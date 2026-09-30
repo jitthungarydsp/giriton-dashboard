@@ -16742,87 +16742,90 @@ def render_courier_detail_page() -> None:
             return snapshot_row
 
         calculated_tig_rows = tig_editor_rows_from_breakdown(tig_breakdown, mobile_overrides)
-        card_drilldowns = build_finance_snapshot_drilldown_payload(
-            mobile_default_rows.to_dict("records"),
-            route_detail,
-        )
-        for detail_label in sorted(detail_labels):
-            detail_frame = finance_detail_frame(detail_label)
-            if isinstance(detail_frame, pd.DataFrame) and not detail_frame.empty:
-                card_drilldowns[detail_label] = detail_frame.to_dict("records")
-        snapshot_result = save_devtest_finance_snapshot_version(
-            courier_id=courier_id,
-            courier_name=courier_name,
-            period_start=period_start,
-            session_id=session_id,
-            calculation_mode=active_calculation_mode,
-            warehouse_label=st.session_state.get("new_warehouse", "Összes"),
-            finance_rows=mobile_default_rows.to_dict("records"),
-            tig_rows=calculated_tig_rows.to_dict("records"),
-            source_payloads=[
-                {
-                    "source_key": "working_row",
-                    "source_table": "devtest.current_filtered_data",
-                    "payload": current_mobile_snapshot_row(),
+
+        def save_current_finance_snapshot(source_name: str) -> dict[str, object]:
+            card_drilldowns = build_finance_snapshot_drilldown_payload(
+                mobile_default_rows.to_dict("records"),
+                route_detail,
+            )
+            for detail_label in sorted(detail_labels):
+                detail_frame = finance_detail_frame(detail_label)
+                if isinstance(detail_frame, pd.DataFrame) and not detail_frame.empty:
+                    card_drilldowns[detail_label] = detail_frame.to_dict("records")
+            return save_devtest_finance_snapshot_version(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                period_start=period_start,
+                session_id=session_id,
+                calculation_mode=active_calculation_mode,
+                warehouse_label=st.session_state.get("new_warehouse", "Összes"),
+                finance_rows=mobile_default_rows.to_dict("records"),
+                tig_rows=calculated_tig_rows.to_dict("records"),
+                source_payloads=[
+                    {
+                        "source_key": "working_row",
+                        "source_table": "devtest.current_filtered_data",
+                        "payload": current_mobile_snapshot_row(),
+                    },
+                    {
+                        "source_key": "settlement_summary",
+                        "source_table": "settlement.courier_settlement_summary",
+                        "payload": summary_row if isinstance(summary_row, dict) else {},
+                        "row_count": 1 if summary_row else 0,
+                    },
+                    {
+                        "source_key": "courier_profile",
+                        "source_table": "public.courier_master",
+                        "payload": profile if isinstance(profile, dict) else {},
+                        "row_count": 1 if profile else 0,
+                    },
+                    {
+                        "source_key": "route_detail",
+                        "source_table": "settlement.jit_row/devtest.route_detail",
+                        "payload": route_detail.to_dict("records") if isinstance(route_detail, pd.DataFrame) and not route_detail.empty else [],
+                        "row_count": int(len(route_detail)) if isinstance(route_detail, pd.DataFrame) else 0,
+                    },
+                    {
+                        "source_key": "card_drilldowns",
+                        "source_table": "devtest.finance_detail_frame",
+                        "payload": card_drilldowns,
+                        "row_count": sum(len(rows) for rows in card_drilldowns.values() if isinstance(rows, list)),
+                    },
+                    {
+                        "source_key": "manual_adjustments",
+                        "source_table": "settlement.courier_settlement_adjustment",
+                        "payload": profile_adjustments.to_dict("records") if isinstance(profile_adjustments, pd.DataFrame) and not profile_adjustments.empty else [],
+                        "row_count": int(len(profile_adjustments)) if isinstance(profile_adjustments, pd.DataFrame) else 0,
+                    },
+                    {
+                        "source_key": "target_reserve_month",
+                        "source_table": "settlement.courier_target_reserve_monthly",
+                        "payload": reserve_month if isinstance(reserve_month, dict) else {},
+                        "row_count": 1 if reserve_month else 0,
+                    },
+                    {
+                        "source_key": "tig_breakdown",
+                        "source_table": "devtest.build_tig_breakdown",
+                        "payload": tig_breakdown if isinstance(tig_breakdown, dict) else {},
+                        "row_count": 1 if tig_breakdown else 0,
+                    },
+                ],
+                metadata={
+                    "payable_total": payable_total,
+                    "tig_final_total": parse_huf_value(tig_breakdown.get("finalTotalHuf")),
+                    "income_total": mobile_income_total,
+                    "deduction_total": mobile_deduction_total,
+                    "correction_total": mobile_correction_total,
+                    "route_count": route_total,
+                    "order_count": order_total,
+                    "source": source_name,
                 },
-                {
-                    "source_key": "settlement_summary",
-                    "source_table": "settlement.courier_settlement_summary",
-                    "payload": summary_row if isinstance(summary_row, dict) else {},
-                    "row_count": 1 if summary_row else 0,
-                },
-                {
-                    "source_key": "courier_profile",
-                    "source_table": "public.courier_master",
-                    "payload": profile if isinstance(profile, dict) else {},
-                    "row_count": 1 if profile else 0,
-                },
-                {
-                    "source_key": "route_detail",
-                    "source_table": "settlement.jit_row/devtest.route_detail",
-                    "payload": route_detail.to_dict("records") if isinstance(route_detail, pd.DataFrame) and not route_detail.empty else [],
-                    "row_count": int(len(route_detail)) if isinstance(route_detail, pd.DataFrame) else 0,
-                },
-                {
-                    "source_key": "card_drilldowns",
-                    "source_table": "devtest.finance_detail_frame",
-                    "payload": card_drilldowns,
-                    "row_count": sum(len(rows) for rows in card_drilldowns.values() if isinstance(rows, list)),
-                },
-                {
-                    "source_key": "manual_adjustments",
-                    "source_table": "settlement.courier_settlement_adjustment",
-                    "payload": profile_adjustments.to_dict("records") if isinstance(profile_adjustments, pd.DataFrame) and not profile_adjustments.empty else [],
-                    "row_count": int(len(profile_adjustments)) if isinstance(profile_adjustments, pd.DataFrame) else 0,
-                },
-                {
-                    "source_key": "target_reserve_month",
-                    "source_table": "settlement.courier_target_reserve_monthly",
-                    "payload": reserve_month if isinstance(reserve_month, dict) else {},
-                    "row_count": 1 if reserve_month else 0,
-                },
-                {
-                    "source_key": "tig_breakdown",
-                    "source_table": "devtest.build_tig_breakdown",
-                    "payload": tig_breakdown if isinstance(tig_breakdown, dict) else {},
-                    "row_count": 1 if tig_breakdown else 0,
-                },
-            ],
-            metadata={
-                "payable_total": payable_total,
-                "tig_final_total": parse_huf_value(tig_breakdown.get("finalTotalHuf")),
-                "income_total": mobile_income_total,
-                "deduction_total": mobile_deduction_total,
-                "correction_total": mobile_correction_total,
-                "route_count": route_total,
-                "order_count": order_total,
-                "source": "devtest.render_courier_detail_page",
-            },
-            updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
-        )
-        if snapshot_result.get("reason"):
-            st.caption("Pénzügyi verzió mentése még nincs aktív. Futtasd a courier_finance_snapshot SQL-t.")
+                updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+            )
         if finance_preflight_active:
+            snapshot_result = save_current_finance_snapshot("devtest.render_courier_detail_page.preflight")
+            if snapshot_result.get("reason"):
+                st.caption("Pénzügyi verzió mentése még nincs aktív. Futtasd a courier_finance_snapshot SQL-t.")
             target_menu_after_finance = (
                 finance_preflight_target
                 if finance_preflight_target in courier_menu_items
@@ -16842,6 +16845,19 @@ def render_courier_detail_page() -> None:
             "note": "Megjegyzés",
         })
         st.markdown("#### Mobilon látható értékek")
+        if st.button(
+            "Pénzügyi snapshot frissítése",
+            use_container_width=True,
+            key=f"save_finance_snapshot_{courier_id}_{period_start:%Y%m}",
+        ):
+            snapshot_result = save_current_finance_snapshot("devtest.render_courier_detail_page.manual")
+            if snapshot_result.get("saved"):
+                clear_devtest_finance_snapshot_cache()
+                st.success(f"Pénzügyi snapshot mentve. Verzió: {snapshot_result.get('version')}")
+            elif snapshot_result.get("unchanged"):
+                st.info(f"A pénzügyi snapshot már naprakész. Verzió: {snapshot_result.get('version')}")
+            else:
+                st.error(f"A pénzügyi snapshot mentése sikertelen: {snapshot_result.get('reason') or 'ismeretlen hiba'}")
         edited_mobile = st.data_editor(
             mobile_editor,
             hide_index=True,
