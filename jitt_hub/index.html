@@ -27,6 +27,7 @@
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--ink); }
     button, input { font: inherit; }
+    [hidden] { display: none !important; }
 
     .topbar {
       height: 70px;
@@ -547,18 +548,277 @@
       font-size: 14px;
     }
 
+    .settlement-page {
+      grid-template-columns: 330px minmax(760px, 1fr) 360px;
+    }
+
+    .filter-stack {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .filter-group {
+      display: grid;
+      gap: 8px;
+    }
+
+    .filter-group label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .select-like,
+    .input-like {
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: #1f2937;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 850;
+    }
+
+    .quick-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      padding: 0 16px 16px;
+    }
+
+    .quick-stat {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfdff;
+      padding: 12px;
+    }
+
+    .quick-stat label,
+    .settlement-kpi label,
+    .settlement-detail label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      margin-bottom: 7px;
+    }
+
+    .quick-stat strong,
+    .settlement-kpi strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .settlement-hero {
+      padding: 20px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .settlement-title {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .settlement-title h1 {
+      margin: 0 0 8px;
+      font-size: 34px;
+      letter-spacing: 0;
+    }
+
+    .settlement-title p {
+      margin: 0;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .settlement-kpis {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .settlement-kpi {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 15px;
+      background: #fbfdff;
+    }
+
+    .settlement-kpi.primary {
+      background: #102a43;
+      color: #fff;
+      border-color: #102a43;
+    }
+
+    .settlement-kpi.primary label,
+    .settlement-kpi.primary span {
+      color: rgba(255,255,255,.75);
+    }
+
+    .settlement-kpi span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .settlement-table {
+      padding: 0 18px 18px;
+      overflow-x: auto;
+    }
+
+    .settlement-table table {
+      width: 100%;
+      min-width: 820px;
+      border-collapse: separate;
+      border-spacing: 0;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .settlement-table th,
+    .settlement-table td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .settlement-table th {
+      background: #f8fafc;
+      color: #475467;
+      font-size: 12px;
+      font-weight: 950;
+      text-transform: uppercase;
+    }
+
+    .settlement-table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .amount-positive {
+      color: var(--green);
+      font-weight: 950;
+    }
+
+    .amount-negative {
+      color: var(--red);
+      font-weight: 950;
+    }
+
+    .settlement-detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .settlement-detail {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fbfdff;
+      padding: 16px;
+    }
+
+    .detail-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+      color: #344054;
+      font-weight: 800;
+    }
+
+    .detail-row:last-child {
+      border-bottom: 0;
+    }
+
+    .detail-row strong {
+      white-space: nowrap;
+      color: var(--ink);
+    }
+
+    .process-list {
+      padding: 16px 18px 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .process-step {
+      display: grid;
+      grid-template-columns: 32px 1fr auto;
+      align-items: center;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      padding: 13px;
+    }
+
+    .step-index {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-weight: 950;
+    }
+
+    .process-step b {
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .process-step small {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .action-stack {
+      padding: 16px 18px 18px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .wide-btn {
+      width: 100%;
+      min-height: 46px;
+    }
+
     @media (max-width: 1280px) {
       .topbar { grid-template-columns: 1fr; height: auto; padding: 14px; }
       .nav { height: auto; overflow-x: auto; }
       .nav button { padding: 12px 14px; white-space: nowrap; }
-      .page { grid-template-columns: 1fr; }
+      .page, .settlement-page { grid-template-columns: 1fr; }
       .live-grid, .timeline-layout { grid-template-columns: 1fr; }
     }
 
     @media (max-width: 760px) {
       .profile, .profile-title { grid-template-columns: 1fr; }
-      .route-metrics, .score-grid { grid-template-columns: 1fr 1fr; }
+      .route-metrics, .score-grid, .settlement-kpis, .settlement-detail-grid { grid-template-columns: 1fr 1fr; }
       .event { grid-template-columns: 62px 24px 1fr; }
+    }
+
+    @media (max-width: 560px) {
+      .settlement-kpis, .settlement-detail-grid { grid-template-columns: 1fr; }
+      .settlement-title { flex-direction: column; }
     }
   </style>
 </head>
@@ -567,8 +827,8 @@
     <div class="brand"><div class="logo">J</div> Futár360</div>
     <nav class="nav" aria-label="Főmenü">
       <button>Új futár</button>
-      <button class="active">Futár360</button>
-      <button>Elszámolás</button>
+      <button class="active" data-view-target="courier-view">Futár360</button>
+      <button data-view-target="settlement-view">Elszámolás</button>
       <button>Beosztás</button>
       <button>JittCar</button>
       <button>Jelentések</button>
@@ -580,7 +840,7 @@
     </div>
   </header>
 
-  <main class="page">
+  <main class="page" id="courier-view">
     <aside class="panel">
       <div class="left-head">
         <h2>Futárok</h2>
@@ -779,5 +1039,357 @@
       </div>
     </aside>
   </main>
+
+  <main class="page settlement-page" id="settlement-view" hidden>
+    <aside class="panel">
+      <div class="left-head">
+        <h2>Elszámolás szűrők</h2>
+        <input class="search" value="2026. szeptember" aria-label="Elszámolási hónap" />
+      </div>
+      <div class="filter-stack">
+        <div class="filter-group">
+          <label>Hónap</label>
+          <div class="select-like"><span>2026. szeptember</span><span>▾</span></div>
+        </div>
+        <div class="filter-group">
+          <label>Raktár</label>
+          <div class="select-like"><span>Összes raktár</span><span>▾</span></div>
+        </div>
+        <div class="filter-group">
+          <label>Állapot</label>
+          <div class="select-like"><span>Nyitott folyamatok</span><span>▾</span></div>
+        </div>
+        <div class="filter-group">
+          <label>Futár keresése</label>
+          <div class="input-like">Név, ID vagy e-mail</div>
+        </div>
+      </div>
+      <div class="quick-stats">
+        <div class="quick-stat"><label>Futár</label><strong>118</strong></div>
+        <div class="quick-stat"><label>Nyitott</label><strong>37</strong></div>
+        <div class="quick-stat"><label>TIG vár</label><strong>18</strong></div>
+        <div class="quick-stat"><label>Fizetés</label><strong>24</strong></div>
+      </div>
+    </aside>
+
+    <section class="main">
+      <section class="panel settlement-hero">
+        <div class="settlement-title">
+          <div>
+            <h1>Elszámolás</h1>
+            <p>Havi futárelszámolás, TIG, számlaellenőrzés és kifizetési státusz egy nézetben.</p>
+          </div>
+          <div class="profile-actions">
+            <button class="btn">Export Excel</button>
+            <button class="btn primary">Frissítés</button>
+          </div>
+        </div>
+        <div class="settlement-kpis">
+          <div class="settlement-kpi primary"><label>Kifizetendő</label><strong>41 850 000 Ft</strong><span>aktuális szűrés</span></div>
+          <div class="settlement-kpi"><label>Vállalkozói díj</label><strong>54 210 000 Ft</strong><span>bruttó hónap</span></div>
+          <div class="settlement-kpi"><label>Levonás</label><strong>12 360 000 Ft</strong><span>előleg, céltartalék, ATM</span></div>
+          <div class="settlement-kpi"><label>Eltérés</label><strong>3</strong><span>ellenőrzést igényel</span></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Futár elszámolási lista</h2>
+          <span class="chip blue">részletezhető</span>
+        </div>
+        <div class="settlement-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Futár</th>
+                <th>Raktár</th>
+                <th>Állapot</th>
+                <th>Kör</th>
+                <th>Cím</th>
+                <th>Bevétel</th>
+                <th>Levonás</th>
+                <th>Kifizetendő</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Papp Nikolett</strong><br><small>7486 · nlorinczpapp@gmail.com</small></td>
+                <td>BUD2</td>
+                <td><span class="chip amber">Számlaellenőrzés</span></td>
+                <td>62</td>
+                <td>728</td>
+                <td class="amount-positive">714 200 Ft</td>
+                <td class="amount-negative">-124 200 Ft</td>
+                <td><strong>590 000 Ft</strong></td>
+              </tr>
+              <tr>
+                <td><strong>Szolnoki Tibor</strong><br><small>6825 · szolnokitibor78@gmail.com</small></td>
+                <td>BUD1</td>
+                <td><span class="chip blue">TIG-re vár</span></td>
+                <td>55</td>
+                <td>641</td>
+                <td class="amount-positive">638 900 Ft</td>
+                <td class="amount-negative">-96 300 Ft</td>
+                <td><strong>542 600 Ft</strong></td>
+              </tr>
+              <tr>
+                <td><strong>Tuza Ádám</strong><br><small>7753 · tuzaadam@gmail.com</small></td>
+                <td>BUD1</td>
+                <td><span class="chip red">Eltérés</span></td>
+                <td>44</td>
+                <td>512</td>
+                <td class="amount-positive">512 300 Ft</td>
+                <td class="amount-negative">-162 800 Ft</td>
+                <td><strong>349 500 Ft</strong></td>
+              </tr>
+              <tr>
+                <td><strong>György Roland</strong><br><small>8530 · gyroland73@gmail.com</small></td>
+                <td>BUD2</td>
+                <td><span class="chip green">Kifizethető</span></td>
+                <td>58</td>
+                <td>694</td>
+                <td class="amount-positive">676 000 Ft</td>
+                <td class="amount-negative">-88 000 Ft</td>
+                <td><strong>588 000 Ft</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="settlement-detail-grid">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Papp Nikolett bontás</h2>
+            <span class="chip amber">ellenőrzés alatt</span>
+          </div>
+          <div class="side-content">
+            <div class="settlement-detail">
+              <label>Bevételi oldal</label>
+              <div class="detail-row"><span>Alapdíj</span><strong>402 000 Ft</strong></div>
+              <div class="detail-row"><span>Borravaló</span><strong>139 465 Ft</strong></div>
+              <div class="detail-row"><span>Bónusz</span><strong>46 500 Ft</strong></div>
+              <div class="detail-row"><span>Korrekció +</span><strong>12 300 Ft</strong></div>
+            </div>
+            <div class="settlement-detail">
+              <label>Levonási oldal</label>
+              <div class="detail-row"><span>Fizetés előleg</span><strong>45 000 Ft</strong></div>
+              <div class="detail-row"><span>Céltartalék</span><strong>58 000 Ft</strong></div>
+              <div class="detail-row"><span>ATM/KP</span><strong>21 200 Ft</strong></div>
+              <div class="detail-row"><span>Biztosítás</span><strong>0 Ft</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Folyamat</h2>
+            <span class="chip blue">aktuális</span>
+          </div>
+          <div class="process-list">
+            <div class="process-step"><span class="step-index">1</span><div><b>Elszámolás elkészült</b><small>PDF generálva és publikálva</small></div><span class="chip green">OK</span></div>
+            <div class="process-step"><span class="step-index">2</span><div><b>TIG elfogadás</b><small>Futári visszajelzésre vár</small></div><span class="chip amber">Vár</span></div>
+            <div class="process-step"><span class="step-index">3</span><div><b>Számlaellenőrzés</b><small>Átutalás és KP külön ellenőrzés</small></div><span class="chip">Nyitott</span></div>
+            <div class="process-step"><span class="step-index">4</span><div><b>Kifizetés</b><small>Jóváhagyás után indítható</small></div><span class="chip">Zárt</span></div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="side">
+      <div class="side-card">
+        <div class="panel-head">
+          <h2>Admin műveletek</h2>
+          <span class="chip blue">Papp Nikolett</span>
+        </div>
+        <div class="action-stack">
+          <button class="btn primary wide-btn">Elszámolás elfogadása</button>
+          <button class="btn wide-btn">TIG jóváhagyása</button>
+          <button class="btn wide-btn">Számla ellenőrzése</button>
+          <button class="btn wide-btn">Kifizetésre küldés</button>
+        </div>
+      </div>
+
+      <div class="side-card">
+        <div class="panel-head">
+          <h2>Eltérések</h2>
+          <span class="chip red">3</span>
+        </div>
+        <div class="side-content">
+          <div class="note">A TIG átutalás és KP összege külön ellenőrzendő.</div>
+          <div class="note">A fizetés előleg levonása aktív, de még nincs lezárt kifizetés.</div>
+          <div class="note">Céltartalék előző havi nyitó-záró egyeztetés szükséges.</div>
+        </div>
+      </div>
+
+      <div class="side-card">
+        <div class="panel-head">
+          <h2>Havi összesítő</h2>
+          <span class="chip green">Excel</span>
+        </div>
+        <div class="side-content">
+          <div class="finance-mini">
+            <div class="finance-row"><span>Elszámolásra vár</span><strong>19</strong></div>
+            <div class="finance-row"><span>TIG-re vár</span><strong>18</strong></div>
+            <div class="finance-row"><span>Számlaellenőrzés</span><strong>11</strong></div>
+            <div class="finance-row"><span>Kifizethető</span><strong>24</strong></div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    const viewButtons = document.querySelectorAll("[data-view-target]");
+    const views = document.querySelectorAll("main[id$='-view']");
+    const settlementView = document.querySelector("#settlement-view");
+    let settlementLoaded = false;
+
+    const hufFormatter = new Intl.NumberFormat("hu-HU", {
+      maximumFractionDigits: 0,
+    });
+
+    function formatHuf(value) {
+      return `${hufFormatter.format(Number(value || 0))} Ft`;
+    }
+
+    function formatNumber(value) {
+      return hufFormatter.format(Number(value || 0));
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function statusClass(status) {
+      if (status === "Kifizethető") return "green";
+      if (status === "Eltérés") return "red";
+      if (status === "Számlaellenőrzés") return "amber";
+      return "blue";
+    }
+
+    function settlementMonthParam() {
+      return "2026-09";
+    }
+
+    function setText(selector, value) {
+      const element = document.querySelector(selector);
+      if (element) element.textContent = value;
+    }
+
+    function renderSettlementRows(couriers) {
+      const tbody = document.querySelector("#settlement-view tbody");
+      if (!tbody || !couriers?.length) return;
+      tbody.innerHTML = couriers.slice(0, 80).map((courier) => `
+        <tr>
+          <td>
+            <strong>${escapeHtml(courier.courierName || "Ismeretlen futár")}</strong><br>
+            <small>${escapeHtml(courier.courierId || "-")}${courier.email ? ` · ${escapeHtml(courier.email)}` : ""}</small>
+          </td>
+          <td>${escapeHtml(courier.warehouse || "-")}</td>
+          <td><span class="chip ${statusClass(courier.status)}">${escapeHtml(courier.status || "-")}</span></td>
+          <td>${formatNumber(courier.routeCount)}</td>
+          <td>${formatNumber(courier.orderCount)}</td>
+          <td class="amount-positive">${formatHuf(courier.income)}</td>
+          <td class="amount-negative">-${formatHuf(courier.deductions)}</td>
+          <td><strong>${formatHuf(courier.payable)}</strong></td>
+        </tr>
+      `).join("");
+    }
+
+    function renderSelectedSettlement(courier) {
+      if (!courier) return;
+      setText("#settlement-view .settlement-detail-grid .panel:first-child .panel-head h2", `${courier.courierName} bontás`);
+      setText("#settlement-view aside.side .side-card:first-child .chip", courier.courierName);
+
+      const detailBlocks = document.querySelectorAll("#settlement-view .settlement-detail");
+      if (detailBlocks[0]) {
+        detailBlocks[0].innerHTML = `
+          <label>Bevételi oldal</label>
+          <div class="detail-row"><span>Alapdíj</span><strong>${formatHuf(courier.base)}</strong></div>
+          <div class="detail-row"><span>Borravaló</span><strong>${formatHuf(courier.tip)}</strong></div>
+          <div class="detail-row"><span>Bónusz</span><strong>${formatHuf(courier.bonus)}</strong></div>
+          <div class="detail-row"><span>Összes bevétel</span><strong>${formatHuf(courier.income)}</strong></div>
+        `;
+      }
+      if (detailBlocks[1]) {
+        detailBlocks[1].innerHTML = `
+          <label>Levonási oldal</label>
+          <div class="detail-row"><span>Levonás összesen</span><strong>${formatHuf(courier.deductions)}</strong></div>
+          <div class="detail-row"><span>MűszakPro foglalás</span><strong>${formatNumber(courier.bookedShiftCount)}</strong></div>
+          <div class="detail-row"><span>Hub/Giriton műszak</span><strong>${formatNumber(courier.giritonShiftCount)}</strong></div>
+          <div class="detail-row"><span>Kifizetendő</span><strong>${formatHuf(courier.payable)}</strong></div>
+        `;
+      }
+    }
+
+    function renderSettlementDashboard(data) {
+      if (!data?.couriers?.length) return;
+      const totals = data.totals || {};
+      const kpis = document.querySelectorAll("#settlement-view .settlement-kpi strong");
+      if (kpis[0]) kpis[0].textContent = formatHuf(totals.payable);
+      if (kpis[1]) kpis[1].textContent = formatHuf(totals.income);
+      if (kpis[2]) kpis[2].textContent = formatHuf(totals.deductions);
+      if (kpis[3]) kpis[3].textContent = formatNumber(totals.issues);
+
+      const quickStats = document.querySelectorAll("#settlement-view .quick-stat strong");
+      if (quickStats[0]) quickStats[0].textContent = formatNumber(totals.couriers);
+      if (quickStats[1]) quickStats[1].textContent = formatNumber((totals.tigWait || 0) + (totals.invoiceCheck || 0) + (totals.issues || 0));
+      if (quickStats[2]) quickStats[2].textContent = formatNumber(totals.tigWait);
+      if (quickStats[3]) quickStats[3].textContent = formatNumber(totals.payableReady);
+
+      const summaryRows = document.querySelectorAll("#settlement-view .side-card:last-child .finance-row strong");
+      if (summaryRows[0]) summaryRows[0].textContent = formatNumber(totals.couriers - totals.payableReady);
+      if (summaryRows[1]) summaryRows[1].textContent = formatNumber(totals.tigWait);
+      if (summaryRows[2]) summaryRows[2].textContent = formatNumber(totals.invoiceCheck);
+      if (summaryRows[3]) summaryRows[3].textContent = formatNumber(totals.payableReady);
+
+      const sourceBadge = document.querySelector("#settlement-view .side-card:last-child .chip");
+      if (sourceBadge) sourceBadge.textContent = "DB";
+
+      renderSettlementRows(data.couriers);
+      renderSelectedSettlement(data.selectedCourier || data.couriers[0]);
+    }
+
+    async function loadSettlementDashboard() {
+      if (!settlementView || settlementLoaded) return;
+      settlementLoaded = true;
+      try {
+        const response = await fetch(`/api/settlement-dashboard?month=${settlementMonthParam()}&limit=120`, {
+          headers: { accept: "application/json" },
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        renderSettlementDashboard(data);
+      } catch (error) {
+        console.warn("JITT Hub settlement DB load failed, keeping demo data.", error);
+        const sourceBadge = document.querySelector("#settlement-view .side-card:last-child .chip");
+        if (sourceBadge) sourceBadge.textContent = "Demo";
+      }
+    }
+
+    viewButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const target = button.dataset.viewTarget;
+        views.forEach((view) => {
+          view.hidden = view.id !== target;
+        });
+        viewButtons.forEach((item) => item.classList.toggle("active", item === button));
+        if (target === "settlement-view") {
+          loadSettlementDashboard();
+        }
+      });
+    });
+
+    document.querySelector("#settlement-view .settlement-title .btn.primary")?.addEventListener("click", () => {
+      settlementLoaded = false;
+      loadSettlementDashboard();
+    });
+  </script>
 </body>
 </html>
