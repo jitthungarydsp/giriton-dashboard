@@ -2668,7 +2668,11 @@ def load_latest_excel_jit_period_start() -> date | None:
 
 
 def default_settlement_month_label() -> str:
-    return "2026. augusztus"
+    latest_period_start = load_latest_excel_jit_period_start()
+    if latest_period_start:
+        return month_option_label(latest_period_start)
+    today = date.today().replace(day=1)
+    return month_option_label(today)
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -21751,6 +21755,32 @@ def show_new_settlement_page() -> None:
         st.session_state["new_month_auto_default"] = current_month_label
     selected_month_label = st.session_state.get("new_month") or default_settlement_month_label()
     selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
+
+    with st.sidebar:
+        st.markdown("## Elszámolás")
+        st.caption("Szűrés és műveletek")
+        sidebar_month_options = month_options()
+        if selected_month_label not in sidebar_month_options:
+            sidebar_month_options.insert(0, selected_month_label)
+        selected_month_label = st.selectbox(
+            "Elszámolási hónap",
+            sidebar_month_options,
+            key="new_month",
+        )
+        selected_calculation_mode = st.selectbox(
+            "Számítás módja",
+            ["API", "Excel", "Összes"],
+            key="new_calculation_mode",
+        )
+        selected_warehouse_label = st.selectbox(
+            "Raktár",
+            ["Összes", "BUD1", "BUD2"],
+            key="new_warehouse",
+        )
+        if str(selected_calculation_mode or "API").strip().casefold() == "excel":
+            render_excel_import_sidebar_tools(selected_month_label)
+
+    selected_month = selected_month_label
     selected_period_start = parse_month_option(selected_month_label)
     balance_period_start = selected_period_start
     _, balance_period_end = month_bounds(balance_period_start)
@@ -21833,17 +21863,9 @@ def show_new_settlement_page() -> None:
     loading_panel.empty()
 
     with st.sidebar:
-        st.markdown("## Elszámolás")
-        st.caption("Szűrés és műveletek")
-        sidebar_month_options = month_options()
-        if selected_month_label not in sidebar_month_options:
-            sidebar_month_options.insert(0, selected_month_label)
-        selected_month=st.selectbox("Elszámolási hónap",sidebar_month_options,key="new_month")
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
-        calculation_mode=st.selectbox("Számítás módja",["API","Excel","Összes"],key="new_calculation_mode")
-        if str(calculation_mode or "API").strip().casefold() == "excel":
-            render_excel_import_sidebar_tools(selected_month)
-        warehouse=st.selectbox("Raktár",["Összes"]+sorted(data["Raktár"].unique().tolist()),key="new_warehouse")
+        calculation_mode = selected_calculation_mode
+        warehouse = selected_warehouse_label
         status=st.selectbox(
             "Elszámolás állapota",
             [
