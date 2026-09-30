@@ -10108,17 +10108,25 @@ def apply_attendance_shift_to_route_result(
     result["attendanceAvailableForShiftSince"] = attendance_shift.get("availableForShiftSince") or ""
     result["plannedStartAt"] = str(attendance_shift.get("shiftStart") or result.get("plannedStartAt") or "")
     result["shiftAvailableAt"] = str(attendance_shift.get("availableForShiftSince") or result.get("shiftAvailableAt") or "")
-    result["actualStartAt"] = str(attendance_shift.get("availableForShiftSince") or result.get("actualStartAt") or "")
     result.setdefault("routeStory", {})
     result["routeStory"]["shiftName"] = str(attendance_shift.get("shiftName") or result["routeStory"].get("shiftName") or "")
     result["routeStory"]["shiftStart"] = str(attendance_shift.get("shiftStart") or result["routeStory"].get("shiftStart") or "")
     result["routeStory"]["shiftEnd"] = str(attendance_shift.get("shiftEnd") or result["routeStory"].get("shiftEnd") or "")
     result["routeStory"]["availableForShiftSince"] = str(attendance_shift.get("availableForShiftSince") or result["routeStory"].get("availableForShiftSince") or "")
     result["routeStory"]["availableAt"] = str(attendance_shift.get("availableForShiftSince") or result["routeStory"].get("availableAt") or "")
-    result["routeStory"]["queueStartedAt"] = str(attendance_shift.get("availableForShiftSince") or result["routeStory"].get("queueStartedAt") or "")
+    assigned_at = local_datetime(result["routeStory"].get("assignedAt") or result.get("routeAssignedAt"))
+    queue_started = route_queue_started_value(
+        result["routeStory"].get("shiftStart") or result.get("plannedStartAt"),
+        assigned_at.isoformat() if assigned_at else "",
+        result["routeStory"].get("queueStartedAt"),
+        result.get("actualStartAt"),
+        attendance_shift.get("availableForShiftSince"),
+    )
+    if queue_started:
+        result["actualStartAt"] = str(queue_started)
+        result["routeStory"]["queueStartedAt"] = str(queue_started)
     shift_start_at = local_datetime(result["routeStory"].get("shiftStart"))
     checkin_at = local_datetime(result["routeStory"].get("queueStartedAt"))
-    assigned_at = local_datetime(result["routeStory"].get("assignedAt") or result.get("routeAssignedAt"))
     if shift_start_at and checkin_at:
         delta_minutes = int(round((checkin_at - shift_start_at).total_seconds() / 60))
         result["plannedStartDelayMinutes"] = max(delta_minutes, 0)
@@ -10239,6 +10247,23 @@ def route_detail_time_text(value: Any) -> str:
         text = str(value or "").strip()
         return text[11:16] if len(text) >= 16 else (text or "Nincs adat")
     return parsed.strftime("%H:%M")
+
+
+def route_queue_started_value(shift_start: Any, assigned_at: Any, *candidates: Any) -> str:
+    assigned_dt = local_datetime(assigned_at)
+    for candidate in candidates:
+        candidate_text = str(candidate or "").strip()
+        candidate_dt = local_datetime(candidate_text)
+        if not candidate_dt:
+            continue
+        if assigned_dt and candidate_dt > assigned_dt:
+            continue
+        return candidate_text
+    shift_start_text = str(shift_start or "").strip()
+    shift_start_dt = local_datetime(shift_start_text)
+    if shift_start_dt and assigned_dt and shift_start_dt <= assigned_dt:
+        return shift_start_text
+    return ""
 
 
 def route_detail_route_type_label(value: Any) -> str:
@@ -10413,6 +10438,14 @@ def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: 
     story = row.get("routeStory") if isinstance(row.get("routeStory"), dict) else {}
     vehicle = row.get("vehicle") if isinstance(row.get("vehicle"), dict) else None
     assigned_at = story.get("assignedAt") or row.get("routeAssignedAt")
+    shift_start_at = story.get("shiftStart") or row.get("plannedStartAt")
+    queue_started_at = route_queue_started_value(
+        shift_start_at,
+        assigned_at,
+        story.get("queueStartedAt"),
+        row.get("queueStartedAt"),
+        row.get("actualStartAt"),
+    )
     departed_at = story.get("realDeparture") or row.get("departedAt")
     returned_at = story.get("realReturn") or row.get("warehouseArrivedAt") or row.get("lastOrderFinishedAt")
     planned_departure = story.get("plannedDeparture") or row.get("plannedDepartureAt")
@@ -10463,9 +10496,10 @@ def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: 
         "routeType": route_type,
         "routeTypeLabel": route_detail_route_type_label(route_type),
         "shiftName": row.get("shiftName") or story.get("shiftName") or route_detail_time_text(story.get("shiftStart") or row.get("plannedStartAt")),
-        "shiftStartAt": story.get("shiftStart") or row.get("plannedStartAt"),
+        "shiftStartAt": shift_start_at,
         "shiftEndAt": story.get("shiftEnd") or row.get("plannedEndAt"),
-        "queueStartedAt": row.get("shiftAvailableAt") or story.get("courierRegisteredAt") or row.get("actualStartAt"),
+        "shiftAvailableAt": story.get("availableForShiftSince") or story.get("availableAt") or row.get("shiftAvailableAt"),
+        "queueStartedAt": queue_started_at,
         "routeAssignedAt": assigned_at,
         "departedAt": departed_at,
         "returnedAt": returned_at,
@@ -10505,6 +10539,12 @@ def build_route_detail_item_from_hub_stat(row: dict[str, Any]) -> dict[str, Any]
     hub_mileage_km = safe_float_value(row.get("hub_mileage_km"))
     google_km = safe_float_value(row.get("google_route_km"))
     actual_km = safe_float_value(row.get("actual_km"))
+    queue_started = route_queue_started_value(
+        hub_stat_shift_planned_start(row),
+        row.get("route_assigned_at"),
+        row.get("queue_started_at"),
+        row.get("actual_shift_start_at"),
+    )
     item = {
         "courierId": courier_id,
         "courierName": courier_name,
@@ -10516,8 +10556,8 @@ def build_route_detail_item_from_hub_stat(row: dict[str, Any]) -> dict[str, Any]
         "routeType": str(row.get("route_type") or "").strip() or "normal",
         "routeTypeLabel": str(row.get("route_type_label") or "").strip() or route_detail_route_type_label(row.get("route_type")),
         "shiftName": str(row.get("shift_name") or "").strip(),
-        "shiftStartAt": row.get("actual_shift_start_at") or row.get("queue_started_at"),
-        "queueStartedAt": row.get("queue_started_at") or row.get("actual_shift_start_at"),
+        "shiftStartAt": hub_stat_shift_planned_start(row),
+        "queueStartedAt": queue_started,
         "actualShiftStartAt": row.get("actual_shift_start_at"),
         "routeAssignedAt": row.get("route_assigned_at"),
         "departedAt": row.get("departed_at"),
@@ -11623,7 +11663,13 @@ def hub_stat_shift_planned_start(row: dict[str, Any]) -> str:
 
 def hub_stat_late_start_minutes(row: dict[str, Any]) -> int:
     planned = local_datetime(hub_stat_shift_planned_start(row))
-    actual = local_datetime(row.get("actual_shift_start_at") or row.get("queue_started_at"))
+    queue_started = route_queue_started_value(
+        hub_stat_shift_planned_start(row),
+        row.get("route_assigned_at"),
+        row.get("queue_started_at"),
+        row.get("actual_shift_start_at"),
+    )
+    actual = local_datetime(queue_started)
     if not planned or not actual:
         return 0
     return max(0, int(round((actual - planned).total_seconds() / 60)))
@@ -11634,8 +11680,13 @@ def hub_stat_daily_history_row(row: dict[str, Any], route_notes: dict[tuple[str,
     route_id = str(row.get("route_id") or "")
     note_row = route_notes.get((work_date, route_id), {})
     planned_start = hub_stat_shift_planned_start(row)
-    queue_started = str(row.get("queue_started_at") or row.get("actual_shift_start_at") or "")
     route_assigned = str(row.get("route_assigned_at") or "")
+    queue_started = route_queue_started_value(
+        planned_start,
+        route_assigned,
+        row.get("queue_started_at"),
+        row.get("actual_shift_start_at"),
+    )
     departed = str(row.get("departed_at") or "")
     returned = str(row.get("returned_at") or "")
     planned_return = str(row.get("planned_return_at") or "")
@@ -11723,11 +11774,19 @@ def hub_detail_daily_history_row(row: dict[str, Any], route_notes: dict[tuple[st
     mileage = safe_float_value(row.get("mileageKm")) or safe_float_value(row.get("plannedKm")) or 0
     late_count = safe_int(row.get("routeDelayCount"))
     late_minutes = safe_int(row.get("routeDelayMinutes"))
+    queue_started = route_queue_started_value(
+        row.get("plannedStartAt"),
+        assigned,
+        row.get("queueStartedAt"),
+        row.get("actualStartAt"),
+        row.get("shiftAvailableAt"),
+    )
+    available_for_shift = str(row.get("shiftAvailableAt") or row.get("actualStartAt") or "")
     story = {
         "shiftName": str(row.get("shiftName") or "").strip(),
         "shiftStart": str(row.get("plannedStartAt") or ""),
-        "queueStartedAt": str(row.get("shiftAvailableAt") or row.get("actualStartAt") or ""),
-        "availableForShiftSince": str(row.get("shiftAvailableAt") or row.get("actualStartAt") or ""),
+        "queueStartedAt": queue_started,
+        "availableForShiftSince": available_for_shift,
         "assignedAt": assigned,
         "realDeparture": departed,
         "plannedReturn": planned_return,
@@ -11746,8 +11805,8 @@ def hub_detail_daily_history_row(row: dict[str, Any], route_notes: dict[tuple[st
         "orders": safe_int(row.get("orders")),
         "stops": safe_int(row.get("stops") or row.get("orders")),
         "plannedStartAt": str(row.get("plannedStartAt") or ""),
-        "actualStartAt": str(row.get("actualStartAt") or row.get("shiftAvailableAt") or ""),
-        "shiftAvailableAt": str(row.get("shiftAvailableAt") or row.get("actualStartAt") or ""),
+        "actualStartAt": queue_started,
+        "shiftAvailableAt": available_for_shift,
         "routeAssignedAt": assigned,
         "plannedDepartureAt": str(row.get("plannedDepartureAt") or ""),
         "departedAt": departed,

@@ -508,9 +508,9 @@ textarea { min-height: 96px; resize: vertical; }
 .stat-card strong { display: block; margin-top: 12px; font-size: 28px; line-height: 1; letter-spacing: 0; overflow-wrap: anywhere; }
 .stat-card small { display: block; margin-top: 10px; color: var(--green-dark); font-size: 11px; font-weight: 800; }
 .stat-breakdown-list { display: grid; gap: 8px; margin-top: 16px; }
-.stat-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 13px; border-radius: 14px; background: #f5f7f3; }
-.stat-row span { color: var(--muted); font-size: 13px; font-weight: 750; }
-.stat-row strong { font-size: 16px; }
+.stat-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px 13px; border-radius: 14px; background: #f5f7f3; }
+.stat-row span { min-width: 0; color: var(--muted); font-size: 13px; font-weight: 750; overflow-wrap: anywhere; }
+.stat-row strong { min-width: 0; font-size: 16px; text-align: right; overflow-wrap: anywhere; }
 .stat-row.missing { border: 1px solid var(--danger); background: #fff0ef; }
 .stat-row.missing span, .stat-row.missing strong { color: var(--danger); }
 .stat-detail-section { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
@@ -542,7 +542,11 @@ textarea { min-height: 96px; resize: vertical; }
 .daily-route-row > div:last-child { text-align: right; }
 .daily-route-story { display: grid; gap: 8px; padding: 0 12px 12px; }
 .daily-route-story .stat-row { align-items: flex-start; }
-.daily-route-story .stat-row strong { text-align: right; }
+.daily-route-story .stat-row strong { max-width: 100%; text-align: right; }
+@media (max-width: 520px) {
+  .stat-row { grid-template-columns: minmax(0, 1fr); }
+  .stat-row strong { text-align: left; }
+}
 .shift-quality-list { display: grid; gap: 8px; margin: 10px 0; }
 .shift-quality-row,
 .route-quality-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 14px; background: #f5f7f3; }

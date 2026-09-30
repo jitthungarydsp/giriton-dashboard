@@ -58,7 +58,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v141";
+const APP_VERSION = "v142";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -1002,6 +1002,30 @@ function signedMinutesBetween(start, end) {
   return Math.round((endTime - startTime) / 60000);
 }
 
+function dateTimeMs(value) {
+  if (!value) return NaN;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function routeQueueStartedAt(row = {}, story = row.routeStory || {}) {
+  const assignedAt = story.assignedAt || row.routeAssignedAt;
+  const assignedMs = dateTimeMs(assignedAt);
+  const candidates = [story.queueStartedAt, row.queueStartedAt, row.actualStartAt];
+  for (const candidate of candidates) {
+    const candidateMs = dateTimeMs(candidate);
+    if (!Number.isFinite(candidateMs)) continue;
+    if (Number.isFinite(assignedMs) && candidateMs > assignedMs) continue;
+    return candidate;
+  }
+  const shiftStart = story.shiftStart || row.plannedStartAt || row.shiftStartAt;
+  const shiftStartMs = dateTimeMs(shiftStart);
+  if (Number.isFinite(shiftStartMs) && Number.isFinite(assignedMs) && shiftStartMs <= assignedMs) {
+    return shiftStart;
+  }
+  return "";
+}
+
 function shiftKeyForRoute(row = {}) {
   return String(
     row.routeStory?.shiftStart
@@ -1202,12 +1226,12 @@ function routeStoryDelayLabel(story = {}) {
 }
 
 function routeShiftLateMinutes(row = {}, story = {}) {
-  const explicitDelay = Number(row.plannedStartDelayMinutes || 0);
-  if (explicitDelay > 0) return explicitDelay;
   const shiftStart = story.shiftStart || row.plannedStartAt;
-  const queuedAt = story.queueStartedAt || row.actualStartAt || story.availableForShiftSince || story.availableAt || row.shiftAvailableAt;
+  const queuedAt = routeQueueStartedAt(row, story);
   const computedDelay = minutesBetween(shiftStart, queuedAt);
-  return computedDelay > 0 ? computedDelay : 0;
+  if (queuedAt) return computedDelay > 0 ? computedDelay : 0;
+  const explicitDelay = Number(row.plannedStartDelayMinutes || 0);
+  return explicitDelay > 0 ? explicitDelay : 0;
 }
 
 function routeDelayCleaningLabel(row = {}) {
@@ -1242,13 +1266,15 @@ function renderCurrentRouteStory(route) {
   if (!Object.keys(story).length) {
     return "";
   }
+  const queueStartedAt = routeQueueStartedAt(route, story);
   return `
     <section class="route-timeline">
       <div class="route-timeline-head">
         <strong>${escapeHtml(routeStoryShiftLabel(story))}</strong>
       </div>
       <div class="route-timeline-grid">
-        ${routeStoryTime("Elérhető volt", story.queueStartedAt || story.availableForShiftSince || story.availableAt || story.courierRegisteredAt)}
+        ${routeStoryTime("Elérhető volt", story.availableForShiftSince || story.availableAt || story.courierRegisteredAt)}
+        ${routeStoryTime("Sorba állt", queueStartedAt)}
         ${routeStoryTime("Túrát kapott", story.assignedAt || route.routeAssignedAt)}
         ${routeStoryMetric("Várakozott", story.queueWaitMinutes, " perc")}
         ${routeStoryTime("Raktárat elhagyta", story.realDeparture || route.realDeparture)}
@@ -1267,8 +1293,8 @@ function renderNarrativeRouteStory(row) {
   const storyText = String(story.storyText || "");
   const shiftStart = story.shiftStart || row.plannedStartAt;
   const shiftEnd = story.shiftEnd || "";
-  const shiftCheckinAt = story.queueStartedAt || row.actualStartAt || story.availableForShiftSince || story.availableAt || row.shiftAvailableAt;
-  const availableAt = story.availableForShiftSince || story.availableAt || shiftCheckinAt || story.courierRegisteredAt || row.shiftAvailableAt;
+  const shiftCheckinAt = routeQueueStartedAt(row, story);
+  const availableAt = story.availableForShiftSince || story.availableAt || story.courierRegisteredAt || row.shiftAvailableAt;
   const registeredAt = story.courierRegisteredAt || shiftCheckinAt;
   const assignedAt = story.assignedAt || row.routeAssignedAt;
   const computedQueueDelta = shiftStart && shiftCheckinAt ? signedMinutesBetween(shiftStart, shiftCheckinAt) : null;
@@ -1344,6 +1370,7 @@ function renderNarrativeRouteStory(row) {
 
 function renderRouteStoryDetails(row) {
   const story = row.routeStory || {};
+  const queueStartedAt = routeQueueStartedAt(row, story);
   const distance = Number(story.gpsDistanceKm || row.mileageKm || 0);
   const routeMinutes = Number(
     story.realRouteMinutes
@@ -1384,7 +1411,7 @@ function renderRouteStoryDetails(row) {
       ${routeStoryTime("Műszak kezdete", story.shiftStart || row.plannedStartAt)}
       <div class="stat-row"><span>Túratípus</span><strong>${escapeHtml(routeTypeLabel(row.routeType))}</strong></div>
       ${routeStoryTime("Elérhető volt", story.availableForShiftSince || story.availableAt || story.courierRegisteredAt || row.shiftAvailableAt)}
-      ${routeStoryTime("Sorba állt", story.queueStartedAt || row.actualStartAt)}
+      ${routeStoryTime("Sorba állt", queueStartedAt)}
       ${routeStoryTime("Túrát kapott", story.assignedAt || row.routeAssignedAt)}
       ${routeStoryTime("Indulás a raktárból", story.realDeparture || row.departedAt)}
       ${routeStoryTime("Tervezett visszaérkezés", story.plannedReturn || row.plannedReturnAt)}
@@ -2090,11 +2117,12 @@ function routeProgressBlock(route) {
 
 function routeTimeDetailsBlock(route, departure, returnTime) {
   const story = route?.routeStory || {};
+  const queueStartedAt = routeQueueStartedAt(route || {}, story);
   return `
     <section class="route-detail-card">
       <h4>Idő részletek</h4>
       <div class="stat-breakdown-list">
-        <div class="stat-row"><span>Sorba állt</span><strong>${escapeHtml(timeOnly(story.queueStartedAt || story.availableForShiftSince || ""))}</strong></div>
+        <div class="stat-row"><span>Sorba állt</span><strong>${escapeHtml(timeOnly(queueStartedAt))}</strong></div>
         <div class="stat-row"><span>Túrát kapott</span><strong>${escapeHtml(timeOnly(story.assignedAt || route.routeAssignedAt || ""))}</strong></div>
         <div class="stat-row"><span>Indulás</span><strong>${escapeHtml(departure || "-")}</strong></div>
         <div class="stat-row"><span>Várható vissza</span><strong>${escapeHtml(returnTime || "-")}</strong></div>
