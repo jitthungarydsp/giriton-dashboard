@@ -8001,6 +8001,146 @@ def load_courier_settlement_summary_row(
     return {}
 
 
+def courier_detail_frame_from_saved_summary(
+    summary_row: dict[str, object],
+    *,
+    courier_id: str,
+    calculation_mode: str,
+    warehouse_label: str | None = None,
+) -> pd.DataFrame:
+    if not summary_row:
+        return pd.DataFrame()
+    clean_courier_id = _courier_id_key(summary_row.get("courier_id") or courier_id)
+    try:
+        profile = load_courier_profile(clean_courier_id) if clean_courier_id else {}
+    except Exception:
+        profile = {}
+    courier_name = str(
+        summary_row.get("driver_name")
+        or profile.get("courier_name")
+        or profile.get("name")
+        or ""
+    ).strip()
+    mode_label = "Excel" if str(calculation_mode or "").strip().casefold() == "excel" else "API"
+    base_total = parse_huf_value(summary_row.get("courier_base_rate_huf"))
+    tip_total = parse_huf_value(summary_row.get("tip_huf"))
+    delay_total = parse_huf_value(summary_row.get("delay_bonus_huf"))
+    compliance_total = parse_huf_value(summary_row.get("compliance_bonus_huf"))
+    other_route_bonus_total = parse_huf_value(summary_row.get("other_route_bonus_huf"))
+    imported_bonus_total = parse_huf_value(summary_row.get("imported_bonus_huf"))
+    manual_bonus_total = parse_huf_value(summary_row.get("manual_bonus_huf"))
+    customer_rating_total = parse_huf_value(summary_row.get("customer_rating_bonus_huf"))
+    loyalty_total = parse_huf_value(summary_row.get("loyalty_bonus_huf"))
+    correction_income_total = parse_huf_value(
+        summary_row.get("correction_bonus_huf")
+        or summary_row.get("correction_income_huf")
+    )
+    imported_malus_total = abs(parse_huf_value(summary_row.get("imported_malus_huf")))
+    manual_malus_total = abs(parse_huf_value(summary_row.get("manual_malus_huf")))
+    atm_deduction_total = abs(
+        parse_huf_value(
+            summary_row.get("imported_atm_deduction_huf")
+            or summary_row.get("atm_deduction_huf")
+        )
+    )
+    salary_advance_total = abs(parse_huf_value(summary_row.get("salary_advance_huf")))
+    target_reserve_total = abs(parse_huf_value(summary_row.get("target_reserve_topup_huf")))
+    insurance_fee_total = abs(parse_huf_value(summary_row.get("insurance_fee_huf")))
+    correction_deduction_total = abs(parse_huf_value(summary_row.get("correction_deduction_huf")))
+    other_expense_total = abs(parse_huf_value(summary_row.get("other_expense_huf")))
+    bonus_total = (
+        delay_total
+        + compliance_total
+        + other_route_bonus_total
+        + imported_bonus_total
+        + manual_bonus_total
+        + customer_rating_total
+        + loyalty_total
+    )
+    deduction_total = (
+        imported_malus_total
+        + manual_malus_total
+        + atm_deduction_total
+        + salary_advance_total
+        + target_reserve_total
+        + insurance_fee_total
+        + correction_deduction_total
+        + other_expense_total
+    )
+    payable_total = (
+        parse_huf_value(summary_row.get("payable_huf"))
+        or parse_huf_value(summary_row.get("payable_total_huf"))
+        or parse_huf_value(summary_row.get("calculated_total"))
+    )
+    if not payable_total:
+        payable_total = base_total + tip_total + bonus_total + correction_income_total - deduction_total
+    contractor_total = (
+        parse_huf_value(summary_row.get("contractor_total_huf"))
+        or parse_huf_value(summary_row.get("company_base_rate_huf"))
+        + parse_huf_value(summary_row.get("company_quality_bonus_total_huf"))
+    )
+    route_count = int(
+        parse_huf_value(
+            summary_row.get("route_count")
+            or summary_row.get("calculated_routes")
+            or summary_row.get("total_routes")
+        )
+    )
+    order_count = int(
+        parse_huf_value(
+            summary_row.get("order_count")
+            or summary_row.get("total_orders")
+        )
+    )
+    warehouse = str(
+        summary_row.get("warehouse_name")
+        or summary_row.get("warehouse")
+        or profile.get("warehouse_name")
+        or warehouse_label
+        or ""
+    ).strip()
+    row = {
+        "Courier ID": clean_courier_id,
+        "Futár": courier_name or clean_courier_id or "Ismeretlen futár",
+        "Raktár": warehouse,
+        "Branch": str(summary_row.get("branch") or profile.get("branch") or "JIT"),
+        "Számítás módja": mode_label,
+        "Vállalkozói alapdíj": parse_huf_value(summary_row.get("company_base_rate_huf")),
+        "Alvállalkozói összeg": contractor_total,
+        "Nettó bevétel": base_total,
+        "Bónusz": bonus_total,
+        "Borravaló": tip_total,
+        "Levonás": deduction_total,
+        "Kifizetendő": payable_total,
+        "Kifizetendő kifizetésre": payable_total,
+        "Előző havi összeg": 0.0,
+        "KPI": parse_huf_value(summary_row.get("kpi")),
+        "Státusz": str(summary_row.get("workflow_status") or summary_row.get("status") or "Előkészítve"),
+        "Rendelések": order_count,
+        "Útvonalak": route_count,
+        "Kör": route_count,
+        "Számolt túrák": int(parse_huf_value(summary_row.get("calculated_routes"))) or route_count,
+        "Nem számolt túrák": int(parse_huf_value(summary_row.get("uncalculated_routes"))),
+        "Kiemelt túrák": int(parse_huf_value(summary_row.get("highlighted_routes"))),
+        "Normál túrák": int(parse_huf_value(summary_row.get("normal_routes"))),
+        "Késedelmi díj": delay_total,
+        "Túramegfelelés": compliance_total,
+        "Cím bónusz (Kifli)": other_route_bonus_total,
+        "Importált bónusz": imported_bonus_total,
+        "JITT bónusz": manual_bonus_total,
+        "JITT malus": manual_malus_total,
+        "Importált málusz": imported_malus_total,
+        "Importált ATM levonás": atm_deduction_total,
+        "Fizetés előleg": salary_advance_total,
+        "Lojalitás": loyalty_total,
+        "Ügyfélértékelés": customer_rating_total,
+        "Korrekció": correction_income_total,
+        "Biztosítási díj": insurance_fee_total,
+        "_detail_source": "settlement.courier_settlement_summary",
+    }
+    return pd.DataFrame([row])
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_session_payable_totals(session_id: str | None) -> dict[str, float]:
     if not session_id:
@@ -14348,10 +14488,10 @@ def render_table(df: pd.DataFrame) -> None:
                     else courier_detail_menu_for_status(row.get("Státusz"))
                 )
                 month_key = list_period_start.strftime("%Y%m") if list_period_start else "current"
-                st.session_state[f"courier_after_finance_menu_{courier_id_value}_{month_key}"] = target_menu
-                st.session_state[f"courier_finance_preflight_{courier_id_value}_{month_key}"] = True
-                st.session_state[f"courier_menu_{courier_id_value}"] = "Pénzügy"
-                st.session_state[f"courier_menu_target_{courier_id_value}"] = "Pénzügy"
+                st.session_state.pop(f"courier_after_finance_menu_{courier_id_value}_{month_key}", None)
+                st.session_state.pop(f"courier_finance_preflight_{courier_id_value}_{month_key}", None)
+                st.session_state[f"courier_menu_{courier_id_value}"] = target_menu
+                st.session_state[f"courier_menu_target_{courier_id_value}"] = target_menu
                 st.rerun()
             audit_text = str(row.get("Route audit text") or "").strip()
             if audit_text:
@@ -14721,7 +14861,6 @@ def render_courier_detail_page() -> None:
     if not isinstance(data, pd.DataFrame) or data.empty:
         dialog_calculation_mode = st.session_state.get("new_calculation_mode", "API")
         dialog_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
-        _, dialog_end = month_bounds(dialog_start)
         if str(dialog_calculation_mode or "API").strip().casefold() == "excel":
             state_excel_session_id = st.session_state.get("settlement_excel_session_id")
             dialog_session_id = (
@@ -14734,22 +14873,34 @@ def render_courier_detail_page() -> None:
             dialog_api_session_id = load_latest_api_jit_session_id(dialog_start, st.session_state.get("new_warehouse", "Összes"))
             if dialog_api_session_id:
                 dialog_session_id = dialog_api_session_id
-        data = build_settlement_working_data(dialog_calculation_mode, dialog_session_id, dialog_start, st.session_state.get("new_warehouse", "Összes"))
-        data = apply_received_amounts(
-            data,
-            dialog_calculation_mode,
-            dialog_start,
-            st.session_state.get("new_warehouse", "Összes"),
+        saved_summary_row = load_courier_settlement_summary_row(
             dialog_session_id,
+            courier_id,
+            "",
+            dialog_start,
         )
-        data = apply_imported_balance_components(
-            data,
-            balance_component_session_id(dialog_calculation_mode, dialog_start, dialog_session_id),
+        data = courier_detail_frame_from_saved_summary(
+            saved_summary_row,
+            courier_id=courier_id,
+            calculation_mode=dialog_calculation_mode,
+            warehouse_label=st.session_state.get("new_warehouse", "Összes"),
         )
-        data = apply_manual_balance_adjustments(data, dialog_start, dialog_end)
-        data = apply_salary_advance_deduction(data, dialog_start, dialog_end)
-        data = recompute_payable_total(data)
-    match = data[data["Courier ID"].astype(str) == courier_id]
+        if data.empty:
+            profile = load_courier_profile(courier_id)
+            if profile:
+                data = pd.DataFrame([{
+                    "Courier ID": _courier_id_key(profile.get("courier_id") or courier_id),
+                    "Futár": str(profile.get("courier_name") or profile.get("name") or courier_id),
+                    "Raktár": str(profile.get("warehouse_name") or st.session_state.get("new_warehouse", "")),
+                    "Branch": str(profile.get("branch") or "JIT"),
+                    "Számítás módja": "Excel" if str(dialog_calculation_mode or "").strip().casefold() == "excel" else "API",
+                    "Státusz": "Profil",
+                }])
+    match = (
+        data.loc[data["Courier ID"].astype(str).map(_courier_id_key).eq(_courier_id_key(courier_id))]
+        if isinstance(data, pd.DataFrame) and "Courier ID" in data.columns
+        else pd.DataFrame()
+    )
 
     if match.empty:
         st.warning("A futár nem található.")
@@ -14800,12 +14951,17 @@ def render_courier_detail_page() -> None:
     finance_preflight_active = bool(st.session_state.get(finance_preflight_key))
     finance_preflight_target = str(st.session_state.get(finance_preflight_target_key) or "Pénzügy")
     if finance_preflight_active:
-        st.session_state[menu_key] = "Pénzügy"
+        st.session_state.pop(finance_preflight_key, None)
+        st.session_state.pop(finance_preflight_target_key, None)
+        st.session_state[menu_key] = (
+            finance_preflight_target
+            if finance_preflight_target
+            else st.session_state.get(menu_key, "Pénzügy")
+        )
+        finance_preflight_active = False
     menu_target = st.session_state.pop(menu_target_key, None)
     if menu_target:
         st.session_state[menu_key] = menu_target
-    if finance_preflight_active:
-        st.session_state[menu_key] = "Pénzügy"
     if st.session_state.get(menu_key) == "ttekintés":
         st.session_state[menu_key] = "Pénzügy"
     selected_menu_hint = str(st.session_state.get(menu_key) or "Pénzügy")
