@@ -15511,30 +15511,7 @@ def render_courier_detail_page() -> None:
                     )
         else:
             st.info("Ehhez a futárhoz és hónaphoz még nincs dsp_courier_quality_monthly minőségi sor, ezért a százalékos magyarázat nem jeleníthető meg.")
-        source_options = ["API", "Excel"]
-        current_source = "Excel" if str(active_calculation_mode or "").strip().casefold() == "excel" else "API"
-        source_choice = st.radio(
-            "Adatforrás módosítása",
-            source_options,
-            index=source_options.index(current_source),
-            horizontal=True,
-            key=f"courier_data_source_choice_{courier_id}",
-            help="A futár részletező adatai API vagy Excel alapú elszámolásból olvashatók.",
-        )
-        if source_choice != current_source:
-            st.session_state["courier_requested_calculation_mode"] = source_choice
-            if source_choice == "Excel":
-                state_excel_session_id = st.session_state.get("settlement_excel_session_id")
-                if jit_session_has_rows_in_month(state_excel_session_id, period_start):
-                    st.session_state["settlement_import_session_id"] = state_excel_session_id
-                else:
-                    st.session_state["settlement_import_session_id"] = load_latest_excel_jit_session_id(period_start)
-            else:
-                st.session_state["settlement_import_session_id"] = load_latest_api_jit_session_id(
-                    period_start,
-                    st.session_state.get("new_warehouse", "Összes"),
-                )
-            st.rerun()
+        st.caption("Adatforrás: Excel")
         st.markdown("#### Bejelentések (public.courier_route_alerts)")
         st.caption("Ellenőrző táblák: settlement.excel_route_coverage_audit, settlement.dsp_time_window_delay_audit_monthly, settlement.dsp_shift_attendance_audit_monthly.")
         route_alerts = load_courier_route_alerts(courier_id, limit=5)
@@ -21747,7 +21724,7 @@ def show_new_settlement_page() -> None:
     if st.session_state.pop("settlement_force_profile_refresh", False):
         refresh_settlement_profile_data()
     requested_calculation_mode = st.session_state.pop("courier_requested_calculation_mode", None)
-    if requested_calculation_mode in {"API", "Excel"}:
+    if requested_calculation_mode == "Excel":
         st.session_state["new_calculation_mode"] = requested_calculation_mode
     pending_month_label = st.session_state.pop("new_month_pending", None)
     if pending_month_label:
@@ -21755,19 +21732,15 @@ def show_new_settlement_page() -> None:
     pending_status_label = st.session_state.pop("new_status_pending", None)
     if pending_status_label:
         st.session_state["new_status"] = pending_status_label
-    if "new_calculation_mode" not in st.session_state:
+    if st.session_state.get("new_calculation_mode") != "Excel":
         st.session_state["new_calculation_mode"] = "Excel"
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "Excel")
-    latest_default_month_label = default_settlement_month_label()
-    previous_auto_default = st.session_state.get("new_month_auto_default")
     current_month_label = st.session_state.get("new_month")
     if not current_month_label:
+        latest_default_month_label = default_settlement_month_label()
         st.session_state["new_month"] = latest_default_month_label
         st.session_state["new_month_auto_default"] = latest_default_month_label
-    elif previous_auto_default and current_month_label == previous_auto_default and previous_auto_default != latest_default_month_label:
-        st.session_state["new_month"] = latest_default_month_label
-        st.session_state["new_month_auto_default"] = latest_default_month_label
-    elif previous_auto_default is None:
+    elif "new_month_auto_default" not in st.session_state:
         st.session_state["new_month_auto_default"] = current_month_label
     selected_month_label = st.session_state.get("new_month") or default_settlement_month_label()
     selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
@@ -21785,7 +21758,7 @@ def show_new_settlement_page() -> None:
         )
         selected_calculation_mode = st.selectbox(
             "Számítás módja",
-            ["API", "Excel", "Összes"],
+            ["Excel"],
             key="new_calculation_mode",
         )
         selected_warehouse_label = st.selectbox(
@@ -22032,7 +22005,7 @@ def show_new_settlement_page() -> None:
             st.rerun()
         if st.button("Szűrők törlése",use_container_width=True):
             st.session_state["new_branch"]="Összes"
-            st.session_state["new_calculation_mode"]="API"
+            st.session_state["new_calculation_mode"]="Excel"
             st.session_state["new_warehouse"]="Összes"
             st.session_state["new_status"]="Összes"
             st.session_state["new_search"]=""
