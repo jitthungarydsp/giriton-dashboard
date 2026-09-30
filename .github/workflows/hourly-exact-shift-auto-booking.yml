@@ -19,9 +19,6 @@ on:
         description: "true = csak lista, false = eles inditas"
         required: false
         default: "false"
-  schedule:
-    # GitHub cron UTC-ben fut. A MűszakPro és Giriton forrásfrissítések után indul.
-    - cron: "40 * * * *"
 
 permissions:
   contents: read
