@@ -228,7 +228,7 @@ def existing_adjustments() -> dict[str, dict[str, Any]]:
         f"{supabase_url()}/rest/v1/courier_settlement_adjustment",
         headers=supabase_headers(),
         params={
-            "select": "id,source_key",
+            "select": "id,source_key,is_active,deleted_at,deleted_by,updated_at",
             "source_key": f"like.{SOURCE_PREFIX}:%",
             "limit": "10000",
         },
@@ -240,6 +240,36 @@ def existing_adjustments() -> dict[str, dict[str, Any]]:
         for row in response.json() or []
         if str(row.get("source_key") or "")
     }
+
+
+def closed_months() -> set[tuple[str, str]]:
+    response = requests.get(
+        f"{supabase_url()}/rest/v1/courier_monthly_closure",
+        headers=supabase_headers(),
+        params={
+            "select": "courier_id,period_start,status",
+            "status": "eq.done",
+            "limit": "50000",
+        },
+        timeout=60,
+    )
+    raise_for_response(response, "courier_monthly_closure existing")
+    result: set[tuple[str, str]] = set()
+    for row in response.json() or []:
+        courier_id = str(row.get("courier_id") or "").strip()
+        period_start = str(row.get("period_start") or "").strip()[:10]
+        if courier_id and period_start:
+            result.add((courier_id, period_start))
+    return result
+
+
+def payload_month_key(payload: dict[str, Any]) -> tuple[str, str]:
+    courier_id = str(payload.get("courier_id") or "").strip()
+    try:
+        period_start = date.fromisoformat(str(payload.get("valid_from") or "")[:10]).replace(day=1).isoformat()
+    except ValueError:
+        period_start = ""
+    return courier_id, period_start
 
 
 def adjustment_payload(row: dict[str, Any], courier: dict[str, str], key: str) -> dict[str, Any]:
@@ -281,6 +311,9 @@ def insert_adjustment(payload: dict[str, Any]) -> None:
 def update_adjustment(row_id: str, payload: dict[str, Any]) -> None:
     payload = dict(payload)
     payload.pop("created_by", None)
+    payload.pop("is_active", None)
+    payload.pop("deleted_at", None)
+    payload.pop("deleted_by", None)
     response = requests.patch(
         f"{supabase_url()}/rest/v1/courier_settlement_adjustment",
         headers=supabase_headers("return=minimal"),
@@ -330,10 +363,13 @@ def main() -> int:
 
     couriers = read_courier_master()
     existing = existing_adjustments()
+    closed = closed_months()
 
     prepared: list[tuple[str, dict[str, Any]]] = []
     unmatched: list[str] = []
     skipped = 0
+    protected_existing = 0
+    protected_closed = 0
     for row in sheet_rows:
         courier = couriers.get(normalize_text(row["courier_name"]))
         if not courier:
@@ -347,8 +383,14 @@ def main() -> int:
     updated = 0
     if args.apply:
         for key, payload in prepared:
+            if payload_month_key(payload) in closed:
+                protected_closed += 1
+                continue
             current = existing.get(key)
             if current and current.get("id"):
+                if current.get("deleted_at") or current.get("is_active") is False:
+                    protected_existing += 1
+                    continue
                 update_adjustment(str(current["id"]), payload)
                 updated += 1
             else:
@@ -356,13 +398,30 @@ def main() -> int:
                 inserted += 1
     else:
         inserted = sum(1 for key, _payload in prepared if key not in existing)
-        updated = sum(1 for key, _payload in prepared if key in existing)
+        protected_existing = sum(
+            1
+            for key, _payload in prepared
+            if key in existing and (existing[key].get("deleted_at") or existing[key].get("is_active") is False)
+        )
+        protected_closed = sum(1 for _key, payload in prepared if payload_month_key(payload) in closed)
+        inserted = sum(1 for key, payload in prepared if key not in existing and payload_month_key(payload) not in closed)
+        updated = sum(
+            1
+            for key, payload in prepared
+            if key in existing
+            and payload_month_key(payload) not in closed
+            and not (existing[key].get("deleted_at") or existing[key].get("is_active") is False)
+        )
 
     skipped = len(sheet_rows) - len(prepared)
     print("Google bonus/malus import")
     print("Mode:", "APPLY" if args.apply else "DRY-RUN")
     print(f"Sheet rows with amount: {len(sheet_rows)}")
-    print(f"Prepared: {len(prepared)} | insert: {inserted} | update: {updated} | unmatched/skipped: {skipped}")
+    print(
+        f"Prepared: {len(prepared)} | insert: {inserted} | update: {updated} | "
+        f"protected_deleted: {protected_existing} | protected_closed: {protected_closed} | "
+        f"unmatched/skipped: {skipped}"
+    )
     if prepared:
         by_type: dict[str, int] = {}
         by_type_amount: dict[str, int] = {}

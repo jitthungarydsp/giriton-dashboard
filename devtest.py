@@ -17059,13 +17059,15 @@ def render_courier_detail_page() -> None:
             editor_df = editor_df[editor_columns]
 
         with finance_right:
+            if closure_done:
+                st.info("Ez a hónap már le van zárva/kifizetve, ezért a havi kézi tételek csak olvashatók. Módosításhoz előbb vissza kell nyitni a havi zárást.")
             edited_adjustments = st.data_editor(
                 editor_df,
                 use_container_width=True,
                 hide_index=True,
-                num_rows="dynamic",
+                num_rows="fixed" if closure_done else "dynamic",
                 key=f"finance_adjustment_editor_{courier_id}",
-                disabled=["id"],
+                disabled=editor_columns if closure_done else ["id"],
                 column_order=["Típus", "Összeg", "Megjegyzés", "Érvényes ettől", "Érvényes eddig", "Törlés"],
                 column_config={
                     "id": st.column_config.TextColumn("ID", help="Belső azonosító", width="small"),
@@ -17079,8 +17081,8 @@ def render_courier_detail_page() -> None:
             )
             st.markdown('<div class="finance-note">A pozitív összeg növeli, a levonás típusú sor csökkenti a kifizetendő összeget.</div>', unsafe_allow_html=True)
             save_col, reset_col = st.columns([0.46, 0.54])
-            save_clicked = save_col.button("Változások mentése", type="primary", use_container_width=True, key=f"finance_save_adjustments_{courier_id}")
-            reset_clicked = reset_col.button("Havi kézi tételek visszaállítása", use_container_width=True, key=f"reset_adjustments_{courier_id}", help="A kézi korrekciók inaktiválódnak, az alap DB-értékek maradnak.")
+            save_clicked = save_col.button("Változások mentése", type="primary", use_container_width=True, disabled=closure_done, key=f"finance_save_adjustments_{courier_id}")
+            reset_clicked = reset_col.button("Havi kézi tételek visszaállítása", use_container_width=True, disabled=closure_done, key=f"reset_adjustments_{courier_id}", help="A kézi korrekciók inaktiválódnak, az alap DB-értékek maradnak.")
 
         def editor_date(value: object, fallback: date | None = None) -> date | None:
             if value is None or value == "":
