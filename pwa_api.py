@@ -108,6 +108,12 @@ class WorkflowActionRequest(BaseModel):
     process: str = ""
 
 
+class AdminWorkflowActionRequest(BaseModel):
+    month: str
+    process: str = ""
+    note: str = ""
+
+
 class SalaryAdvanceRequest(BaseModel):
     start_date: str
     requested_amount_huf: int
@@ -16191,6 +16197,114 @@ def accept_workflow_document(
     return {"ok": True, "workflow": build_workflow(user, month, process_id)}
 
 
+@app.post("/api/admin/workflow/{action}/complete")
+def admin_complete_workflow_action(
+    action: str,
+    payload: AdminWorkflowActionRequest,
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    admin_user = require_user(giriton_pwa_session)
+    if not can_preview_couriers(admin_user):
+        raise HTTPException(status_code=403, detail="Admin jogosultság szükséges.")
+    view_user, preview = workflow_view_user(admin_user, courier)
+    if not preview:
+        raise HTTPException(status_code=422, detail="Válassz futárt admin módban.")
+    month = parse_month(payload.month)
+    process_id = normalize_process_id(payload.process)
+    require_workflow_month_allowed(admin_user, month, preview=True)
+    clean_action = str(action or "").strip().lower()
+    allowed_actions = {"settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment", "all"}
+    if clean_action not in allowed_actions:
+        raise HTTPException(status_code=404, detail="Ismeretlen admin művelet.")
+
+    actor = str(admin_user.get("username") or "admin").strip() or "admin"
+    extra_note = clean_text(payload.note, limit=300)
+
+    def admin_note(text: str) -> str:
+        parts = [text, f"Admin művelet: {actor}"]
+        if extra_note:
+            parts.append(extra_note)
+        return " | ".join(parts)
+
+    actions = (
+        ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]
+        if clean_action == "all"
+        else [clean_action]
+    )
+    visibility_mode = normalize_mobile_visibility_mode(
+        read_mobile_settlement_period_config(month).get("visibility_mode")
+    )
+    completed: list[str] = []
+    for item in actions:
+        if item == "tig" and not process_id and visibility_mode == "settlement_only":
+            continue
+        if item == "settlement":
+            upsert_workflow_status(
+                view_user,
+                month,
+                "settlement",
+                "done",
+                admin_note("Elszámolás admin által elfogadva a futár nevében."),
+                process_id,
+            )
+            if not process_id and visibility_mode != "settlement_only":
+                try:
+                    generate_tig_after_settlement_accept(view_user, month, process_id)
+                except Exception as exc:
+                    print("Admin TIG generation skipped:", exc)
+        elif item == "tig":
+            upsert_workflow_status(
+                view_user,
+                month,
+                "tig",
+                "done",
+                admin_note("TIG admin által elfogadva a futár nevében."),
+                process_id,
+            )
+        elif item == "invoice_submit":
+            upsert_workflow_status(
+                view_user,
+                month,
+                "invoice_submit",
+                "done",
+                admin_note("Számlafeltöltés admin által jóváhagyva."),
+                process_id,
+            )
+        elif item == "invoice_check":
+            upsert_workflow_status(
+                view_user,
+                month,
+                "invoice_check",
+                "done",
+                admin_note("Számlaellenőrzés admin által jóváhagyva."),
+                process_id,
+            )
+        elif item == "invoice_payment":
+            upsert_workflow_status(
+                view_user,
+                month,
+                "invoice_payment",
+                "done",
+                admin_note("Kifizetés admin által lezárva."),
+                process_id,
+            )
+        completed.append(item)
+
+    return {
+        "ok": True,
+        "completed": completed,
+        "workflow": build_workflow(
+            view_user,
+            month,
+            process_id,
+            preview_read_only=True,
+            allow_unpublished=True,
+            can_view_amounts=True,
+        ),
+    }
+
+
 @app.post("/api/workflow/complaints")
 def create_workflow_complaint(
     payload: ComplaintRequest,
@@ -16877,6 +16991,93 @@ def create_salary_advance_request(
     return {
         "request": normalize_salary_advance_request(rows[0] if rows else {}),
         "requests": requests["requests"],
+    }
+
+
+@app.post("/api/admin/salary-advance/requests/{request_id}/approve")
+def admin_approve_salary_advance_request(
+    request_id: str,
+    payload: AdminWorkflowActionRequest | None = None,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    admin_user = require_user(giriton_pwa_session)
+    if not can_preview_couriers(admin_user):
+        raise HTTPException(status_code=403, detail="Admin jogosultság szükséges.")
+    clean_request_id = str(request_id or "").strip()
+    if not clean_request_id:
+        raise HTTPException(status_code=422, detail="Hiányzó előleg kérelem azonosító.")
+    rows = supabase_rest(
+        "GET",
+        "courier_salary_advance_request",
+        params={"select": "*", "id": f"eq.{clean_request_id}", "limit": "1"},
+        schema="settlement",
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Nem található előleg kérelem.")
+    request_row = rows[0]
+    courier_id = str(request_row.get("courier_id") or "").strip()
+    courier_name = str(request_row.get("courier_name") or "").strip() or read_courier_display_name(courier_id) or f"Futár {courier_id}"
+    if not courier_id:
+        raise HTTPException(status_code=409, detail="Az előleg kérelemhez nincs futár ID.")
+    try:
+        start_month = date.fromisoformat(str(request_row.get("start_date") or "")[:10]).replace(day=1)
+    except ValueError:
+        start_month = datetime.now(LOCAL_TIMEZONE).date().replace(day=1)
+    process_id = normalize_process_id(str(request_row.get("process_id") or "")) or normalize_process_id(
+        f"fizetes-eloleg-{courier_id}-{clean_request_id[:8]}"
+    )
+    actor = str(admin_user.get("username") or "admin").strip() or "admin"
+    amount_huf = int(float(request_row.get("requested_amount_huf") or 0))
+    note = clean_text((payload.note if payload else "") or "", limit=300)
+    existing_note = str(request_row.get("note") or "").strip()
+    approval_note = f"Admin jóváhagyta: {actor}" + (f" | {note}" if note else "")
+    updated_note = f"{existing_note}\n{approval_note}".strip() if existing_note else approval_note
+    supabase_rest(
+        "PATCH",
+        "courier_salary_advance_request",
+        params={"id": f"eq.{clean_request_id}"},
+        payload={
+            "status": "approved",
+            "process_id": process_id,
+            "note": updated_note,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+        schema="settlement",
+    )
+    workflow_user = dict(admin_user)
+    workflow_user["courierId"] = courier_id
+    workflow_user["username"] = courier_name
+    for workflow_action, status, status_note in [
+        ("settlement", "done", f"Fizetés előleg jóváhagyva: {amount_huf} Ft."),
+        ("tig", "done", "Fizetés előleghez TIG nem szükséges."),
+        ("invoice_submit", "done", "Fizetés előleghez számlafeltöltés nem szükséges."),
+        ("invoice_check", "done", "Fizetés előleg admin által jóváhagyva."),
+        ("invoice_payment", "open", f"Fizetés előleg kifizetésre vár: {amount_huf} Ft."),
+    ]:
+        upsert_workflow_status(
+            workflow_user,
+            start_month,
+            workflow_action,
+            status,
+            f"{status_note} | Admin művelet: {actor}",
+            process_id,
+        )
+    refreshed_rows = supabase_rest(
+        "GET",
+        "courier_salary_advance_request",
+        params={
+            "select": "*",
+            "courier_id": f"eq.{courier_id}",
+            "order": "requested_at.desc",
+            "limit": "100",
+        },
+        schema="settlement",
+    )
+    return {
+        "ok": True,
+        "request": normalize_salary_advance_request({**request_row, "status": "approved", "process_id": process_id, "note": updated_note}),
+        "requests": [normalize_salary_advance_request(row) for row in refreshed_rows],
     }
 
 

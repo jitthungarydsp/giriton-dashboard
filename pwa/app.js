@@ -58,7 +58,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v140";
+const APP_VERSION = "v141";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -754,6 +754,9 @@ function renderSalaryAdvanceRequests() {
             <div class="stat-row"><span>Havi levonás</span><strong>${formatHuf(item.monthlyAmountHuf)}</strong></div>
             ${item.processId ? `<div class="stat-row"><span>Folyamat</span><strong>${escapeHtml(item.processId)}</strong></div>` : ""}
           </div>
+          ${canUseAdminWorkflowActions() && item.status === "requested"
+            ? `<button class="primary full-width salary-advance-approve" type="button" data-id="${escapeHtml(item.id)}">Előleg jóváhagyása admin módban</button>`
+            : ""}
         </article>
       `).join("")}
     </div>
@@ -768,6 +771,23 @@ async function loadSalaryAdvanceRequests() {
     state.salaryAdvanceRequests = payload.requests || [];
     renderSalaryAdvanceRequests();
     if (message) message.textContent = "";
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  }
+}
+
+async function approveSalaryAdvanceRequest(requestId) {
+  if (!requestId || !canUseAdminWorkflowActions()) return;
+  const message = $("#salary-advance-message");
+  if (message) message.textContent = "Előleg jóváhagyása...";
+  try {
+    const payload = await api(`/api/admin/salary-advance/requests/${encodeURIComponent(requestId)}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ month: state.workflowMonth }),
+    });
+    state.salaryAdvanceRequests = payload.requests || [];
+    renderSalaryAdvanceRequests();
+    if (message) message.textContent = "Előleg jóváhagyva, a kifizetési folyamat létrejött.";
   } catch (error) {
     if (message) message.textContent = error.message;
   }
@@ -3063,6 +3083,39 @@ function renderWorkflowSteps() {
   }).join("");
 }
 
+function canUseAdminWorkflowActions() {
+  return Boolean(state.user?.canPreviewCouriers && state.workflowPreviewCourierId);
+}
+
+function renderAdminWorkflowActions() {
+  const panel = $("#workflow-admin-actions");
+  if (!panel) return;
+  if (!canUseAdminWorkflowActions()) {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    return;
+  }
+  const viewedUser = state.workflow?.viewingAs || {};
+  panel.classList.remove("hidden");
+  panel.innerHTML = `
+    <div class="process-title">
+      <span class="step-code">ADM</span>
+      <div>
+        <h3>Admin műveletek</h3>
+        <p>${escapeHtml(viewedUser.username || state.workflowPreviewCourierId)} folyamatát a futár nevében lehet lezárni.</p>
+      </div>
+    </div>
+    <div class="bulk-action-grid">
+      <button class="secondary admin-workflow-action" type="button" data-action="settlement">Elszámolás elfogadása</button>
+      <button class="secondary admin-workflow-action" type="button" data-action="tig">TIG elfogadása</button>
+      <button class="secondary admin-workflow-action" type="button" data-action="invoice_submit">Számlafeltöltés jóváhagyása</button>
+      <button class="secondary admin-workflow-action" type="button" data-action="invoice_check">Számlaellenőrzés jóváhagyása</button>
+      <button class="secondary admin-workflow-action" type="button" data-action="invoice_payment">Kifizetés lezárása</button>
+      <button class="primary admin-workflow-action" type="button" data-action="all">Minden lezárása</button>
+    </div>
+  `;
+}
+
 function documentList(documents) {
   if (!documents.length) return `<div class="empty-card">Ehhez a hónaphoz még nincs feltöltött dokumentum.</div>`;
   return `<div class="document-list">${documents.map((document) => `
@@ -3619,6 +3672,7 @@ function showOnlyWorkflowPanel(panelId) {
 function renderWorkflow() {
   applyInvoiceValidationOverride();
   renderWorkflowSteps();
+  renderAdminWorkflowActions();
   renderDocumentPanel("settlement", "Elszámolás és elfogadás", 1);
   renderDocumentPanel("tig", "TIG és elfogadás", 3);
   const readOnly = Boolean(state.workflow?.viewerReadOnly);
@@ -3741,6 +3795,31 @@ async function acceptDocument(action) {
     state.workflow = payload.workflow;
     renderWorkflow();
     showWorkflowMessage("Az elfogadás rögzítve. A következő lépés aktívvá vált.");
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
+
+async function completeWorkflowAsAdmin(action) {
+  if (!canUseAdminWorkflowActions()) return;
+  const actionLabel = {
+    settlement: "elszámolást",
+    tig: "TIG-et",
+    invoice_submit: "számlafeltöltést",
+    invoice_check: "számlaellenőrzést",
+    invoice_payment: "kifizetést",
+    all: "teljes folyamatot",
+  }[action] || "műveletet";
+  if (action === "all" && !window.confirm("Biztosan lezárod a teljes folyamatot a futár nevében?")) return;
+  showWorkflowMessage(`Admin művelet mentése: ${actionLabel}...`);
+  try {
+    const payload = await api(withPreviewCourier(`/api/admin/workflow/${encodeURIComponent(action)}/complete`), {
+      method: "POST",
+      body: JSON.stringify({ month: state.workflowMonth, process: state.workflowProcess }),
+    });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    showWorkflowMessage("Admin művelet rögzítve.");
   } catch (error) {
     showWorkflowMessage(error.message, true);
   }
@@ -5843,6 +5922,18 @@ $("#registration-admin-list")?.addEventListener("click", async (event) => {
     button.disabled = false;
     window.alert(error.message);
   }
+});
+
+$("#workflow-admin-actions")?.addEventListener("click", (event) => {
+  const button = event.target.closest(".admin-workflow-action");
+  if (!button) return;
+  completeWorkflowAsAdmin(button.dataset.action || "");
+});
+
+$("#salary-advance-list")?.addEventListener("click", (event) => {
+  const button = event.target.closest(".salary-advance-approve");
+  if (!button) return;
+  approveSalaryAdvanceRequest(button.dataset.id || "");
 });
 
 $("#workflow-month").value = state.workflowMonth;
