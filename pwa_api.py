@@ -10980,36 +10980,38 @@ def read_route_report_muszakpro_rows(month_value: date) -> list[dict[str, Any]]:
     if bookings_rows:
         source_batches.append(("muszakpro.bookings", bookings_rows))
 
-    def read_public_muszakpro_source(table: str) -> list[dict[str, Any]]:
-        select_variants = [
-            "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,email,status,fetched_at",
-            "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,status,fetched_at",
-            "work_date,shift_text,warehouse,booking_code,courier_id,email,status,fetched_at",
-            "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,email,fetched_at",
-            "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,fetched_at",
-            "work_date,shift_text,warehouse,booking_code,courier_id,email,fetched_at",
-        ]
-        for select in select_variants:
-            rows = optional_supabase_rows_paged(
-                table,
-                params={
-                    "select": select,
-                    "work_date": f"gte.{start.isoformat()}",
-                    "and": f"(work_date.lte.{end.isoformat()})",
-                    "order": "work_date.asc,shift_text.asc",
-                },
-                timeout=45,
-                page_size=1000,
-                max_rows=50000,
-            )
-            if rows:
-                return rows
-        return []
+    if not source_batches:
+        def read_public_muszakpro_source(table: str) -> list[dict[str, Any]]:
+            select_variants = [
+                "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,email,status,fetched_at",
+                "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,status,fetched_at",
+                "work_date,shift_text,warehouse,booking_code,courier_id,email,status,fetched_at",
+                "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,email,fetched_at",
+                "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,fetched_at",
+                "work_date,shift_text,warehouse,booking_code,courier_id,email,fetched_at",
+            ]
+            for select in select_variants:
+                rows = optional_supabase_rows_paged(
+                    table,
+                    params={
+                        "select": select,
+                        "work_date": f"gte.{start.isoformat()}",
+                        "and": f"(work_date.lte.{end.isoformat()})",
+                        "order": "work_date.asc,shift_text.asc",
+                    },
+                    timeout=45,
+                    page_size=1000,
+                    max_rows=50000,
+                )
+                if rows:
+                    return rows
+            return []
 
-    for table in ("raw_muszakpro_bookings", "foglalasok_raw"):
-        rows = read_public_muszakpro_source(table)
-        if rows:
-            source_batches.append((f"public.{table}", rows))
+        for table in ("raw_muszakpro_bookings", "foglalasok_raw"):
+            rows = read_public_muszakpro_source(table)
+            if rows:
+                source_batches.append((f"public.{table}", rows))
+                break
 
     if not source_batches:
         source_batches.append(("raw_muszakpro_bookings", read_schedule_muszakpro_rows(start, end)))
@@ -11053,7 +11055,65 @@ def read_route_report_muszakpro_rows(month_value: date) -> list[dict[str, Any]]:
     return result
 
 
+def read_route_report_giriton_shift_rows(month_value: date) -> list[dict[str, Any]]:
+    start, end = route_report_month_range(month_value)
+    source_rows: list[tuple[str, list[dict[str, Any]]]] = []
+    for table in ("giriton_shifts_raw", "raw_giriton_shifts"):
+        rows = optional_supabase_rows_paged(
+            table,
+            params={
+                "select": "work_date,start_time,end_time,warehouse,courier_id,courier_name,email,serial,status,updated_at",
+                "work_date": f"gte.{start.isoformat()}",
+                "and": f"(work_date.lte.{end.isoformat()})",
+                "order": "work_date.asc,courier_id.asc,start_time.asc",
+            },
+            timeout=45,
+            page_size=1000,
+            max_rows=50000,
+        )
+        if rows:
+            source_rows.append((f"public.{table}", rows))
+            break
+
+    invalid_statuses = {"", "-", "nincs", "missing", "missing_giriton", "torolve", "torolt", "deleted", "inactive"}
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for source_name, rows in source_rows:
+        for row in rows:
+            status_key = normalize_text(row.get("status"))
+            if status_key in invalid_statuses:
+                continue
+            work_date = str(row.get("work_date") or "")[:10]
+            courier_id = route_report_courier_id(row.get("courier_id")) or route_report_courier_id_from_reference(row.get("serial"))
+            courier_name = str(row.get("courier_name") or "").strip()
+            warehouse = normalize_warehouse(row.get("warehouse"))
+            start_time = normalize_time(row.get("start_time"))
+            serial = str(row.get("serial") or "").strip()
+            identity = courier_id or str(row.get("email") or "").strip().casefold() or normalize_person_match_text(courier_name)
+            key = (work_date, identity, warehouse, start_time, serial)
+            if not work_date or not identity or not start_time or key in seen:
+                continue
+            seen.add(key)
+            result.append({
+                "source": source_name,
+                "work_date": work_date,
+                "courier_id": courier_id,
+                "courier_name": courier_name,
+                "warehouse": warehouse,
+                "shift_id": serial,
+                "shift_name": f"{warehouse}_{start_time}" if warehouse or start_time else "",
+                "shift_start": start_time,
+                "shift_end": normalize_time(row.get("end_time")),
+                "status": str(row.get("status") or "").strip(),
+            })
+    return result
+
+
 def read_route_report_hub_shift_rows(month_value: date) -> list[dict[str, Any]]:
+    giriton_rows = read_route_report_giriton_shift_rows(month_value)
+    if giriton_rows:
+        return giriton_rows
+
     start, end = route_report_month_range(month_value)
     rows = optional_supabase_rows_paged(
         "courier_shift_overview",
@@ -11085,6 +11145,7 @@ def read_route_report_hub_shift_rows(month_value: date) -> list[dict[str, Any]]:
         if not warehouse and warehouse_id:
             warehouse = f"BUD{warehouse_id}" if warehouse_id in {"1", "2"} else warehouse_id
         result.append({
+            "source": "public.courier_shift_overview",
             "work_date": work_date,
             "courier_id": courier_id,
             "courier_name": str(row.get("courier_name") or "").strip(),
@@ -15817,7 +15878,7 @@ def monthly_shift_route_report_excel(
         ])
     for row in payload["hub_rows"]:
         detail_sheet.append([
-            "HUB műszak",
+            row.get("source") or "HUB/Giriton műszak",
             row.get("work_date"),
             row.get("courier_id"),
             row.get("courier_name"),
