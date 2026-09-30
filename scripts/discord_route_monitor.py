@@ -1171,6 +1171,22 @@ PLANNED_DEPARTURE_FIELD_NAMES = {
 }
 
 
+PLANNED_RETURN_FIELD_NAMES = {
+    "plannedReturn",
+    "plannedReturnAt",
+    "planned_return",
+    "planned_return_at",
+    "plannedReturnTime",
+    "plannedReturnDateTime",
+    "plannedRouteReturn",
+    "plannedRouteReturnAt",
+    "routePlannedReturn",
+    "routePlannedReturnAt",
+    "expectedReturn",
+    "expectedReturnAt",
+}
+
+
 def normalize_live_monitoring_route(row, warehouse_id):
     route_id = live_route_id(row)
     courier_id = normalize_id(row.get("courierId") or row.get("courier_id"))
@@ -1202,10 +1218,7 @@ def normalize_live_monitoring_route(row, warehouse_id):
             row.get("plannedReturn"),
             row.get("expectedReturn"),
             row.get("expectedReturnAt"),
-            first_value_by_names(
-                row,
-                {"plannedReturnAt", "plannedReturn", "expectedReturn", "expectedReturnAt"},
-            ),
+            first_value_by_names(row, PLANNED_RETURN_FIELD_NAMES),
         ),
         "realDeparture": row.get("departedAt"),
         "assignedAt": row.get("actualStartAt") or row.get("plannedDepartureAt") or row.get("plannedStartAt"),
@@ -1272,10 +1285,7 @@ def normalize_courier_hub_departure_route(row, warehouse_id):
             row.get("plannedReturnAt"),
             row.get("expectedReturn"),
             row.get("expectedReturnAt"),
-            first_value_by_names(
-                row,
-                {"plannedReturn", "plannedReturnAt", "expectedReturn", "expectedReturnAt"},
-            ),
+            first_value_by_names(row, PLANNED_RETURN_FIELD_NAMES),
         ),
         "realDeparture": coalesce(row.get("realDeparture"), row.get("departedAt")),
         "assignedAt": coalesce(
@@ -2830,35 +2840,12 @@ def run_once(max_age_minutes, dry_run=False):
         )
         planned_return_text = format_time(
             coalesce(
-                route.get("realReturn"),
                 route.get("plannedReturn"),
-                route.get("actualReturnAt"),
-                route.get("warehouseArrivedAt"),
-                route.get("returnedAt"),
-                first_value_by_names(
-                    route,
-                    {
-                        "realReturn",
-                        "plannedReturn",
-                        "actualReturnAt",
-                        "warehouseArrivedAt",
-                        "returnedAt",
-                        "expectedReturn",
-                        "expectedReturnAt",
-                    },
-                ),
-                first_value_by_names(
-                    driver_detail,
-                    {
-                        "realReturn",
-                        "plannedReturn",
-                        "actualReturnAt",
-                        "warehouseArrivedAt",
-                        "returnedAt",
-                        "expectedReturn",
-                        "expectedReturnAt",
-                    },
-                ),
+                route.get("plannedReturnAt"),
+                route.get("expectedReturn"),
+                route.get("expectedReturnAt"),
+                first_value_by_names(route, PLANNED_RETURN_FIELD_NAMES),
+                first_value_by_names(driver_detail, PLANNED_RETURN_FIELD_NAMES),
             )
         )
 

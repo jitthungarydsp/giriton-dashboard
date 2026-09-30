@@ -187,17 +187,14 @@ def _build_route_notification_lines(
     if next_shift_delay_note:
         content_lines.append(f"**Kovetkezo muszak keses:** {next_shift_delay_note}")
 
-    if queue_since_note:
-        content_lines.append(f"**Sorba allt:** {queue_since_note}")
+    content_lines.append(f"**Sorba állt pontosan:** {queue_since_note or 'nincs adat'}")
 
-    if queue_wait_note:
-        content_lines.append(f"**Varakozott:** {queue_wait_note}")
+    content_lines.append(f"**Várakozott:** {queue_wait_note or 'nincs adat'}")
 
     if planned_departure:
         content_lines.append(f"**Tervezett indulás:** {planned_departure}")
 
-    if planned_return:
-        content_lines.append(f"**Tervezett visszaerkezes:** {planned_return}")
+    content_lines.append(f"**Tervezett visszaérkezés:** {planned_return or 'nincs adat'}")
 
     if orders_in_route:
         content_lines.append(f"**Rendelesek:** {orders_in_route}")
