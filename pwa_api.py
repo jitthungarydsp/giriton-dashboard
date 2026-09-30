@@ -7104,7 +7104,7 @@ def visible_mobile_settlement_month_keys() -> list[str]:
         month_key = str(config.get("period_start") or "")[:7]
         if month_key and month_key not in keys:
             keys.append(month_key)
-    return keys[:1]
+    return keys
 
 
 def workflow_month_allowed_for_user(user: dict[str, Any], month: date, *, preview: bool = False) -> bool:
@@ -10941,6 +10941,15 @@ def route_report_courier_id(value: Any) -> str:
     return digits or text
 
 
+def route_report_courier_id_from_reference(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        match = re.search(r"(?:^|[_\s-])(\d{3,6})(?:\.0)?(?:[_\s-]|$)", text)
+        if match:
+            return match.group(1)
+    return ""
+
+
 def route_report_month_range(month_value: date) -> tuple[date, date]:
     start = month_value.replace(day=1)
     return start, month_end(start)
@@ -10948,7 +10957,8 @@ def route_report_month_range(month_value: date) -> tuple[date, date]:
 
 def read_route_report_muszakpro_rows(month_value: date) -> list[dict[str, Any]]:
     start, end = route_report_month_range(month_value)
-    rows = optional_supabase_rows_paged(
+    source_batches: list[tuple[str, list[dict[str, Any]]]] = []
+    bookings_rows = optional_supabase_rows_paged(
         "bookings",
         schema="muszakpro",
         params={
@@ -10961,38 +10971,79 @@ def read_route_report_muszakpro_rows(month_value: date) -> list[dict[str, Any]]:
         page_size=1000,
         max_rows=50000,
     )
-    if not rows:
-        rows = read_schedule_muszakpro_rows(start, end)
-    active_statuses = {"", "ACTIVE", "OK", "FOGLALÁS", "FOGLALAS"}
+    if bookings_rows:
+        source_batches.append(("muszakpro.bookings", bookings_rows))
+
+    def read_public_muszakpro_source(table: str) -> list[dict[str, Any]]:
+        select_variants = [
+            "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,email,status,fetched_at",
+            "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,status,fetched_at",
+            "work_date,shift_text,warehouse,booking_code,courier_id,email,status,fetched_at",
+            "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,email,fetched_at",
+            "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,fetched_at",
+            "work_date,shift_text,warehouse,booking_code,courier_id,email,fetched_at",
+        ]
+        for select in select_variants:
+            rows = optional_supabase_rows_paged(
+                table,
+                params={
+                    "select": select,
+                    "work_date": f"gte.{start.isoformat()}",
+                    "and": f"(work_date.lte.{end.isoformat()})",
+                    "order": "work_date.asc,shift_text.asc",
+                },
+                timeout=45,
+                page_size=1000,
+                max_rows=50000,
+            )
+            if rows:
+                return rows
+        return []
+
+    for table in ("raw_muszakpro_bookings", "foglalasok_raw"):
+        rows = read_public_muszakpro_source(table)
+        if rows:
+            source_batches.append((f"public.{table}", rows))
+
+    if not source_batches:
+        source_batches.append(("raw_muszakpro_bookings", read_schedule_muszakpro_rows(start, end)))
+
+    inactive_statuses = {"CANCELLED", "CANCELED", "TOROLVE", "TÖRÖLVE", "TOROLT", "TÖRÖLT", "DELETED", "INACTIVE"}
     result: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str, str, str]] = set()
-    for row in rows:
-        status = str(row.get("status") or "ACTIVE").strip().upper()
-        if status not in active_statuses:
-            continue
-        work_date = str(row.get("work_date") or "")[:10]
-        courier_id = route_report_courier_id(row.get("courier_id"))
-        courier_name = str(row.get("courier_name") or "").strip()
-        email = str(row.get("email") or "").strip()
-        shift_text = str(row.get("shift_text") or "").strip()
-        warehouse = normalize_warehouse(row.get("warehouse"))
-        start_time = shift_start(shift_text)
-        key = (work_date, courier_id or normalize_person_match_text(courier_name), email.casefold(), warehouse, start_time or shift_text)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append({
-            "source": "muszakpro.bookings" if "serial" in row else "raw_muszakpro_bookings",
-            "work_date": work_date,
-            "courier_id": courier_id,
-            "courier_name": courier_name,
-            "email": email,
-            "warehouse": warehouse,
-            "shift_text": shift_text,
-            "shift_start": start_time,
-            "booking_code": str(row.get("booking_code") or "").strip(),
-            "serial": str(row.get("serial") or "").strip(),
-        })
+    seen: set[tuple[str, str, str, str]] = set()
+    for source_name, rows in source_batches:
+        for row in rows:
+            status = str(row.get("status") or "ACTIVE").strip().upper()
+            if status in inactive_statuses:
+                continue
+            work_date = str(row.get("work_date") or "")[:10]
+            booking_code = str(row.get("booking_code") or "").strip()
+            serial = str(row.get("serial") or "").strip()
+            courier_id = route_report_courier_id(row.get("courier_id")) or route_report_courier_id_from_reference(serial, booking_code)
+            courier_name = str(row.get("courier_name") or "").strip()
+            email = str(row.get("email") or "").strip()
+            shift_text = str(row.get("shift_text") or "").strip()
+            warehouse = normalize_warehouse(row.get("warehouse"))
+            start_time = shift_start(shift_text)
+            identity = courier_id or email.casefold() or normalize_person_match_text(courier_name)
+            key = (work_date, identity, warehouse, start_time or shift_text)
+            if not work_date or not identity or not (start_time or shift_text):
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append({
+                "source": source_name,
+                "work_date": work_date,
+                "courier_id": courier_id,
+                "courier_name": courier_name,
+                "email": email,
+                "warehouse": warehouse,
+                "shift_text": shift_text,
+                "shift_start": start_time,
+                "booking_code": booking_code,
+                "serial": serial,
+            })
     return result
 
 
@@ -11086,6 +11137,9 @@ def build_monthly_shift_route_report(month_value: date) -> dict[str, Any]:
             "hub_uploaded": 0,
             "routes_delivered": 0,
             "city_over_5h": 0,
+            "_muszakpro_days": set(),
+            "_hub_days": set(),
+            "_route_days": set(),
         })
         if clean_name and (not item.get("courier_name") or str(item.get("courier_name")).startswith("Futár ")):
             item["courier_name"] = clean_name
@@ -11113,17 +11167,26 @@ def build_monthly_shift_route_report(month_value: date) -> dict[str, Any]:
         return item
 
     for row in muszakpro_rows:
-        ensure_summary(row.get("courier_id"), row.get("courier_name"), row.get("warehouse"))["muszakpro_booked"] += 1
+        summary_item = ensure_summary(row.get("courier_id"), row.get("courier_name"), row.get("warehouse"))
+        summary_item["muszakpro_booked"] += 1
+        if row.get("work_date"):
+            summary_item["_muszakpro_days"].add(row.get("work_date"))
         ensure_daily(row.get("work_date"), row.get("courier_id"), row.get("courier_name"), row.get("warehouse"))["muszakpro_booked"] += 1
     for row in hub_rows:
-        ensure_summary(row.get("courier_id"), row.get("courier_name"), row.get("warehouse"))["hub_uploaded"] += 1
+        summary_item = ensure_summary(row.get("courier_id"), row.get("courier_name"), row.get("warehouse"))
+        summary_item["hub_uploaded"] += 1
+        if row.get("work_date"):
+            summary_item["_hub_days"].add(row.get("work_date"))
         ensure_daily(row.get("work_date"), row.get("courier_id"), row.get("courier_name"), row.get("warehouse"))["hub_uploaded"] += 1
 
     city_over_5h_rows = []
     for row in route_rows:
         courier_id = route_report_courier_id(row.get("courierId"))
         warehouse = row.get("warehouse")
-        ensure_summary(courier_id, row.get("courierName"), warehouse)["routes_delivered"] += 1
+        summary_item = ensure_summary(courier_id, row.get("courierName"), warehouse)
+        summary_item["routes_delivered"] += 1
+        if row.get("date"):
+            summary_item["_route_days"].add(row.get("date"))
         ensure_daily(row.get("date"), courier_id, row.get("courierName"), warehouse)["routes_delivered"] += 1
         planned_minutes = planned_route_minutes_from_departure_return(row)
         if planned_minutes is not None and planned_minutes > 300 and is_city_route(row):
@@ -11131,9 +11194,17 @@ def build_monthly_shift_route_report(month_value: date) -> dict[str, Any]:
             ensure_daily(row.get("date"), courier_id, row.get("courierName"), warehouse)["city_over_5h"] += 1
             city_over_5h_rows.append({**row, "plannedDepotToDepotMinutes": planned_minutes})
 
+    summary_rows: list[dict[str, Any]] = []
+    for item in summary.values():
+        clean_item = dict(item)
+        clean_item["muszakpro_days"] = len(clean_item.pop("_muszakpro_days", set()))
+        clean_item["hub_days"] = len(clean_item.pop("_hub_days", set()))
+        clean_item["route_days"] = len(clean_item.pop("_route_days", set()))
+        summary_rows.append(clean_item)
+
     return {
         "month": month_value.replace(day=1).strftime("%Y-%m"),
-        "summary": sorted(summary.values(), key=lambda item: (normalize_text(item.get("courier_name")), str(item.get("courier_id")))),
+        "summary": sorted(summary_rows, key=lambda item: (normalize_text(item.get("courier_name")), str(item.get("courier_id")))),
         "daily": sorted(daily.values(), key=lambda item: (item.get("work_date") or "", normalize_text(item.get("courier_name")), item.get("warehouse") or "")),
         "muszakpro_rows": muszakpro_rows,
         "hub_rows": hub_rows,
@@ -15629,8 +15700,11 @@ def monthly_shift_route_report_excel(
         "Futár neve",
         "Raktár",
         "MűszakPro foglalt műszak",
+        "MűszakPro foglalt nap",
         "HUB-on feltöltött műszak",
+        "HUB-on feltöltött nap",
         "Futár által kivitt kör",
+        "Kivitt körös nap",
         "HUB / MűszakPro arány",
         "Kivitt kör / HUB arány",
         "City 5 óra felett",
@@ -15642,8 +15716,11 @@ def monthly_shift_route_report_excel(
             row.get("courier_name"),
             row.get("warehouse"),
             row.get("muszakpro_booked"),
+            row.get("muszakpro_days"),
             row.get("hub_uploaded"),
+            row.get("hub_days"),
             row.get("routes_delivered"),
+            row.get("route_days"),
             ratio(row.get("hub_uploaded"), row.get("muszakpro_booked")),
             ratio(row.get("routes_delivered"), row.get("hub_uploaded")),
             row.get("city_over_5h"),
@@ -15721,7 +15798,7 @@ def monthly_shift_route_report_excel(
     ])
     for row in payload["muszakpro_rows"]:
         detail_sheet.append([
-            "MűszakPro",
+            row.get("source") or "MűszakPro",
             row.get("work_date"),
             row.get("courier_id"),
             row.get("courier_name"),
@@ -15890,8 +15967,6 @@ def workflow_months(
         for config in configs
         if str(config.get("period_start") or "")[:7]
     ]
-    if not (preview or privileged_viewer):
-        months = months[:1]
     if not months and (preview or privileged_viewer):
         current_month = datetime.now(LOCAL_TIMEZONE).date().replace(day=1).strftime("%Y-%m")
         months = [{"month": current_month, "calculationMode": "", "warehouseLabel": "", "sessionId": "", "visibilityMode": "original", "updatedAt": ""}]
@@ -15899,7 +15974,7 @@ def workflow_months(
     return {
         "defaultMonth": default_month,
         "months": months,
-        "locked": not (preview or privileged_viewer),
+        "locked": not (preview or privileged_viewer) and len(months) <= 1,
     }
 
 
