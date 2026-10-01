@@ -1794,9 +1794,8 @@ def render_empty_right_menu(
             invoice_records = invoice_documents.to_dict("records") if not invoice_documents.empty else []
             transfer_invoice = next((item for item in invoice_records if not is_cash_invoice_document(item)), {})
             cash_invoice = next((item for item in invoice_records if is_cash_invoice_document(item)), {})
-            panel_tig_breakdown = (
-                st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
-            ).get("tig_breakdown") or {}
+            panel_tig_breakdown = admin_tig_breakdown_for_payment(courier_id, period_start)
+            panel_has_saved_tig_breakdown = bool(panel_tig_breakdown)
             if not panel_tig_breakdown:
                 panel_tig_breakdown = build_tig_breakdown(
                     {
@@ -1818,10 +1817,14 @@ def render_empty_right_menu(
                         "tip": parse_huf_value(row.get("Borravaló")),
                     },
                 )
-            transfer_expected = parse_huf_value(panel_tig_breakdown.get("finalTotalHuf"))
-            cash_expected = parse_huf_value(panel_tig_breakdown.get("cashGrossHuf"))
+            panel_invoice_amounts = admin_tig_invoice_amounts(panel_tig_breakdown, payable_value)
+            transfer_expected = panel_invoice_amounts["transfer_gross"]
+            cash_expected = panel_invoice_amounts["cash_gross"]
             transfer_uploaded = invoice_amount_from_document(transfer_invoice) if transfer_invoice else 0.0
             cash_uploaded = invoice_amount_from_document(cash_invoice) if cash_invoice else 0.0
+            if not panel_has_saved_tig_breakdown:
+                transfer_expected = int(round(transfer_uploaded or transfer_expected))
+                cash_expected = int(round(cash_uploaded or cash_expected))
 
             def invoice_short_status(uploaded: float, expected: float, document: dict[str, object]) -> tuple[str, bool]:
                 if expected and not document:
@@ -6140,6 +6143,47 @@ def invoice_amount_from_document(document: dict[str, object]) -> float:
     return 0.0
 
 
+def admin_tig_breakdown_for_payment(courier_id: str, period_start: date) -> dict[str, object]:
+    session_tig_breakdown = (
+        st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
+    ).get("tig_breakdown") or {}
+    if isinstance(session_tig_breakdown, dict) and session_tig_breakdown:
+        return session_tig_breakdown
+    snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
+    snapshot_tig_breakdown = _snapshot_source_payload(snapshot, "tig_breakdown") if snapshot else {}
+    if isinstance(snapshot_tig_breakdown, dict) and snapshot_tig_breakdown:
+        return snapshot_tig_breakdown
+    return {}
+
+
+def admin_tig_invoice_amounts(
+    tig_breakdown: dict[str, object] | None,
+    fallback_amount_huf: object = 0,
+) -> dict[str, int]:
+    breakdown = tig_breakdown or {}
+    transfer_gross = parse_huf_value(breakdown.get("finalTotalHuf"))
+    cash_gross = parse_huf_value(breakdown.get("cashGrossHuf"))
+    if not transfer_gross:
+        transfer_gross = parse_huf_value(fallback_amount_huf)
+    return {
+        "transfer_gross": max(int(round(transfer_gross)), 0),
+        "cash_gross": max(int(round(cash_gross)), 0),
+        "total_gross": max(int(round(transfer_gross + cash_gross)), 0),
+    }
+
+
+def admin_expected_invoice_amount(
+    tig_breakdown: dict[str, object] | None,
+    *,
+    fallback_amount_huf: object = 0,
+    invoice_document: dict[str, object] | None = None,
+) -> int:
+    amounts = admin_tig_invoice_amounts(tig_breakdown, fallback_amount_huf)
+    if is_cash_invoice_document(invoice_document or {}):
+        return amounts["cash_gross"] or amounts["transfer_gross"]
+    return amounts["transfer_gross"] or int(round(parse_huf_value(fallback_amount_huf)))
+
+
 WORKFLOW_BACKSTEP_TARGETS = {
     "settlement": {"label": "Elszamolas elfogadasara", "done": [], "open": ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]},
     "tig": {"label": "TIG elfogadasara", "done": ["settlement"], "open": ["tig", "invoice_submit", "invoice_check", "invoice_payment"]},
@@ -6325,21 +6369,17 @@ def invoice_validation_context_for_admin(
         fallback_amount_huf,
         process_id,
     )
-    cash_amount = 0.0
-    transfer_amount = 0.0
-    session_tig_breakdown = (
-        st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
-    ).get("tig_breakdown") or {}
-    if isinstance(session_tig_breakdown, dict):
-        cash_amount = parse_huf_value(session_tig_breakdown.get("cashGrossHuf"))
-        transfer_amount = parse_huf_value(session_tig_breakdown.get("finalTotalHuf"))
+    tig_breakdown = admin_tig_breakdown_for_payment(courier_id, period_start)
+    if not tig_breakdown and invoice_document:
+        invoice_amount = invoice_amount_from_document(invoice_document)
+        if invoice_amount:
+            full_amount = int(round(invoice_amount))
+    amounts = admin_tig_invoice_amounts(tig_breakdown, full_amount)
+    cash_amount = amounts["cash_gross"]
+    transfer_amount = amounts["transfer_gross"]
 
     if not cash_amount or not transfer_amount:
         snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
-        snapshot_tig_breakdown = _snapshot_source_payload(snapshot, "tig_breakdown") if snapshot else {}
-        if isinstance(snapshot_tig_breakdown, dict):
-            cash_amount = cash_amount or parse_huf_value(snapshot_tig_breakdown.get("cashGrossHuf"))
-            transfer_amount = transfer_amount or parse_huf_value(snapshot_tig_breakdown.get("finalTotalHuf"))
         if not cash_amount and snapshot:
             cash_amount = parse_huf_value(_snapshot_amount(snapshot, "tig_cash_service", section="tig"))
         if not transfer_amount and snapshot:
@@ -17361,6 +17401,10 @@ def render_courier_detail_page() -> None:
             or current_table_monthly_amount
             or displayed_payable_total
         )
+        monthly_tig_breakdown = admin_tig_breakdown_for_payment(courier_id, payment_month)
+        monthly_has_saved_tig_breakdown = bool(monthly_tig_breakdown)
+        monthly_invoice_amounts = admin_tig_invoice_amounts(monthly_tig_breakdown, monthly_payment_amount)
+        monthly_transfer_invoice_amount = monthly_invoice_amounts["transfer_gross"] or int(round(monthly_payment_amount))
         quick_invoice_default = str(monthly_closure.get("invoice_number") or load_latest_invoice_number(courier_id, period_start) or "")
         quick_recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
         quick_bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
@@ -17564,6 +17608,31 @@ def render_courier_detail_page() -> None:
                 if request_item
                 else 0
             )
+            expected_invoice_amount = (
+                admin_expected_invoice_amount(
+                    monthly_tig_breakdown,
+                    fallback_amount_huf=monthly_payment_amount,
+                    invoice_document=latest_invoice,
+                )
+                if not process_id and not request_item
+                else request_amount
+                if request_item
+                else invoice_amount
+            )
+            if (
+                not process_id
+                and not request_item
+                and not monthly_has_saved_tig_breakdown
+                and invoice_amount
+            ):
+                expected_invoice_amount = invoice_amount
+            payment_amount = (
+                request_amount
+                if request_item
+                else (expected_invoice_amount or monthly_transfer_invoice_amount)
+                if not process_id
+                else invoice_amount or 0
+            )
 
             action_key = process_action_key(
                 "invoice_payment",
@@ -17584,11 +17653,9 @@ def render_courier_detail_page() -> None:
                 "invoice_file": str(latest_invoice.get("file_name") or ""),
                 "invoice_title": str(latest_invoice.get("title") or ""),
                 "invoice_amount": invoice_amount,
-                "amount": (
-                    request_amount
-                    if request_item
-                    else (monthly_payment_amount if not process_id else invoice_amount or 0)
-                ),
+                "invoice_expected_amount": expected_invoice_amount,
+                "tig_breakdown": monthly_tig_breakdown if not process_id and not request_item else {},
+                "amount": payment_amount,
                 "status": (
                     "Lezárva"
                     if payment_status == "done"
@@ -17622,9 +17689,13 @@ def render_courier_detail_page() -> None:
             recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
             bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
             amount_huf = parse_huf_value(payment_item.get("amount"))
-            payment_tig_final_huf = max(amount_huf, 0.0)
+            expected_invoice_amount_huf = parse_huf_value(payment_item.get("invoice_expected_amount")) or amount_huf
+            selected_tig_breakdown = payment_item.get("tig_breakdown") if isinstance(payment_item.get("tig_breakdown"), dict) else {}
+            payment_tig_final_huf = max(expected_invoice_amount_huf, 0.0)
             if is_expense_payment:
                 payment_tig_breakdown = {"rows": [], "finalTotalHuf": amount_huf}
+            elif selected_tig_breakdown:
+                payment_tig_breakdown = selected_tig_breakdown
             else:
                 payment_tig_breakdown = {
                     "rows": [
@@ -17639,14 +17710,15 @@ def render_courier_detail_page() -> None:
                     ] if payment_tig_final_huf else [],
                     "finalTotalHuf": payment_tig_final_huf,
                 }
+            payment_invoice_amounts = admin_tig_invoice_amounts(payment_tig_breakdown, expected_invoice_amount_huf)
             tig_final_huf = (
                 0
                 if is_expense_payment
-                else parse_huf_value(payment_tig_breakdown.get("finalTotalHuf"))
-                or amount_huf
+                else payment_invoice_amounts["transfer_gross"]
+                or expected_invoice_amount_huf
             )
             invoice_amount_huf = parse_huf_value(payment_item.get("invoice_amount"))
-            invoice_difference_huf = invoice_amount_huf - amount_huf if invoice_amount_huf else 0.0
+            invoice_difference_huf = invoice_amount_huf - expected_invoice_amount_huf if invoice_amount_huf else 0.0
             invoice_difference_label = format_huf(invoice_difference_huf) if invoice_amount_huf else "-"
             tig_final_label = "-" if is_expense_payment else format_huf(tig_final_huf)
             payment_note = f"{courier_id}-{invoice_number}".strip("-")
@@ -17967,9 +18039,8 @@ def render_courier_detail_page() -> None:
         transfer_invoice = next((item for item in invoice_records if not is_cash_invoice_document(item)), {})
         cash_invoice = next((item for item in invoice_records if is_cash_invoice_document(item)), {})
 
-        synced_tig_breakdown = (
-            st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
-        ).get("tig_breakdown") or {}
+        synced_tig_breakdown = admin_tig_breakdown_for_payment(courier_id, period_start)
+        compare_has_saved_tig_breakdown = bool(synced_tig_breakdown)
         if not synced_tig_breakdown:
             synced_tig_breakdown = build_tig_breakdown(
                 {
@@ -17991,10 +18062,14 @@ def render_courier_detail_page() -> None:
                     "tip": tip_total,
                 },
             )
-        tig_transfer_amount = parse_huf_value(synced_tig_breakdown.get("finalTotalHuf"))
-        tig_cash_amount = parse_huf_value(synced_tig_breakdown.get("cashGrossHuf"))
+        invoice_compare_amounts = admin_tig_invoice_amounts(synced_tig_breakdown, displayed_payable_total)
+        tig_transfer_amount = invoice_compare_amounts["transfer_gross"]
+        tig_cash_amount = invoice_compare_amounts["cash_gross"]
         transfer_invoice_amount = invoice_amount_from_document(transfer_invoice) if transfer_invoice else 0.0
         cash_invoice_amount = invoice_amount_from_document(cash_invoice) if cash_invoice else 0.0
+        if not compare_has_saved_tig_breakdown:
+            tig_transfer_amount = int(round(transfer_invoice_amount or tig_transfer_amount))
+            tig_cash_amount = int(round(cash_invoice_amount or tig_cash_amount))
 
         def compare_card(title: str, invoice_doc: dict[str, object], uploaded_amount: float, tig_amount: float) -> str:
             difference = round(parse_huf_value(uploaded_amount) - parse_huf_value(tig_amount))
