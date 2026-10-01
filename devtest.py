@@ -2978,11 +2978,9 @@ def load_latest_api_jit_session_id(period_start: date, warehouse_label: str | No
 
 
 def settlement_mobile_session_for_mode(calculation_mode: str, period_start: date, warehouse_label: str | None) -> str | None:
-    normalized_mode = str(calculation_mode or "API").strip().casefold()
+    normalized_mode = str(calculation_mode or "Excel").strip().casefold()
     if normalized_mode == "excel":
         return load_latest_excel_jit_session_id(period_start)
-    if normalized_mode == "api":
-        return load_latest_api_jit_session_id(period_start, warehouse_label)
     return None
 
 
@@ -3009,8 +3007,8 @@ def save_mobile_settlement_period_config(
     updated_by: str,
     visibility_mode: str = "original",
 ) -> bool:
-    normalized_mode = "Excel" if str(calculation_mode or "").strip().casefold() == "excel" else "API"
-    if str(calculation_mode or "").strip() not in {"API", "Excel"}:
+    normalized_mode = "Excel"
+    if str(calculation_mode or "").strip() != "Excel":
         return False
     normalized_visibility = normalize_mobile_visibility_mode(visibility_mode)
     payload = {
@@ -3367,7 +3365,7 @@ def save_devtest_finance_snapshot_version(
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_latest_devtest_finance_snapshot(courier_id: str, period_start: date, include_sources: bool = True) -> dict[str, object]:
+def load_latest_devtest_finance_snapshot(courier_id: str, period_start: date) -> dict[str, object]:
     clean_courier_id = _courier_id_key(courier_id)
     if not clean_courier_id:
         return {}
@@ -3393,9 +3391,6 @@ def load_latest_devtest_finance_snapshot(courier_id: str, period_start: date, in
             .execute().data or []
         )
         snapshot["items"] = items
-        if not include_sources:
-            snapshot["sources"] = []
-            return snapshot
         sources = (
             get_db().schema("settlement").table("courier_finance_snapshot_source")
             .select("source_key,source_table,payload,row_count")
@@ -9465,7 +9460,7 @@ def apply_received_amounts(
     session_id: str | None = None,
 ) -> pd.DataFrame:
     result = data.copy()
-    normalized_mode = str(calculation_mode or "API").strip().casefold()
+    normalized_mode = str(calculation_mode or "Excel").strip().casefold()
     result["Alvállalkozói összeg"] = _numeric_series(result, "Vállalkozói alapdíj")
     contractor_totals = load_contractor_totals_for_session(session_id, period_start)
     if not contractor_totals.empty:
@@ -9540,11 +9535,8 @@ def apply_api_base_rates(
 
 def build_settlement_working_data(calculation_mode: str, session_id: str | None, period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
     """Build the main settlement table without changing its shape per source."""
-    normalized_mode = str(calculation_mode or "API").strip().casefold()
-    if normalized_mode == "excel":
-        data = load_courier_master("Excel")
-        return apply_excel_base_rates(data, session_id)
-    return apply_api_base_rates(load_courier_master("API"), period_start, warehouse_label, session_id)
+    data = load_courier_master("Excel")
+    return apply_excel_base_rates(data, session_id)
 
 
 def settlement_loyalty_cache_token(session_id: str | None, period_start: date, calculation_mode: str) -> str:
@@ -14880,8 +14872,6 @@ def render_fast_courier_profile(
     if st.session_state.get(menu_key) == "ttekintés":
         st.session_state[menu_key] = "Pénzügy"
     profile_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
-    if str(st.session_state.get("new_calculation_mode", "API")).strip().casefold() == "api":
-        profile_menu_items.append("Statisztika")
     profile_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "E-mail küldése", "Profil"])
     selected_menu = st.radio(
         "Futármenü",
@@ -15096,20 +15086,14 @@ def render_courier_detail_page() -> None:
 
     data = st.session_state.get("current_filtered_data")
     if not isinstance(data, pd.DataFrame) or data.empty:
-        dialog_calculation_mode = st.session_state.get("new_calculation_mode", "API")
+        dialog_calculation_mode = "Excel"
         dialog_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
-        if str(dialog_calculation_mode or "API").strip().casefold() == "excel":
-            state_excel_session_id = st.session_state.get("settlement_excel_session_id")
-            dialog_session_id = (
-                state_excel_session_id
-                if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, dialog_start)
-                else load_latest_excel_jit_session_id(dialog_start)
-            )
-        else:
-            dialog_session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
-            dialog_api_session_id = load_latest_api_jit_session_id(dialog_start, st.session_state.get("new_warehouse", "Összes"))
-            if dialog_api_session_id:
-                dialog_session_id = dialog_api_session_id
+        state_excel_session_id = st.session_state.get("settlement_excel_session_id")
+        dialog_session_id = (
+            state_excel_session_id
+            if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, dialog_start)
+            else load_latest_excel_jit_session_id(dialog_start)
+        )
         saved_summary_row = load_courier_settlement_summary_row(
             dialog_session_id,
             courier_id,
@@ -15130,7 +15114,7 @@ def render_courier_detail_page() -> None:
                     "Futár": str(profile.get("courier_name") or profile.get("name") or courier_id),
                     "Raktár": str(profile.get("warehouse_name") or st.session_state.get("new_warehouse", "")),
                     "Branch": str(profile.get("branch") or "JIT"),
-                    "Számítás módja": "Excel" if str(dialog_calculation_mode or "").strip().casefold() == "excel" else "API",
+                    "Számítás módja": "Excel",
                     "Státusz": "Profil",
                 }])
     match = (
@@ -15156,21 +15140,15 @@ def render_courier_detail_page() -> None:
         row = row.copy()
         row["Futár"] = courier_name
     initials = "".join(part[:1].upper() for part in courier_name.split()[:2]) or "F"
-    active_calculation_mode = st.session_state.get("new_calculation_mode", "API")
+    active_calculation_mode = "Excel"
     period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
     _, period_end = month_bounds(period_start)
-    if str(active_calculation_mode or "API").strip().casefold() == "excel":
-        state_excel_session_id = st.session_state.get("settlement_excel_session_id")
-        session_id = (
-            state_excel_session_id
-            if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, period_start)
-            else load_latest_excel_jit_session_id(period_start)
-        )
-    else:
-        session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
-        api_session_id = load_latest_api_jit_session_id(period_start, st.session_state.get("new_warehouse", "Összes"))
-        if api_session_id:
-            session_id = api_session_id
+    state_excel_session_id = st.session_state.get("settlement_excel_session_id")
+    session_id = (
+        state_excel_session_id
+        if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, period_start)
+        else load_latest_excel_jit_session_id(period_start)
+    )
     imported_balance_session_id = balance_component_session_id(active_calculation_mode, period_start, session_id)
     period_label = (
         f"{period_start:%Y. %m. %d.} - {period_end:%Y. %m. %d.}"
@@ -15213,7 +15191,7 @@ def render_courier_detail_page() -> None:
         )
         return
     heavy_finance_menus = {"Pénzügy", "Kifizetés", "Fizetés előleg", "Bónusz", "Málusz"}
-    quality_menus = {"Pénzügy", "Statisztika", "Útvonalak"}
+    quality_menus = {"Pénzügy", "Útvonalak"}
     needs_finance_adjustments = selected_menu_hint in heavy_finance_menus
     needs_quality_data = selected_menu_hint in quality_menus
     route_detail = pd.DataFrame()
@@ -15929,7 +15907,7 @@ def render_courier_detail_page() -> None:
 
     if selected_menu == "Pénzügy":
         is_api_mode = str(active_calculation_mode or "").strip().casefold() == "api"
-        if route_detail.empty and not summary_available:
+        if route_detail.empty:
             route_detail = load_courier_route_detail(
                 courier_id,
                 courier_name,
@@ -16241,57 +16219,61 @@ def render_courier_detail_page() -> None:
 
         settlement_document_reference = make_document_reference(courier_id, "settlement", period_start)
         tig_document_reference = make_document_reference(courier_id, "tig", period_start)
-        pdf_bytes = build_settlement_pdf(
-            {
-                "name": courier_name,
-                "id": courier_id,
-                "branch": row["Branch"],
-                "warehouse": row["Raktár"],
-                "status": row["Státusz"],
-                "document_reference": settlement_document_reference,
-                "document_month": period_start,
-                "email": profile.get("email") or "",
-            },
-            route_breakdown.to_dict("records"),
-            {
-                "base": base_total,
-                "tip": tip_total,
-                "bonus": bonus_total + loyalty_total,
-                "malus": malus_total,
-                "atm": atm_deduction_total,
-                "other": other_expense_total,
-                "salary_advance": salary_advance_total,
-                "customer_rating": customer_rating_total,
-                "reserve": reserve_addition_total,
-                "reserve_before": reserve_before_total,
-                "reserve_after": reserve_after_total,
-                "insurance": insurance_fee_total,
-                "payable": payable_total,
-            },
-        )
-        tig_bytes = build_tig_pdf(
-            {
-                "name": courier_name,
-                "company_name": profile.get("company_name") or courier_name,
-                "address": profile.get("address") or profile.get("company_address") or "",
-                "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
-                "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
-                "vat_status": profile.get("vat_status") or "",
-                "employment_type": profile.get("employment_type") or "",
-                "employment_status": profile.get("employment_status") or "",
-                "efo_status": profile.get("efo_status") or "",
-                "email": profile.get("email") or "",
-                "id": courier_id,
-                "document_reference": tig_document_reference,
-                "document_month": period_start,
-            },
-            {
-                "payable": payable_total,
-                "cash": abs(atm_deduction_total),
-                "tip": tip_total,
-            },
-            tig_breakdown=tig_breakdown,
-        )
+
+        def build_current_settlement_pdf() -> bytes:
+            return build_settlement_pdf(
+                {
+                    "name": courier_name,
+                    "id": courier_id,
+                    "branch": row["Branch"],
+                    "warehouse": row["Raktár"],
+                    "status": row["Státusz"],
+                    "document_reference": settlement_document_reference,
+                    "document_month": period_start,
+                    "email": profile.get("email") or "",
+                },
+                route_breakdown.to_dict("records"),
+                {
+                    "base": base_total,
+                    "tip": tip_total,
+                    "bonus": bonus_total + loyalty_total,
+                    "malus": malus_total,
+                    "atm": atm_deduction_total,
+                    "other": other_expense_total,
+                    "salary_advance": salary_advance_total,
+                    "customer_rating": customer_rating_total,
+                    "reserve": reserve_addition_total,
+                    "reserve_before": reserve_before_total,
+                    "reserve_after": reserve_after_total,
+                    "insurance": insurance_fee_total,
+                    "payable": payable_total,
+                },
+            )
+
+        def build_current_tig_pdf() -> bytes:
+            return build_tig_pdf(
+                {
+                    "name": courier_name,
+                    "company_name": profile.get("company_name") or courier_name,
+                    "address": profile.get("address") or profile.get("company_address") or "",
+                    "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+                    "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+                    "vat_status": profile.get("vat_status") or "",
+                    "employment_type": profile.get("employment_type") or "",
+                    "employment_status": profile.get("employment_status") or "",
+                    "efo_status": profile.get("efo_status") or "",
+                    "email": profile.get("email") or "",
+                    "id": courier_id,
+                    "document_reference": tig_document_reference,
+                    "document_month": period_start,
+                },
+                {
+                    "payable": payable_total,
+                    "cash": abs(atm_deduction_total),
+                    "tip": tip_total,
+                },
+                tig_breakdown=tig_breakdown,
+            )
         st.markdown(
             f"""
             <div class="settlement-profile-shell">
@@ -16322,8 +16304,20 @@ def render_courier_detail_page() -> None:
         doc_a, doc_b = st.columns([0.18, 0.18])
         settlement_file_name = f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{settlement_document_reference}.pdf"
         tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
-        doc_a.download_button("Elszámolás PDF", data=pdf_bytes, file_name=settlement_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
-        doc_b.download_button("TIG PDF", data=tig_bytes, file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
+        pdf_cache_suffix = (
+            f"{courier_id}_{period_start:%Y%m}_{int(round(payable_total))}_"
+            f"{int(round(final_total_income))}_{int(round(final_total_deduction))}_{route_total}_{order_total}"
+        )
+        settlement_pdf_cache_key = f"finance_settlement_pdf_bytes_{pdf_cache_suffix}"
+        tig_pdf_cache_key = f"finance_tig_pdf_bytes_{pdf_cache_suffix}_{int(round(tig_display_total))}"
+        if doc_a.button("Elszámolás PDF készítése", use_container_width=True, key=f"finance_prepare_settlement_pdf_{courier_id}_{period_start:%Y%m}"):
+            st.session_state[settlement_pdf_cache_key] = build_current_settlement_pdf()
+        if st.session_state.get(settlement_pdf_cache_key):
+            doc_a.download_button("Elszámolás PDF letöltése", data=st.session_state[settlement_pdf_cache_key], file_name=settlement_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
+        if doc_b.button("TIG PDF készítése", use_container_width=True, key=f"finance_prepare_tig_pdf_{courier_id}_{period_start:%Y%m}"):
+            st.session_state[tig_pdf_cache_key] = build_current_tig_pdf()
+        if st.session_state.get(tig_pdf_cache_key):
+            doc_b.download_button("TIG PDF letöltése", data=st.session_state[tig_pdf_cache_key], file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
         upload_a, upload_b, open_month_col, refresh_col = st.columns([0.18, 0.18, 0.28, 0.18])
         if closure_done:
             st.warning("A havi folyamat le van zárva, új elszámolás/TIG nem tölthető fel erre a hónapra.")
@@ -16378,6 +16372,8 @@ def render_courier_detail_page() -> None:
                 st.error(f"A folyamat beállítása sikertelen: {exc}")
         if upload_a.button("Elszámolás feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_settlement_pdf_{courier_id}"):
             try:
+                settlement_upload_bytes = st.session_state.get(settlement_pdf_cache_key) or build_current_settlement_pdf()
+                st.session_state[settlement_pdf_cache_key] = settlement_upload_bytes
                 upload_peopleforce_document_bytes(
                     courier_id=courier_id,
                     courier_name=courier_name,
@@ -16387,7 +16383,7 @@ def render_courier_detail_page() -> None:
                     note=f"Dokumentum azonosító: {settlement_document_reference}",
                     file_name=settlement_file_name,
                     mime_type="application/pdf",
-                    file_bytes=pdf_bytes,
+                    file_bytes=settlement_upload_bytes,
                     uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
                 )
                 st.success("Elszámolás PDF feltöltve a futár profiljába.")
@@ -16396,6 +16392,8 @@ def render_courier_detail_page() -> None:
                 st.error(f"Az elszámolás feltöltése sikertelen: {exc}")
         if upload_b.button("TIG feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_tig_pdf_{courier_id}"):
             try:
+                tig_upload_bytes = st.session_state.get(tig_pdf_cache_key) or build_current_tig_pdf()
+                st.session_state[tig_pdf_cache_key] = tig_upload_bytes
                 upload_peopleforce_document_bytes(
                     courier_id=courier_id,
                     courier_name=courier_name,
@@ -16405,7 +16403,7 @@ def render_courier_detail_page() -> None:
                     note=f"Dokumentum azonosító: {tig_document_reference}",
                     file_name=tig_file_name,
                     mime_type="application/pdf",
-                    file_bytes=tig_bytes,
+                    file_bytes=tig_upload_bytes,
                     uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
                 )
                 st.success("TIG PDF feltöltve a futár profiljába.")
@@ -16453,7 +16451,7 @@ def render_courier_detail_page() -> None:
                         )
                         rerun_courier_profile("Dokumentumok")
                     else:
-                        st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a mobil SQL táblákat és a kiválasztott API/Excel sessiont.")
+                        st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a mobil SQL táblákat és a kiválasztott Excel sessiont.")
             except Exception as exc:
                 st.error(f"Az egyedi havi számlázás módosítása sikertelen: {exc}")
         if refresh_col.button("Adatok frissítése", use_container_width=True, key=f"finance_refresh_data_{courier_id}"):
@@ -18650,15 +18648,6 @@ def render_courier_detail_page() -> None:
                     hide_index=True,
                 )
 
-    if selected_menu == "Statisztika":
-        if str(active_calculation_mode or "API").strip().casefold() == "api":
-            render_courier_api_statistics(
-                courier_id=courier_id,
-                period_start=period_start,
-                period_end=period_end,
-                warehouse_label=st.session_state.get("new_warehouse", "Összes"),
-            )
-
     if selected_menu == "Útvonalak":
         if route_detail.empty:
             route_detail = load_courier_route_detail(
@@ -19141,7 +19130,7 @@ def render_courier_detail_page() -> None:
                         )
                         st.rerun()
                     else:
-                        st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a kiválasztott API/Excel sessiont.")
+                        st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a kiválasztott Excel sessiont.")
             except Exception as exc:
                 st.error(f"Az egyedi havi számlázás módosítása sikertelen: {exc}")
         with st.expander("Folyamat visszaleptetese", expanded=False):
@@ -20727,7 +20716,7 @@ def show_settlement_pdf_sample_page() -> None:
         },
         {
             "tetel": "Kesedelmi dij",
-            "szabaly": f"{level_code} + API/Excel delay",
+            "szabaly": f"{level_code} + Excel delay",
             "darab": 1,
             "egysegar": int(delay_bonus),
             "keplet": f"szabaly szerinti havi osszeg",
@@ -22277,14 +22266,14 @@ def show_new_settlement_page() -> None:
             ["Összes", "BUD1", "BUD2"],
             key="new_warehouse",
         )
-        if str(selected_calculation_mode or "API").strip().casefold() == "excel":
-            render_excel_import_sidebar_tools(selected_month_label)
+        render_excel_import_sidebar_tools(selected_month_label)
 
     selected_month = selected_month_label
     selected_period_start = parse_month_option(selected_month_label)
     balance_period_start = selected_period_start
     _, balance_period_end = month_bounds(balance_period_start)
-    if str(selected_calculation_mode or "API").strip().casefold() == "excel":
+    import_session_id = None
+    if str(selected_calculation_mode or "Excel").strip().casefold() == "excel":
         state_excel_session_id = st.session_state.get("settlement_excel_session_id")
         if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, balance_period_start):
             import_session_id = state_excel_session_id
@@ -22296,17 +22285,7 @@ def show_new_settlement_page() -> None:
                 st.session_state.pop("settlement_excel_session_id", None)
                 if str(st.session_state.get("settlement_import_session_id") or "") == str(state_excel_session_id or ""):
                     st.session_state.pop("settlement_import_session_id", None)
-    else:
-        state_api_session_id = st.session_state.get("settlement_api_session_id")
-        if state_api_session_id and jit_session_has_rows_in_month(state_api_session_id, balance_period_start):
-            api_session_id = state_api_session_id
-        else:
-            api_session_id = load_latest_api_jit_session_id(balance_period_start, selected_warehouse_label)
-        import_session_id = api_session_id
-        if api_session_id:
-            st.session_state["settlement_api_session_id"] = api_session_id
-            import_session_id = api_session_id
-    if str(selected_calculation_mode or "").strip() in {"API", "Excel"} and import_session_id:
+    if str(selected_calculation_mode or "").strip() == "Excel" and import_session_id:
         st.session_state["settlement_import_session_id"] = import_session_id
     selected_branch_label = st.session_state.get("new_branch", "Összes")
     selected_status_label = st.session_state.get("new_status", "Összes")
@@ -22435,68 +22414,22 @@ def show_new_settlement_page() -> None:
         else:
             st.caption("Kiválasztott mobil forrás: nincs, mert a Számítás módja Összes.")
         st.divider()
-        if str(calculation_mode or "API").strip().casefold() != "excel":
-            if st.button("API diagnosztika frissítése", use_container_width=True, key="refresh_api_sidebar_diagnostics"):
-                st.session_state["settlement_show_api_sidebar_diagnostics_for"] = (
-                    f"{selected_month}:{warehouse}"
-                )
-                st.rerun()
-            if st.session_state.get("settlement_show_api_sidebar_diagnostics_for") == f"{selected_month}:{warehouse}":
-                api_stats = api_raw_overview_stats(parse_month_option(selected_month), warehouse)
-                st.caption(f"API raw adat: {api_stats['couriers']} futár, {api_stats['routes']} útvonal")
-                api_breakdown = api_raw_overview_breakdown(parse_month_option(selected_month))
-                if not api_breakdown.empty:
-                    st.dataframe(api_breakdown, hide_index=True, use_container_width=True, height=120)
-                selected_api_session_id = load_latest_api_jit_session_id(parse_month_option(selected_month), warehouse)
-                api_diagnostics = load_api_import_diagnostics(selected_api_session_id)
-                if api_diagnostics.get("error"):
-                    st.caption(f"API számítás ellenőrzés hiba: {api_diagnostics['error']}")
-                else:
-                    st.caption(
-                        "API számítás: "
-                        f"session={str(api_diagnostics.get('session_id') or '-')[:8]} | "
-                        f"jit_row={api_diagnostics.get('jit_rows', 0)} | "
-                        f"summary={api_diagnostics.get('summary_rows', 0)} | "
-                        f"számolt={api_diagnostics.get('calculated', 0)} | "
-                        f"hiányzó szabály={api_diagnostics.get('missing_base_rate', 0)}"
-                    )
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
             refresh_settlement_profile_data()
-            if str(calculation_mode or "API").strip().casefold() == "excel":
-                current_period_start = parse_month_option(selected_month)
-                state_excel_session_id = st.session_state.get("settlement_excel_session_id")
-                if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, current_period_start):
-                    current_excel_session_id = state_excel_session_id
-                else:
-                    current_excel_session_id = load_latest_excel_jit_session_id(current_period_start)
-                    if current_excel_session_id:
-                        st.session_state["settlement_excel_session_id"] = current_excel_session_id
-                        st.session_state["settlement_import_session_id"] = current_excel_session_id
-                if current_excel_session_id:
-                    st.toast(f"Excel adatok betöltve: {selected_month}", icon="✅")
-                    st.rerun()
-                else:
-                    st.warning("Ehhez a hónaphoz nem találok feldolgozott Excel importot. Töltsd fel az Excelt, majd nyomd meg a Számítás betöltése gombot.")
+            current_period_start = parse_month_option(selected_month)
+            state_excel_session_id = st.session_state.get("settlement_excel_session_id")
+            if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, current_period_start):
+                current_excel_session_id = state_excel_session_id
             else:
-                try:
-                    api_period_start = parse_month_option(selected_month)
-                    api_stats = api_raw_overview_stats(api_period_start, warehouse)
-                    if api_stats["routes"] == 0:
-                        st.error(
-                            "Nincs raw API adat erre a hónapra/raktárra. "
-                            "Előbb futtasd a Courier Hub API szinkront erre az időszakra."
-                        )
-                        st.stop()
-                    api_session_id = import_api_financial_overview_to_jit(api_period_start, warehouse)
-                    if settlement_warehouse_id(warehouse) is not None:
-                        import_api_financial_overview_to_jit(api_period_start, "Összes")
-                    st.session_state["settlement_api_session_id"] = api_session_id
-                    st.session_state["settlement_import_session_id"] = api_session_id
-                    load_api_import_diagnostics.clear()
-                    st.toast(f"API adatok betöltve és újraszámolva: {selected_month}", icon="✅")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"API adatok betöltése sikertelen: {exc}")
+                current_excel_session_id = load_latest_excel_jit_session_id(current_period_start)
+                if current_excel_session_id:
+                    st.session_state["settlement_excel_session_id"] = current_excel_session_id
+                    st.session_state["settlement_import_session_id"] = current_excel_session_id
+            if current_excel_session_id:
+                st.toast(f"Excel adatok betöltve: {selected_month}", icon="✅")
+                st.rerun()
+            else:
+                st.warning("Ehhez a hónaphoz nem találok feldolgozott Excel importot. Töltsd fel az Excelt, majd nyomd meg a Számítás betöltése gombot.")
         if st.button(
             "Lojalitás újraszámítása",
             use_container_width=True,
@@ -22952,7 +22885,7 @@ def show_new_settlement_page() -> None:
     if st.button(
         "PWA láthatóság mentése",
         use_container_width=True,
-        disabled=selected_calculation_mode not in {"API", "Excel"},
+        disabled=selected_calculation_mode != "Excel",
         key=f"save_mobile_visibility_mode_{balance_period_start:%Y%m}",
         help="Már megnyitott hónapnál is átállítja, hogy a futár csak elszámolást, TIG-et is, vagy az eredeti folyamatot lássa.",
     ):
@@ -22984,7 +22917,7 @@ def show_new_settlement_page() -> None:
     )
     if st.button(
         start_label,
-        disabled=selected_calculation_mode not in {"API", "Excel"} or filtered.empty,
+        disabled=selected_calculation_mode != "Excel" or filtered.empty,
         use_container_width=True,
         key=f"monthly_period_start_{balance_period_start:%Y%m}",
         help="A futár PWA-ban láthatóvá teszi a már mentett havi elszámolást. Nem számol újra mobil értékeket.",
@@ -23017,7 +22950,7 @@ def show_new_settlement_page() -> None:
 
     if st.button(
         f"Mobil értékek tömeges frissítése ellenőrzéshez - {selected_month} ({len(filtered)} futár)",
-        disabled=selected_calculation_mode not in {"API", "Excel"} or filtered.empty,
+        disabled=selected_calculation_mode != "Excel" or filtered.empty,
         use_container_width=True,
         key=f"mobile_breakdown_bulk_refresh_{balance_period_start:%Y%m}",
         help="Csak a PWA megjelenítési bontást frissíti a DB-ben. Nem indít havi folyamatot és nem nyitja meg a futároknak.",
@@ -23027,8 +22960,8 @@ def show_new_settlement_page() -> None:
             balance_period_start,
             selected_warehouse_label,
         )
-        if selected_calculation_mode in {"API", "Excel"} and not snapshot_session_id:
-            st.error("Nincs publikálható API/Excel forrás ehhez a hónaphoz. Töltsd be vagy válaszd ki újra a számítást.")
+        if selected_calculation_mode == "Excel" and not snapshot_session_id:
+            st.error("Nincs publikálható Excel forrás ehhez a hónaphoz. Töltsd be vagy válaszd ki újra a számítást.")
             st.stop()
         with st.spinner("Mobil ellenőrzési értékek frissítése..."):
             courier_count, row_count = refresh_mobile_settlement_breakdown_snapshot(
@@ -23043,7 +22976,7 @@ def show_new_settlement_page() -> None:
             st.success(f"Mobil ellenőrzési értékek frissítve: {courier_count} futár, {row_count} sor.")
             st.rerun()
         else:
-            st.error("A mobil ellenőrzési frissítés nem sikerült. Ellenőrizd a kiválasztott API/Excel sessiont és a szűrést.")
+            st.error("A mobil ellenőrzési frissítés nem sikerült. Ellenőrizd a kiválasztott Excel sessiont és a szűrést.")
 
     metric_options = [
         {"key": "payable", "label": "Kifizetés összesen", "column": "Kifizetendő", "kind": "huf"},
@@ -23074,13 +23007,9 @@ def show_new_settlement_page() -> None:
 
     def calculate_previous_filtered_for_metric() -> pd.DataFrame:
         previous_session_id = None
-        mode_key = str(selected_calculation_mode or "API").strip().casefold()
+        mode_key = str(selected_calculation_mode or "Excel").strip().casefold()
         if mode_key == "excel":
             previous_session_id = load_latest_excel_jit_session_id(previous_period_start)
-        if mode_key == "api":
-            previous_session_id = load_latest_api_jit_session_id(previous_period_start, selected_warehouse_label)
-            if not previous_session_id:
-                return pd.DataFrame(columns=filtered.columns)
         previous_data = build_settlement_working_data(
             selected_calculation_mode,
             previous_session_id,
