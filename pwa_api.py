@@ -114,6 +114,21 @@ class AdminWorkflowActionRequest(BaseModel):
     note: str = ""
 
 
+def admin_invoice_upload_months() -> set[date]:
+    current = datetime.now(LOCAL_TIMEZONE).date().replace(day=1)
+    previous_month_end = current - timedelta(days=1)
+    previous = previous_month_end.replace(day=1)
+    return {current, previous}
+
+
+def require_admin_invoice_upload_month(month: date) -> None:
+    if month.replace(day=1) not in admin_invoice_upload_months():
+        raise HTTPException(
+            status_code=422,
+            detail="Admin számlafeltöltés csak az aktuális vagy az előző hónapra indítható.",
+        )
+
+
 class SalaryAdvanceRequest(BaseModel):
     start_date: str
     requested_amount_huf: int
@@ -16417,6 +16432,103 @@ def admin_complete_workflow_action(
         "workflow": build_workflow(
             view_user,
             month,
+            process_id,
+            preview_read_only=True,
+            allow_unpublished=True,
+            can_view_amounts=True,
+        ),
+    }
+
+
+@app.post("/api/admin/invoices/upload")
+async def admin_upload_invoice_for_courier(
+    courier: str = Query(default=""),
+    month: str = Form(...),
+    process: str = Form(default=""),
+    invoice_number: str = Form(default=""),
+    gross_amount: str = Form(default=""),
+    note: str = Form(default=""),
+    invoice_file: UploadFile = File(...),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    admin_user = require_user(giriton_pwa_session)
+    if not can_preview_couriers(admin_user):
+        raise HTTPException(status_code=403, detail="Admin jogosultság szükséges.")
+    view_user, preview = workflow_view_user(admin_user, courier)
+    if not preview:
+        raise HTTPException(status_code=422, detail="Válassz futárt admin módban.")
+    month_value = parse_month(month)
+    require_admin_invoice_upload_month(month_value)
+    process_id = normalize_process_id(process)
+    content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=422, detail="Válassz feltöltendő számlát.")
+    if len(content) > MAX_INVOICE_BYTES:
+        raise HTTPException(status_code=413, detail="A számla fájl túl nagy.")
+
+    courier_id, courier_name = courier_identity(view_user)
+    actor = str(admin_user.get("username") or "admin").strip() or "admin"
+    clean_invoice_number = clean_text(invoice_number, limit=120)
+    clean_note = clean_text(note, limit=500)
+    gross_value = max(0, int(re.sub(r"[^\d]", "", str(gross_amount or "")) or 0))
+    title = f"Számla {clean_invoice_number}".strip() if clean_invoice_number else "Számla"
+    marker = process_note_marker(process_id)
+    note_parts = [
+        marker,
+        f"Admin feltöltés a futár nevében: {actor}",
+        f"bruttó összesen: {gross_value} Ft" if gross_value else "",
+        clean_note,
+    ]
+    document_rows = supabase_rest(
+        "POST",
+        "peopleforce_documents",
+        payload={
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "document_type": process_action_key("invoice", process_id),
+            "document_month": month_value.isoformat(),
+            "title": title,
+            "file_name": invoice_file.filename or f"admin_szamla_{courier_id}_{month_value:%Y_%m}.pdf",
+            "mime_type": invoice_file.content_type or "application/octet-stream",
+            "file_size": len(content),
+            "file_content_base64": base64.b64encode(content).decode("ascii"),
+            "note": "; ".join(part for part in note_parts if part).strip(),
+            "uploaded_by": f"admin:{actor}",
+        },
+        prefer="return=representation",
+        timeout=60,
+    )
+    upsert_workflow_status(
+        view_user,
+        month_value,
+        "invoice_submit",
+        "done",
+        f"Számla admin által feltöltve a futár nevében. Admin: {actor}",
+        process_id,
+    )
+    upsert_workflow_status(
+        view_user,
+        month_value,
+        "invoice_check",
+        "open",
+        f"Admin által feltöltött számla manuális ellenőrzésre vár. Admin: {actor}",
+        process_id,
+    )
+    upsert_workflow_status(
+        view_user,
+        month_value,
+        "invoice_payment",
+        "open",
+        f"Admin számlafeltöltés után kifizetés előkészítésre vár. Admin: {actor}",
+        process_id,
+    )
+    return {
+        "ok": True,
+        "stored": True,
+        "document": (document_rows or [{}])[0],
+        "workflow": build_workflow(
+            view_user,
+            month_value,
             process_id,
             preview_read_only=True,
             allow_unpublished=True,

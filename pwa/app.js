@@ -58,7 +58,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v142";
+const APP_VERSION = "v143";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -498,6 +498,15 @@ function formatMonthLabel(month) {
     year: "numeric",
     month: "long",
   });
+}
+
+function adminInvoiceUploadMonths() {
+  const current = new Date();
+  current.setDate(1);
+  const previous = new Date(current);
+  previous.setMonth(previous.getMonth() - 1);
+  const monthKey = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
+  return [monthKey(current), monthKey(previous)];
 }
 
 function parseHufInput(value) {
@@ -3040,7 +3049,10 @@ function updateWorkflowMonthControl() {
   const input = $("#workflow-month");
   if (!input) return;
   const months = [...new Set(state.workflowMonths.map((item) => item.month).filter(Boolean))];
-  const optionMonths = months.length ? months : [state.workflowMonth].filter(Boolean);
+  const optionMonths = months.length ? [...months] : [state.workflowMonth].filter(Boolean);
+  if (isAdminPreviewMode() && state.workflowMonth && !optionMonths.includes(state.workflowMonth)) {
+    optionMonths.unshift(state.workflowMonth);
+  }
   if (input.tagName === "SELECT") {
     const currentValue = state.workflowMonth || optionMonths[0] || "";
     input.innerHTML = optionMonths.map((month) => (
@@ -3124,6 +3136,8 @@ function renderAdminWorkflowActions() {
     return;
   }
   const viewedUser = state.workflow?.viewingAs || {};
+  const uploadMonths = adminInvoiceUploadMonths();
+  const selectedUploadMonth = uploadMonths.includes(state.workflowMonth) ? state.workflowMonth : uploadMonths[0];
   panel.classList.remove("hidden");
   panel.innerHTML = `
     <div class="process-title">
@@ -3141,6 +3155,19 @@ function renderAdminWorkflowActions() {
       <button class="secondary admin-workflow-action" type="button" data-action="invoice_payment">Kifizetés lezárása</button>
       <button class="primary admin-workflow-action" type="button" data-action="all">Minden lezárása</button>
     </div>
+    <form id="admin-invoice-upload-form" class="process-form two-column admin-inline-form">
+      <label>Számla hónap
+        <select name="month">
+          ${uploadMonths.map((month) => `<option value="${escapeHtml(month)}" ${month === selectedUploadMonth ? "selected" : ""}>${escapeHtml(formatMonthLabel(month))}</option>`).join("")}
+        </select>
+      </label>
+      <label>Számlaszám<input name="invoice_number" autocomplete="off" /></label>
+      <label>Bruttó összeg (Ft)<input name="gross_amount" type="number" min="0" step="1" /></label>
+      <label>Megjegyzés<input name="note" autocomplete="off" placeholder="Admin feltöltés oka" /></label>
+      <label class="full-width">Számla feltöltése<input name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" required /></label>
+      <button class="primary full-width" type="submit">Számla feltöltése a futár nevében</button>
+    </form>
+    <div id="admin-invoice-upload-result"></div>
   `;
 }
 
@@ -3850,6 +3877,34 @@ async function completeWorkflowAsAdmin(action) {
     showWorkflowMessage("Admin művelet rögzítve.");
   } catch (error) {
     showWorkflowMessage(error.message, true);
+  }
+}
+
+async function uploadInvoiceAsAdmin(form) {
+  if (!canUseAdminWorkflowActions()) return;
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
+  const data = new FormData(form);
+  data.set("process", state.workflowProcess || "");
+  const uploadedMonth = String(data.get("month") || state.workflowMonth);
+  showWorkflowMessage("Admin számlafeltöltés folyamatban...");
+  try {
+    const payload = await api(withPreviewCourier("/api/admin/invoices/upload"), {
+      method: "POST",
+      body: data,
+      loadingMessage: "Számla feltöltése...",
+    });
+    state.workflowMonth = uploadedMonth;
+    state.workflow = payload.workflow;
+    updateWorkflowMonthControl();
+    renderWorkflow();
+    showWorkflowMessage("A számla bekerült a futár dokumentumtárába, manuális ellenőrzésre vár.");
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+    const result = $("#admin-invoice-upload-result");
+    if (result) result.innerHTML = `<div class="empty-card error-state">${escapeHtml(error.message)}</div>`;
+  } finally {
+    if (submitButton) submitButton.disabled = false;
   }
 }
 
@@ -5956,6 +6011,13 @@ $("#workflow-admin-actions")?.addEventListener("click", (event) => {
   const button = event.target.closest(".admin-workflow-action");
   if (!button) return;
   completeWorkflowAsAdmin(button.dataset.action || "");
+});
+
+$("#workflow-admin-actions")?.addEventListener("submit", (event) => {
+  const form = event.target.closest("#admin-invoice-upload-form");
+  if (!form) return;
+  event.preventDefault();
+  uploadInvoiceAsAdmin(form);
 });
 
 $("#salary-advance-list")?.addEventListener("click", (event) => {
