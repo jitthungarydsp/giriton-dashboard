@@ -187,7 +187,7 @@ expected_invoice_rows as (
     left join snapshot_tig st
       on st.courier_id = b.courier_id
      and st.period_start = b.period_start
-    where coalesce(st.cash_expected_huf, 0) > 0
+    where coalesce(st.cash_expected_huf, 0) >= 1000
 ),
 compared as (
     select
@@ -349,9 +349,9 @@ select
                 and i.invoice_kind = 'transfer'
           )
     ) as transfer_uploaded_count,
-    count(*) filter (where coalesce(st.cash_expected_huf, 0) > 0) as cash_expected_count,
+    count(*) filter (where coalesce(st.cash_expected_huf, 0) >= 1000) as cash_expected_count,
     count(*) filter (
-        where coalesce(st.cash_expected_huf, 0) > 0
+        where coalesce(st.cash_expected_huf, 0) >= 1000
           and exists (
               select 1
               from invoice_documents i
