@@ -8,7 +8,7 @@ import uuid
 import zipfile
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
-from urllib.parse import quote
+from urllib.parse import urlencode
 from streamlit_autorefresh import st_autorefresh
 
 import pandas as pd
@@ -1872,10 +1872,14 @@ def render_empty_right_menu(
                 if read_cash_invoice_missing_email_sent(str(courier_id), process_month):
                     invoice_compare_action_html = '<div class="right-invoice-sent">✓ E-mail kiküldve</div>'
                 else:
-                    notify_url = (
-                        f"?cash_invoice_notify={quote(str(courier_id))}"
-                        f"&cash_invoice_month={process_month:%Y-%m}"
-                    )
+                    notify_params = {
+                        str(key): str(value)
+                        for key, value in st.query_params.items()
+                        if str(key) not in {"cash_invoice_notify", "cash_invoice_month"}
+                    }
+                    notify_params["cash_invoice_notify"] = str(courier_id)
+                    notify_params["cash_invoice_month"] = process_month.strftime("%Y-%m")
+                    notify_url = "?" + urlencode(notify_params)
                     invoice_compare_action_html = (
                         f'<a class="right-invoice-action" href="{html.escape(notify_url)}">Futár értesítése</a>'
                     )
