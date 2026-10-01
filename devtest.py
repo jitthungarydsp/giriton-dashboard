@@ -1830,8 +1830,16 @@ def render_empty_right_menu(
                 transfer_expected = int(round(transfer_uploaded or transfer_expected))
                 cash_expected = int(round(cash_uploaded or cash_expected))
 
-            def invoice_short_status(uploaded: float, expected: float, document: dict[str, object]) -> tuple[str, bool]:
+            def invoice_short_status(
+                uploaded: float,
+                expected: float,
+                document: dict[str, object],
+                *,
+                missing_required: bool = True,
+            ) -> tuple[str, bool]:
                 if expected and not document:
+                    if not missing_required:
+                        return f"nem szükséges: {format_huf(expected)}", False
                     return f"hiányzik: {format_huf(expected)}", True
                 if document and abs(round(uploaded - expected)) > 1:
                     return f"Eltérés összege: {format_huf(round(uploaded - expected))}", True
@@ -1840,8 +1848,14 @@ def render_empty_right_menu(
                 return "-", False
 
             transfer_status, transfer_bad = invoice_short_status(transfer_uploaded, transfer_expected, transfer_invoice)
-            cash_status, cash_bad = invoice_short_status(cash_uploaded, cash_expected, cash_invoice)
-            cash_invoice_missing = not cash_invoice and int(round(parse_huf_value(cash_expected))) >= 1000
+            cash_invoice_required = int(round(parse_huf_value(cash_expected))) >= 1000
+            cash_status, cash_bad = invoice_short_status(
+                cash_uploaded,
+                cash_expected,
+                cash_invoice,
+                missing_required=cash_invoice_required,
+            )
+            cash_invoice_missing = not cash_invoice and cash_invoice_required
             if cash_invoice_missing:
                 process_month = period_start.replace(day=1)
                 cash_amount_huf = int(round(parse_huf_value(cash_expected)))
@@ -1934,8 +1948,7 @@ def render_empty_right_menu(
                 <div class="right-empty-menu-title">Számla kontroll</div>
                 <p class="right-empty-menu-caption">TIG kontra feltöltött számlák.</p>
                 {invoice_compare_rows_html}
-                <div class="right-invoice-status">{html.escape(invoice_compare_status)}</div>
-                {invoice_compare_action_html}
+                <div class="right-invoice-status">{html.escape(invoice_compare_status)}</div>{invoice_compare_action_html}
             </div>
         </div>
         """,
@@ -18296,17 +18309,28 @@ def render_courier_detail_page() -> None:
             tig_transfer_amount = int(round(transfer_invoice_amount or tig_transfer_amount))
             tig_cash_amount = int(round(cash_invoice_amount or tig_cash_amount))
 
-        def compare_card(title: str, invoice_doc: dict[str, object], uploaded_amount: float, tig_amount: float) -> str:
+        def compare_card(
+            title: str,
+            invoice_doc: dict[str, object],
+            uploaded_amount: float,
+            tig_amount: float,
+            *,
+            invoice_required: bool = True,
+        ) -> str:
             difference = round(parse_huf_value(uploaded_amount) - parse_huf_value(tig_amount))
             has_invoice = bool(invoice_doc)
-            is_ok = has_invoice and abs(difference) <= 1
+            is_ok = (has_invoice and abs(difference) <= 1) or (not has_invoice and not invoice_required)
             css_class = "is-ok" if is_ok else "is-bad"
             invoice_label = invoice_number_from_document(invoice_doc) if invoice_doc else "Nincs feltöltött számla"
             file_label = str(invoice_doc.get("title") or invoice_doc.get("file_name") or "-") if invoice_doc else "-"
             message = (
                 "Egyezik a TIG bontással."
-                if is_ok
-                else ("Hiányzik a feltöltött számla." if not has_invoice else f"Eltérés: {format_huf(difference)}")
+                if has_invoice and is_ok
+                else (
+                    "1000 Ft alatt nem szükséges KP számla."
+                    if not has_invoice and not invoice_required
+                    else ("Hiányzik a feltöltött számla." if not has_invoice else f"Eltérés: {format_huf(difference)}")
+                )
             )
             message_class = "invoice-compare-ok" if is_ok else "invoice-compare-alert"
             return f"""
@@ -18324,7 +18348,7 @@ def render_courier_detail_page() -> None:
             f"""
             <div class="invoice-compare-grid">
                 {compare_card("Átutalásos számla", transfer_invoice, transfer_invoice_amount, tig_transfer_amount)}
-                {compare_card("KP számla", cash_invoice, cash_invoice_amount, tig_cash_amount)}
+                {compare_card("KP számla", cash_invoice, cash_invoice_amount, tig_cash_amount, invoice_required=int(round(parse_huf_value(tig_cash_amount))) >= 1000)}
             </div>
             """,
             unsafe_allow_html=True,
