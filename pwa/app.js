@@ -2996,6 +2996,7 @@ function invoiceUploadBlockedByExistingDocument() {
 
 function renderInvoiceRequirements(invoiceLocked = false) {
   const requirements = state.workflow?.invoiceRequirements || {};
+  const cashOnlyInvoice = Boolean(requirements.cashOnlyInvoice);
   const requiresCashInvoice = Boolean(requirements.requiresCashInvoice);
   const cashAmount = Number(requirements.cashGrossHuf || 0);
   const transferAmount = Number(requirements.transferGrossHuf || 0);
@@ -3009,6 +3010,12 @@ function renderInvoiceRequirements(invoiceLocked = false) {
     cashLabel.textContent = requiresCashInvoice
       ? `KP számla feltöltése (kötelező, ${formatHuf(cashAmount)})`
       : "KP számla feltöltése";
+  }
+  const mainInvoiceLabel = $("#invoice-submit-file-label");
+  if (mainInvoiceLabel && cashOnlyInvoice) {
+    mainInvoiceLabel.textContent = `KP számla feltöltése (${formatHuf(totalAmount || cashAmount)})`;
+  } else if (mainInvoiceLabel) {
+    mainInvoiceLabel.textContent = "Számla feltöltése (üresen az 5. lépésben ellenőrzött fájlt küldi be)";
   }
   const grossInput = $("#gross-amount");
   if (grossInput && totalAmount) {
@@ -3565,13 +3572,21 @@ function renderTigBreakdown() {
       <small>${escapeHtml(tigIdentifier)}</small>
     </section>
     <div class="tig-party-grid">${buyerBlock}${sellerBlock}</div>
-    ${renderTigRows(transferRows)}
+    ${transferRows.length ? renderTigRows(transferRows) : ""}
     ${cashRows.length ? `<section class="tig-buyer-card"><span>KP külön számla</span><strong>Készpénzes teljesítés</strong><small>A KP külön számlás tétel: aznapi teljesítés, aznapi kifizetés, TAM.</small></section>${renderTigRows(cashRows)}` : ""}
   `;
 }
 
 function isExtraWorkflow() {
   return Boolean(state.workflow?.process);
+}
+
+function isKpInvoiceWorkflow() {
+  return state.workflow?.processType === "kp_invoice";
+}
+
+function workflowCanShowTig() {
+  return !isExtraWorkflow() || isKpInvoiceWorkflow();
 }
 
 function renderDocumentPanel(action, title, stepNumber) {
@@ -3588,7 +3603,7 @@ function renderDocumentPanel(action, title, stepNumber) {
   const breakdown = state.workflow?.financialBreakdown || {};
   const tig = state.workflow?.tigBreakdown || {};
   const settlementVisibleData = action === "settlement" && !isExtraWorkflow() && (Boolean(breakdown.available) || documents.length > 0);
-  const tigVisibleData = action === "tig" && !isExtraWorkflow() && (Boolean(tig.available) || documents.length > 0);
+  const tigVisibleData = action === "tig" && workflowCanShowTig() && (Boolean(tig.available) || documents.length > 0);
   const locked = Boolean(documentStep.locked) && !settlementVisibleData && !tigVisibleData;
   const useLegacySettlementDocument = action === "settlement" && !breakdown.available && documents.length > 0;
   const waitingTitle = action === "settlement"
@@ -3606,7 +3621,7 @@ function renderDocumentPanel(action, title, stepNumber) {
     panel.innerHTML = `
       <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>Elszámolásom</h3><p>A kártyákra nyitva látod, miből áll össze a havi összeg.</p></div></div>
       ${isExtraWorkflow()
-        ? `<div class="notice">Ez egy egyéb folyamat. Itt nincs külön havi elszámolás vagy TIG; a következő teendő a számla feltöltése.</div>`
+        ? `<div class="notice">${isKpInvoiceWorkflow() ? "Ez KP számla pótlási folyamat. A havi elszámolás helyett csak a KP TIG és a hozzá tartozó számlafeltöltés aktív." : "Ez egy egyéb folyamat. Itt nincs külön havi elszámolás vagy TIG; a következő teendő a számla feltöltése."}</div>`
         : locked
           ? `<div class="empty-card">🔒 Az elszámolási adatok még nem aktívak.</div>`
           : useLegacySettlementDocument
@@ -3619,7 +3634,7 @@ function renderDocumentPanel(action, title, stepNumber) {
     if (complaintForm) complaintForm.addEventListener("submit", (event) => submitComplaint(event, action));
     return;
   }
-  if (action === "tig" && !isExtraWorkflow()) {
+  if (action === "tig" && workflowCanShowTig()) {
     const tigReady = Boolean(tig.available) || documents.length > 0;
     const tigContent = tig.available
       ? renderTigBreakdown()
@@ -3693,7 +3708,7 @@ function activeWorkflowPanel() {
   const steps = state.workflow?.steps || [];
   const firstActive = steps.find((step) => !step.done && !step.locked) || steps.find((step) => !step.done);
   if (!firstActive && state.workflow?.states?.invoice_payment?.status === "done") return "invoice-check-panel";
-  if (isExtraWorkflow() && (firstActive?.key?.startsWith("settlement") || firstActive?.key?.startsWith("tig"))) {
+  if (isExtraWorkflow() && !workflowCanShowTig() && (firstActive?.key?.startsWith("settlement") || firstActive?.key?.startsWith("tig"))) {
     const invoiceStep = workflowStep("invoice_submit");
     if (!invoiceStep.locked && !invoiceStep.done) return "invoice-submit-panel";
   }
@@ -3711,7 +3726,7 @@ function showOnlyWorkflowPanel(panelId) {
     Boolean(state.workflow?.financialBreakdown?.available)
     || Boolean((docs.settlement || []).length)
   );
-  const showTig = !isExtraWorkflow() && (
+  const showTig = workflowCanShowTig() && (
     Boolean(state.workflow?.tigBreakdown?.available)
     || Boolean((docs.tig || []).length)
   );
@@ -4836,13 +4851,16 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
     selectedCashInvoiceFile instanceof File && Boolean(selectedCashInvoiceFile.name);
   const invoiceRequirements = state.workflow?.invoiceRequirements || {};
   const cashInvoiceRequired = Boolean(invoiceRequirements.requiresCashInvoice);
+  const cashOnlyInvoice = Boolean(invoiceRequirements.cashOnlyInvoice);
   if (cashInvoiceRequired && !hasCashInvoiceFile) {
     showWorkflowMessage(`Ehhez a TIG-hez külön KP számla is kell (${formatHuf(invoiceRequirements.cashGrossHuf || 0)}). Töltsd fel a KP számlát is.`, true);
     if (submitButton) submitButton.disabled = false;
     return;
   }
   showWorkflowMessage(
-    hasCashInvoiceFile
+    cashOnlyInvoice
+      ? "A KP számla ellenőrzése és tárolása folyamatban…"
+      : hasCashInvoiceFile
       ? "A normál és a KP számla ellenőrzése és tárolása folyamatban…"
       : "A számla végső ellenőrzése és tárolása folyamatban…"
   );

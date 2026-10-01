@@ -5967,6 +5967,7 @@ WORKFLOW_PREREQUISITES = {
 WORKFLOW_DOCUMENT_TYPES = {"settlement", "tig", "invoice"}
 PROCESS_NOTE_PREFIX = "Folyamat azonosító:"
 MOBILE_VISIBILITY_MODES = {"original", "settlement_only", "settlement_and_tig"}
+KP_INVOICE_PROCESS_PREFIX = "kp_invoice_"
 
 
 def normalize_mobile_visibility_mode(value: Any) -> str:
@@ -6002,6 +6003,25 @@ def process_id_from_action_key(action_key: str) -> str:
 def process_note_marker(process_id: str | None) -> str:
     clean_process = normalize_process_id(process_id)
     return f"{PROCESS_NOTE_PREFIX} {clean_process}" if clean_process else ""
+
+
+def kp_invoice_process_id(month: date) -> str:
+    return f"{KP_INVOICE_PROCESS_PREFIX}{month:%Y%m}"
+
+
+def is_kp_invoice_process(process_id: str | None) -> bool:
+    clean_process = normalize_process_id(process_id)
+    return bool(re.fullmatch(rf"{KP_INVOICE_PROCESS_PREFIX}\d{{6}}", clean_process))
+
+
+def workflow_process_label(process_id: str | None) -> str:
+    clean_process = normalize_process_id(process_id)
+    if not clean_process:
+        return "Havi folyamat"
+    match = re.fullmatch(rf"{KP_INVOICE_PROCESS_PREFIX}(\d{{4}})(\d{{2}})", clean_process)
+    if match:
+        return f"KP számla pótlás - {match.group(1)}-{match.group(2)}"
+    return f"Egyéb folyamat: {clean_process}"
 
 
 def document_belongs_to_process(document: dict[str, Any], process_id: str | None) -> bool:
@@ -8825,14 +8845,25 @@ def workflow_invoice_requirements(
 ) -> dict[str, Any]:
     tig_breakdown = tig_breakdown or {}
     cash_gross = money_int(tig_breakdown.get("cashGrossHuf"))
+    cash_only_process = str(tig_breakdown.get("processType") or "") == "kp_invoice"
     if cash_gross <= 0:
         cash_gross = workflow_cash_amount_from_financial_breakdown(financial_breakdown)
     total_gross = money_int(tig_breakdown.get("finalTotalHuf")) or money_int(expected_tig_gross_huf)
     if total_gross <= 0:
         total_gross = money_int(financial_breakdown.get("totalPayableHuf"))
+    if cash_only_process:
+        cash_gross = total_gross or cash_gross
+        return {
+            "requiresCashInvoice": False,
+            "cashOnlyInvoice": True,
+            "transferGrossHuf": 0,
+            "cashGrossHuf": max(cash_gross, 0),
+            "totalGrossHuf": max(cash_gross, 0),
+        }
     transfer_gross = max(total_gross - cash_gross, 0) if cash_gross else total_gross
     return {
         "requiresCashInvoice": cash_gross > 0,
+        "cashOnlyInvoice": False,
         "transferGrossHuf": max(transfer_gross, 0),
         "cashGrossHuf": max(cash_gross, 0),
         "totalGrossHuf": max(total_gross, 0),
@@ -9034,6 +9065,57 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
     }
     tig = align_tig_breakdown_with_financial_cards(tig, financial_breakdown)
     return apply_tig_overrides(tig, read_mobile_breakdown_overrides(courier_id, month))
+
+
+def build_kp_invoice_tig_breakdown(user: dict[str, Any], month: date) -> dict[str, Any]:
+    financial_breakdown = build_financial_breakdown(user, month, allow_unpublished=True)
+    monthly_tig = build_workflow_tig_breakdown(user, month, financial_breakdown)
+    cash_amount = money_int(monthly_tig.get("cashGrossHuf")) or workflow_cash_amount_from_financial_breakdown(financial_breakdown)
+    if cash_amount < 1000:
+        return {
+            "available": False,
+            "month": month.strftime("%Y-%m"),
+            "message": "Ehhez a hónaphoz nincs bekérendő KP számla 1000 Ft felett.",
+            "rows": [],
+        }
+    cash_rows = [
+        {**row}
+        for row in monthly_tig.get("rows") or []
+        if str(row.get("key") or "") == "cash_service"
+    ]
+    if not cash_rows:
+        cash_rows = [{
+            "key": "cash_service",
+            "label": "KP számla pótlás",
+            "netHuf": cash_amount,
+            "vatHuf": 0,
+            "grossHuf": cash_amount,
+            "vatLabel": "TAM",
+            "note": "Külön KP számla: aznapi teljesítés, aznapi kifizetés.",
+        }]
+    for row in cash_rows:
+        row["key"] = "cash_service"
+        row["label"] = str(row.get("label") or "KP számla pótlás")
+        row["grossHuf"] = money_int(row.get("grossHuf")) or cash_amount
+        row["netHuf"] = money_int(row.get("netHuf")) or money_int(row.get("grossHuf"))
+        row["vatHuf"] = money_int(row.get("vatHuf"))
+        row["vatLabel"] = str(row.get("vatLabel") or "TAM")
+        row["note"] = str(row.get("note") or "Külön KP számla: aznapi teljesítés, aznapi kifizetés.")
+    courier_id, courier_name = courier_identity(user)
+    result = {
+        **monthly_tig,
+        "available": True,
+        "month": month.strftime("%Y-%m"),
+        "courierId": courier_id,
+        "courierName": courier_name,
+        "documentReference": f"KP-{courier_id}-{month:%Y%m}",
+        "rows": cash_rows,
+        "cashGrossHuf": cash_amount,
+        "finalTotalHuf": cash_amount,
+        "processType": "kp_invoice",
+        "message": "KP számla pótlási TIG, csak a készpénzes részre.",
+    }
+    return result
 
 
 def hidden_financial_breakdown(month: date) -> dict[str, Any]:
@@ -13450,6 +13532,7 @@ def build_workflow(
     can_view_amounts: bool | None = None,
 ) -> dict[str, Any]:
     process_id = normalize_process_id(process)
+    kp_invoice_process = is_kp_invoice_process(process_id)
     documents, status_rows, complaints = read_workflow_rows(user, month)
     states = status_map(status_rows, process_id)
     mobile_config = read_mobile_settlement_period_config(month) if not process_id else {}
@@ -13490,12 +13573,17 @@ def build_workflow(
     }
     if not process_id and not amount_access:
         financial_breakdown = hidden_financial_breakdown(month)
-    tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown) if not process_id and not tig_hidden_by_admin else {
-        "available": False,
-        "month": month.strftime("%Y-%m"),
-        "message": "Admin beállítás szerint a TIG most nem látható." if tig_hidden_by_admin else "Egyedi folyamatnĂˇl nincs havi TIG bontĂˇs.",
-        "rows": [],
-    }
+    if kp_invoice_process and not tig_hidden_by_admin:
+        tig_breakdown = build_kp_invoice_tig_breakdown(user, month)
+    elif not process_id and not tig_hidden_by_admin:
+        tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown)
+    else:
+        tig_breakdown = {
+            "available": False,
+            "month": month.strftime("%Y-%m"),
+            "message": "Admin beállítás szerint a TIG most nem látható." if tig_hidden_by_admin else "Egyedi folyamatnál nincs havi TIG bontás.",
+            "rows": [],
+        }
     documents = [row for row in documents if document_belongs_to_process(row, process_id)]
     complaints = [
         row for row in complaints
@@ -13515,7 +13603,7 @@ def build_workflow(
         if document_groups[action] and action not in states:
             states[action] = {"status": "open", "status_note": "Új dokumentum érkezett."}
 
-    process_invoice_flow_ready = bool(process_id) and (
+    process_invoice_flow_ready = bool(process_id) and not kp_invoice_process and (
         bool(document_groups["tig"])
         or bool(document_groups["settlement"])
         or bool(states.get("settlement"))
@@ -13524,7 +13612,7 @@ def build_workflow(
         or bool(states.get("invoice_check"))
         or bool(states.get("invoice_payment"))
     )
-    process_settlement_ready = process_invoice_flow_ready
+    process_settlement_ready = kp_invoice_process or process_invoice_flow_ready
     settlement_ready = process_settlement_ready or bool(document_groups["settlement"]) or bool(financial_breakdown.get("available"))
     settlement_done = workflow_done(states, "settlement") or process_settlement_ready
     efo_invoice_skip = not process_id and courier_has_efo_assignment(user, month)
@@ -13563,7 +13651,7 @@ def build_workflow(
         },
         {
             "key": "tig_document",
-            "title": "TIG admin beállítás szerint rejtve" if tig_hidden_by_admin else "TIG azonnal látható" if tig_open_by_admin else "TIG nem szükséges ehhez a folyamathoz" if process_id else (
+            "title": "TIG admin beállítás szerint rejtve" if tig_hidden_by_admin else "KP TIG elkészült" if kp_invoice_process and tig_ready else "TIG azonnal látható" if tig_open_by_admin else "TIG nem szükséges ehhez a folyamathoz" if process_id else (
                 "TIG elkészült"
                 if tig_ready
                 else "Várakozás a TIG elkészítésére"
@@ -13575,7 +13663,7 @@ def build_workflow(
             "key": "tig",
             "title": "TIG elfogadása" if not tig_hidden_by_admin else "TIG rejtve",
             "done": tig_done,
-            "locked": False if tig_open_by_admin and tig_ready else not settlement_done or (not process_id and not tig_ready),
+            "locked": False if tig_open_by_admin and tig_ready else not settlement_done or ((not process_id or kp_invoice_process) and not tig_ready),
         },
         {
             "key": "invoice_submit",
@@ -13719,7 +13807,8 @@ def build_workflow(
     return {
         "month": month.strftime("%Y-%m"),
         "process": process_id,
-        "processLabel": "Havi folyamat" if not process_id else f"Egyéb folyamat: {process_id}",
+        "processLabel": workflow_process_label(process_id),
+        "processType": "kp_invoice" if kp_invoice_process else ("custom" if process_id else "monthly"),
         "viewerReadOnly": preview_read_only,
         "viewingAs": public_user(user) if preview_read_only else None,
         "steps": steps,
@@ -13899,36 +13988,42 @@ def list_workflow_processes(user: dict[str, Any], month: date) -> list[dict[str,
     return [
         {
             "id": process_id,
-            "label": "Havi folyamat" if not process_id else f"Egyéb folyamat: {process_id}",
+            "label": workflow_process_label(process_id),
         }
         for process_id in sorted(process_ids, key=lambda item: (item != "", item))
     ]
 
 
-def expected_tig_amount(user: dict[str, Any], month: date) -> int:
+def expected_tig_amount(user: dict[str, Any], month: date, process_id: str | None = "") -> int:
     courier_id, _courier_name = courier_identity(user)
-    rows = supabase_rest(
-        "GET",
-        "peopleforce_documents",
-        params={
-            "select": "file_content_base64",
-            "courier_id": f"eq.{courier_id}",
-            "document_month": f"eq.{month.isoformat()}",
-            "document_type": "eq.tig",
-            "order": "uploaded_at.desc",
-            "limit": "5",
-        },
-        timeout=60,
+    clean_process_id = normalize_process_id(process_id)
+    if not is_kp_invoice_process(clean_process_id):
+        rows = supabase_rest(
+            "GET",
+            "peopleforce_documents",
+            params={
+                "select": "file_content_base64",
+                "courier_id": f"eq.{courier_id}",
+                "document_month": f"eq.{month.isoformat()}",
+                "document_type": "eq.tig",
+                "order": "uploaded_at.desc",
+                "limit": "5",
+            },
+            timeout=60,
+        )
+        for row in rows:
+            try:
+                amount = extract_expected_amount(base64.b64decode(row.get("file_content_base64") or ""))
+            except Exception:
+                amount = 0
+            if amount:
+                return amount
+    financial_breakdown = build_financial_breakdown(user, month, allow_unpublished=is_kp_invoice_process(clean_process_id))
+    tig_breakdown = (
+        build_kp_invoice_tig_breakdown(user, month)
+        if is_kp_invoice_process(clean_process_id)
+        else build_workflow_tig_breakdown(user, month, financial_breakdown)
     )
-    for row in rows:
-        try:
-            amount = extract_expected_amount(base64.b64decode(row.get("file_content_base64") or ""))
-        except Exception:
-            amount = 0
-        if amount:
-            return amount
-    financial_breakdown = build_financial_breakdown(user, month)
-    tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown)
     if tig_breakdown.get("available"):
         return money_int(tig_breakdown.get("finalTotalHuf"))
     return 0
@@ -14077,6 +14172,10 @@ def require_prerequisite(user: dict[str, Any], month: date, action: str, process
         return
     documents, status_rows, _complaints = read_workflow_rows(user, month)
     clean_process_id = normalize_process_id(process_id)
+    if is_kp_invoice_process(clean_process_id) and prerequisite == "tig":
+        if not workflow_done(status_map(status_rows, clean_process_id), "tig"):
+            raise HTTPException(status_code=409, detail="Előbb szükséges: a KP TIG elfogadása.")
+        return
     if clean_process_id and prerequisite in {"settlement", "tig"}:
         process_documents = [row for row in documents if document_belongs_to_process(row, clean_process_id)]
         process_document_groups = {
@@ -16136,16 +16235,21 @@ def workflow_tig_pdf(
     )
     if not normalize_process_id(process) and visibility_mode == "settlement_only" and not privileged_viewer:
         raise HTTPException(status_code=404, detail="A TIG admin beállítás szerint most nem látható.")
+    process_id = normalize_process_id(process)
     financial_breakdown = build_financial_breakdown(
         view_user,
         month_value,
-        allow_unpublished=preview or privileged_viewer,
+        allow_unpublished=preview or privileged_viewer or is_kp_invoice_process(process_id),
     )
-    tig_breakdown = build_workflow_tig_breakdown(view_user, month_value, financial_breakdown)
+    tig_breakdown = (
+        build_kp_invoice_tig_breakdown(view_user, month_value)
+        if is_kp_invoice_process(process_id)
+        else build_workflow_tig_breakdown(view_user, month_value, financial_breakdown)
+    )
     if not tig_breakdown.get("available"):
         raise HTTPException(status_code=404, detail="Ehhez a hónaphoz még nincs letölthető TIG.")
     _documents, status_rows, _complaints = read_workflow_rows(view_user, month_value)
-    states = status_map(status_rows, process)
+    states = status_map(status_rows, process_id)
 
     courier_id, courier_name = courier_identity(view_user)
     profile_rows = optional_supabase_rows(
@@ -16162,6 +16266,10 @@ def workflow_tig_pdf(
     tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
     cash_amount = workflow_cash_amount_from_financial_breakdown(financial_breakdown)
     payable = money_int(financial_breakdown.get("totalPayableHuf"))
+    if is_kp_invoice_process(process_id):
+        payable = money_int(tig_breakdown.get("finalTotalHuf"))
+        cash_amount = money_int(tig_breakdown.get("cashGrossHuf"))
+        tip_amount = 0
     reference = str(tig_breakdown.get("documentReference") or make_document_reference(courier_id, "tig", month_value))
     pdf_bytes = build_tig_pdf(
         {
@@ -16723,13 +16831,19 @@ async def check_invoice(
     billing_profile = read_billing_profile(user)
     _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
     override_enabled = invoice_validation_override_enabled(status_map(status_rows, process_id))
+    kp_only_invoice_process = is_kp_invoice_process(process_id)
+    expected_gross_amount = expected_tig_amount(user, month_value)
+    if kp_only_invoice_process:
+        kp_tig = build_kp_invoice_tig_breakdown(user, month_value)
+        expected_gross_amount = money_int(kp_tig.get("finalTotalHuf")) or expected_gross_amount
     result = validate_invoice(
         file_name=invoice_file.filename or "szamla",
         content=content,
         invoice_month=month_value,
         courier_name=courier_name,
         courier_id=courier_id,
-        expected_gross_amount=expected_tig_amount(user, month_value),
+        expected_gross_amount=expected_gross_amount,
+        invoice_mode="cash" if kp_only_invoice_process else "transfer",
         expected_seller_name=billing_profile["company_name"],
         expected_seller_tax_number=billing_profile["tax_number"],
         expected_seller_address=billing_profile["company_address"],
@@ -16800,18 +16914,25 @@ async def submit_invoice(
     if cash_invoice_file is not None and cash_invoice_file.filename:
         cash_content = await cash_invoice_file.read(MAX_INVOICE_BYTES + 1)
     override_enabled = invoice_validation_override_enabled(states)
+    kp_only_invoice_process = is_kp_invoice_process(process_id)
     expected_amount = expected_tig_amount(user, month_value)
-    financial_breakdown = build_financial_breakdown(user, month_value)
-    tig_breakdown = build_workflow_tig_breakdown(user, month_value, financial_breakdown)
+    financial_breakdown = build_financial_breakdown(user, month_value, allow_unpublished=kp_only_invoice_process)
+    tig_breakdown = (
+        build_kp_invoice_tig_breakdown(user, month_value)
+        if kp_only_invoice_process
+        else build_workflow_tig_breakdown(user, month_value, financial_breakdown)
+    )
     invoice_requirements = workflow_invoice_requirements(
         financial_breakdown,
         tig_breakdown,
         expected_tig_gross_huf=expected_amount,
     )
     expected_cash_amount = money_int(invoice_requirements.get("cashGrossHuf"))
+    if kp_only_invoice_process:
+        expected_amount = money_int(invoice_requirements.get("totalGrossHuf")) or expected_cash_amount
     expected_transfer_amount = money_int(invoice_requirements.get("transferGrossHuf")) or expected_amount
     expected_total_invoice_amount = money_int(invoice_requirements.get("totalGrossHuf")) or expected_transfer_amount
-    cash_invoice_required = bool(invoice_requirements.get("requiresCashInvoice"))
+    cash_invoice_required = bool(invoice_requirements.get("requiresCashInvoice")) and not kp_only_invoice_process
     if cash_invoice_required and not cash_content:
         raise HTTPException(
             status_code=422,
@@ -16820,7 +16941,25 @@ async def submit_invoice(
                 f"Töltsd fel a KP számlát is ({format_email_huf(expected_cash_amount)})."
             ),
         )
-    if cash_content:
+    if kp_only_invoice_process:
+        result = validate_invoice(
+            file_name=invoice_file.filename or "kp_szamla",
+            content=content,
+            invoice_month=month_value,
+            courier_name=courier_name,
+            courier_id=courier_id,
+            expected_gross_amount=expected_amount,
+            invoice_mode="cash",
+            invoice_number=invoice_number,
+            gross_amount=gross_amount,
+            require_submission_fields=True,
+            skip_invoice_number_match=skip_invoice_number_match,
+            expected_seller_name=billing_profile["company_name"],
+            expected_seller_tax_number=billing_profile["tax_number"],
+            expected_seller_address=billing_profile["company_address"],
+        )
+        cash_content = b""
+    elif cash_content:
         shared_validation_base = {
             "invoice_month": month_value,
             "courier_name": courier_name,
@@ -16871,15 +17010,21 @@ async def submit_invoice(
     result = apply_invoice_validation_override(result, override_enabled)
     main_gross_amount = money_int((main_result if cash_content else result).get("parsed", {}).get("grossTotal"))
     cash_gross_amount = money_int((cash_result if cash_content else {}).get("parsed", {}).get("grossTotal"))
+    main_payment_type = "KP" if kp_only_invoice_process else "Átutalás"
+    main_title = f"KP számla {invoice_number}" if kp_only_invoice_process else f"Számla {invoice_number}"
 
     upload_documents = [
         {
             "file_name": invoice_file.filename or f"szamla_{invoice_number}.pdf",
             "content_type": invoice_file.content_type or "application/octet-stream",
             "content": content,
-            "title": f"Számla {invoice_number}",
-            "payment_type": "Átutalás",
-            "gross_amount": main_gross_amount or (gross_amount - cash_gross_amount if cash_gross_amount else gross_amount),
+            "title": main_title,
+            "payment_type": main_payment_type,
+            "gross_amount": main_gross_amount or (
+                gross_amount
+                if kp_only_invoice_process
+                else (gross_amount - cash_gross_amount if cash_gross_amount else gross_amount)
+            ),
         }
     ]
     if cash_content and cash_invoice_file is not None:

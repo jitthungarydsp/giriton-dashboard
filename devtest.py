@@ -6039,6 +6039,17 @@ def process_id_from_note(note: object) -> str:
     return normalize_process_id(match.group(1)) if match else ""
 
 
+KP_INVOICE_PROCESS_PREFIX = "kp_invoice_"
+
+
+def kp_invoice_process_id(document_month: date) -> str:
+    return f"{KP_INVOICE_PROCESS_PREFIX}{document_month:%Y%m}"
+
+
+def kp_invoice_process_label(document_month: date) -> str:
+    return f"KP számla pótlás - {document_month:%Y-%m}"
+
+
 def delete_peopleforce_process_statuses(courier_id: str, document_month: date, process_id: object) -> int:
     clean_process = normalize_process_id(process_id)
     if not clean_process:
@@ -17764,7 +17775,7 @@ def render_courier_detail_page() -> None:
                 next_payment_month = add_months(payment_month, 1)
                 next_period_start, next_period_end = month_bounds(next_payment_month)
                 correction_amount_huf = abs(round(invoice_difference_huf))
-                correction_type = "correction_income" if invoice_difference_huf > 0 else "correction_deduction"
+                correction_type = "correction_income" if invoice_difference_huf < 0 else "correction_deduction"
                 correction_type_label = "Korrekció +" if correction_type == "correction_income" else "Korrekció -"
                 default_correction_note = f"Előző hónapi eltérés korrekció - {payment_month:%Y-%m}"
                 st.markdown("##### Eltérés továbbvezetése")
@@ -18148,6 +18159,94 @@ def render_courier_detail_page() -> None:
             """,
             unsafe_allow_html=True,
         )
+        cash_invoice_missing = not cash_invoice and int(round(parse_huf_value(tig_cash_amount))) >= 1000
+        if cash_invoice_missing:
+            process_month = period_start.replace(day=1)
+            process_id = kp_invoice_process_id(process_month)
+            process_label = kp_invoice_process_label(process_month)
+            cash_amount_huf = int(round(parse_huf_value(tig_cash_amount)))
+            email_candidates = [
+                str(profile.get("email") or "").strip(),
+                str(profile.get("billing_email") or "").strip(),
+                *load_courier_booking_emails(courier_id, courier_name),
+            ]
+            recipient_email = next((value for value in email_candidates if value), "")
+            st.warning(
+                f"Hiányzik a KP számla {format_huf(cash_amount_huf)} összegre. "
+                f"Ezzel a gombbal megnyílik a PWA-ban a '{process_label}' folyamat."
+            )
+            if st.button("Futár értesítése", key=f"notify_cash_invoice_missing_{courier_id}_{process_month:%Y%m}", type="primary"):
+                actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+                subject = f"Hiányzó KP számla pótlása - {process_month:%Y-%m}"
+                body = (
+                    f"Kedves {courier_name}!\n\n"
+                    f"A(z) {process_month:%Y-%m} havi elszámolásodhoz hiányzik a KP számla.\n"
+                    f"Bekérendő KP számla összege: {format_huf(cash_amount_huf)}.\n\n"
+                    "A PWA oldalon válaszd ki az 'Elszámolás és számla' résznél a "
+                    f"'{process_label}' folyamatot, fogadd el a KP TIG-et, majd töltsd fel a KP számlát.\n\n"
+                    f"Belépés: {app_login_url()}\n\n"
+                    "Köszönjük!\nJITT"
+                )
+                process_note = (
+                    f"KP számla pótlási folyamat. Folyamat azonosító: {process_id}. "
+                    f"KP TIG összeg: {cash_amount_huf} Ft."
+                )
+                try:
+                    clean_email = validate_email(recipient_email)
+                    upsert_peopleforce_card_status(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        action_key=process_action_key("settlement", process_id),
+                        document_month=process_month,
+                        status="done",
+                        status_note=process_note,
+                        updated_by=actor,
+                    )
+                    upsert_peopleforce_card_status(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        action_key=process_action_key("tig", process_id),
+                        document_month=process_month,
+                        status="open",
+                        status_note="KP TIG elfogadásra vár. " + process_note,
+                        updated_by=actor,
+                    )
+                    result = send_custom_email(clean_email, subject, body)
+                    log_email_event(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        recipient_email=clean_email,
+                        template_key="cash_invoice_missing",
+                        subject=subject,
+                        body=body,
+                        status="sent",
+                        sent_by=actor,
+                        context={
+                            "month": process_month.strftime("%Y-%m"),
+                            "amount_huf": cash_amount_huf,
+                            "process_id": process_id,
+                        },
+                    )
+                    st.success(f"Értesítés elküldve: {result.get('recipient')}. A folyamat megnyílt a PWA-ban.")
+                    st.rerun()
+                except Exception as exc:
+                    log_email_event(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        recipient_email=str(recipient_email or ""),
+                        template_key="cash_invoice_missing",
+                        subject=subject,
+                        body=body,
+                        status="failed",
+                        error_message=str(exc),
+                        sent_by=actor,
+                        context={
+                            "month": process_month.strftime("%Y-%m"),
+                            "amount_huf": cash_amount_huf,
+                            "process_id": process_id,
+                        },
+                    )
+                    st.error(f"A futár értesítése sikertelen: {exc}")
         if invoice_documents.empty:
             st.info("Ehhez a hónaphoz még nincs feltöltött számla.")
         else:
