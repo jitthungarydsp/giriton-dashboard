@@ -3,6 +3,7 @@ begin;
 create schema if not exists settlement;
 
 drop view if exists settlement.vw_invoice_discrepancy_list;
+drop view if exists settlement.vw_invoice_discrepancy_coverage;
 
 create or replace view settlement.vw_invoice_discrepancy_list as
 with latest_snapshots as (
@@ -253,6 +254,126 @@ order by
 
 grant select on settlement.vw_invoice_discrepancy_list to service_role;
 grant select on settlement.vw_invoice_discrepancy_list to authenticated;
+
+create or replace view settlement.vw_invoice_discrepancy_coverage as
+with latest_snapshots as (
+    select *
+    from (
+        select
+            s.*,
+            row_number() over (
+                partition by s.courier_id, s.period_start::date
+                order by s.version desc, s.created_at desc, s.id desc
+            ) as rn
+        from settlement.courier_finance_snapshot s
+    ) ranked
+    where rn = 1
+),
+snapshot_tig as (
+    select
+        s.id as snapshot_id,
+        s.courier_id,
+        s.courier_name,
+        s.period_start::date as period_start,
+        coalesce(
+            nullif(regexp_replace(coalesce(src.payload ->> 'finalTotalHuf', ''), '[^0-9.-]', '', 'g'), '')::numeric,
+            nullif(regexp_replace(coalesce(s.metadata ->> 'tig_final_total', ''), '[^0-9.-]', '', 'g'), '')::numeric,
+            0
+        ) as transfer_expected_huf,
+        coalesce(
+            nullif(regexp_replace(coalesce(src.payload ->> 'cashGrossHuf', ''), '[^0-9.-]', '', 'g'), '')::numeric,
+            0
+        ) as cash_expected_huf
+    from latest_snapshots s
+    left join settlement.courier_finance_snapshot_source src
+      on src.snapshot_id = s.id
+     and src.source_key = 'tig_breakdown'
+),
+settlement_months as (
+    select distinct
+        coalesce(nullif(s.courier_id, ''), 'name:' || lower(trim(s.driver_name))) as courier_id,
+        s.driver_name as courier_name,
+        date_trunc('month', s.period_start::date)::date as period_start
+    from settlement.courier_settlement_summary s
+    where s.period_start is not null
+),
+invoice_documents as (
+    select
+        d.courier_id,
+        date_trunc('month', d.document_month::date)::date as period_start,
+        case
+            when lower(coalesce(d.title, '')) like 'kp %'
+              or lower(coalesce(d.title, '')) like '%kp szamla%'
+              or lower(coalesce(d.title, '')) like '%kp számla%'
+              or lower(coalesce(d.file_name, '')) like '%kp_szamla%'
+              or lower(coalesce(d.file_name, '')) like '%kp-szamla%'
+              or lower(coalesce(d.file_name, '')) like '%kp számla%'
+              or lower(coalesce(d.note, '')) like '%fizetesi mod: kp%'
+              or lower(coalesce(d.note, '')) like '%fizetési mód: kp%'
+            then 'cash'
+            else 'transfer'
+        end as invoice_kind
+    from public.peopleforce_documents d
+    where lower(coalesce(d.document_type, '')) = 'invoice'
+       or lower(concat_ws(' ', d.document_type, d.title, d.file_name)) like '%szamla%'
+       or lower(concat_ws(' ', d.document_type, d.title, d.file_name)) like '%számla%'
+),
+month_base as (
+    select
+        sm.courier_id,
+        sm.courier_name,
+        sm.period_start
+    from settlement_months sm
+
+    union
+
+    select
+        st.courier_id,
+        st.courier_name,
+        st.period_start
+    from snapshot_tig st
+)
+select
+    b.period_start,
+    count(*) as courier_months_total,
+    count(*) filter (where st.snapshot_id is not null) as courier_months_with_snapshot,
+    count(*) filter (where st.snapshot_id is null) as courier_months_without_snapshot,
+    count(*) filter (where coalesce(st.transfer_expected_huf, 0) > 0) as transfer_expected_count,
+    count(*) filter (
+        where coalesce(st.transfer_expected_huf, 0) > 0
+          and exists (
+              select 1
+              from invoice_documents i
+              where i.courier_id = b.courier_id
+                and i.period_start = b.period_start
+                and i.invoice_kind = 'transfer'
+          )
+    ) as transfer_uploaded_count,
+    count(*) filter (where coalesce(st.cash_expected_huf, 0) > 0) as cash_expected_count,
+    count(*) filter (
+        where coalesce(st.cash_expected_huf, 0) > 0
+          and exists (
+              select 1
+              from invoice_documents i
+              where i.courier_id = b.courier_id
+                and i.period_start = b.period_start
+                and i.invoice_kind = 'cash'
+          )
+    ) as cash_uploaded_count,
+    (
+        select count(*)
+        from settlement.vw_invoice_discrepancy_list d
+        where d.period_start = b.period_start
+    ) as discrepancy_rows
+from month_base b
+left join snapshot_tig st
+  on st.courier_id = b.courier_id
+ and st.period_start = b.period_start
+group by b.period_start
+order by b.period_start desc;
+
+grant select on settlement.vw_invoice_discrepancy_coverage to service_role;
+grant select on settlement.vw_invoice_discrepancy_coverage to authenticated;
 
 notify pgrst, 'reload schema';
 
