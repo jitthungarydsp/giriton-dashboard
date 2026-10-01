@@ -80,6 +80,13 @@ def resend_from_email(default_from):
     return first_setting("RESEND_FROM_EMAIL", "EMAIL_API_FROM", default=default_from)
 
 
+def sender_display_name(value):
+    name = str(value or "").strip()
+    if not name or name.casefold() == "giriton":
+        return "JittFutár"
+    return name
+
+
 def validate_email(value):
     email = str(value or "").strip()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
@@ -101,7 +108,7 @@ def smtp_config():
             "username": username,
             "password": password,
             "from_email": from_email,
-            "from_name": first_setting("RESEND_FROM_NAME", "SMTP_FROM_NAME", "EMAIL_FROM_NAME", "MAIL_FROM_NAME", default="JITT"),
+            "from_name": sender_display_name(first_setting("RESEND_FROM_NAME", "SMTP_FROM_NAME", "EMAIL_FROM_NAME", "MAIL_FROM_NAME", default="JittFutár")),
             "use_ssl": False,
             "use_starttls": False,
         }
@@ -129,7 +136,7 @@ def smtp_config():
         "username": username,
         "password": password,
         "from_email": from_email,
-        "from_name": first_setting("SMTP_FROM_NAME", "EMAIL_FROM_NAME", "MAIL_FROM_NAME", default="JITT"),
+        "from_name": sender_display_name(first_setting("SMTP_FROM_NAME", "EMAIL_FROM_NAME", "MAIL_FROM_NAME", default="JittFutár")),
         "use_ssl": use_ssl,
         "use_starttls": parse_bool(
             first_setting("SMTP_USE_STARTTLS", "EMAIL_USE_STARTTLS", "MAIL_USE_STARTTLS"),
