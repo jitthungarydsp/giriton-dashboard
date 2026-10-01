@@ -3442,6 +3442,15 @@ def _snapshot_source_payload(snapshot: dict[str, object], source_key: str):
     return {}
 
 
+def _snapshot_route_detail_frame(snapshot: dict[str, object]) -> pd.DataFrame:
+    payload = _snapshot_source_payload(snapshot, "route_detail") if snapshot else {}
+    if isinstance(payload, list) and payload:
+        frame = pd.DataFrame(payload)
+        if not frame.empty:
+            return frame
+    return pd.DataFrame()
+
+
 def _drilldown_rows_for_label(drilldowns: dict[str, object], detail_label: str) -> list[dict[str, object]]:
     candidates = [detail_label]
     mojibake_map = {
@@ -15219,6 +15228,15 @@ def render_courier_detail_page() -> None:
     profile = load_courier_profile(courier_id)
     summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
     summary_available = not summary_row.empty if isinstance(summary_row, pd.Series) else bool(summary_row)
+    latest_finance_snapshot = (
+        load_latest_devtest_finance_snapshot(courier_id, period_start)
+        if selected_menu_hint == "Pénzügy"
+        else {}
+    )
+    snapshot_route_detail = _snapshot_route_detail_frame(latest_finance_snapshot)
+    if not snapshot_route_detail.empty:
+        route_detail = snapshot_route_detail
+        route_breakdown = summarize_courier_route_detail(route_detail)
     profile_adjustments = (
         load_courier_adjustments(courier_id, period_start, period_end)
         if needs_finance_adjustments
@@ -15926,7 +15944,7 @@ def render_courier_detail_page() -> None:
 
     if selected_menu == "Pénzügy":
         is_api_mode = str(active_calculation_mode or "").strip().casefold() == "api"
-        if route_detail.empty:
+        if route_detail.empty and not summary_available:
             route_detail = load_courier_route_detail(
                 courier_id,
                 courier_name,
