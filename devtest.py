@@ -17760,6 +17760,50 @@ def render_courier_detail_page() -> None:
                 ("Eltérés", invoice_difference_label),
             ])
             copy_cards_html(payment_copy_items)
+            if invoice_amount_huf and abs(round(invoice_difference_huf)) > 1:
+                next_payment_month = add_months(payment_month, 1)
+                next_period_start, next_period_end = month_bounds(next_payment_month)
+                correction_amount_huf = abs(round(invoice_difference_huf))
+                correction_type = "correction_income" if invoice_difference_huf > 0 else "correction_deduction"
+                correction_type_label = "Korrekció +" if correction_type == "correction_income" else "Korrekció -"
+                default_correction_note = f"Előző hónapi eltérés korrekció - {payment_month:%Y-%m}"
+                st.markdown("##### Eltérés továbbvezetése")
+                st.caption(
+                    f"A(z) {format_huf(correction_amount_huf)} eltérés a következő havi elszámolásba "
+                    f"{correction_type_label} tételként kerülhet be ({next_period_start:%Y-%m})."
+                )
+                correction_note_key = f"payment_difference_correction_note_{courier_id}_{payment_month:%Y%m}_{process_id or 'monthly'}"
+                if correction_note_key not in st.session_state:
+                    st.session_state[correction_note_key] = default_correction_note
+                correction_note_col, correction_button_col = st.columns([0.68, 0.32])
+                correction_note = correction_note_col.text_input(
+                    "Korrekció megjegyzés",
+                    key=correction_note_key,
+                    placeholder=default_correction_note,
+                )
+                if correction_button_col.button(
+                    "Eltérés rögzítése",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"payment_difference_correction_save_{courier_id}_{payment_month:%Y%m}_{process_id or 'monthly'}",
+                ):
+                    try:
+                        target_session_id = load_latest_excel_jit_session_id(next_period_start) or session_id
+                        save_courier_adjustment(
+                            target_session_id,
+                            courier_id,
+                            correction_type,
+                            correction_amount_huf,
+                            correction_note or default_correction_note,
+                            next_period_start,
+                            next_period_end,
+                        )
+                        st.success(
+                            f"Eltérés rögzítve a következő hónapra: {correction_type_label}, "
+                            f"{format_huf(correction_amount_huf)}."
+                        )
+                    except Exception as exc:
+                        st.error(f"Az eltérés korrekcióként mentése sikertelen: {exc}")
             if payment_item.get("invoice_file"):
                 st.caption(f"Feltöltött számla: {payment_item.get('invoice_title') or payment_item.get('invoice_file')}")
             st.markdown("##### Aktuális havi dokumentumok")
