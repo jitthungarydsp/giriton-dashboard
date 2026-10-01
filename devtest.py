@@ -3367,7 +3367,7 @@ def save_devtest_finance_snapshot_version(
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_latest_devtest_finance_snapshot(courier_id: str, period_start: date) -> dict[str, object]:
+def load_latest_devtest_finance_snapshot(courier_id: str, period_start: date, include_sources: bool = True) -> dict[str, object]:
     clean_courier_id = _courier_id_key(courier_id)
     if not clean_courier_id:
         return {}
@@ -3393,6 +3393,9 @@ def load_latest_devtest_finance_snapshot(courier_id: str, period_start: date) ->
             .execute().data or []
         )
         snapshot["items"] = items
+        if not include_sources:
+            snapshot["sources"] = []
+            return snapshot
         sources = (
             get_db().schema("settlement").table("courier_finance_snapshot_source")
             .select("source_key,source_table,payload,row_count")
@@ -3440,15 +3443,6 @@ def _snapshot_source_payload(snapshot: dict[str, object], source_key: str):
         if str(source.get("source_key") or "") == source_key:
             return source.get("payload")
     return {}
-
-
-def _snapshot_route_detail_frame(snapshot: dict[str, object]) -> pd.DataFrame:
-    payload = _snapshot_source_payload(snapshot, "route_detail") if snapshot else {}
-    if isinstance(payload, list) and payload:
-        frame = pd.DataFrame(payload)
-        if not frame.empty:
-            return frame
-    return pd.DataFrame()
 
 
 def _drilldown_rows_for_label(drilldowns: dict[str, object], detail_label: str) -> list[dict[str, object]]:
@@ -15228,15 +15222,6 @@ def render_courier_detail_page() -> None:
     profile = load_courier_profile(courier_id)
     summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
     summary_available = not summary_row.empty if isinstance(summary_row, pd.Series) else bool(summary_row)
-    latest_finance_snapshot = (
-        load_latest_devtest_finance_snapshot(courier_id, period_start)
-        if selected_menu_hint == "Pénzügy"
-        else {}
-    )
-    snapshot_route_detail = _snapshot_route_detail_frame(latest_finance_snapshot)
-    if not snapshot_route_detail.empty:
-        route_detail = snapshot_route_detail
-        route_breakdown = summarize_courier_route_detail(route_detail)
     profile_adjustments = (
         load_courier_adjustments(courier_id, period_start, period_end)
         if needs_finance_adjustments
