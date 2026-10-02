@@ -615,6 +615,19 @@ textarea { min-height: 96px; resize: vertical; }
 .route-details-table tbody tr.active { background: #eff8ed; }
 .route-details-table tbody tr.active td:first-child { box-shadow: inset 4px 0 0 var(--green-dark); }
 .route-details-export-all { display: grid; place-items: center; min-height: 44px; margin-top: 14px; text-align: center; }
+.route-stat-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.route-stat-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.route-stat-chart { display: grid; gap: 10px; align-content: start; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: #fbfdf9; }
+.route-stat-chart h4 { margin: 0; color: var(--green-dark); font-size: 13px; font-weight: 950; }
+.route-stat-chart p { margin: 0; color: var(--muted); font-size: 12px; font-weight: 750; }
+.route-stat-bar-row { display: grid; grid-template-columns: minmax(90px, .8fr) minmax(110px, 1.4fr) auto; gap: 10px; align-items: center; }
+.route-stat-bar-row strong { display: block; min-width: 0; font-size: 12px; font-weight: 900; overflow-wrap: anywhere; }
+.route-stat-bar-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; font-weight: 750; }
+.route-stat-bar-row b { min-width: 32px; text-align: right; font-size: 15px; }
+.route-stat-bar-track { height: 11px; overflow: hidden; border-radius: 999px; background: #e9ede7; }
+.route-stat-bar-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--green-dark), var(--green)); }
+.route-stat-table-wrap { margin-top: 14px; }
+.route-stat-table { min-width: 900px; }
 .bottom-nav { position: fixed; z-index: 10; right: 0; bottom: 0; left: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82px, 1fr); overflow-x: auto; padding: 9px 8px calc(9px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fffffff2; backdrop-filter: blur(18px); }
 .bottom-nav button { display: grid; gap: 3px; place-items: center; min-width: 0; border: 0; background: transparent; color: #8a938c; font-size: 10px; font-weight: 700; }
 .bottom-nav button span { font-size: 20px; }
@@ -702,4 +715,8 @@ textarea { min-height: 96px; resize: vertical; }
   .route-details-head { grid-template-columns: 1fr; }
   .route-details-actions { justify-content: stretch; }
   .route-details-actions .download-link { width: 100%; }
+  .route-stat-kpis,
+  .route-stat-chart-grid { grid-template-columns: 1fr; }
+  .route-stat-bar-row { grid-template-columns: minmax(0, 1fr); }
+  .route-stat-bar-row b { text-align: left; }
 }

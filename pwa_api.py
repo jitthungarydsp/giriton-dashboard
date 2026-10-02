@@ -6052,6 +6052,20 @@ def parse_month(value: str | date | None) -> date:
         raise HTTPException(status_code=422, detail="A hónap formátuma YYYY-MM legyen.") from exc
 
 
+def parse_date_query(value: str | date | None, *, default: date | None = None, label: str = "dátum") -> date:
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        if default is not None:
+            return default
+        raise HTTPException(status_code=422, detail=f"A {label} megadása kötelező.")
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"A {label} formátuma YYYY-MM-DD legyen.") from exc
+
+
 def month_end(value: date) -> date:
     next_month = (value.replace(day=28) + timedelta(days=4)).replace(day=1)
     return next_month - timedelta(days=1)
@@ -10893,6 +10907,29 @@ def load_courier_hub_route_stat_rows_for_month(month_value: date) -> list[dict[s
     )
 
 
+def load_courier_hub_route_stat_rows_for_range(start: date, end: date) -> list[dict[str, Any]]:
+    return optional_supabase_rows_paged(
+        "courier_hub_route_statistics",
+        params={
+            "select": (
+                "courier_id,work_date,route_id,warehouse_id,warehouse_code,dsp_id,courier_name,shift_name,"
+                "queue_started_at,actual_shift_start_at,route_assigned_at,departed_at,returned_at,"
+                "planned_departure_at,planned_return_at,next_shift_same_day,late_stop_count,late_stop_minutes,"
+                "planned_route_minutes,actual_route_minutes,waiting_minutes,loading_minutes,total_minutes,"
+                "planned_km,hub_mileage_km,google_route_km,google_route_minutes,google_traffic_delay_minutes,"
+                "google_route_status,actual_km,distance_delta_km,distance_source,route_type,route_type_label,"
+                "tip_huf,tip_source,orders,stops,vehicle_plate,warehouse_address,story_text,updated_at"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "and": f"(work_date.lte.{end.isoformat()})",
+            "order": "work_date.asc,warehouse_code.asc,courier_name.asc,route_assigned_at.asc,route_id.asc",
+        },
+        timeout=60,
+        page_size=1000,
+        max_rows=100000,
+    )
+
+
 def courier_name_lookup() -> dict[str, str]:
     lookup: dict[str, str] = {}
     master_rows = optional_supabase_rows(
@@ -10961,6 +10998,208 @@ def route_details_for_all_couriers(month_value: date) -> dict[str, Any]:
         "month": month_value.replace(day=1).strftime("%Y-%m"),
         "courier": {"id": "", "name": "Összes futár"},
         "rows": rows,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def iter_month_starts(start: date, end: date) -> list[date]:
+    months: list[date] = []
+    cursor = start.replace(day=1)
+    last = end.replace(day=1)
+    while cursor <= last:
+        months.append(cursor)
+        cursor = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return months
+
+
+def route_details_for_range(start: date, end: date) -> tuple[list[dict[str, Any]], str]:
+    names = courier_name_lookup()
+    stat_rows = load_courier_hub_route_stat_rows_for_range(start, end)
+    if stat_rows:
+        rows = []
+        for stat_row in stat_rows:
+            item = build_route_detail_item_from_hub_stat(stat_row)
+            if not item.get("courierName"):
+                item["courierName"] = names.get(str(item.get("courierId") or "")) or f"Futár {item.get('courierId') or ''}".strip()
+            rows.append(item)
+        return rows, "courier_hub_route_statistics"
+
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for month_value in iter_month_starts(start, end):
+        payload = route_details_for_all_couriers(month_value)
+        for row in payload.get("rows") or []:
+            row_date = parse_date_value(row.get("date"))
+            if not row_date or row_date < start or row_date > end:
+                continue
+            key = (
+                str(row.get("date") or ""),
+                str(row.get("courierId") or ""),
+                str(row.get("routeId") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+    rows.sort(key=lambda item: (item.get("date") or "", item.get("warehouse") or "", item.get("courierName") or "", item.get("routeAssignedAt") or ""))
+    return rows, "route_details_fallback"
+
+
+def route_statistics_type_key(row: dict[str, Any]) -> str:
+    route_type = normalize_text(row.get("routeType"))
+    route_label = normalize_text(row.get("routeTypeLabel"))
+    if "express" in route_type or "express" in route_label:
+        return "express"
+    if "regional" in route_type or "regional" in route_label or "regio" in route_type or "regio" in route_label or "régio" in route_label:
+        return "regional"
+    return "city"
+
+
+def route_statistics_type_label(key: str) -> str:
+    return {
+        "city": "City",
+        "express": "Express",
+        "regional": "Regionális",
+    }.get(str(key or ""), "City")
+
+
+def route_statistics_warehouse_key(row: dict[str, Any]) -> str:
+    warehouse = normalize_warehouse(row.get("warehouse"))
+    if warehouse in {"BUD1", "BUD2"}:
+        return warehouse
+    warehouse_id = safe_int(row.get("warehouseId"))
+    if warehouse_id == 1:
+        return "BUD1"
+    if warehouse_id == 2:
+        return "BUD2"
+    return warehouse or "Nincs adat"
+
+
+def build_route_statistics(start: date, end: date, warehouse: str = "all") -> dict[str, Any]:
+    if end < start:
+        raise HTTPException(status_code=422, detail="A záró dátum nem lehet korábbi a kezdő dátumnál.")
+    if (end - start).days > 370:
+        raise HTTPException(status_code=422, detail="Legfeljebb 370 napos tartomány kérhető le egyszerre.")
+
+    requested_warehouse = normalize_warehouse(warehouse)
+    if normalize_text(warehouse) in {"", "all", "osszes", "összes"}:
+        requested_warehouse = ""
+    rows, source = route_details_for_range(start, end)
+    filtered_rows = []
+    seen_routes: set[tuple[str, str, str, str]] = set()
+    for row in rows:
+        row_date = parse_date_value(row.get("date"))
+        if not row_date or row_date < start or row_date > end:
+            continue
+        warehouse_key = route_statistics_warehouse_key(row)
+        if requested_warehouse and warehouse_key != requested_warehouse:
+            continue
+        route_key = (
+            row_date.isoformat(),
+            str(row.get("courierId") or ""),
+            str(row.get("routeId") or ""),
+            warehouse_key,
+        )
+        if route_key in seen_routes:
+            continue
+        seen_routes.add(route_key)
+        item = dict(row)
+        item["_date"] = row_date.isoformat()
+        item["_warehouse"] = warehouse_key
+        item["_route_type"] = route_statistics_type_key(row)
+        filtered_rows.append(item)
+
+    daily: dict[str, dict[str, Any]] = {}
+    warehouse_totals: dict[str, dict[str, Any]] = {}
+    type_totals: dict[str, dict[str, Any]] = {}
+    courier_totals: dict[str, dict[str, Any]] = {}
+
+    def empty_counts(**extra: Any) -> dict[str, Any]:
+        return {
+            **extra,
+            "routes": 0,
+            "orders": 0,
+            "cityRoutes": 0,
+            "expressRoutes": 0,
+            "regionalRoutes": 0,
+            "bud1Routes": 0,
+            "bud2Routes": 0,
+        }
+
+    for row in filtered_rows:
+        row_date = str(row.get("_date") or "")
+        warehouse_key = str(row.get("_warehouse") or "")
+        route_type = str(row.get("_route_type") or "city")
+        orders = safe_int(row.get("orders"))
+        courier_id = str(row.get("courierId") or "").strip()
+        courier_name = str(row.get("courierName") or "").strip() or (f"Futár {courier_id}" if courier_id else "Ismeretlen futár")
+        daily_item = daily.setdefault(row_date, empty_counts(date=row_date))
+        warehouse_item = warehouse_totals.setdefault(warehouse_key, empty_counts(key=warehouse_key, label=warehouse_key))
+        type_item = type_totals.setdefault(route_type, {"key": route_type, "label": route_statistics_type_label(route_type), "routes": 0, "orders": 0})
+        courier_key = courier_id or normalize_person_match_text(courier_name)
+        courier_item = courier_totals.setdefault(courier_key, empty_counts(courierId=courier_id, courierName=courier_name))
+
+        for item in (daily_item, warehouse_item, courier_item):
+            item["routes"] += 1
+            item["orders"] += orders
+            if route_type == "express":
+                item["expressRoutes"] += 1
+            elif route_type == "regional":
+                item["regionalRoutes"] += 1
+            else:
+                item["cityRoutes"] += 1
+            if warehouse_key == "BUD1":
+                item["bud1Routes"] += 1
+            elif warehouse_key == "BUD2":
+                item["bud2Routes"] += 1
+        type_item["routes"] += 1
+        type_item["orders"] += orders
+
+    total_routes = len(filtered_rows)
+    summary = {
+        "routes": total_routes,
+        "orders": sum(safe_int(row.get("orders")) for row in filtered_rows),
+        "cityRoutes": sum(1 for row in filtered_rows if row.get("_route_type") == "city"),
+        "expressRoutes": sum(1 for row in filtered_rows if row.get("_route_type") == "express"),
+        "regionalRoutes": sum(1 for row in filtered_rows if row.get("_route_type") == "regional"),
+        "bud1Routes": sum(1 for row in filtered_rows if row.get("_warehouse") == "BUD1"),
+        "bud2Routes": sum(1 for row in filtered_rows if row.get("_warehouse") == "BUD2"),
+        "days": len({row.get("_date") for row in filtered_rows if row.get("_date")}),
+        "averageRoutesPerDay": round(total_routes / len(daily), 2) if daily else 0,
+    }
+
+    def with_percent(item: dict[str, Any]) -> dict[str, Any]:
+        result = dict(item)
+        result["percent"] = round((safe_int(result.get("routes")) / total_routes * 100), 2) if total_routes else 0
+        return result
+
+    source_rows = [
+        {
+            "date": row.get("_date"),
+            "warehouse": row.get("_warehouse"),
+            "courierId": row.get("courierId"),
+            "courierName": row.get("courierName"),
+            "routeId": row.get("routeId"),
+            "routeType": route_statistics_type_label(row.get("_route_type")),
+            "orders": safe_int(row.get("orders")),
+            "shiftName": row.get("shiftName"),
+            "routeAssignedAt": row.get("routeAssignedAt"),
+            "plannedReturnAt": row.get("plannedReturnAt"),
+            "dataSource": row.get("dataSource") or source,
+        }
+        for row in filtered_rows
+    ]
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "warehouse": requested_warehouse or "all",
+        "source": source,
+        "summary": summary,
+        "daily": sorted(daily.values(), key=lambda item: item.get("date") or ""),
+        "warehouses": [with_percent(item) for item in sorted(warehouse_totals.values(), key=lambda item: item.get("key") or "")],
+        "routeTypes": [with_percent(type_totals.get(key, {"key": key, "label": route_statistics_type_label(key), "routes": 0, "orders": 0})) for key in ("city", "express", "regional")],
+        "couriers": sorted(courier_totals.values(), key=lambda item: (-safe_int(item.get("routes")), normalize_text(item.get("courierName"))))[:100],
+        "rows": source_rows,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -15756,6 +15995,135 @@ def current_route(
         source="routes_current",
     )
     return attach_route_map_config(card)
+
+
+@app.get("/api/routes/statistics")
+def route_statistics(
+    start: str = Query(default=""),
+    end: str = Query(default=""),
+    warehouse: str = Query(default="all"),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not can_preview_couriers(user):
+        raise HTTPException(status_code=403, detail="A túra statisztikához admin jogosultság szükséges.")
+    month_value = parse_month("")
+    start_value = parse_date_query(start, default=month_value.replace(day=1), label="kezdő dátum")
+    end_value = parse_date_query(end, default=month_end(start_value), label="záró dátum")
+    return build_route_statistics(start_value, end_value, warehouse)
+
+
+@app.get("/api/routes/statistics.xlsx")
+def route_statistics_excel(
+    start: str = Query(default=""),
+    end: str = Query(default=""),
+    warehouse: str = Query(default="all"),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not can_preview_couriers(user):
+        raise HTTPException(status_code=403, detail="A túra statisztika exporthoz admin jogosultság szükséges.")
+    month_value = parse_month("")
+    start_value = parse_date_query(start, default=month_value.replace(day=1), label="kezdő dátum")
+    end_value = parse_date_query(end, default=month_end(start_value), label="záró dátum")
+    payload = build_route_statistics(start_value, end_value, warehouse)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    workbook = Workbook()
+    header_fill = PatternFill("solid", fgColor="17231C")
+
+    def setup_sheet(sheet, headers: list[str]) -> None:
+        sheet.append(headers)
+        for cell in sheet[1]:
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.fill = header_fill
+        sheet.freeze_panes = "A2"
+
+    def autosize(sheet) -> None:
+        for column_cells in sheet.columns:
+            max_length = max(len(str(cell.value or "")) for cell in column_cells[:300])
+            sheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 10), 55)
+
+    sheet = workbook.active
+    sheet.title = "Napi osszesito"
+    setup_sheet(sheet, ["Dátum", "Összes kör", "City", "Express", "Regionális", "BUD1", "BUD2", "Cím / rendelés"])
+    for row in payload["daily"]:
+        sheet.append([
+            row.get("date"),
+            row.get("routes"),
+            row.get("cityRoutes"),
+            row.get("expressRoutes"),
+            row.get("regionalRoutes"),
+            row.get("bud1Routes"),
+            row.get("bud2Routes"),
+            row.get("orders"),
+        ])
+
+    warehouse_sheet = workbook.create_sheet("Raktar bontas")
+    setup_sheet(warehouse_sheet, ["Raktár", "Kör", "Arány %", "City", "Express", "Regionális", "Cím / rendelés"])
+    for row in payload["warehouses"]:
+        warehouse_sheet.append([
+            row.get("label"),
+            row.get("routes"),
+            row.get("percent"),
+            row.get("cityRoutes"),
+            row.get("expressRoutes"),
+            row.get("regionalRoutes"),
+            row.get("orders"),
+        ])
+
+    type_sheet = workbook.create_sheet("Turatipus bontas")
+    setup_sheet(type_sheet, ["Túratípus", "Kör", "Arány %", "Cím / rendelés"])
+    for row in payload["routeTypes"]:
+        type_sheet.append([row.get("label"), row.get("routes"), row.get("percent"), row.get("orders")])
+
+    courier_sheet = workbook.create_sheet("Futar bontas")
+    setup_sheet(courier_sheet, ["Futár ID", "Futár neve", "Kör", "City", "Express", "Regionális", "BUD1", "BUD2", "Cím / rendelés"])
+    for row in payload["couriers"]:
+        courier_sheet.append([
+            row.get("courierId"),
+            row.get("courierName"),
+            row.get("routes"),
+            row.get("cityRoutes"),
+            row.get("expressRoutes"),
+            row.get("regionalRoutes"),
+            row.get("bud1Routes"),
+            row.get("bud2Routes"),
+            row.get("orders"),
+        ])
+
+    source_sheet = workbook.create_sheet("Forras route sorok")
+    setup_sheet(source_sheet, ["Dátum", "Raktár", "Futár ID", "Futár neve", "Route ID", "Túratípus", "Cím / rendelés", "Műszak", "Túrát kapott", "Tervezett vissza", "Forrás"])
+    for row in payload["rows"]:
+        source_sheet.append([
+            row.get("date"),
+            row.get("warehouse"),
+            row.get("courierId"),
+            row.get("courierName"),
+            row.get("routeId"),
+            row.get("routeType"),
+            row.get("orders"),
+            row.get("shiftName"),
+            route_detail_datetime_text(row.get("routeAssignedAt")),
+            route_detail_datetime_text(row.get("plannedReturnAt")),
+            row.get("dataSource"),
+        ])
+
+    for sheet_item in workbook.worksheets:
+        autosize(sheet_item)
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    warehouse_part = normalize_warehouse(warehouse) if normalize_text(warehouse) not in {"", "all", "osszes", "összes"} else "osszes"
+    filename = f"tura-statisztika-{start_value.isoformat()}-{end_value.isoformat()}-{slugify_filename(warehouse_part)}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/routes/details")

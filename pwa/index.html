@@ -580,11 +580,22 @@
           </div>
           <div class="workflow-controls">
             <label class="month-picker">Hónap<input id="route-details-month" type="month" /></label>
+            <label class="month-picker">Kezdő dátum<input id="route-stats-start" type="date" /></label>
+            <label class="month-picker">Záró dátum<input id="route-stats-end" type="date" /></label>
+            <label class="month-picker">Raktár
+              <select id="route-stats-warehouse">
+                <option value="all">Összes</option>
+                <option value="BUD1">BUD1</option>
+                <option value="BUD2">BUD2</option>
+              </select>
+            </label>
             <label class="month-picker">Futár<select id="route-details-courier"></select></label>
             <button id="route-details-load" class="secondary" type="button">Lekérés</button>
+            <button id="route-stats-load" class="secondary" type="button">Statisztika</button>
           </div>
         </section>
         <section id="route-details-message" aria-live="polite"></section>
+        <section id="route-statistics-panel" class="process-card"></section>
         <section id="route-details-panel" class="process-card"></section>
       </div>
 

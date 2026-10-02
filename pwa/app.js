@@ -52,6 +52,7 @@ const state = {
   loadingVisible: false,
   silentLoading: false,
   routeDetails: null,
+  routeStatistics: null,
   routeDetailsSelectedIndex: 0,
   section: "home",
   routeAutoDelayKeys: new Set(),
@@ -169,7 +170,11 @@ function currentSectionRefresh() {
   if (state.section === "home") return loadShifts();
   if (state.section === "tours") return loadCurrentRoute();
   if (state.section === "statistics") return loadStatistics();
-  if (state.section === "route-details") return loadRouteDetails();
+  if (state.section === "route-details") {
+    if (state.routeDetails) return loadRouteDetails();
+    if (state.routeStatistics) return loadRouteStatistics();
+    return Promise.resolve();
+  }
   if (state.section === "workflow") return loadWorkflow();
   if (state.section === "atm") return loadAtmPayments();
   if (state.section === "expense") return loadExpenseRequests();
@@ -242,6 +247,21 @@ function localDate(offset = 0) {
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function monthStartDate(month) {
+  const value = String(month || new Date().toISOString().slice(0, 7)).slice(0, 7);
+  return `${value}-01`;
+}
+
+function monthEndDate(month) {
+  const [year, monthNumber] = String(month || new Date().toISOString().slice(0, 7)).split("-").map((part) => Number(part));
+  if (!year || !monthNumber) return localDate();
+  const value = new Date(year, monthNumber, 0);
+  const yyyy = value.getFullYear();
+  const mm = String(value.getMonth() + 1).padStart(2, "0");
+  const dd = String(value.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function dateLabel(value, short = false) {
@@ -446,8 +466,11 @@ function showSection(section) {
   if (section === "route-details") {
     loadCourierMasterOptions().then(() => {
       if (!$("#route-details-month")?.value) $("#route-details-month").value = state.statisticsMonth;
+      if (!$("#route-stats-start")?.value) $("#route-stats-start").value = monthStartDate($("#route-details-month")?.value || state.statisticsMonth);
+      if (!$("#route-stats-end")?.value) $("#route-stats-end").value = monthEndDate($("#route-details-month")?.value || state.statisticsMonth);
       if (state.workflowPreviewCourierId && $("#route-details-courier")) $("#route-details-courier").value = state.workflowPreviewCourierId;
     });
+    renderRouteStatistics();
     renderRouteDetails();
   }
   if (section === "phonebook") renderPhonebook();
@@ -2362,6 +2385,138 @@ function monthlyShiftRouteReportExcelUrl() {
   return `/api/routes/monthly-shift-report.xlsx?${params.toString()}`;
 }
 
+function routeStatisticsRange() {
+  const month = $("#route-details-month")?.value || state.statisticsMonth;
+  const start = $("#route-stats-start")?.value || monthStartDate(month);
+  const end = $("#route-stats-end")?.value || monthEndDate(month);
+  const warehouse = $("#route-stats-warehouse")?.value || "all";
+  return { start, end, warehouse };
+}
+
+function routeStatisticsExcelUrl() {
+  const { start, end, warehouse } = routeStatisticsRange();
+  if (!start || !end) return "";
+  const params = new URLSearchParams({ start, end, warehouse });
+  return `/api/routes/statistics.xlsx?${params.toString()}`;
+}
+
+function routeStatsBarRows(rows = [], labelKey = "label") {
+  const maxRoutes = Math.max(1, ...rows.map((row) => Number(row.routes || 0)));
+  return rows.map((row) => {
+    const routes = Number(row.routes || 0);
+    const width = Math.max(2, Math.round(routes / maxRoutes * 100));
+    return `
+      <div class="route-stat-bar-row">
+        <div>
+          <strong>${escapeHtml(row[labelKey] || row.date || "-")}</strong>
+          <small>${formatCount(row.orders || 0)} cím</small>
+        </div>
+        <div class="route-stat-bar-track"><span style="width:${width}%"></span></div>
+        <b>${formatCount(routes)}</b>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderRouteStatistics() {
+  const panel = $("#route-statistics-panel");
+  if (!panel) return;
+  if (!state.user?.canPreviewCouriers) {
+    panel.innerHTML = "";
+    return;
+  }
+  const payload = state.routeStatistics;
+  const excelUrl = routeStatisticsExcelUrl();
+  if (!payload) {
+    panel.innerHTML = `
+      <div class="route-details-head">
+        <div>
+          <span>Statisztika</span>
+          <strong>Tartományos túra statisztika</strong>
+          <small>Válassz időszakot és raktárat, majd kérd le az összesített körszámokat.</small>
+        </div>
+        <div class="route-details-actions">
+          ${excelUrl ? `<a class="download-link" href="${excelUrl}">Statisztika Excel</a>` : ""}
+        </div>
+      </div>
+    `;
+    return;
+  }
+  const summary = payload.summary || {};
+  const daily = payload.daily || [];
+  const topDaily = [...daily].sort((a, b) => Number(b.routes || 0) - Number(a.routes || 0)).slice(0, 14);
+  const routeTypes = payload.routeTypes || [];
+  const warehouses = payload.warehouses || [];
+  panel.innerHTML = `
+    <div class="route-details-head">
+      <div>
+        <span>${escapeHtml(payload.start || "-")} - ${escapeHtml(payload.end || "-")}</span>
+        <strong>Túra statisztika</strong>
+        <small>${escapeHtml(payload.warehouse === "all" ? "Összes raktár" : payload.warehouse || "Összes raktár")} · ${escapeHtml(payload.source || "-")}</small>
+      </div>
+      <div class="route-details-actions">
+        ${excelUrl ? `<a class="download-link" href="${excelUrl}">Statisztika Excel</a>` : ""}
+      </div>
+    </div>
+    <div class="statistics-grid route-stat-kpis">
+      <div class="stat-card"><span>Összes kivitt kör</span><strong>${formatCount(summary.routes || 0)}</strong><small>${formatCount(summary.orders || 0)} cím / rendelés</small></div>
+      <div class="stat-card"><span>City</span><strong>${formatCount(summary.cityRoutes || 0)}</strong><small>Normál / city körök</small></div>
+      <div class="stat-card"><span>Express</span><strong>${formatCount(summary.expressRoutes || 0)}</strong><small>Express körök</small></div>
+      <div class="stat-card"><span>Regionális</span><strong>${formatCount(summary.regionalRoutes || 0)}</strong><small>Regionális körök</small></div>
+      <div class="stat-card"><span>BUD1</span><strong>${formatCount(summary.bud1Routes || 0)}</strong><small>Raktári bontás</small></div>
+      <div class="stat-card"><span>BUD2</span><strong>${formatCount(summary.bud2Routes || 0)}</strong><small>Raktári bontás</small></div>
+    </div>
+    <div class="route-stat-chart-grid">
+      <section class="route-stat-chart">
+        <h4>Napi körszám</h4>
+        ${routeStatsBarRows(daily, "date") || `<p>Nincs adat a kiválasztott időszakra.</p>`}
+      </section>
+      <section class="route-stat-chart">
+        <h4>Túratípus bontás</h4>
+        ${routeStatsBarRows(routeTypes)}
+      </section>
+      <section class="route-stat-chart">
+        <h4>Raktár bontás</h4>
+        ${routeStatsBarRows(warehouses) || `<p>Nincs adat a kiválasztott időszakra.</p>`}
+      </section>
+      <section class="route-stat-chart">
+        <h4>Legforgalmasabb napok</h4>
+        ${routeStatsBarRows(topDaily, "date") || `<p>Nincs adat a kiválasztott időszakra.</p>`}
+      </section>
+    </div>
+    <div class="route-details-table-wrap route-stat-table-wrap">
+      <table class="route-details-table route-stat-table">
+        <thead>
+          <tr>
+            <th>Dátum</th>
+            <th>Összes kör</th>
+            <th>City</th>
+            <th>Express</th>
+            <th>Regionális</th>
+            <th>BUD1</th>
+            <th>BUD2</th>
+            <th>Cím / rendelés</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${daily.map((row) => `
+            <tr>
+              <td><strong>${escapeHtml(row.date || "-")}</strong></td>
+              <td>${formatCount(row.routes || 0)}</td>
+              <td>${formatCount(row.cityRoutes || 0)}</td>
+              <td>${formatCount(row.expressRoutes || 0)}</td>
+              <td>${formatCount(row.regionalRoutes || 0)}</td>
+              <td>${formatCount(row.bud1Routes || 0)}</td>
+              <td>${formatCount(row.bud2Routes || 0)}</td>
+              <td>${formatCount(row.orders || 0)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderRouteDetails() {
   const panel = $("#route-details-panel");
   if (!panel) return;
@@ -2530,6 +2685,24 @@ async function loadRouteDetails() {
     state.routeDetails = await api(`/api/routes/details?month=${encodeURIComponent(month)}&courier=${encodeURIComponent(courier)}`);
     if (message) message.innerHTML = "";
     renderRouteDetails();
+  } catch (error) {
+    if (message) message.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadRouteStatistics() {
+  const message = $("#route-details-message");
+  const { start, end, warehouse } = routeStatisticsRange();
+  if (!start || !end) {
+    if (message) message.innerHTML = `<div class="notice error">Válassz kezdő és záró dátumot.</div>`;
+    return;
+  }
+  try {
+    if (message) message.innerHTML = `<div class="notice">Túra statisztika betöltése...</div>`;
+    const params = new URLSearchParams({ start, end, warehouse });
+    state.routeStatistics = await api(`/api/routes/statistics?${params.toString()}`);
+    if (message) message.innerHTML = "";
+    renderRouteStatistics();
   } catch (error) {
     if (message) message.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
@@ -6053,6 +6226,9 @@ const adminPreviewCourierInput = $("#admin-preview-courier");
 if (adminPreviewCourierInput) adminPreviewCourierInput.value = state.workflowPreviewCourierId;
 renderWorkflowProcessPicker();
 $("#statistics-month").value = state.statisticsMonth;
+if ($("#route-details-month")) $("#route-details-month").value = state.statisticsMonth;
+if ($("#route-stats-start")) $("#route-stats-start").value = monthStartDate(state.statisticsMonth);
+if ($("#route-stats-end")) $("#route-stats-end").value = monthEndDate(state.statisticsMonth);
 $("#coordinator-date").value = localDate();
 $("#workflow-month").addEventListener("change", (event) => {
   const requestedMonth = event.target.value || state.workflowMonth;
@@ -6448,6 +6624,7 @@ $("#logout").addEventListener("click", async () => {
   state.queueStatus = null;
   state.statistics = null;
   state.routeDetails = null;
+  state.routeStatistics = null;
   state.routeDetailsSelectedIndex = 0;
   state.game = null;
   state.gameStartedAt = null;
@@ -6488,6 +6665,7 @@ $("#coordinator-schedule-month")?.addEventListener("change", () => {
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
 $("#nav-registration-admin").addEventListener("click", () => showSection("registration-admin"));
 $("#route-details-load")?.addEventListener("click", loadRouteDetails);
+$("#route-stats-load")?.addEventListener("click", loadRouteStatistics);
 $("#route-details-courier")?.addEventListener("change", () => {
   state.routeDetails = null;
   state.routeDetailsSelectedIndex = 0;
@@ -6495,8 +6673,19 @@ $("#route-details-courier")?.addEventListener("change", () => {
 });
 $("#route-details-month")?.addEventListener("change", () => {
   state.routeDetails = null;
+  state.routeStatistics = null;
   state.routeDetailsSelectedIndex = 0;
+  const month = $("#route-details-month")?.value || state.statisticsMonth;
+  if ($("#route-stats-start")) $("#route-stats-start").value = monthStartDate(month);
+  if ($("#route-stats-end")) $("#route-stats-end").value = monthEndDate(month);
+  renderRouteStatistics();
   renderRouteDetails();
+});
+["#route-stats-start", "#route-stats-end", "#route-stats-warehouse"].forEach((selector) => {
+  $(selector)?.addEventListener("change", () => {
+    state.routeStatistics = null;
+    renderRouteStatistics();
+  });
 });
 
 setInterval(() => {
