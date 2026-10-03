@@ -196,6 +196,19 @@ class CoordinatorShiftSignalRequest(BaseModel):
     message: str = ""
 
 
+class TodayWorkerAttendanceRequest(BaseModel):
+    courier_id: str
+    courier_name: str = ""
+    work_date: str = ""
+    start: str = ""
+    end: str = ""
+    warehouse: str = ""
+    shift_name: str = ""
+    booking_code: str = ""
+    attendance_status: str = "present"
+    note: str = ""
+
+
 class DailyGameSubmitRequest(BaseModel):
     found_words: list[str] = []
     quiz_answers: dict[str, str] = {}
@@ -4770,6 +4783,94 @@ def today_worker_shift_payload(worker: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def today_worker_attendance_key(
+    courier_id: Any,
+    start: Any,
+    warehouse: Any,
+    booking_code: Any,
+) -> tuple[str, str, str, str]:
+    return (
+        str(courier_id or "").strip(),
+        normalize_time(start),
+        normalize_warehouse(warehouse) or str(warehouse or "").strip(),
+        str(booking_code or "").strip(),
+    )
+
+
+def read_today_worker_attendance_statuses(work_date: date) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "pwa_today_worker_attendance",
+        params={
+            "select": (
+                "courier_id,courier_name,work_date,start_time,end_time,warehouse,"
+                "shift_name,booking_code,attendance_status,note,marked_by,marked_at,updated_at"
+            ),
+            "work_date": f"eq.{work_date.isoformat()}",
+            "order": "updated_at.desc,marked_at.desc",
+            "limit": "2000",
+        },
+        timeout=20,
+    )
+    latest: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = today_worker_attendance_key(
+            row.get("courier_id"),
+            row.get("start_time"),
+            row.get("warehouse"),
+            row.get("booking_code"),
+        )
+        if key[0] and key not in latest:
+            latest[key] = row
+    return latest
+
+
+def route_detail_value(route: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in route and route.get(key) not in (None, ""):
+            return route.get(key)
+    return None
+
+
+def today_worker_vehicle_payload(
+    schedule_vehicle: Any,
+    live: dict[str, Any],
+    route_detail: dict[str, Any],
+) -> dict[str, Any] | str:
+    vehicle: dict[str, Any] = {}
+    if isinstance(schedule_vehicle, dict):
+        vehicle.update(schedule_vehicle)
+    elif str(schedule_vehicle or "").strip():
+        vehicle["licensePlate"] = str(schedule_vehicle or "").strip()
+
+    plate = (
+        vehicle.get("licensePlate")
+        or vehicle.get("vehiclePlate")
+        or live.get("vehiclePlate")
+        or route_detail.get("vehiclePlate")
+    )
+    if plate:
+        vehicle["licensePlate"] = str(plate).strip()
+        vehicle["vehiclePlate"] = str(plate).strip()
+
+    fridge_config = vehicle.get("fridgeConfig") or live.get("fridgeConfig") or route_detail.get("fridgeConfig")
+    if fridge_config not in (None, ""):
+        vehicle["fridgeConfig"] = fridge_config
+
+    for target, source in (
+        ("cargoRouteId", route_detail.get("cargoRouteId") or live.get("cargoRouteId")),
+        ("routeExternalId", route_detail.get("routeExternalId") or live.get("routeExternalId")),
+        ("plannedKm", route_detail.get("plannedKm") or live.get("plannedKm")),
+        ("routeId", route_detail.get("routeId") or live.get("activeRouteId")),
+    ):
+        if source not in (None, ""):
+            vehicle[target] = source
+
+    if not vehicle:
+        return ""
+    vehicle.setdefault("source", route_detail.get("source") or live.get("source") or "Beosztás / live adat")
+    return vehicle
+
+
 def latest_today_hub_details_by_courier() -> dict[str, dict[str, Any]]:
     rows = optional_supabase_rows(
         "courier_hub_live_monitoring_courier_latest",
@@ -4824,6 +4925,35 @@ def today_worker_route_detail(
         or route.get("finishedAt")
     )
     queue_wait = minutes_between_local(queue_started_at, route_assigned_at)
+    vehicle_plate = str(
+        route_detail_value(route, "vehiclePlate", "licensePlate", "licencePlate")
+        or route_detail_value(payload, "vehiclePlate", "licensePlate", "licencePlate")
+        or live.get("vehiclePlate")
+        or ""
+    ).strip()
+    fridge_config = (
+        route_detail_value(route, "fridgeConfig", "shiftType", "routeType")
+        or route_detail_value(payload, "fridgeConfig", "shiftType", "routeType")
+        or live.get("fridgeConfig")
+        or ""
+    )
+    cargo_route_id = (
+        route_detail_value(route, "cargoRouteId", "cargo_route_id")
+        or route_detail_value(payload, "cargoRouteId", "cargo_route_id")
+        or live.get("cargoRouteId")
+        or ""
+    )
+    route_external_id = (
+        route_detail_value(route, "routeExternalId", "route_external_id", "externalId")
+        or route_detail_value(payload, "routeExternalId", "route_external_id", "externalId")
+        or live.get("routeExternalId")
+        or ""
+    )
+    planned_km = safe_float_value(
+        route_detail_value(route, "plannedKm", "planned_km", "mileageKm")
+        or route_detail_value(payload, "plannedKm", "planned_km", "mileageKm")
+        or live.get("plannedKm")
+    )
     return {
         "courierId": courier_id,
         "routeId": route_id,
@@ -4835,6 +4965,11 @@ def today_worker_route_detail(
         "plannedReturn": planned_return,
         "realReturn": real_return or returned_at,
         "queueWaitMinutes": queue_wait,
+        "vehiclePlate": vehicle_plate,
+        "fridgeConfig": fridge_config,
+        "cargoRouteId": cargo_route_id,
+        "routeExternalId": route_external_id,
+        "plannedKm": planned_km,
         "updatedAt": iso_local_text((detail_row or {}).get("fetched_at") or live.get("updatedAt")),
         "source": "courier_hub_live_monitoring_courier_latest" if detail_row else "live_map_summary",
     }
@@ -4859,6 +4994,7 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
     live_by_courier = {str(item.get("courierId") or ""): item for item in live_map.get("couriers", [])}
     detail_by_courier = latest_today_hub_details_by_courier()
     checkins_by_courier = latest_today_shift_checkins()
+    attendance_by_key = read_today_worker_attendance_statuses(target_date)
     comparison_rows = read_schedule_comparison_rows(target_date, target_date)
     if comparison_rows:
         scheduled_workers = [schedule_worker_from_comparison(row) for row in comparison_rows]
@@ -4892,6 +5028,13 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
         live = live_by_courier.get(courier_id) or {}
         route_detail = today_worker_route_detail(courier_id, live, detail_by_courier.get(courier_id))
         checkin = checkins_by_courier.get(courier_id) or {}
+        vehicle_payload = today_worker_vehicle_payload(schedule_worker.get("vehicle"), live, route_detail)
+        attendance = attendance_by_key.get(today_worker_attendance_key(
+            courier_id,
+            schedule_worker.get("start"),
+            schedule_worker.get("warehouse") or live.get("warehouse") or "",
+            schedule_worker.get("bookingCode") or "",
+        )) or {}
         live_route_id = live.get("activeRouteId") or ""
         live_total_stops = safe_int(live.get("totalStops"))
         live_order_count = safe_int(live.get("totalStops")) or safe_int(live.get("remainingStops")) + safe_int(live.get("deliveredStops"))
@@ -4908,6 +5051,7 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
             shifts[0]["orderCount"] = live_order_count
             shifts[0]["plannedReturn"] = route_detail.get("plannedReturn") or ""
             shifts[0]["realReturn"] = route_detail.get("realReturn") or ""
+            shifts[0]["vehicle"] = vehicle_payload
         status_label = "Beosztva"
         if live_presence:
             status_label = "Live map alapján aktív"
@@ -4948,7 +5092,11 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
             "signalAt": iso_local_text(checkin.get("signalAt")),
             "signalText": str(checkin.get("signalShiftName") or ""),
             "signalMeta": str(checkin.get("signalBookingCode") or ""),
-            "vehicle": schedule_worker.get("vehicle") or live.get("vehiclePlate") or "",
+            "vehicle": vehicle_payload,
+            "attendanceStatus": str(attendance.get("attendance_status") or ""),
+            "attendanceNote": str(attendance.get("note") or ""),
+            "attendanceMarkedBy": str(attendance.get("marked_by") or ""),
+            "attendanceMarkedAt": iso_local_text(attendance.get("marked_at") or attendance.get("updated_at")),
             "shifts": shifts,
             "shiftCount": len(shifts),
             "alternativeShift": alternative_shift,
@@ -4961,6 +5109,9 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
                 "totalStops": live_total_stops,
                 "orderCount": live_order_count,
                 "remainingStops": live.get("remainingStops") or 0,
+                "cargoRouteId": route_detail.get("cargoRouteId") or "",
+                "routeExternalId": route_detail.get("routeExternalId") or "",
+                "plannedKm": route_detail.get("plannedKm"),
                 "plannedReturn": route_detail.get("plannedReturn") or "",
                 "realReturn": route_detail.get("realReturn") or "",
                 "queueWaitMinutes": route_detail.get("queueWaitMinutes"),
@@ -4988,6 +5139,8 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
             ]),
             "queued": len([item for item in workers if item.get("queueEvent") == "queued"]),
             "returned": len([item for item in workers if item.get("queueEvent") == "returned"]),
+            "present": len([item for item in workers if item.get("attendanceStatus") == "present"]),
+            "absent": len([item for item in workers if item.get("attendanceStatus") == "absent"]),
         },
         "workers": workers,
     }
@@ -5003,6 +5156,8 @@ def empty_today_workers_payload(error: Any = "") -> dict[str, Any]:
             "active": 0,
             "queued": 0,
             "returned": 0,
+            "present": 0,
+            "absent": 0,
         },
         "workers": [],
         "error": str(error or ""),
@@ -5794,6 +5949,46 @@ def save_coordinator_shift_signal(payload: CoordinatorShiftSignalRequest) -> Non
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
         prefer="return=minimal",
+    )
+
+
+def save_today_worker_attendance(payload: TodayWorkerAttendanceRequest, user: dict[str, Any]) -> None:
+    courier_id = str(payload.courier_id or "").strip()
+    if not courier_id.isdigit():
+        raise HTTPException(status_code=422, detail="Hiányzik a futár azonosító.")
+    attendance_status = str(payload.attendance_status or "").strip().lower()
+    if attendance_status not in {"present", "absent"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen jelenlét státusz.")
+    work_date = str(payload.work_date or "").strip() or date.today().isoformat()
+    start_time = normalize_time(payload.start)
+    warehouse = normalize_warehouse(payload.warehouse) or str(payload.warehouse or "").strip()
+    marked_by = str(
+        user.get("username")
+        or user.get("email")
+        or user.get("name")
+        or "admin"
+    ).strip() or "admin"
+    now = datetime.now(timezone.utc).isoformat()
+    supabase_rest(
+        "POST",
+        "pwa_today_worker_attendance",
+        params={"on_conflict": "work_date,courier_id,start_time,warehouse,booking_code"},
+        payload={
+            "courier_id": int(courier_id),
+            "courier_name": str(payload.courier_name or "Futár").strip() or "Futár",
+            "work_date": work_date,
+            "start_time": start_time,
+            "end_time": normalize_time(payload.end),
+            "warehouse": warehouse,
+            "shift_name": str(payload.shift_name or "").strip(),
+            "booking_code": str(payload.booking_code or "").strip(),
+            "attendance_status": attendance_status,
+            "note": str(payload.note or "").strip(),
+            "marked_by": marked_by,
+            "marked_at": now,
+            "updated_at": now,
+        },
+        prefer="resolution=merge-duplicates,return=minimal",
     )
 
 
@@ -15888,6 +16083,16 @@ def coordinator_today_worker_signal(
 ):
     require_coordinator(require_user(giriton_pwa_session))
     save_coordinator_shift_signal(payload)
+    return {"ok": True}
+
+
+@app.post("/api/coordinator/today-workers/attendance")
+def coordinator_today_worker_attendance(
+    payload: TodayWorkerAttendanceRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_coordinator(require_user(giriton_pwa_session))
+    save_today_worker_attendance(payload, user)
     return {"ok": True}
 
 

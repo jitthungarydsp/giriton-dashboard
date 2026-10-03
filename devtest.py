@@ -1839,7 +1839,7 @@ def render_empty_right_menu(
             ) -> tuple[str, bool]:
                 if expected and not document:
                     if not missing_required:
-                        return f"nem szükséges: {format_huf(expected)}", False
+                        return "nem szükséges", False
                     return f"hiányzik: {format_huf(expected)}", True
                 if document and abs(round(uploaded - expected)) > 1:
                     return f"Eltérés összege: {format_huf(round(uploaded - expected))}", True
@@ -1848,7 +1848,7 @@ def render_empty_right_menu(
                 return "-", False
 
             transfer_status, transfer_bad = invoice_short_status(transfer_uploaded, transfer_expected, transfer_invoice)
-            cash_invoice_required = int(round(parse_huf_value(cash_expected))) >= 1000
+            cash_invoice_required = cash_invoice_required_from_atm_effect(row, cash_expected)
             cash_status, cash_bad = invoice_short_status(
                 cash_uploaded,
                 cash_expected,
@@ -4980,6 +4980,44 @@ def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_e
         return {"booked_shift_count": 0, "advance_booked_shift_count": 0, "source": ""}
 
     previous_month_end = period_start - timedelta(days=1)
+    rows: list[dict[str, object]] = []
+    source_table = ""
+    for table_name in ["raw_muszakpro_bookings", "foglalasok_raw"]:
+        try:
+            rows = (
+                get_db().schema("public").table(table_name)
+                .select("work_date,timestamp_text,shift_text,booking_code,serial,courier_id")
+                .eq("courier_id", clean_courier_id)
+                .gte("work_date", period_start.isoformat())
+                .lte("work_date", period_end.isoformat())
+                .limit(1000)
+                .execute().data or []
+            )
+            source_table = table_name
+            break
+        except BaseException:
+            rows = []
+
+    if rows:
+        unique_keys = set()
+        advance_keys = set()
+        for row in rows:
+            key = (
+                str(row.get("work_date") or ""),
+                str(row.get("shift_text") or ""),
+                str(row.get("booking_code") or row.get("serial") or ""),
+            )
+            unique_keys.add(key)
+            booking_date = _parse_booking_timestamp_date(row.get("timestamp_text"))
+            if booking_date and booking_date <= previous_month_end:
+                advance_keys.add(key)
+
+        return {
+            "booked_shift_count": len(unique_keys),
+            "advance_booked_shift_count": len(advance_keys),
+            "source": source_table,
+        }
+
     try:
         log_rows = (
             get_db().schema("settlement").table("courier_loyalty_booking_log")
@@ -5003,45 +5041,7 @@ def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_e
             "source": "courier_loyalty_booking_log",
         }
 
-    rows: list[dict[str, object]] = []
-    source_table = ""
-    for table_name in ["raw_muszakpro_bookings", "foglalasok_raw"]:
-        try:
-            rows = (
-                get_db().schema("public").table(table_name)
-                .select("work_date,timestamp_text,shift_text,booking_code,serial,courier_id")
-                .eq("courier_id", clean_courier_id)
-                .gte("work_date", period_start.isoformat())
-                .lte("work_date", period_end.isoformat())
-                .limit(1000)
-                .execute().data or []
-            )
-            source_table = table_name
-            break
-        except BaseException:
-            rows = []
-
-    if not rows:
-        return {"booked_shift_count": 0, "advance_booked_shift_count": 0, "source": ""}
-
-    unique_keys = set()
-    advance_keys = set()
-    for row in rows:
-        key = (
-            str(row.get("work_date") or ""),
-            str(row.get("shift_text") or ""),
-            str(row.get("booking_code") or row.get("serial") or ""),
-        )
-        unique_keys.add(key)
-        booking_date = _parse_booking_timestamp_date(row.get("timestamp_text"))
-        if booking_date and booking_date <= previous_month_end:
-            advance_keys.add(key)
-
-    return {
-        "booked_shift_count": len(unique_keys),
-        "advance_booked_shift_count": len(advance_keys),
-        "source": source_table,
-    }
+    return {"booked_shift_count": 0, "advance_booked_shift_count": 0, "source": ""}
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -11224,6 +11224,21 @@ def parse_huf_value(value: object) -> float:
         return float(text)
     except ValueError:
         return 0.0
+
+
+def cash_invoice_required_from_atm_effect(row: pd.Series | dict[str, object], expected_amount: object) -> bool:
+    atm_effect = parse_huf_value(
+        _export_row_value(row, {"ATM hatás", "ATM hatas", "ATM levonás", "ATM levonas", "atm_effect"})
+    )
+    if atm_effect == 0:
+        imported_atm = parse_huf_value(
+            _export_row_value(row, {"Importált ATM levonás", "Importalt ATM levonas"})
+        )
+        manual_atm = parse_huf_value(
+            _export_row_value(row, {"Kézi ATM levonás", "Kezi ATM levonas", "JITT ATM levonás", "JITT ATM levonas"})
+        )
+        atm_effect = -(abs(imported_atm) + abs(manual_atm))
+    return atm_effect < 0 and int(round(abs(parse_huf_value(expected_amount)))) >= 1000
 
 
 ACCOUNTING_INVOICE_COMPANY_SUFFIX_RE = re.compile(
@@ -18309,6 +18324,7 @@ def render_courier_detail_page() -> None:
         if not compare_has_saved_tig_breakdown:
             tig_transfer_amount = int(round(transfer_invoice_amount or tig_transfer_amount))
             tig_cash_amount = int(round(cash_invoice_amount or tig_cash_amount))
+        cash_invoice_required = cash_invoice_required_from_atm_effect(row, tig_cash_amount)
 
         def compare_card(
             title: str,
@@ -18328,7 +18344,7 @@ def render_courier_detail_page() -> None:
                 "Egyezik a TIG bontással."
                 if has_invoice and is_ok
                 else (
-                    "1000 Ft alatt nem szükséges KP számla."
+                    "KP számla nem szükséges."
                     if not has_invoice and not invoice_required
                     else ("Hiányzik a feltöltött számla." if not has_invoice else f"Eltérés: {format_huf(difference)}")
                 )
@@ -18349,12 +18365,12 @@ def render_courier_detail_page() -> None:
             f"""
             <div class="invoice-compare-grid">
                 {compare_card("Átutalásos számla", transfer_invoice, transfer_invoice_amount, tig_transfer_amount)}
-                {compare_card("KP számla", cash_invoice, cash_invoice_amount, tig_cash_amount, invoice_required=int(round(parse_huf_value(tig_cash_amount))) >= 1000)}
+                {compare_card("KP számla", cash_invoice, cash_invoice_amount, tig_cash_amount, invoice_required=cash_invoice_required)}
             </div>
             """,
             unsafe_allow_html=True,
         )
-        cash_invoice_missing = not cash_invoice and int(round(parse_huf_value(tig_cash_amount))) >= 1000
+        cash_invoice_missing = not cash_invoice and cash_invoice_required
         if cash_invoice_missing:
             process_month = period_start.replace(day=1)
             process_label = kp_invoice_process_label(process_month)
