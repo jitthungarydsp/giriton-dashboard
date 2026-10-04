@@ -56,9 +56,9 @@ function formatNumericIdList(values) {
 
 async function supabaseFetch(env, schema, table, params) {
   const supabaseUrl = cleanEnv(env.SUPABASE_URL);
-  const supabaseKey = cleanEnv(env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_ANON_KEY);
+  const supabaseKey = cleanEnv(env.SUPABASE_READ_KEY || env.SUPABASE_ANON_KEY || env.SUPABASE_SERVICE_ROLE_KEY);
   if (!supabaseUrl || !supabaseKey) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
+    throw new Error("Missing SUPABASE_URL or SUPABASE_READ_KEY.");
   }
 
   const url = new URL(`${supabaseUrl}/rest/v1/${table}`);
@@ -83,6 +83,9 @@ async function supabaseFetch(env, schema, table, params) {
 }
 
 function statusForRow(row, closure) {
+  if (row.invoiceIssueCount > 0) {
+    return "Számlaellenőrzés";
+  }
   if (closure?.status === "done") {
     return "Kifizethető";
   }
@@ -102,10 +105,24 @@ function buildCourierRow(row, profile, workload, closure) {
   const delay = money(row.delay_bonus_huf);
   const compliance = money(row.compliance_bonus_huf);
   const otherBonus = money(row.other_route_bonus_huf);
-  const bonus = delay + compliance + otherBonus;
+  const importedBonus = money(row.imported_bonus_huf);
+  const manualBonus = money(row.manual_bonus_huf);
+  const customerRating = money(row.customer_rating_bonus_huf);
+  const loyalty = money(row.loyalty_bonus_huf);
+  const correctionIncome = money(row.correction_bonus_huf || row.correction_income_huf);
+  const bonus = delay + compliance + otherBonus + importedBonus + manualBonus + customerRating + loyalty + correctionIncome;
   const payable = money(closure?.payable_huf || row.payable_huf);
   const income = base + tip + bonus;
-  const deductions = Math.max(income - payable, 0);
+  const malus = Math.abs(money(row.malus_huf));
+  const importedMalus = Math.abs(money(row.imported_malus_huf));
+  const manualMalus = Math.abs(money(row.manual_malus_huf));
+  const atm = Math.abs(money(row.atm_deduction_huf || row.imported_atm_deduction_huf));
+  const otherExpense = Math.abs(money(row.other_expense_huf));
+  const salaryAdvance = Math.abs(money(row.salary_advance_huf));
+  const reserve = Math.abs(money(row.target_reserve_topup_huf));
+  const insurance = Math.abs(money(row.insurance_fee_huf));
+  const correctionDeduction = Math.abs(money(row.correction_deduction_huf));
+  const deductions = malus + importedMalus + manualMalus + atm + otherExpense + salaryAdvance + reserve + insurance + correctionDeduction;
   const routeCount = Number(workload?.completed_route_count || row.route_count || 0);
   const orderCount = Number(workload?.order_count || row.order_count || 0);
 
@@ -120,12 +137,26 @@ function buildCourierRow(row, profile, workload, closure) {
     base,
     tip,
     bonus,
+    delay,
+    compliance,
+    otherBonus,
+    importedBonus,
+    manualBonus,
+    customerRating,
+    loyalty,
+    malus,
+    atm,
+    salaryAdvance,
+    reserve,
+    insurance,
     income,
     deductions,
     payable,
     closureStatus: key(closure?.status),
     bookedShiftCount: Number(workload?.booked_shift_count || 0),
+    advanceBookedShiftCount: Number(workload?.advance_booked_shift_count || 0),
     giritonShiftCount: Number(workload?.giriton_shift_count || 0),
+    invoiceIssueCount: Number(row.invoiceIssueCount || 0),
   };
 }
 
@@ -135,24 +166,9 @@ async function settlementDashboard(request, env) {
   const periodEnd = monthEnd(periodStart);
   const limit = Math.min(Math.max(Number(requestUrl.searchParams.get("limit") || 120), 1), 500);
 
-  const summaryRows = await supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_settlement_summary", {
-    select: [
-      "session_id",
-      "courier_id",
-      "driver_name",
-      "period_start",
-      "period_end",
-      "route_count",
-      "order_count",
-      "courier_base_rate_huf",
-      "tip_huf",
-      "delay_bonus_huf",
-      "compliance_bonus_huf",
-      "other_route_bonus_huf",
-      "route_bonus_total_huf",
-      "payable_huf",
-    ].join(","),
-    period_start: `eq.${periodStart}`,
+  const summaryRows = await supabaseFetch(env, SETTLEMENT_SCHEMA, "vw_courier_month_profile_snapshot", {
+    select: "*",
+    period_month: `eq.${periodStart}`,
     order: "payable_huf.desc",
     limit,
   });
@@ -161,7 +177,7 @@ async function settlementDashboard(request, env) {
   const idFilter = formatIdList(courierIds);
   const numericIdFilter = formatNumericIdList(courierIds);
 
-  const [profiles, workloads, closures] = await Promise.all([
+  const [profiles, workloads, closures, discrepancies, discrepancyCoverage] = await Promise.all([
     numericIdFilter
       ? supabaseFetch(env, PUBLIC_SCHEMA, "courier_master", {
           select: "courier_id,courier_name,email,billing_email,warehouse_name",
@@ -185,19 +201,41 @@ async function settlementDashboard(request, env) {
           limit,
         }).catch(() => [])
       : [],
+    supabaseFetch(env, SETTLEMENT_SCHEMA, "vw_invoice_discrepancy_list", {
+      select: "courier_id,courier_name,period_start,invoice_kind_label,issue_type,expected_amount_huf,uploaded_invoice_amount_huf,difference_huf,invoice_number",
+      period_start: `eq.${periodStart}`,
+      limit: 50,
+    }).catch(() => []),
+    supabaseFetch(env, SETTLEMENT_SCHEMA, "vw_invoice_discrepancy_coverage", {
+      select: "*",
+      period_start: `eq.${periodStart}`,
+      limit: 1,
+    }).catch(() => []),
   ]);
 
   const profileById = new Map(profiles.map((row) => [key(row.courier_id), row]));
   const workloadById = new Map(workloads.map((row) => [key(row.courier_id), row]));
   const closureById = new Map(closures.map((row) => [key(row.courier_id), row]));
-  const couriers = summaryRows.map((row) =>
-    buildCourierRow(
+  const discrepancyCountByCourier = new Map();
+  discrepancies.forEach((row) => {
+    const courierId = key(row.courier_id);
+    discrepancyCountByCourier.set(courierId, (discrepancyCountByCourier.get(courierId) || 0) + 1);
+  });
+
+  const couriers = summaryRows.map((sourceRow) => {
+    const row = {
+      ...sourceRow,
+      route_count: sourceRow.completed_route_count || sourceRow.route_count,
+      order_count: sourceRow.workload_order_count || sourceRow.order_count,
+      invoiceIssueCount: discrepancyCountByCourier.get(key(sourceRow.courier_id)) || 0,
+    };
+    return buildCourierRow(
       row,
       profileById.get(key(row.courier_id)),
       workloadById.get(key(row.courier_id)),
       closureById.get(key(row.courier_id)),
-    ),
-  );
+    );
+  });
 
   const totals = couriers.reduce(
     (acc, row) => {
@@ -223,6 +261,8 @@ async function settlementDashboard(request, env) {
     generatedAt: new Date().toISOString(),
     totals,
     couriers,
+    discrepancies,
+    discrepancyCoverage: discrepancyCoverage[0] || null,
     selectedCourier: couriers[0] || null,
   });
 }
@@ -232,6 +272,9 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/settlement-dashboard") {
+      if (request.method !== "GET") {
+        return jsonResponse({ error: "Read-only endpoint. Use GET." }, 405);
+      }
       try {
         return await settlementDashboard(request, env);
       } catch (error) {

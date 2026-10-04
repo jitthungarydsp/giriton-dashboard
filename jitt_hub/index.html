@@ -271,6 +271,12 @@
       font-weight: 850;
     }
 
+    .btn:disabled {
+      cursor: not-allowed;
+      opacity: .58;
+      box-shadow: none;
+    }
+
     .btn.primary {
       background: var(--blue);
       border-color: var(--blue);
@@ -1049,7 +1055,11 @@
       <div class="filter-stack">
         <div class="filter-group">
           <label>Hónap</label>
-          <div class="select-like"><span>2026. szeptember</span><span>▾</span></div>
+          <select class="select-like" id="settlement-month-select" aria-label="Elszámolási hónap">
+            <option value="2026-10">2026. október</option>
+            <option value="2026-09" selected>2026. szeptember</option>
+            <option value="2026-08">2026. augusztus</option>
+          </select>
         </div>
         <div class="filter-group">
           <label>Raktár</label>
@@ -1081,7 +1091,7 @@
           </div>
           <div class="profile-actions">
             <button class="btn">Export Excel</button>
-            <button class="btn primary">Frissítés</button>
+            <button class="btn primary" id="settlement-refresh-button">Frissítés</button>
           </div>
         </div>
         <div class="settlement-kpis">
@@ -1203,10 +1213,11 @@
           <span class="chip blue">Papp Nikolett</span>
         </div>
         <div class="action-stack">
-          <button class="btn primary wide-btn">Elszámolás elfogadása</button>
-          <button class="btn wide-btn">TIG jóváhagyása</button>
-          <button class="btn wide-btn">Számla ellenőrzése</button>
-          <button class="btn wide-btn">Kifizetésre küldés</button>
+          <button class="btn primary wide-btn" disabled>Elszámolás elfogadása</button>
+          <button class="btn wide-btn" disabled>TIG jóváhagyása</button>
+          <button class="btn wide-btn" disabled>Számla ellenőrzése</button>
+          <button class="btn wide-btn" disabled>Kifizetésre küldés</button>
+          <div class="note">Olvasó mód: a JITT Hub ezen a nézeten nem ír adatot az adatbázisba.</div>
         </div>
       </div>
 
@@ -1274,7 +1285,7 @@
     }
 
     function settlementMonthParam() {
-      return "2026-09";
+      return document.querySelector("#settlement-month-select")?.value || "2026-09";
     }
 
     function setText(selector, value) {
@@ -1284,9 +1295,17 @@
 
     function renderSettlementRows(couriers) {
       const tbody = document.querySelector("#settlement-view tbody");
-      if (!tbody || !couriers?.length) return;
+      if (!tbody) return;
+      if (!couriers?.length) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="8"><strong>Nincs DB adat erre a hónapra.</strong><br><small>Ellenőrizd, hogy van-e settlement snapshot vagy summary erre az időszakra.</small></td>
+          </tr>
+        `;
+        return;
+      }
       tbody.innerHTML = couriers.slice(0, 80).map((courier) => `
-        <tr>
+        <tr data-courier-id="${escapeHtml(courier.courierId || "")}">
           <td>
             <strong>${escapeHtml(courier.courierName || "Ismeretlen futár")}</strong><br>
             <small>${escapeHtml(courier.courierId || "-")}${courier.email ? ` · ${escapeHtml(courier.email)}` : ""}</small>
@@ -1300,6 +1319,12 @@
           <td><strong>${formatHuf(courier.payable)}</strong></td>
         </tr>
       `).join("");
+      tbody.querySelectorAll("tr[data-courier-id]").forEach((row) => {
+        row.addEventListener("click", () => {
+          const courier = couriers.find((item) => String(item.courierId || "") === row.dataset.courierId);
+          renderSelectedSettlement(courier);
+        });
+      });
     }
 
     function renderSelectedSettlement(courier) {
@@ -1314,6 +1339,7 @@
           <div class="detail-row"><span>Alapdíj</span><strong>${formatHuf(courier.base)}</strong></div>
           <div class="detail-row"><span>Borravaló</span><strong>${formatHuf(courier.tip)}</strong></div>
           <div class="detail-row"><span>Bónusz</span><strong>${formatHuf(courier.bonus)}</strong></div>
+          <div class="detail-row"><span>Lojalitás</span><strong>${formatHuf(courier.loyalty)}</strong></div>
           <div class="detail-row"><span>Összes bevétel</span><strong>${formatHuf(courier.income)}</strong></div>
         `;
       }
@@ -1321,6 +1347,9 @@
         detailBlocks[1].innerHTML = `
           <label>Levonási oldal</label>
           <div class="detail-row"><span>Levonás összesen</span><strong>${formatHuf(courier.deductions)}</strong></div>
+          <div class="detail-row"><span>ATM/KP</span><strong>${formatHuf(courier.atm)}</strong></div>
+          <div class="detail-row"><span>Fizetés előleg</span><strong>${formatHuf(courier.salaryAdvance)}</strong></div>
+          <div class="detail-row"><span>Céltartalék</span><strong>${formatHuf(courier.reserve)}</strong></div>
           <div class="detail-row"><span>MűszakPro foglalás</span><strong>${formatNumber(courier.bookedShiftCount)}</strong></div>
           <div class="detail-row"><span>Hub/Giriton műszak</span><strong>${formatNumber(courier.giritonShiftCount)}</strong></div>
           <div class="detail-row"><span>Kifizetendő</span><strong>${formatHuf(courier.payable)}</strong></div>
@@ -1328,8 +1357,44 @@
       }
     }
 
+    function issueText(issue) {
+      const labels = {
+        missing_cash_invoice: "Hiányzó KP számla",
+        missing_transfer_invoice: "Hiányzó átutalásos számla",
+        invoice_amount_not_read: "Számla összege nem olvasható",
+        amount_difference: "Számlaösszeg eltérés",
+      };
+      return labels[issue] || issue || "Eltérés";
+    }
+
+    function renderDiscrepancies(discrepancies) {
+      const card = document.querySelector("#settlement-view aside.side .side-card:nth-child(2)");
+      const badge = card?.querySelector(".chip");
+      const content = card?.querySelector(".side-content");
+      if (badge) badge.textContent = formatNumber(discrepancies?.length || 0);
+      if (!content) return;
+      if (!discrepancies?.length) {
+        content.innerHTML = `<div class="note">Nincs nyitott számlaeltérés ebben a hónapban.</div>`;
+        return;
+      }
+      content.innerHTML = discrepancies.slice(0, 8).map((item) => `
+        <div class="note">
+          <strong>${escapeHtml(item.courier_name || item.courier_id || "Ismeretlen futár")}</strong><br>
+          ${escapeHtml(issueText(item.issue_type))} · ${escapeHtml(item.invoice_kind_label || "-")}<br>
+          Elvárt: ${formatHuf(item.expected_amount_huf)} · Feltöltött: ${formatHuf(item.uploaded_invoice_amount_huf)} · Eltérés: ${formatHuf(item.difference_huf)}
+        </div>
+      `).join("");
+    }
+
+    function setSettlementLoading(isLoading) {
+      const button = document.querySelector("#settlement-refresh-button");
+      if (!button) return;
+      button.disabled = isLoading;
+      button.textContent = isLoading ? "Betöltés..." : "Frissítés";
+    }
+
     function renderSettlementDashboard(data) {
-      if (!data?.couriers?.length) return;
+      const couriers = data?.couriers || [];
       const totals = data.totals || {};
       const kpis = document.querySelectorAll("#settlement-view .settlement-kpi strong");
       if (kpis[0]) kpis[0].textContent = formatHuf(totals.payable);
@@ -1352,13 +1417,18 @@
       const sourceBadge = document.querySelector("#settlement-view .side-card:last-child .chip");
       if (sourceBadge) sourceBadge.textContent = "DB";
 
-      renderSettlementRows(data.couriers);
-      renderSelectedSettlement(data.selectedCourier || data.couriers[0]);
+      const monthInput = document.querySelector("#settlement-view .left-head .search");
+      if (monthInput && data.periodStart) monthInput.value = data.periodStart.slice(0, 7);
+
+      renderSettlementRows(couriers);
+      renderSelectedSettlement(data.selectedCourier || couriers[0]);
+      renderDiscrepancies(data.discrepancies || []);
     }
 
     async function loadSettlementDashboard() {
       if (!settlementView || settlementLoaded) return;
       settlementLoaded = true;
+      setSettlementLoading(true);
       try {
         const response = await fetch(`/api/settlement-dashboard?month=${settlementMonthParam()}&limit=120`, {
           headers: { accept: "application/json" },
@@ -1370,6 +1440,8 @@
         console.warn("JITT Hub settlement DB load failed, keeping demo data.", error);
         const sourceBadge = document.querySelector("#settlement-view .side-card:last-child .chip");
         if (sourceBadge) sourceBadge.textContent = "Demo";
+      } finally {
+        setSettlementLoading(false);
       }
     }
 
@@ -1386,7 +1458,12 @@
       });
     });
 
-    document.querySelector("#settlement-view .settlement-title .btn.primary")?.addEventListener("click", () => {
+    document.querySelector("#settlement-refresh-button")?.addEventListener("click", () => {
+      settlementLoaded = false;
+      loadSettlementDashboard();
+    });
+
+    document.querySelector("#settlement-month-select")?.addEventListener("change", () => {
       settlementLoaded = false;
       loadSettlementDashboard();
     });
