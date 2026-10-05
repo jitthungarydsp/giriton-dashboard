@@ -4294,6 +4294,13 @@ def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]
     ]
 
 
+def schedule_capacity_source_key(row: dict[str, Any]) -> tuple[str, int, int]:
+    day_key = str(row.get("work_date") or "")[:10]
+    warehouse_id = warehouse_id_for_hub(row.get("warehouse_id") or row.get("warehouse_code"))
+    dsp_id = safe_int(row.get("dsp_id"))
+    return day_key, warehouse_id or 0, dsp_id
+
+
 def read_schedule_capacity_rows(start: date, end: date) -> list[dict[str, Any]]:
     daily_rows = optional_supabase_rows(
         "pwa_schedule_capacity_calendar_daily",
@@ -4313,8 +4320,6 @@ def read_schedule_capacity_rows(start: date, end: date) -> list[dict[str, Any]]:
         row for row in daily_rows
         if str(row.get("work_date") or "")[:10] <= end.isoformat()
     ]
-    if daily_rows:
-        return daily_rows
 
     rows = optional_supabase_rows(
         "courier_hub_shift_blocks_raw",
@@ -4322,18 +4327,32 @@ def read_schedule_capacity_rows(start: date, end: date) -> list[dict[str, Any]]:
             "select": (
                 "work_date,warehouse_id,warehouse_code,block_key,shift_template_id,"
                 "template_name,shift_text,slot_from,slot_to,status,assigned,opened,"
-                "free_slots,capacity_published,fetched_at,updated_at"
+                "free_slots,capacity_published,dsp_id,fetched_at,updated_at"
             ),
             "work_date": f"gte.{start.isoformat()}",
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc",
             "limit": "10000",
         },
         timeout=40,
     )
-    return [
+    raw_rows = [
         row for row in rows
         if str(row.get("work_date") or "")[:10] <= end.isoformat()
     ]
+    if not daily_rows:
+        return raw_rows
+
+    covered_daily_keys = {
+        schedule_capacity_source_key(row)
+        for row in daily_rows
+        if schedule_capacity_source_key(row)[0]
+    }
+    raw_fallback_rows = [
+        row for row in raw_rows
+        if schedule_capacity_source_key(row) not in covered_daily_keys
+    ]
+    return daily_rows + raw_fallback_rows
 
 
 def read_schedule_free_slot_rows(start: date, end: date) -> list[dict[str, Any]]:
