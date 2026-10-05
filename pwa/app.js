@@ -61,7 +61,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v144";
+const APP_VERSION = "v145";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4209,7 +4209,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=139");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=140");
   }
   return navigator.serviceWorker.ready;
 }
@@ -6325,7 +6325,11 @@ async function loadCoordinatorScheduleDay(day) {
     mergeCoordinatorScheduleDay(payload);
     state.coordinatorScheduleDay = selectedDay;
     state.coordinatorScheduleView = "day";
-    renderCoordinatorSchedule();
+    if (state.coordinatorScheduleView === "day") {
+      await loadCoordinatorScheduleDay(state.coordinatorScheduleDay);
+    } else {
+      renderCoordinatorSchedule();
+    }
   } catch (error) {
     if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
