@@ -4281,6 +4281,107 @@ def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]
     ]
 
 
+def read_schedule_capacity_rows(start: date, end: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "courier_hub_shift_blocks_raw",
+        params={
+            "select": (
+                "work_date,warehouse_id,warehouse_code,block_key,shift_template_id,"
+                "template_name,shift_text,slot_from,slot_to,status,assigned,opened,"
+                "free_slots,capacity_published,fetched_at,updated_at"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc",
+            "limit": "10000",
+        },
+        timeout=40,
+    )
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+    ]
+
+
+def schedule_capacity_coverage(booked_slots: int, required_slots: int) -> int | None:
+    if required_slots <= 0:
+        return None
+    return int(round(booked_slots / required_slots * 100))
+
+
+def schedule_capacity_summary(
+    rows: list[dict[str, Any]],
+    warehouse_ids: list[int] | None = None,
+) -> dict[str, dict[str, Any]]:
+    capacity_by_day: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        day_key = str(row.get("work_date") or "")[:10]
+        if not day_key:
+            continue
+        warehouse_value = row.get("warehouse_code") or row.get("warehouse_id")
+        if not warehouse_allowed(warehouse_value, warehouse_ids):
+            continue
+        status = str(row.get("status") or "").strip().upper()
+        if status in {"CANCELLED", "CANCELED", "DELETED"}:
+            continue
+
+        assigned = safe_int(row.get("assigned"))
+        opened = safe_int(row.get("opened"))
+        free_raw = row.get("free_slots")
+        free_slots = safe_int(free_raw) if free_raw not in (None, "") else None
+        required = opened if opened > 0 else assigned + max(free_slots or 0, 0)
+        if required <= 0 and assigned <= 0:
+            continue
+        if free_slots is None:
+            free_slots = max(required - assigned, 0)
+
+        day_capacity = capacity_by_day.setdefault(day_key, {
+            "requiredSlots": 0,
+            "bookedSlots": 0,
+            "freeSlots": 0,
+            "blockCount": 0,
+            "updatedAt": "",
+            "warehouses": {},
+        })
+        day_capacity["requiredSlots"] += required
+        day_capacity["bookedSlots"] += assigned
+        day_capacity["freeSlots"] += max(free_slots, 0)
+        day_capacity["blockCount"] += 1
+        updated_at = str(row.get("updated_at") or row.get("fetched_at") or "")
+        if updated_at > str(day_capacity.get("updatedAt") or ""):
+            day_capacity["updatedAt"] = updated_at
+
+        warehouse_code = normalize_warehouse(warehouse_value) or str(warehouse_value or "").strip()
+        warehouse_capacity = day_capacity["warehouses"].setdefault(warehouse_code, {
+            "warehouse": warehouse_code,
+            "requiredSlots": 0,
+            "bookedSlots": 0,
+            "freeSlots": 0,
+            "blockCount": 0,
+        })
+        warehouse_capacity["requiredSlots"] += required
+        warehouse_capacity["bookedSlots"] += assigned
+        warehouse_capacity["freeSlots"] += max(free_slots, 0)
+        warehouse_capacity["blockCount"] += 1
+
+    for day_capacity in capacity_by_day.values():
+        required = safe_int(day_capacity.get("requiredSlots"))
+        booked = safe_int(day_capacity.get("bookedSlots"))
+        day_capacity["coveragePercent"] = schedule_capacity_coverage(booked, required)
+        day_capacity["missingSlots"] = max(required - booked, 0)
+        day_capacity["extraSlots"] = max(booked - required, 0)
+        day_capacity["capacityKnown"] = required > 0
+        day_capacity["warehouses"] = sorted(
+            day_capacity["warehouses"].values(),
+            key=lambda item: str(item.get("warehouse") or ""),
+        )
+        for warehouse_capacity in day_capacity["warehouses"]:
+            warehouse_capacity["coveragePercent"] = schedule_capacity_coverage(
+                safe_int(warehouse_capacity.get("bookedSlots")),
+                safe_int(warehouse_capacity.get("requiredSlots")),
+            )
+    return capacity_by_day
+
+
 def schedule_status_label(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
@@ -4597,6 +4698,10 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
     giriton_rows = read_schedule_giriton_rows(start, end)
     muszakpro_rows = read_schedule_muszakpro_rows(start, end)
     vehicle_rows = read_vehicle_assignment_rows(start, end, limit=10000)
+    capacity_by_day = schedule_capacity_summary(
+        read_schedule_capacity_rows(start, end),
+        warehouse_ids,
+    )
     workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     for row in comparison_rows:
@@ -4657,11 +4762,25 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
     while cursor <= end:
         day_key = cursor.isoformat()
         day_workers = [worker for worker in workers if worker.get("date") == day_key]
+        capacity = capacity_by_day.get(day_key, {})
+        required_slots = safe_int(capacity.get("requiredSlots"))
+        booked_slots = safe_int(capacity.get("bookedSlots"))
+        coverage_percent = schedule_capacity_coverage(booked_slots, required_slots)
         days.append({
             "date": day_key,
             "label": cursor.strftime("%m.%d."),
             "weekday": cursor.strftime("%a"),
             "total": len(day_workers),
+            "requiredSlots": required_slots,
+            "bookedSlots": booked_slots,
+            "freeSlots": safe_int(capacity.get("freeSlots")),
+            "missingSlots": max(required_slots - booked_slots, 0),
+            "extraSlots": max(booked_slots - required_slots, 0),
+            "coveragePercent": coverage_percent,
+            "capacityKnown": required_slots > 0,
+            "capacityBlockCount": safe_int(capacity.get("blockCount")),
+            "capacityUpdatedAt": str(capacity.get("updatedAt") or ""),
+            "capacityByWarehouse": capacity.get("warehouses") or [],
             "giritonOk": len([worker for worker in day_workers if worker.get("giritonTone") == "ok"]),
             "muszakproOk": len([worker for worker in day_workers if worker.get("muszakproTone") == "ok"]),
             "missing": len([
@@ -4672,6 +4791,8 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
         })
         cursor += timedelta(days=1)
 
+    required_slots_total = sum(safe_int(day.get("requiredSlots")) for day in days)
+    booked_slots_total = sum(safe_int(day.get("bookedSlots")) for day in days)
     return {
         "month": start.strftime("%Y-%m"),
         "from": start.isoformat(),
@@ -4680,6 +4801,12 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
         "summary": {
             "workers": len(workers),
             "daysWithWorkers": len([day for day in days if day["total"]]),
+            "capacityDays": len([day for day in days if day.get("capacityKnown")]),
+            "requiredSlots": required_slots_total,
+            "bookedSlots": booked_slots_total,
+            "freeSlots": sum(safe_int(day.get("freeSlots")) for day in days),
+            "missingSlots": sum(safe_int(day.get("missingSlots")) for day in days),
+            "coveragePercent": schedule_capacity_coverage(booked_slots_total, required_slots_total),
             "giritonOk": len([worker for worker in workers if worker.get("giritonTone") == "ok"]),
             "muszakproOk": len([worker for worker in workers if worker.get("muszakproTone") == "ok"]),
             "missing": len([
@@ -5175,6 +5302,16 @@ def empty_coordinator_schedule_payload(month: str, error: Any = "") -> dict[str,
             "label": cursor.strftime("%m.%d."),
             "weekday": cursor.strftime("%a"),
             "total": 0,
+            "requiredSlots": 0,
+            "bookedSlots": 0,
+            "freeSlots": 0,
+            "missingSlots": 0,
+            "extraSlots": 0,
+            "coveragePercent": None,
+            "capacityKnown": False,
+            "capacityBlockCount": 0,
+            "capacityUpdatedAt": "",
+            "capacityByWarehouse": [],
             "giritonOk": 0,
             "muszakproOk": 0,
             "missing": 0,
@@ -5189,6 +5326,12 @@ def empty_coordinator_schedule_payload(month: str, error: Any = "") -> dict[str,
         "summary": {
             "workers": 0,
             "daysWithWorkers": 0,
+            "capacityDays": 0,
+            "requiredSlots": 0,
+            "bookedSlots": 0,
+            "freeSlots": 0,
+            "missingSlots": 0,
+            "coveragePercent": None,
             "giritonOk": 0,
             "muszakproOk": 0,
             "missing": 0,

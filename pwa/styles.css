@@ -291,12 +291,23 @@ textarea { min-height: 96px; resize: vertical; }
 .ops-muted { color: var(--muted); font-weight: 850; }
 .ops-worker-foot { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 .schedule-day-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
-.schedule-day { display: grid; gap: 4px; min-height: 76px; padding: 9px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); text-align: left; }
+.schedule-day { display: grid; gap: 5px; min-height: 104px; padding: 9px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); text-align: left; }
 .schedule-day.active { border-color: var(--green-dark); background: #eff8ed; box-shadow: 0 0 0 3px #6f9d3d1f; }
 .schedule-day.attention { border-color: #e0a39e; }
+.schedule-day.coverage-good { background: #f3fbef; }
+.schedule-day.coverage-warn { background: #fffaf0; border-color: #ead9aa; }
+.schedule-day.coverage-risk { background: #fff4ec; border-color: #efc1a7; }
+.schedule-day.coverage-bad { background: #fff0ef; border-color: #e0a39e; }
 .schedule-day span { color: var(--green-dark); font-size: 11px; font-weight: 900; }
-.schedule-day strong { font-size: 18px; }
+.schedule-day strong { font-size: 16px; line-height: 1.05; }
 .schedule-day small { color: var(--muted); font-size: 10px; font-weight: 800; line-height: 1.2; }
+.schedule-day .slot-line { color: var(--ink); font-size: 14px; font-weight: 950; }
+.schedule-day .coverage-pill { width: fit-content; padding: 3px 8px; border-radius: 999px; background: #e2f2df; color: var(--green-dark); font-size: 11px; }
+.schedule-day.coverage-warn .coverage-pill { background: #fff0c8; color: #8b5d00; }
+.schedule-day.coverage-risk .coverage-pill { background: #ffe1ca; color: #9b450f; }
+.schedule-day.coverage-bad .coverage-pill { background: #ffdada; color: #a52d28; }
+.schedule-day.coverage-unknown .coverage-pill { background: #eef1eb; color: var(--muted); }
+.schedule-day .day-delta { overflow-wrap: anywhere; }
 .schedule-selected { display: grid; gap: 10px; }
 .schedule-worker { display: block; padding: 0; overflow: hidden; }
 .schedule-worker > .ops-card-head { padding: 16px; cursor: pointer; list-style: none; }

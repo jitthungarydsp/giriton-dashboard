@@ -5190,7 +5190,7 @@ function renderOpsSummary(summary = {}, cards = []) {
     ${items.map(([label, value, note]) => `
       <div>
         <span>${escapeHtml(label)}</span>
-        <strong>${escapeHtml(formatCount(value || 0))}</strong>
+        <strong>${escapeHtml(typeof value === "string" ? value : formatCount(value || 0))}</strong>
         ${note ? `<small>${escapeHtml(note)}</small>` : ""}
       </div>
     `).join("")}
@@ -5985,13 +5985,52 @@ function selectedScheduleDay(payload) {
     || null;
 }
 
+function scheduleDayOffset(date) {
+  const selected = new Date(`${date}T12:00:00`);
+  const today = new Date(`${localDate()}T12:00:00`);
+  return Math.round((selected - today) / 86400000);
+}
+
+function scheduleCoverageTone(day = {}) {
+  if (!day.capacityKnown || day.coveragePercent === null || day.coveragePercent === undefined) return "unknown";
+  const value = Number(day.coveragePercent);
+  if (value >= 95) return "good";
+  if (value >= 85) return "warn";
+  if (value >= 70) return "risk";
+  return "bad";
+}
+
+function scheduleCoverageText(day = {}) {
+  if (!day.capacityKnown || day.coveragePercent === null || day.coveragePercent === undefined) return "-";
+  return `${formatCount(day.coveragePercent)}%`;
+}
+
+function scheduleSlotText(day = {}) {
+  if (!day.capacityKnown) return `${formatCount(day.total || 0)} futár`;
+  return `${formatCount(day.bookedSlots || 0)}/${formatCount(day.requiredSlots || 0)}`;
+}
+
+function scheduleDayDeltaText(day = {}) {
+  if (!day.capacityKnown) return "nincs slot adat";
+  const missing = Number(day.missingSlots || 0);
+  const extra = Number(day.extraSlots || 0);
+  if (missing > 0) return `-${formatCount(missing)} slot`;
+  if (extra > 0) return `+${formatCount(extra)} slot`;
+  return "rendben";
+}
+
 function renderScheduleDayButton(day) {
   const isSelected = day.date === state.coordinatorScheduleDay;
+  const tone = scheduleCoverageTone(day);
+  const offset = scheduleDayOffset(day.date);
+  const offsetText = offset === 0 ? "Ma" : `D${offset > 0 ? "+" : ""}${offset}`;
   return `
-    <button class="schedule-day ${isSelected ? "active" : ""} ${day.missing ? "attention" : ""}" type="button" data-schedule-day="${escapeHtml(day.date)}">
-      <span>${escapeHtml(day.label || day.date)}</span>
-      <strong>${formatCount(day.total || 0)}</strong>
-      <small>G ${formatCount(day.giritonOk || 0)} · M ${formatCount(day.muszakproOk || 0)}</small>
+    <button class="schedule-day coverage-${tone} ${isSelected ? "active" : ""} ${day.missingSlots || day.missing ? "attention" : ""}" type="button" data-schedule-day="${escapeHtml(day.date)}">
+      <span>${escapeHtml(offsetText)}</span>
+      <strong>${escapeHtml(day.label || day.date)}</strong>
+      <small class="slot-line">${escapeHtml(scheduleSlotText(day))}</small>
+      <small class="coverage-pill">${escapeHtml(scheduleCoverageText(day))}</small>
+      <small class="day-delta">${escapeHtml(scheduleDayDeltaText(day))}</small>
     </button>
   `;
 }
@@ -6044,13 +6083,20 @@ function renderCoordinatorSchedule() {
   const day = selectedScheduleDay(payload);
   if (day && state.coordinatorScheduleDay !== day.date) state.coordinatorScheduleDay = day.date;
   const workers = day?.workers || [];
+  const summary = payload.summary || {};
+  const summaryCoverage = summary.coveragePercent === null || summary.coveragePercent === undefined
+    ? "-"
+    : `${formatCount(summary.coveragePercent)}%`;
+  const selectedSlotText = day?.capacityKnown
+    ? `${scheduleSlotText(day)} slot · ${scheduleCoverageText(day)}`
+    : "Nincs slot adat";
   target.innerHTML = `
     ${payload.error ? `<div class="notice error">A beosztás nem tölthető be: ${escapeHtml(payload.error)}</div>` : ""}
-    ${renderOpsSummary(payload.summary || {}, [
-      ["Műszak sor", payload.summary?.workers || 0],
-      ["Munkanapos nap", payload.summary?.daysWithWorkers || 0],
-      ["Giriton OK", payload.summary?.giritonOk || 0],
-      ["MűszakPro OK", payload.summary?.muszakproOk || 0],
+    ${renderOpsSummary(summary, [
+      ["Töltöttség", summaryCoverage, "havi slot alapján"],
+      ["Slot", `${formatCount(summary.bookedSlots || 0)}/${formatCount(summary.requiredSlots || 0)}`, "foglalt / nyitott"],
+      ["Hiány", summary.missingSlots || 0, "nyitott slot"],
+      ["Nap", summary.capacityDays || 0, "kapacitás adattal"],
     ])}
     <p class="updated-at">${escapeHtml(payload.month || "")} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
     <div class="schedule-day-grid">
@@ -6059,7 +6105,7 @@ function renderCoordinatorSchedule() {
     <section class="schedule-selected">
       <div class="device-history-head">
         <strong>${day ? escapeHtml(dateLabel(day.date)) : "Nincs kiválasztott nap"}</strong>
-        <span>${formatCount(workers.length)} futár</span>
+        <span>${escapeHtml(selectedSlotText)} · ${formatCount(workers.length)} futár</span>
       </div>
       <div class="ops-card-list">
         ${workers.length ? workers.map(renderScheduleWorker).join("") : `<div class="empty-card">Ezen a napon nincs beosztott futár.</div>`}
