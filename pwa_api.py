@@ -4381,6 +4381,29 @@ def read_schedule_free_slot_rows(start: date, end: date) -> list[dict[str, Any]]
 
 
 def read_schedule_slot_rows(start: date, end: date) -> list[dict[str, Any]]:
+    view_rows = optional_supabase_rows(
+        "vw_courier_hub_shift_block_capacity",
+        params={
+            "select": (
+                "work_date,warehouse_id,warehouse_code,dsp_id,block_key,shift_template_id,"
+                "template_name,slot_from,slot_to,occupancy_from,occupancy_to,status,"
+                "assigned,opened,free_slots,capacity_published,fetched_at,updated_at"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+            "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc,block_key.asc",
+            "limit": "10000",
+        },
+        timeout=40,
+    )
+    view_rows = [
+        row for row in view_rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+        and str(row.get("status") or "OPEN").strip().upper() not in {"CANCELLED", "CANCELED", "DELETED"}
+    ]
+    if view_rows:
+        return view_rows
+
     rows = optional_supabase_rows(
         "courier_hub_shift_blocks_raw",
         params={
@@ -4531,7 +4554,7 @@ def schedule_slot_payload(row: dict[str, Any]) -> dict[str, Any] | None:
         "status": str(row.get("status") or "OPEN").strip(),
         "blockKey": str(row.get("block_key") or ""),
         "shiftTemplateId": str(row.get("shift_template_id") or ""),
-        "shiftText": str(row.get("shift_text") or row.get("template_name") or ""),
+        "shiftText": str(row.get("shift_text") or row.get("template_name") or row.get("block_key") or ""),
     }
 
 

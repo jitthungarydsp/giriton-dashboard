@@ -61,7 +61,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v146";
+const APP_VERSION = "v147";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4209,7 +4209,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=141");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=142");
   }
   return navigator.serviceWorker.ready;
 }
@@ -6080,45 +6080,6 @@ function scheduleSlotLabel(slot = {}) {
   return `${slot.start || "-"}${slot.end ? `-${slot.end}` : ""}${suffix}`;
 }
 
-function scheduleNormalizeTime(value) {
-  const text = String(value || "").trim();
-  const match = text.match(/(?:^|\D)([0-2]?\d)[:.](\d{2})(?:\D|$)/);
-  if (!match) return "";
-  return `${match[1].padStart(2, "0")}:${match[2]}`;
-}
-
-function scheduleMinutes(value) {
-  const normalized = scheduleNormalizeTime(value);
-  if (!normalized) return null;
-  const [hour, minute] = normalized.split(":").map((part) => Number(part));
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-  return hour * 60 + minute;
-}
-
-function scheduleSlotsFromWorkers(day = {}) {
-  const grouped = new Map();
-  (day.workers || []).forEach((worker) => {
-    const start = scheduleNormalizeTime(worker.start || worker.shiftName || worker.bookingCode);
-    const end = scheduleNormalizeTime(worker.end);
-    const key = `${worker.warehouse || ""}|${start || worker.shiftName || worker.bookingCode || "ismeretlen"}|${end}`;
-    const slot = grouped.get(key) || {
-      date: day.date || "",
-      warehouse: worker.warehouse || "",
-      start,
-      end,
-      startMinutes: scheduleMinutes(start) ?? 99999,
-      freeSlots: 0,
-      opened: 0,
-      assigned: 0,
-      status: "NOT_UPLOADED",
-      shiftText: worker.shiftName || worker.bookingCode || "Beosztott műszak",
-    };
-    slot.assigned = Number(slot.assigned || 0) + 1;
-    grouped.set(key, slot);
-  });
-  return [...grouped.values()].sort((a, b) => Number(a.startMinutes || 0) - Number(b.startMinutes || 0));
-}
-
 function scheduleSlotTone(slot = {}) {
   const opened = Number(slot.opened || 0);
   const assigned = Number(slot.assigned || 0);
@@ -6163,7 +6124,7 @@ function renderScheduleSlotCard(slot = {}) {
 }
 
 function renderScheduleSlots(day = {}) {
-  const slots = (day.slots || []).length ? (day.slots || []) : scheduleSlotsFromWorkers(day);
+  const slots = day.slots || [];
   return `
     <section class="schedule-slots">
       <div class="device-history-head">
@@ -6172,7 +6133,7 @@ function renderScheduleSlots(day = {}) {
       </div>
       ${slots.length
         ? `<div class="schedule-slot-grid">${slots.map(renderScheduleSlotCard).join("")}</div>`
-        : `<div class="empty-card">Ehhez a naphoz nincs betöltött slot lista.</div>`}
+        : `<div class="empty-card">Ehhez a naphoz nincs betöltött részletes slotlista. Futtasd a HUB shift block frissítést erre a napra.</div>`}
     </section>
   `;
 }
