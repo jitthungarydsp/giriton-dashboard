@@ -6079,6 +6079,61 @@ function scheduleSlotLabel(slot = {}) {
   return `${slot.start || "-"}${slot.end ? `-${slot.end}` : ""}${suffix}`;
 }
 
+function scheduleSlotTone(slot = {}) {
+  const opened = Number(slot.opened || 0);
+  const assigned = Number(slot.assigned || 0);
+  const free = Number(slot.freeSlots || 0);
+  const status = String(slot.status || "OPEN").toUpperCase();
+  if (opened <= 0 || status !== "OPEN") return "closed";
+  if (free > 0 || assigned < opened) return "open";
+  return "full";
+}
+
+function scheduleSlotStatusText(slot = {}) {
+  const tone = scheduleSlotTone(slot);
+  if (tone === "full") return "Tele";
+  if (tone === "open") return `${formatCount(slot.freeSlots || 0)} szabad`;
+  return "Nincs nyitott slot";
+}
+
+function scheduleSlotCapacityText(slot = {}) {
+  const opened = Number(slot.opened || 0);
+  if (opened <= 0) return "0 · Nincs közzétéve";
+  return `${formatCount(slot.assigned || 0)}/${formatCount(opened)}`;
+}
+
+function renderScheduleSlotCard(slot = {}) {
+  const tone = scheduleSlotTone(slot);
+  return `
+    <article class="schedule-slot-card ${tone}">
+      <div>
+        <strong>${escapeHtml(slot.start || "-")}${slot.end ? `-${escapeHtml(slot.end)}` : ""}</strong>
+        <small>${escapeHtml(slot.shiftText || slot.blockKey || "Műszak")}</small>
+      </div>
+      <div>
+        <span>Kapacitás</span>
+        <b>${escapeHtml(scheduleSlotCapacityText(slot))}</b>
+      </div>
+      <em>${escapeHtml(scheduleSlotStatusText(slot))}</em>
+    </article>
+  `;
+}
+
+function renderScheduleSlots(day = {}) {
+  const slots = day.slots || [];
+  return `
+    <section class="schedule-slots">
+      <div class="device-history-head">
+        <strong>Műszakok / slotok</strong>
+        <span>${formatCount(slots.length)} idősáv</span>
+      </div>
+      ${slots.length
+        ? `<div class="schedule-slot-grid">${slots.map(renderScheduleSlotCard).join("")}</div>`
+        : `<div class="empty-card">Ehhez a naphoz nincs betöltött slot lista.</div>`}
+    </section>
+  `;
+}
+
 function renderScheduleRecommendation(item = {}) {
   const phone = String(item.phoneNumber || "").trim();
   const current = (item.currentShifts || [])
@@ -6139,20 +6194,22 @@ function renderCoordinatorSchedule() {
   const day = selectedScheduleDay(payload);
   if (day && state.coordinatorScheduleDay !== day.date) state.coordinatorScheduleDay = day.date;
   const workers = day?.workers || [];
-  const summary = payload.summary || {};
-  const summaryCoverage = summary.coveragePercent === null || summary.coveragePercent === undefined
-    ? "-"
-    : `${formatCount(summary.coveragePercent)}%`;
+  const dayRecommendations = day?.recommendations || [];
+  const dayCoverage = day?.capacityKnown ? scheduleCoverageText(day) : "-";
+  const daySlotValue = day?.capacityKnown
+    ? `${formatCount(day.bookedSlots || 0)}/${formatCount(day.requiredSlots || 0)}`
+    : "-";
+  const dayMissingValue = day?.capacityKnown ? formatCount(day.missingSlots || 0) : "-";
   const selectedSlotText = day?.capacityKnown
     ? `${scheduleSlotText(day)} slot · ${scheduleCoverageText(day)}`
     : "Nincs slot adat";
   target.innerHTML = `
     ${payload.error ? `<div class="notice error">A beosztás nem tölthető be: ${escapeHtml(payload.error)}</div>` : ""}
-    ${renderOpsSummary(summary, [
-      ["Töltöttség", summaryCoverage, "havi slot alapján"],
-      ["Slot", `${formatCount(summary.bookedSlots || 0)}/${formatCount(summary.requiredSlots || 0)}`, "foglalt / nyitott"],
-      ["Hiány", summary.missingSlots || 0, "nyitott slot"],
-      ["Ajánlás", summary.recommendations || 0, "4ó30 szabály"],
+    ${renderOpsSummary(day || {}, [
+      ["Töltöttség", dayCoverage, "napi slot alapján"],
+      ["Slot", daySlotValue, "foglalt / nyitott"],
+      ["Hiány", dayMissingValue, "nyitott slot"],
+      ["Ajánlás", dayRecommendations.length || 0, "4ó30 szabály"],
     ])}
     <p class="updated-at">${escapeHtml(payload.month || "")} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
     <div class="schedule-day-grid">
@@ -6163,10 +6220,14 @@ function renderCoordinatorSchedule() {
         <strong>${day ? escapeHtml(dateLabel(day.date)) : "Nincs kiválasztott nap"}</strong>
         <span>${escapeHtml(selectedSlotText)} · ${formatCount(workers.length)} futár</span>
       </div>
+      ${day ? renderScheduleSlots(day) : ""}
       ${day ? renderScheduleRecommendations(day) : ""}
-      <div class="ops-card-list">
-        ${workers.length ? workers.map(renderScheduleWorker).join("") : `<div class="empty-card">Ezen a napon nincs beosztott futár.</div>`}
-      </div>
+      <details class="schedule-worker-list-panel">
+        <summary>Beosztott futárok · ${formatCount(workers.length)} fő</summary>
+        <div class="ops-card-list">
+          ${workers.length ? workers.map(renderScheduleWorker).join("") : `<div class="empty-card">Ezen a napon nincs beosztott futár.</div>`}
+        </div>
+      </details>
     </section>
   `;
   target.querySelectorAll("[data-schedule-day]").forEach((button) => {

@@ -4378,6 +4378,29 @@ def read_schedule_free_slot_rows(start: date, end: date) -> list[dict[str, Any]]
     ]
 
 
+def read_schedule_slot_rows(start: date, end: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "courier_hub_shift_blocks_raw",
+        params={
+            "select": (
+                "work_date,warehouse_id,warehouse_code,block_key,shift_template_id,"
+                "template_name,shift_text,slot_from,slot_to,status,assigned,opened,"
+                "free_slots,capacity_published,dsp_id,fetched_at,updated_at"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+            "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc",
+            "limit": "10000",
+        },
+        timeout=40,
+    )
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+        and str(row.get("status") or "OPEN").strip().upper() not in {"CANCELLED", "CANCELED", "DELETED"}
+    ]
+
+
 def schedule_capacity_coverage(booked_slots: int, required_slots: int) -> int | None:
     if required_slots <= 0:
         return None
@@ -4487,6 +4510,11 @@ def schedule_slot_payload(row: dict[str, Any]) -> dict[str, Any] | None:
         return None
     warehouse_id = warehouse_id_for_hub(row.get("warehouse_id") or row.get("warehouse_code")) or 0
     warehouse = normalize_warehouse(row.get("warehouse_code") or row.get("warehouse_id"))
+    assigned = safe_int(row.get("assigned"))
+    opened = safe_int(row.get("opened"))
+    free_raw = row.get("free_slots")
+    free_slots = safe_int(free_raw) if free_raw not in (None, "") else max(opened - assigned, 0)
+    capacity_published = str(row.get("capacity_published") or "").strip().lower() in {"true", "1", "yes", "igen"}
     return {
         "date": str(row.get("work_date") or "")[:10],
         "warehouse": warehouse,
@@ -4494,9 +4522,11 @@ def schedule_slot_payload(row: dict[str, Any]) -> dict[str, Any] | None:
         "start": start,
         "end": normalize_time(row.get("slot_to")),
         "startMinutes": start_minutes,
-        "freeSlots": safe_int(row.get("free_slots")),
-        "opened": safe_int(row.get("opened")),
-        "assigned": safe_int(row.get("assigned")),
+        "freeSlots": free_slots,
+        "opened": opened,
+        "assigned": assigned,
+        "capacityPublished": capacity_published,
+        "status": str(row.get("status") or "OPEN").strip(),
         "blockKey": str(row.get("block_key") or ""),
         "shiftTemplateId": str(row.get("shift_template_id") or ""),
         "shiftText": str(row.get("shift_text") or row.get("template_name") or ""),
@@ -4966,6 +4996,7 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
     muszakpro_rows = read_schedule_muszakpro_rows(start, end)
     vehicle_rows = read_vehicle_assignment_rows(start, end, limit=10000)
     free_slot_rows = read_schedule_free_slot_rows(start, end)
+    slot_rows = read_schedule_slot_rows(start, end)
     capacity_by_day = schedule_capacity_summary(
         read_schedule_capacity_rows(start, end),
         warehouse_ids,
@@ -5032,6 +5063,16 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
             if warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids)
         ],
     )
+    slots_by_day: dict[str, list[dict[str, Any]]] = {}
+    for row in slot_rows:
+        if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
+            continue
+        slot = schedule_slot_payload(row)
+        if not slot or not slot.get("date"):
+            continue
+        slots_by_day.setdefault(slot["date"], []).append(slot)
+    for day_slots in slots_by_day.values():
+        day_slots.sort(key=lambda item: (safe_int(item.get("startMinutes")), str(item.get("shiftTemplateId") or "")))
 
     days = []
     cursor = start
@@ -5057,6 +5098,7 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
             "capacityBlockCount": safe_int(capacity.get("blockCount")),
             "capacityUpdatedAt": str(capacity.get("updatedAt") or ""),
             "capacityByWarehouse": capacity.get("warehouses") or [],
+            "slots": slots_by_day.get(day_key, []),
             "recommendations": recommendations_by_day.get(day_key, []),
             "giritonOk": len([worker for worker in day_workers if worker.get("giritonTone") == "ok"]),
             "muszakproOk": len([worker for worker in day_workers if worker.get("muszakproTone") == "ok"]),
