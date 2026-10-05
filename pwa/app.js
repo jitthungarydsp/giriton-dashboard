@@ -13,6 +13,7 @@ const state = {
   coordinatorLeafletMap: null,
   coordinatorSchedule: null,
   coordinatorScheduleDay: localDate(),
+  coordinatorScheduleView: "calendar",
   coordinatorScheduleWarehouse: "",
   todayWorkers: null,
   todayWorkersQuery: "",
@@ -60,7 +61,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v143";
+const APP_VERSION = "v144";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4208,7 +4209,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=129");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=139");
   }
   return navigator.serviceWorker.ready;
 }
@@ -6181,6 +6182,43 @@ function renderScheduleRecommendations(day = {}) {
   `;
 }
 
+function renderCoordinatorScheduleDayDetail(payload, day) {
+  const workers = day?.workers || [];
+  const dayRecommendations = day?.recommendations || [];
+  const dayCoverage = day?.capacityKnown ? scheduleCoverageText(day) : "-";
+  const daySlotValue = day?.capacityKnown
+    ? `${formatCount(day.bookedSlots || 0)}/${formatCount(day.requiredSlots || 0)}`
+    : "-";
+  const dayMissingValue = day?.capacityKnown ? formatCount(day.missingSlots || 0) : "-";
+  const selectedSlotText = day?.capacityKnown
+    ? `${scheduleSlotText(day)} slot · ${scheduleCoverageText(day)}`
+    : "Nincs slot adat";
+  return `
+    ${payload.error ? `<div class="notice error">A beosztás nem tölthető be: ${escapeHtml(payload.error)}</div>` : ""}
+    <section class="schedule-day-detail">
+      <button class="ghost-btn schedule-back-btn" type="button" data-schedule-back>Vissza a naptárhoz</button>
+      <div class="device-history-head">
+        <strong>${day ? escapeHtml(dateLabel(day.date)) : "Nincs kiválasztott nap"}</strong>
+        <span>${escapeHtml(selectedSlotText)} · ${formatCount(workers.length)} futár</span>
+      </div>
+      ${renderOpsSummary(day || {}, [
+        ["Töltöttség", dayCoverage, "napi slot alapján"],
+        ["Slot", daySlotValue, "foglalt / nyitott"],
+        ["Hiány", dayMissingValue, "nyitott slot"],
+        ["Ajánlás", dayRecommendations.length || 0, "4ó30 szabály"],
+      ])}
+      ${day ? renderScheduleSlots(day) : ""}
+      ${day ? renderScheduleRecommendations(day) : ""}
+      <details class="schedule-worker-list-panel">
+        <summary>Beosztott futárok · ${formatCount(workers.length)} fő</summary>
+        <div class="ops-card-list">
+          ${workers.length ? workers.map(renderScheduleWorker).join("") : `<div class="empty-card">Ezen a napon nincs beosztott futár.</div>`}
+        </div>
+      </details>
+    </section>
+  `;
+}
+
 function renderCoordinatorSchedule() {
   const target = $("#coordinator-schedule-panel");
   if (!target) return;
@@ -6193,46 +6231,36 @@ function renderCoordinatorSchedule() {
   if (monthInput && !monthInput.value) monthInput.value = payload.month || state.statisticsMonth;
   const day = selectedScheduleDay(payload);
   if (day && state.coordinatorScheduleDay !== day.date) state.coordinatorScheduleDay = day.date;
-  const workers = day?.workers || [];
-  const dayRecommendations = day?.recommendations || [];
   const dayCoverage = day?.capacityKnown ? scheduleCoverageText(day) : "-";
   const daySlotValue = day?.capacityKnown
     ? `${formatCount(day.bookedSlots || 0)}/${formatCount(day.requiredSlots || 0)}`
     : "-";
   const dayMissingValue = day?.capacityKnown ? formatCount(day.missingSlots || 0) : "-";
-  const selectedSlotText = day?.capacityKnown
-    ? `${scheduleSlotText(day)} slot · ${scheduleCoverageText(day)}`
-    : "Nincs slot adat";
+  if (state.coordinatorScheduleView === "day") {
+    target.innerHTML = renderCoordinatorScheduleDayDetail(payload, day);
+    target.querySelector("[data-schedule-back]")?.addEventListener("click", () => {
+      state.coordinatorScheduleView = "calendar";
+      renderCoordinatorSchedule();
+    });
+    return;
+  }
   target.innerHTML = `
     ${payload.error ? `<div class="notice error">A beosztás nem tölthető be: ${escapeHtml(payload.error)}</div>` : ""}
     ${renderOpsSummary(day || {}, [
       ["Töltöttség", dayCoverage, "napi slot alapján"],
       ["Slot", daySlotValue, "foglalt / nyitott"],
       ["Hiány", dayMissingValue, "nyitott slot"],
-      ["Ajánlás", dayRecommendations.length || 0, "4ó30 szabály"],
+      ["Nap", day ? (day.label || day.date) : "-", "kiválasztva"],
     ])}
     <p class="updated-at">${escapeHtml(payload.month || "")} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
     <div class="schedule-day-grid">
       ${(payload.days || []).map(renderScheduleDayButton).join("")}
     </div>
-    <section class="schedule-selected">
-      <div class="device-history-head">
-        <strong>${day ? escapeHtml(dateLabel(day.date)) : "Nincs kiválasztott nap"}</strong>
-        <span>${escapeHtml(selectedSlotText)} · ${formatCount(workers.length)} futár</span>
-      </div>
-      ${day ? renderScheduleSlots(day) : ""}
-      ${day ? renderScheduleRecommendations(day) : ""}
-      <details class="schedule-worker-list-panel">
-        <summary>Beosztott futárok · ${formatCount(workers.length)} fő</summary>
-        <div class="ops-card-list">
-          ${workers.length ? workers.map(renderScheduleWorker).join("") : `<div class="empty-card">Ezen a napon nincs beosztott futár.</div>`}
-        </div>
-      </details>
-    </section>
   `;
   target.querySelectorAll("[data-schedule-day]").forEach((button) => {
     button.addEventListener("click", () => {
       state.coordinatorScheduleDay = button.dataset.scheduleDay || state.coordinatorScheduleDay;
+      state.coordinatorScheduleView = "day";
       renderCoordinatorSchedule();
     });
   });
@@ -6924,12 +6952,14 @@ $("#coordinator-schedule-refresh")?.addEventListener("click", loadCoordinatorSch
 $("#coordinator-schedule-month")?.addEventListener("change", () => {
   state.coordinatorSchedule = null;
   state.coordinatorScheduleDay = "";
+  state.coordinatorScheduleView = "calendar";
   loadCoordinatorSchedule();
 });
 $("#coordinator-schedule-warehouse")?.addEventListener("change", (event) => {
   state.coordinatorScheduleWarehouse = event.currentTarget.value || "";
   state.coordinatorSchedule = null;
   state.coordinatorScheduleDay = localDate();
+  state.coordinatorScheduleView = "calendar";
   loadCoordinatorSchedule();
 });
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));

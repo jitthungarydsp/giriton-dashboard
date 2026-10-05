@@ -308,7 +308,8 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-day.coverage-bad .coverage-pill { background: #ffdada; color: #a52d28; }
 .schedule-day.coverage-unknown .coverage-pill { background: #eef1eb; color: var(--muted); }
 .schedule-day .day-delta { overflow-wrap: anywhere; }
-.schedule-selected { display: grid; gap: 10px; }
+.schedule-selected, .schedule-day-detail { display: grid; gap: 10px; }
+.schedule-back-btn { width: fit-content; min-height: 42px; padding: 0 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); color: var(--green-dark); font-size: 13px; font-weight: 950; }
 .schedule-slots { display: grid; gap: 10px; }
 .schedule-slot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .schedule-slot-card { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(92px, .55fr) auto; gap: 10px; align-items: center; min-height: 72px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
