@@ -210,6 +210,17 @@ jobs:
 
           "${CMD[@]}"
 
+      - name: HUB_JOB_AUTOBOOKING refresh PWA schedule capacity calendar
+        if: ${{ steps.window.outputs.dry_run == 'true' }}
+        shell: bash
+        run: |
+          python scripts/refresh_pwa_schedule_capacity_calendar.py \
+            --warehouse-ids "1,2" \
+            --dsp-id 8 \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}" \
+            --refresh-source "HUB_JOB_AUTOBOOKING"
+
       - name: HUB_JOB_AUTOBOOKING refresh DB after live booking
         if: ${{ steps.window.outputs.dry_run != 'true' }}
         shell: bash
@@ -219,6 +230,13 @@ jobs:
             --dsp-id 8 \
             --start-date "${{ steps.window.outputs.start_date }}" \
             --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
+
+          python scripts/refresh_pwa_schedule_capacity_calendar.py \
+            --warehouse-ids "1,2" \
+            --dsp-id 8 \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}" \
+            --refresh-source "HUB_JOB_AUTOBOOKING"
 
           python scripts/refresh_ops_shift_comparison_from_hub.py \
             --start-date "${{ steps.window.outputs.start_date }}" \

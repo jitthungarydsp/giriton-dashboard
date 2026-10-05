@@ -4282,6 +4282,27 @@ def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]
 
 
 def read_schedule_capacity_rows(start: date, end: date) -> list[dict[str, Any]]:
+    daily_rows = optional_supabase_rows(
+        "pwa_schedule_capacity_calendar_daily",
+        params={
+            "select": (
+                "work_date,warehouse_id,warehouse_code,dsp_id,required_slots,booked_slots,"
+                "free_slots,missing_slots,extra_slots,coverage_percent,source_block_count,"
+                "source_updated_at,refreshed_at,updated_at"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "work_date.asc,warehouse_code.asc",
+            "limit": "10000",
+        },
+        timeout=20,
+    )
+    daily_rows = [
+        row for row in daily_rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+    ]
+    if daily_rows:
+        return daily_rows
+
     rows = optional_supabase_rows(
         "courier_hub_shift_blocks_raw",
         params={
@@ -4324,8 +4345,8 @@ def schedule_capacity_summary(
         if status in {"CANCELLED", "CANCELED", "DELETED"}:
             continue
 
-        assigned = safe_int(row.get("assigned"))
-        opened = safe_int(row.get("opened"))
+        assigned = safe_int(row.get("assigned") if "assigned" in row else row.get("booked_slots"))
+        opened = safe_int(row.get("opened") if "opened" in row else row.get("required_slots"))
         free_raw = row.get("free_slots")
         free_slots = safe_int(free_raw) if free_raw not in (None, "") else None
         required = opened if opened > 0 else assigned + max(free_slots or 0, 0)
@@ -4345,8 +4366,8 @@ def schedule_capacity_summary(
         day_capacity["requiredSlots"] += required
         day_capacity["bookedSlots"] += assigned
         day_capacity["freeSlots"] += max(free_slots, 0)
-        day_capacity["blockCount"] += 1
-        updated_at = str(row.get("updated_at") or row.get("fetched_at") or "")
+        day_capacity["blockCount"] += safe_int(row.get("source_block_count")) or 1
+        updated_at = str(row.get("source_updated_at") or row.get("updated_at") or row.get("fetched_at") or "")
         if updated_at > str(day_capacity.get("updatedAt") or ""):
             day_capacity["updatedAt"] = updated_at
 
