@@ -59,6 +59,7 @@ COURIER_HUB_LIVE_MAP_TRACK_CHUNK_SIZE = int(
 )
 COURIER_HUB_DETAIL_CACHE = {}
 COURIER_HUB_PERFORMANCE_SHIFT_CACHE = {}
+COURIER_HUB_ROUTE_STATISTICS_CACHE = {}
 
 
 def normalize_id(value):
@@ -1096,6 +1097,79 @@ def build_performance_shift_note(courier_id, warehouse, route):
     if shift_parts:
         summary += " | mai: " + "; ".join(shift_parts)
     return summary
+
+
+def load_courier_hub_route_statistics_row(courier_id, route_id, warehouse=""):
+    normalized_courier_id = normalize_id(courier_id)
+    normalized_route_id = normalize_id(route_id)
+    normalized_warehouse = normalize_warehouse(warehouse)
+    cache_key = (normalized_courier_id, normalized_route_id, normalized_warehouse)
+    if cache_key in COURIER_HUB_ROUTE_STATISTICS_CACHE:
+        return COURIER_HUB_ROUTE_STATISTICS_CACHE[cache_key]
+
+    if not normalized_courier_id or not normalized_route_id:
+        COURIER_HUB_ROUTE_STATISTICS_CACHE[cache_key] = {}
+        return {}
+
+    supabase_url, service_role_key = get_supabase_config()
+    if not supabase_url or not service_role_key:
+        COURIER_HUB_ROUTE_STATISTICS_CACHE[cache_key] = {}
+        return {}
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/courier_hub_route_statistics"
+        "?select=courier_id,route_id,warehouse_id,planned_departure_at,planned_return_at,returned_at,order_count,stops_total,planned_km,mileage_km,updated_at"
+        f"&courier_id=eq.{normalized_courier_id}"
+        f"&route_id=eq.{normalized_route_id}"
+        "&order=updated_at.desc"
+        "&limit=5"
+    )
+    response = requests.get(
+        endpoint,
+        headers=supabase_headers(service_role_key),
+        timeout=20,
+    )
+    if response.status_code in [404, 406]:
+        COURIER_HUB_ROUTE_STATISTICS_CACHE[cache_key] = {}
+        return {}
+    raise_for_supabase_error(response)
+
+    rows = response.json() or []
+    if normalized_warehouse:
+        wanted_warehouse_id = warehouse_id_for_courier_hub(normalized_warehouse)
+        warehouse_rows = [
+            row
+            for row in rows
+            if str(row.get("warehouse_id") or "") == str(wanted_warehouse_id or "")
+        ]
+        if warehouse_rows:
+            rows = warehouse_rows
+
+    row = rows[0] if rows else {}
+    COURIER_HUB_ROUTE_STATISTICS_CACHE[cache_key] = row
+    return row
+
+
+def route_planned_departure_value(route, driver_detail=None, statistics_row=None):
+    return coalesce(
+        route.get("plannedDeparture"),
+        route.get("plannedDepartureAt"),
+        first_value_by_names(route, PLANNED_DEPARTURE_FIELD_NAMES),
+        first_value_by_names(driver_detail, PLANNED_DEPARTURE_FIELD_NAMES),
+        (statistics_row or {}).get("planned_departure_at"),
+    )
+
+
+def route_planned_return_value(route, driver_detail=None, statistics_row=None):
+    return coalesce(
+        route.get("plannedReturn"),
+        route.get("plannedReturnAt"),
+        route.get("expectedReturn"),
+        route.get("expectedReturnAt"),
+        first_value_by_names(route, PLANNED_RETURN_FIELD_NAMES),
+        first_value_by_names(driver_detail, PLANNED_RETURN_FIELD_NAMES),
+        (statistics_row or {}).get("planned_return_at"),
+    )
 
 
 def find_live_monitoring_rows(value):
@@ -2211,13 +2285,11 @@ def build_notification_payload(
         "order_id": str(checkpoint.get("orderId") or ""),
         "assigned_at": timestamp_or_none(route.get("assignedAt")),
         "planned_departure": timestamp_or_none(
-            coalesce(
-                route.get("plannedDeparture"),
-                route.get("plannedDepartureAt"),
-                first_value_by_names(route, PLANNED_DEPARTURE_FIELD_NAMES),
-            )
+            route_planned_departure_value(route)
         ),
-        "planned_return": timestamp_or_none(route.get("plannedReturn")),
+        "planned_return": timestamp_or_none(
+            route_planned_return_value(route)
+        ),
         "licence_plate": str(licence_plate),
         "orders_in_route": str(orders_in_route),
     }
@@ -2775,6 +2847,25 @@ def run_once(max_age_minutes, dry_run=False):
             route,
             driver_detail,
         )
+        route_statistics = load_courier_hub_route_statistics_row(
+            courier_id,
+            route_id,
+            route_warehouse,
+        )
+        planned_departure_value = route_planned_departure_value(
+            route,
+            driver_detail,
+            route_statistics,
+        )
+        planned_return_value = route_planned_return_value(
+            route,
+            driver_detail,
+            route_statistics,
+        )
+        if planned_departure_value and not route.get("plannedDeparture"):
+            route = {**route, "plannedDeparture": planned_departure_value}
+        if planned_return_value and not route.get("plannedReturn"):
+            route = {**route, "plannedReturn": planned_return_value}
 
         checkpoint = find_first_checkpoint(route)
         order_id = normalize_id(checkpoint.get("orderId"))
@@ -2831,22 +2922,10 @@ def run_once(max_age_minutes, dry_run=False):
         )
         shift_notes = merge_shift_notes(shift_notes, stored_hub_shift_notes)
         planned_departure_text = format_time(
-            coalesce(
-                route.get("plannedDeparture"),
-                route.get("plannedDepartureAt"),
-                first_value_by_names(route, PLANNED_DEPARTURE_FIELD_NAMES),
-                first_value_by_names(driver_detail, PLANNED_DEPARTURE_FIELD_NAMES),
-            )
+            planned_departure_value
         )
         planned_return_text = format_time(
-            coalesce(
-                route.get("plannedReturn"),
-                route.get("plannedReturnAt"),
-                route.get("expectedReturn"),
-                route.get("expectedReturnAt"),
-                first_value_by_names(route, PLANNED_RETURN_FIELD_NAMES),
-                first_value_by_names(driver_detail, PLANNED_RETURN_FIELD_NAMES),
-            )
+            planned_return_value
         )
 
         if dry_run:
