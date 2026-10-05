@@ -6070,6 +6070,59 @@ function renderScheduleWorker(worker) {
   `;
 }
 
+function scheduleSlotLabel(slot = {}) {
+  const free = Number(slot.freeSlots || 0);
+  const suffix = free > 1 ? ` · ${formatCount(free)} szabad` : "";
+  return `${slot.start || "-"}${slot.end ? `-${slot.end}` : ""}${suffix}`;
+}
+
+function renderScheduleRecommendation(item = {}) {
+  const phone = String(item.phoneNumber || "").trim();
+  const current = (item.currentShifts || [])
+    .map((shift) => shift.start || "")
+    .filter(Boolean)
+    .join(", ");
+  const directSlots = (item.recommendedSlots || [])
+    .map((slot) => `<span>${escapeHtml(scheduleSlotLabel(slot))}</span>`)
+    .join("");
+  const moveSuggestions = (item.moveSuggestions || []).map((suggestion) => `
+    <div class="schedule-move-row">
+      <strong>${escapeHtml(suggestion.newSlot?.start || "-")}</strong>
+      <small>${escapeHtml(suggestion.moveFrom?.start || "-")} csúsztatása ide: ${escapeHtml(suggestion.moveTo?.start || "-")}</small>
+    </div>
+  `).join("");
+  return `
+    <article class="schedule-recommendation ${item.type === "move" ? "move" : ""}">
+      <div>
+        <strong>${escapeHtml(item.courierName || "Futár")}</strong>
+        <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")} · most: ${escapeHtml(current || "-")}</small>
+      </div>
+      <div class="schedule-rec-slots">
+        ${directSlots || moveSuggestions || `<span>Nincs közvetlen slot</span>`}
+      </div>
+      <div class="schedule-rec-foot">
+        <small>${escapeHtml(item.reason || "")}</small>
+        ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : `<span>Nincs telefonszám</span>`}
+      </div>
+    </article>
+  `;
+}
+
+function renderScheduleRecommendations(day = {}) {
+  const recommendations = day.recommendations || [];
+  return `
+    <section class="schedule-recommendations">
+      <div class="device-history-head">
+        <strong>Ajánlás</strong>
+        <span>${formatCount(recommendations.length)} találat</span>
+      </div>
+      ${recommendations.length
+        ? `<div class="schedule-recommendation-list">${recommendations.map(renderScheduleRecommendation).join("")}</div>`
+        : `<div class="empty-card">Nincs ajánlható futár a 4 óra 30 perc szabály és az aktuális raktár alapján.</div>`}
+    </section>
+  `;
+}
+
 function renderCoordinatorSchedule() {
   const target = $("#coordinator-schedule-panel");
   if (!target) return;
@@ -6096,7 +6149,7 @@ function renderCoordinatorSchedule() {
       ["Töltöttség", summaryCoverage, "havi slot alapján"],
       ["Slot", `${formatCount(summary.bookedSlots || 0)}/${formatCount(summary.requiredSlots || 0)}`, "foglalt / nyitott"],
       ["Hiány", summary.missingSlots || 0, "nyitott slot"],
-      ["Nap", summary.capacityDays || 0, "kapacitás adattal"],
+      ["Ajánlás", summary.recommendations || 0, "4ó30 szabály"],
     ])}
     <p class="updated-at">${escapeHtml(payload.month || "")} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
     <div class="schedule-day-grid">
@@ -6107,6 +6160,7 @@ function renderCoordinatorSchedule() {
         <strong>${day ? escapeHtml(dateLabel(day.date)) : "Nincs kiválasztott nap"}</strong>
         <span>${escapeHtml(selectedSlotText)} · ${formatCount(workers.length)} futár</span>
       </div>
+      ${day ? renderScheduleRecommendations(day) : ""}
       <div class="ops-card-list">
         ${workers.length ? workers.map(renderScheduleWorker).join("") : `<div class="empty-card">Ezen a napon nincs beosztott futár.</div>`}
       </div>

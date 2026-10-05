@@ -317,6 +317,17 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-chip.ok { background: #e2f2df; color: var(--green-dark); }
 .schedule-chip.missing { background: #fff0ef; color: #b93c33; }
 .schedule-chip.unknown { background: #eef1eb; color: var(--muted); }
+.schedule-recommendations { display: grid; gap: 10px; }
+.schedule-recommendation-list { display: grid; gap: 8px; }
+.schedule-recommendation { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, .9fr); gap: 10px; align-items: center; padding: 12px; border: 1px solid #cfe2c8; border-radius: 14px; background: #f7fcf4; }
+.schedule-recommendation.move { border-color: #ead9aa; background: #fffaf0; }
+.schedule-recommendation strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
+.schedule-recommendation small { display: block; color: var(--muted); font-size: 11px; font-weight: 800; line-height: 1.35; overflow-wrap: anywhere; }
+.schedule-rec-slots { display: flex; flex-wrap: wrap; gap: 6px; }
+.schedule-rec-slots span { display: inline-flex; align-items: center; min-height: 28px; padding: 5px 9px; border-radius: 999px; background: #e2f2df; color: var(--green-dark); font-size: 12px; font-weight: 950; }
+.schedule-move-row { display: grid; gap: 2px; min-width: 150px; padding: 7px 9px; border-radius: 12px; background: #fff0c8; }
+.schedule-rec-foot { display: grid; gap: 5px; justify-items: end; text-align: right; }
+.schedule-rec-foot a, .schedule-rec-foot span { color: var(--green-dark); font-size: 13px; font-weight: 950; text-decoration: none; }
 .process-title { display: flex; align-items: flex-start; gap: 12px; }
 .process-title h3 { margin: 2px 0 4px; font-size: 20px; }
 .process-title p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -725,6 +736,8 @@ textarea { min-height: 96px; resize: vertical; }
   .departure-main { grid-template-columns: 1fr; }
   .departure-group-head { align-items: flex-start; }
   .schedule-day-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .schedule-recommendation { grid-template-columns: 1fr; }
+  .schedule-rec-foot { justify-items: start; text-align: left; }
   .tig-row { grid-template-columns: minmax(0, 1fr) 1fr; }
   .tig-party-grid { grid-template-columns: 1fr; }
   .tig-row.head { display: none; }

@@ -4323,6 +4323,29 @@ def read_schedule_capacity_rows(start: date, end: date) -> list[dict[str, Any]]:
     ]
 
 
+def read_schedule_free_slot_rows(start: date, end: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "courier_hub_shift_blocks_raw",
+        params={
+            "select": (
+                "work_date,warehouse_id,warehouse_code,block_key,shift_template_id,"
+                "template_name,shift_text,slot_from,slot_to,status,assigned,opened,"
+                "free_slots,fetched_at,updated_at"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc",
+            "limit": "10000",
+        },
+        timeout=40,
+    )
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+        and safe_int(row.get("free_slots")) > 0
+        and str(row.get("status") or "OPEN").strip().upper() == "OPEN"
+    ]
+
+
 def schedule_capacity_coverage(booked_slots: int, required_slots: int) -> int | None:
     if required_slots <= 0:
         return None
@@ -4401,6 +4424,197 @@ def schedule_capacity_summary(
                 safe_int(warehouse_capacity.get("requiredSlots")),
             )
     return capacity_by_day
+
+
+SCHEDULE_MIN_SHIFT_GAP_MINUTES = 270
+
+
+def schedule_time_minutes(value: Any) -> int | None:
+    normalized = normalize_time(value)
+    if not normalized:
+        return None
+    try:
+        hour, minute = normalized.split(":", 1)
+        return int(hour) * 60 + int(minute[:2])
+    except (TypeError, ValueError):
+        return None
+
+
+def schedule_gap_ok(minutes: int, existing_minutes: list[int], minimum_gap: int = SCHEDULE_MIN_SHIFT_GAP_MINUTES) -> bool:
+    return all(abs(minutes - item) >= minimum_gap for item in existing_minutes)
+
+
+def schedule_worker_identity(worker: dict[str, Any]) -> str:
+    return str(worker.get("courierId") or "").strip() or normalize_person_match_text(worker.get("courierName"))
+
+
+def schedule_slot_payload(row: dict[str, Any]) -> dict[str, Any] | None:
+    start = normalize_time(row.get("slot_from"))
+    start_minutes = schedule_time_minutes(start)
+    if start_minutes is None:
+        return None
+    warehouse_id = warehouse_id_for_hub(row.get("warehouse_id") or row.get("warehouse_code")) or 0
+    warehouse = normalize_warehouse(row.get("warehouse_code") or row.get("warehouse_id"))
+    return {
+        "date": str(row.get("work_date") or "")[:10],
+        "warehouse": warehouse,
+        "warehouseId": warehouse_id,
+        "start": start,
+        "end": normalize_time(row.get("slot_to")),
+        "startMinutes": start_minutes,
+        "freeSlots": safe_int(row.get("free_slots")),
+        "opened": safe_int(row.get("opened")),
+        "assigned": safe_int(row.get("assigned")),
+        "blockKey": str(row.get("block_key") or ""),
+        "shiftTemplateId": str(row.get("shift_template_id") or ""),
+        "shiftText": str(row.get("shift_text") or row.get("template_name") or ""),
+    }
+
+
+def read_schedule_contact_rows(workers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    courier_ids = sorted({
+        str(worker.get("courierId") or "").strip()
+        for worker in workers
+        if str(worker.get("courierId") or "").strip().isdigit()
+    })
+    params = {
+        "select": "courier_id,courier_name,phone_number,warehouse_name",
+        "order": "courier_name.asc",
+        "limit": "10000",
+    }
+    if courier_ids and len(courier_ids) <= 500:
+        params["courier_id"] = f"in.({','.join(courier_ids)})"
+    return optional_supabase_rows(
+        "courier_master",
+        params=params,
+        timeout=30,
+    )
+
+
+def attach_schedule_contacts(workers: list[dict[str, Any]]) -> None:
+    rows = read_schedule_contact_rows(workers)
+    by_id: dict[str, dict[str, Any]] = {}
+    by_name: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        name_key = normalize_person_match_text(row.get("courier_name"))
+        if courier_id:
+            by_id[courier_id] = row
+        if name_key:
+            by_name[name_key] = row
+    for worker in workers:
+        courier_id = str(worker.get("courierId") or "").strip()
+        name_key = normalize_person_match_text(worker.get("courierName"))
+        contact = by_id.get(courier_id) or by_name.get(name_key) or {}
+        worker["phoneNumber"] = str(contact.get("phone_number") or "").strip()
+
+
+def build_schedule_recommendations(
+    workers: list[dict[str, Any]],
+    free_slot_rows: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    slots_by_day_warehouse: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in free_slot_rows:
+        slot = schedule_slot_payload(row)
+        if not slot or not slot.get("date") or not slot.get("warehouse"):
+            continue
+        slots_by_day_warehouse.setdefault((slot["date"], slot["warehouse"]), []).append(slot)
+    for slots in slots_by_day_warehouse.values():
+        slots.sort(key=lambda item: (item.get("startMinutes") or 0, item.get("blockKey") or ""))
+
+    workers_by_day_warehouse: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+    for worker in workers:
+        day = str(worker.get("date") or "")[:10]
+        warehouse = normalize_warehouse(worker.get("warehouse"))
+        identity = schedule_worker_identity(worker)
+        start_minutes = schedule_time_minutes(worker.get("start"))
+        if not day or not warehouse or not identity or start_minutes is None:
+            continue
+        group = workers_by_day_warehouse.setdefault((day, warehouse), {})
+        candidate = group.setdefault(identity, {
+            "courierId": str(worker.get("courierId") or ""),
+            "courierName": str(worker.get("courierName") or "Futár"),
+            "phoneNumber": str(worker.get("phoneNumber") or ""),
+            "warehouse": warehouse,
+            "date": day,
+            "shifts": [],
+        })
+        if worker.get("phoneNumber") and not candidate.get("phoneNumber"):
+            candidate["phoneNumber"] = str(worker.get("phoneNumber") or "")
+        candidate["shifts"].append({
+            "start": normalize_time(worker.get("start")),
+            "end": normalize_time(worker.get("end")),
+            "startMinutes": start_minutes,
+            "shiftName": str(worker.get("shiftName") or worker.get("bookingCode") or ""),
+        })
+
+    output: dict[str, list[dict[str, Any]]] = {}
+    for key, grouped_workers in workers_by_day_warehouse.items():
+        day, warehouse = key
+        free_slots = slots_by_day_warehouse.get(key, [])
+        if not free_slots:
+            continue
+        for worker in grouped_workers.values():
+            existing_minutes = sorted({safe_int(shift.get("startMinutes")) for shift in worker["shifts"]})
+            direct_slots = [
+                slot for slot in free_slots
+                if schedule_gap_ok(safe_int(slot.get("startMinutes")), existing_minutes)
+            ]
+            move_slots: list[dict[str, Any]] = []
+            for slot in free_slots:
+                slot_minutes = safe_int(slot.get("startMinutes"))
+                if schedule_gap_ok(slot_minutes, existing_minutes):
+                    continue
+                for current_shift in worker["shifts"]:
+                    current_minutes = safe_int(current_shift.get("startMinutes"))
+                    if abs(slot_minutes - current_minutes) >= SCHEDULE_MIN_SHIFT_GAP_MINUTES:
+                        continue
+                    other_minutes = [item for item in existing_minutes if item != current_minutes]
+                    if not schedule_gap_ok(slot_minutes, other_minutes):
+                        continue
+                    for move_target in free_slots:
+                        move_minutes = safe_int(move_target.get("startMinutes"))
+                        if move_minutes == slot_minutes or move_minutes == current_minutes:
+                            continue
+                        if schedule_gap_ok(move_minutes, other_minutes + [slot_minutes]):
+                            move_slots.append({
+                                "newSlot": slot,
+                                "moveFrom": current_shift,
+                                "moveTo": move_target,
+                            })
+                            break
+                    if move_slots and move_slots[-1].get("newSlot") is slot:
+                        break
+
+            if not direct_slots and not move_slots:
+                continue
+            recommendation = {
+                "type": "direct" if direct_slots else "move",
+                "courierId": worker.get("courierId") or "",
+                "courierName": worker.get("courierName") or "Futár",
+                "phoneNumber": worker.get("phoneNumber") or "",
+                "warehouse": warehouse,
+                "currentShifts": sorted(worker["shifts"], key=lambda item: safe_int(item.get("startMinutes"))),
+                "recommendedSlots": direct_slots[:4],
+                "moveSuggestions": move_slots[:3],
+                "maxAdditionalShifts": len(direct_slots),
+                "reason": (
+                    f"Legalább {SCHEDULE_MIN_SHIFT_GAP_MINUTES // 60} óra 30 perc távolság minden műszaktól."
+                    if direct_slots
+                    else "Csúsztatással férhet be új műszak a minimum 4 óra 30 perc szabály mellett."
+                ),
+            }
+            output.setdefault(day, []).append(recommendation)
+
+    for day_recommendations in output.values():
+        day_recommendations.sort(
+            key=lambda item: (
+                0 if item.get("type") == "direct" else 1,
+                -safe_int(item.get("maxAdditionalShifts")),
+                str(item.get("courierName") or ""),
+            )
+        )
+    return output
 
 
 def schedule_status_label(value: Any) -> str:
@@ -4719,6 +4933,7 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
     giriton_rows = read_schedule_giriton_rows(start, end)
     muszakpro_rows = read_schedule_muszakpro_rows(start, end)
     vehicle_rows = read_vehicle_assignment_rows(start, end, limit=10000)
+    free_slot_rows = read_schedule_free_slot_rows(start, end)
     capacity_by_day = schedule_capacity_summary(
         read_schedule_capacity_rows(start, end),
         warehouse_ids,
@@ -4776,7 +4991,15 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
         key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
     )
     attach_schedule_vehicles(workers, start, end)
+    attach_schedule_contacts(workers)
     attach_giriton_attendance_logins(workers, start, end)
+    recommendations_by_day = build_schedule_recommendations(
+        workers,
+        [
+            row for row in free_slot_rows
+            if warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids)
+        ],
+    )
 
     days = []
     cursor = start
@@ -4802,6 +5025,7 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
             "capacityBlockCount": safe_int(capacity.get("blockCount")),
             "capacityUpdatedAt": str(capacity.get("updatedAt") or ""),
             "capacityByWarehouse": capacity.get("warehouses") or [],
+            "recommendations": recommendations_by_day.get(day_key, []),
             "giritonOk": len([worker for worker in day_workers if worker.get("giritonTone") == "ok"]),
             "muszakproOk": len([worker for worker in day_workers if worker.get("muszakproTone") == "ok"]),
             "missing": len([
@@ -4828,6 +5052,7 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
             "freeSlots": sum(safe_int(day.get("freeSlots")) for day in days),
             "missingSlots": sum(safe_int(day.get("missingSlots")) for day in days),
             "coveragePercent": schedule_capacity_coverage(booked_slots_total, required_slots_total),
+            "recommendations": sum(len(day.get("recommendations") or []) for day in days),
             "giritonOk": len([worker for worker in workers if worker.get("giritonTone") == "ok"]),
             "muszakproOk": len([worker for worker in workers if worker.get("muszakproTone") == "ok"]),
             "missing": len([
@@ -5154,12 +5379,36 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
         attach_schedule_vehicles(scheduled_workers, target_date, target_date)
         attach_giriton_attendance_logins(scheduled_workers, target_date, target_date)
     else:
-        schedule = read_coordinator_schedule(target_key[:7], warehouse_ids)
-        today_schedule = next(
-            (day for day in schedule.get("days", []) if day.get("date") == target_key),
-            {"workers": []},
+        workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for row in read_schedule_hub_rows(target_date, target_date):
+            worker = schedule_worker_from_hub(row)
+            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+            workers_by_key[key] = worker
+        for row in read_schedule_giriton_rows(target_date, target_date):
+            worker = schedule_worker_from_giriton(row)
+            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+            existing = workers_by_key.get(key)
+            if existing:
+                merge_schedule_worker(existing, worker)
+            else:
+                workers_by_key[key] = worker
+        for row in read_schedule_muszakpro_rows(target_date, target_date):
+            worker = schedule_worker_from_muszakpro(row)
+            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+            existing = workers_by_key.get(key)
+            if existing:
+                merge_schedule_worker(existing, worker)
+            else:
+                workers_by_key[key] = worker
+        scheduled_workers = sorted(
+            [
+                worker for worker in workers_by_key.values()
+                if warehouse_allowed(worker.get("warehouse"), warehouse_ids)
+            ],
+            key=lambda item: (item.get("start") or "99:99", item.get("warehouse") or "", item.get("courierName") or ""),
         )
-        scheduled_workers = today_schedule.get("workers", [])
+        attach_schedule_vehicles(scheduled_workers, target_date, target_date)
+        attach_giriton_attendance_logins(scheduled_workers, target_date, target_date)
     workers = []
     grouped_workers: dict[str, list[dict[str, Any]]] = {}
     for schedule_worker in scheduled_workers:
@@ -5333,6 +5582,7 @@ def empty_coordinator_schedule_payload(month: str, error: Any = "") -> dict[str,
             "capacityBlockCount": 0,
             "capacityUpdatedAt": "",
             "capacityByWarehouse": [],
+            "recommendations": [],
             "giritonOk": 0,
             "muszakproOk": 0,
             "missing": 0,
@@ -5353,6 +5603,7 @@ def empty_coordinator_schedule_payload(month: str, error: Any = "") -> dict[str,
             "freeSlots": 0,
             "missingSlots": 0,
             "coveragePercent": None,
+            "recommendations": 0,
             "giritonOk": 0,
             "muszakproOk": 0,
             "missing": 0,
