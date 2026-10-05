@@ -585,6 +585,19 @@ def coordinator_warehouse_ids(user: dict[str, Any]) -> list[int]:
     return [1, 2]
 
 
+def selected_coordinator_warehouse_ids(user: dict[str, Any], warehouse: str = "") -> list[int]:
+    allowed_ids = coordinator_warehouse_ids(user)
+    selected_id = warehouse_id_for_hub(warehouse)
+    role = str(user.get("role") or "").strip().lower()
+    if selected_id:
+        if selected_id not in allowed_ids:
+            raise HTTPException(status_code=403, detail="Ehhez a raktárhoz nincs jogosultság.")
+        return [selected_id]
+    if role == "admin":
+        raise HTTPException(status_code=422, detail="Admin módban előbb válassz raktárat.")
+    return allowed_ids
+
+
 def warehouse_allowed(value: Any, allowed_warehouse_ids: list[int] | None) -> bool:
     if not allowed_warehouse_ids:
         return True
@@ -16514,12 +16527,13 @@ def coordinator_today_worker_attendance(
 @app.get("/api/coordinator/schedule")
 def coordinator_schedule(
     month: str = Query(default=""),
+    warehouse: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
     selected_month = month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
     try:
-        return read_coordinator_schedule(selected_month, coordinator_warehouse_ids(user))
+        return read_coordinator_schedule(selected_month, selected_coordinator_warehouse_ids(user, warehouse))
     except Exception as exc:
         print("Coordinator schedule failed:", exc)
         return empty_coordinator_schedule_payload(selected_month, exc)

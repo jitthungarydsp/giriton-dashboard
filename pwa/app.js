@@ -13,6 +13,7 @@ const state = {
   coordinatorLeafletMap: null,
   coordinatorSchedule: null,
   coordinatorScheduleDay: localDate(),
+  coordinatorScheduleWarehouse: "",
   todayWorkers: null,
   todayWorkersQuery: "",
   couriers: [],
@@ -414,6 +415,8 @@ function showApp() {
   if (adminPreviewBar) adminPreviewBar.classList.toggle("hidden", !state.user.canPreviewCouriers);
   const adminPreviewInput = $("#admin-preview-courier");
   if (adminPreviewInput) adminPreviewInput.value = state.workflowPreviewCourierId;
+  const scheduleWarehouseWrap = $("#coordinator-schedule-warehouse-wrap");
+  if (scheduleWarehouseWrap) scheduleWarehouseWrap.classList.toggle("hidden", role !== "admin");
   loadCourierMasterOptions();
 }
 
@@ -6177,11 +6180,20 @@ function renderCoordinatorSchedule() {
 async function loadCoordinatorSchedule() {
   const target = $("#coordinator-schedule-panel");
   const monthInput = $("#coordinator-schedule-month");
+  const warehouseInput = $("#coordinator-schedule-warehouse");
   if (monthInput && !monthInput.value) monthInput.value = new Date().toISOString().slice(0, 7);
   const month = monthInput?.value || new Date().toISOString().slice(0, 7);
+  const role = String(state.user?.role || "").toLowerCase();
+  const warehouse = role === "admin" ? String(warehouseInput?.value || state.coordinatorScheduleWarehouse || "").trim() : "";
+  if (role === "admin" && !warehouse) {
+    state.coordinatorSchedule = null;
+    if (target) target.innerHTML = `<div class="empty-card">Válassz raktárat, utána indítsd a beosztás lekérést.</div>`;
+    return;
+  }
   if (target && !state.coordinatorSchedule) target.innerHTML = `<div class="empty-card">Beosztás betöltése...</div>`;
   try {
-    state.coordinatorSchedule = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}`);
+    const warehouseQuery = warehouse ? `&warehouse=${encodeURIComponent(warehouse)}` : "";
+    state.coordinatorSchedule = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}${warehouseQuery}`);
     if (!state.coordinatorScheduleDay || !String(state.coordinatorScheduleDay).startsWith(month)) {
       state.coordinatorScheduleDay = localDate().startsWith(month) ? localDate() : `${month}-01`;
     }
@@ -6851,6 +6863,12 @@ $("#coordinator-schedule-refresh")?.addEventListener("click", loadCoordinatorSch
 $("#coordinator-schedule-month")?.addEventListener("change", () => {
   state.coordinatorSchedule = null;
   state.coordinatorScheduleDay = "";
+  loadCoordinatorSchedule();
+});
+$("#coordinator-schedule-warehouse")?.addEventListener("change", (event) => {
+  state.coordinatorScheduleWarehouse = event.currentTarget.value || "";
+  state.coordinatorSchedule = null;
+  state.coordinatorScheduleDay = localDate();
   loadCoordinatorSchedule();
 });
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
