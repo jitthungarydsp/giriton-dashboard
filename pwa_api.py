@@ -4301,7 +4301,7 @@ def schedule_capacity_source_key(row: dict[str, Any]) -> tuple[str, int, int]:
     return day_key, warehouse_id or 0, dsp_id
 
 
-def read_schedule_capacity_rows(start: date, end: date) -> list[dict[str, Any]]:
+def read_schedule_capacity_rows(start: date, end: date, allow_raw_fallback: bool = True) -> list[dict[str, Any]]:
     daily_rows = optional_supabase_rows(
         "pwa_schedule_capacity_calendar_daily",
         params={
@@ -4320,6 +4320,8 @@ def read_schedule_capacity_rows(start: date, end: date) -> list[dict[str, Any]]:
         row for row in daily_rows
         if str(row.get("work_date") or "")[:10] <= end.isoformat()
     ]
+    if not allow_raw_fallback:
+        return daily_rows
 
     rows = optional_supabase_rows(
         "courier_hub_shift_blocks_raw",
@@ -4987,92 +4989,119 @@ def attach_schedule_vehicles(workers: list[dict[str, Any]], start: date, end: da
         )
 
 
-def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None) -> dict[str, Any]:
+def read_coordinator_schedule(
+    month: str,
+    warehouse_ids: list[int] | None = None,
+    detail_date: str = "",
+) -> dict[str, Any]:
     start = parse_month(month or datetime.now(LOCAL_TIMEZONE).date().isoformat()[:7])
     end = month_end(start)
-    comparison_rows = read_schedule_comparison_rows(start, end)
-    hub_rows = read_schedule_hub_rows(start, end)
-    giriton_rows = read_schedule_giriton_rows(start, end)
-    muszakpro_rows = read_schedule_muszakpro_rows(start, end)
-    vehicle_rows = read_vehicle_assignment_rows(start, end, limit=10000)
-    free_slot_rows = read_schedule_free_slot_rows(start, end)
-    slot_rows = read_schedule_slot_rows(start, end)
+    detail_day: date | None = None
+    if detail_date:
+        try:
+            detail_day = datetime.strptime(str(detail_date)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            detail_day = None
+        if detail_day and (detail_day < start or detail_day > end):
+            detail_day = None
+
     capacity_by_day = schedule_capacity_summary(
-        read_schedule_capacity_rows(start, end),
+        read_schedule_capacity_rows(start, end, allow_raw_fallback=False),
         warehouse_ids,
     )
-    workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    if detail_day and detail_day.isoformat() not in capacity_by_day:
+        capacity_by_day.update(
+            schedule_capacity_summary(
+                read_schedule_capacity_rows(detail_day, detail_day, allow_raw_fallback=True),
+                warehouse_ids,
+            )
+        )
 
-    for row in comparison_rows:
-        worker = schedule_worker_from_comparison(row)
-        key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
-        workers_by_key[key] = worker
-
-    for row in hub_rows:
-        worker = schedule_worker_from_hub(row)
-        key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
-        existing = workers_by_key.get(key)
-        if existing:
-            merge_schedule_worker(existing, worker)
-        else:
-            workers_by_key[key] = worker
-
-    for row in giriton_rows:
-        worker = schedule_worker_from_giriton(row)
-        key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
-        existing = workers_by_key.get(key)
-        if existing:
-            merge_schedule_worker(existing, worker)
-        else:
-            workers_by_key[key] = worker
-
-    for row in muszakpro_rows:
-        worker = schedule_worker_from_muszakpro(row)
-        key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
-        existing = workers_by_key.get(key)
-        if existing:
-            merge_schedule_worker(existing, worker)
-        else:
-            workers_by_key[key] = worker
-
-    for row in vehicle_rows:
-        worker = schedule_worker_from_vehicle(row)
-        key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
-        existing = workers_by_key.get(key)
-        if existing:
-            if not existing.get("vehicle"):
-                existing["vehicle"] = worker.get("vehicle")
-            merge_schedule_worker(existing, worker)
-        else:
-            workers_by_key[key] = worker
-
-    workers = sorted(
-        [
-            worker for worker in workers_by_key.values()
-            if warehouse_allowed(worker.get("warehouse"), warehouse_ids)
-        ],
-        key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
-    )
-    attach_schedule_vehicles(workers, start, end)
-    attach_schedule_contacts(workers)
-    attach_giriton_attendance_logins(workers, start, end)
-    recommendations_by_day = build_schedule_recommendations(
-        workers,
-        [
-            row for row in free_slot_rows
-            if warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids)
-        ],
-    )
+    workers: list[dict[str, Any]] = []
+    recommendations_by_day: dict[str, list[dict[str, Any]]] = {}
     slots_by_day: dict[str, list[dict[str, Any]]] = {}
-    for row in slot_rows:
-        if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
-            continue
-        slot = schedule_slot_payload(row)
-        if not slot or not slot.get("date"):
-            continue
-        slots_by_day.setdefault(slot["date"], []).append(slot)
-    for day_slots in slots_by_day.values():
-        day_slots.sort(key=lambda item: (safe_int(item.get("startMinutes")), str(item.get("shiftTemplateId") or "")))
+
+    if detail_day:
+        detail_start = detail_day
+        detail_end = detail_day
+        comparison_rows = read_schedule_comparison_rows(detail_start, detail_end)
+        hub_rows = read_schedule_hub_rows(detail_start, detail_end)
+        giriton_rows = read_schedule_giriton_rows(detail_start, detail_end)
+        muszakpro_rows = read_schedule_muszakpro_rows(detail_start, detail_end)
+        vehicle_rows = read_vehicle_assignment_rows(detail_start, detail_end, limit=10000)
+        free_slot_rows = read_schedule_free_slot_rows(detail_start, detail_end)
+        slot_rows = read_schedule_slot_rows(detail_start, detail_end)
+        workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+        for row in comparison_rows:
+            worker = schedule_worker_from_comparison(row)
+            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+            workers_by_key[key] = worker
+
+        for row in hub_rows:
+            worker = schedule_worker_from_hub(row)
+            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+            existing = workers_by_key.get(key)
+            if existing:
+                merge_schedule_worker(existing, worker)
+            else:
+                workers_by_key[key] = worker
+
+        for row in giriton_rows:
+            worker = schedule_worker_from_giriton(row)
+            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+            existing = workers_by_key.get(key)
+            if existing:
+                merge_schedule_worker(existing, worker)
+            else:
+                workers_by_key[key] = worker
+
+        for row in muszakpro_rows:
+            worker = schedule_worker_from_muszakpro(row)
+            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+            existing = workers_by_key.get(key)
+            if existing:
+                merge_schedule_worker(existing, worker)
+            else:
+                workers_by_key[key] = worker
+
+        for row in vehicle_rows:
+            worker = schedule_worker_from_vehicle(row)
+            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+            existing = workers_by_key.get(key)
+            if existing:
+                if not existing.get("vehicle"):
+                    existing["vehicle"] = worker.get("vehicle")
+                merge_schedule_worker(existing, worker)
+            else:
+                workers_by_key[key] = worker
+
+        workers = sorted(
+            [
+                worker for worker in workers_by_key.values()
+                if warehouse_allowed(worker.get("warehouse"), warehouse_ids)
+            ],
+            key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
+        )
+        attach_schedule_vehicles(workers, detail_start, detail_end)
+        attach_schedule_contacts(workers)
+        attach_giriton_attendance_logins(workers, detail_start, detail_end)
+        recommendations_by_day = build_schedule_recommendations(
+            workers,
+            [
+                row for row in free_slot_rows
+                if warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids)
+            ],
+        )
+        for row in slot_rows:
+            if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
+                continue
+            slot = schedule_slot_payload(row)
+            if not slot or not slot.get("date"):
+                continue
+            slots_by_day.setdefault(slot["date"], []).append(slot)
+        for day_slots in slots_by_day.values():
+            day_slots.sort(key=lambda item: (safe_int(item.get("startMinutes")), str(item.get("shiftTemplateId") or "")))
 
     days = []
     cursor = start
@@ -5100,6 +5129,7 @@ def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None
             "capacityByWarehouse": capacity.get("warehouses") or [],
             "slots": slots_by_day.get(day_key, []),
             "recommendations": recommendations_by_day.get(day_key, []),
+            "detailsLoaded": bool(detail_day and day_key == detail_day.isoformat()),
             "giritonOk": len([worker for worker in day_workers if worker.get("giritonTone") == "ok"]),
             "muszakproOk": len([worker for worker in day_workers if worker.get("muszakproTone") == "ok"]),
             "missing": len([
@@ -16589,12 +16619,17 @@ def coordinator_today_worker_attendance(
 def coordinator_schedule(
     month: str = Query(default=""),
     warehouse: str = Query(default=""),
+    day: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
     selected_month = month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
     try:
-        return read_coordinator_schedule(selected_month, selected_coordinator_warehouse_ids(user, warehouse))
+        return read_coordinator_schedule(
+            selected_month,
+            selected_coordinator_warehouse_ids(user, warehouse),
+            detail_date=day,
+        )
     except Exception as exc:
         print("Coordinator schedule failed:", exc)
         return empty_coordinator_schedule_payload(selected_month, exc)

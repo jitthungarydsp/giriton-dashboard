@@ -6207,8 +6207,8 @@ function renderCoordinatorScheduleDayDetail(payload, day) {
         ["Hiány", dayMissingValue, "nyitott slot"],
         ["Ajánlás", dayRecommendations.length || 0, "4ó30 szabály"],
       ])}
-      ${day ? renderScheduleSlots(day) : ""}
-      ${day ? renderScheduleRecommendations(day) : ""}
+      ${day?.detailsLoaded ? renderScheduleSlots(day) : `<div class="empty-card">Napi műszakok betöltése...</div>`}
+      ${day?.detailsLoaded ? renderScheduleRecommendations(day) : ""}
       <details class="schedule-worker-list-panel">
         <summary>Beosztott futárok · ${formatCount(workers.length)} fő</summary>
         <div class="ops-card-list">
@@ -6261,9 +6261,23 @@ function renderCoordinatorSchedule() {
     button.addEventListener("click", () => {
       state.coordinatorScheduleDay = button.dataset.scheduleDay || state.coordinatorScheduleDay;
       state.coordinatorScheduleView = "day";
-      renderCoordinatorSchedule();
+      loadCoordinatorScheduleDay(state.coordinatorScheduleDay);
     });
   });
+}
+
+function mergeCoordinatorScheduleDay(payload) {
+  const incomingDays = payload?.days || [];
+  if (!state.coordinatorSchedule || !incomingDays.length) {
+    state.coordinatorSchedule = payload;
+    return;
+  }
+  const incomingByDate = new Map(incomingDays.map((day) => [day.date, day]));
+  state.coordinatorSchedule.days = (state.coordinatorSchedule.days || []).map((day) =>
+    incomingByDate.get(day.date) || day
+  );
+  state.coordinatorSchedule.updatedAt = payload.updatedAt || state.coordinatorSchedule.updatedAt;
+  state.coordinatorSchedule.summary = payload.summary || state.coordinatorSchedule.summary;
 }
 
 async function loadCoordinatorSchedule() {
@@ -6286,6 +6300,28 @@ async function loadCoordinatorSchedule() {
     if (!state.coordinatorScheduleDay || !String(state.coordinatorScheduleDay).startsWith(month)) {
       state.coordinatorScheduleDay = localDate().startsWith(month) ? localDate() : `${month}-01`;
     }
+    renderCoordinatorSchedule();
+  } catch (error) {
+    if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadCoordinatorScheduleDay(day) {
+  const target = $("#coordinator-schedule-panel");
+  const monthInput = $("#coordinator-schedule-month");
+  const warehouseInput = $("#coordinator-schedule-warehouse");
+  const month = monthInput?.value || new Date().toISOString().slice(0, 7);
+  const role = String(state.user?.role || "").toLowerCase();
+  const warehouse = role === "admin" ? String(warehouseInput?.value || state.coordinatorScheduleWarehouse || "").trim() : "";
+  const selectedDay = String(day || state.coordinatorScheduleDay || "").slice(0, 10);
+  if (!selectedDay) return;
+  renderCoordinatorSchedule();
+  try {
+    const warehouseQuery = warehouse ? `&warehouse=${encodeURIComponent(warehouse)}` : "";
+    const payload = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}${warehouseQuery}&day=${encodeURIComponent(selectedDay)}`);
+    mergeCoordinatorScheduleDay(payload);
+    state.coordinatorScheduleDay = selectedDay;
+    state.coordinatorScheduleView = "day";
     renderCoordinatorSchedule();
   } catch (error) {
     if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
