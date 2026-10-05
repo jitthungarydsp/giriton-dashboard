@@ -6085,6 +6085,7 @@ function scheduleSlotTone(slot = {}) {
   const assigned = Number(slot.assigned || 0);
   const free = Number(slot.freeSlots || 0);
   const status = String(slot.status || "OPEN").toUpperCase();
+  if (status === "NOT_UPLOADED") return "missing";
   if (opened <= 0 || status !== "OPEN") return "closed";
   if (free > 0 || assigned < opened) return "open";
   return "full";
@@ -6094,10 +6095,12 @@ function scheduleSlotStatusText(slot = {}) {
   const tone = scheduleSlotTone(slot);
   if (tone === "full") return "Tele";
   if (tone === "open") return `${formatCount(slot.freeSlots || 0)} szabad`;
+  if (tone === "missing") return "Nincs feltöltve";
   return "Nincs nyitott slot";
 }
 
 function scheduleSlotCapacityText(slot = {}) {
+  if (scheduleSlotTone(slot) === "missing") return `${formatCount(slot.assigned || 0)} beosztva`;
   const opened = Number(slot.opened || 0);
   if (opened <= 0) return "0 · Nincs közzétéve";
   return `${formatCount(slot.assigned || 0)}/${formatCount(opened)}`;
@@ -6125,7 +6128,7 @@ function renderScheduleSlots(day = {}) {
   return `
     <section class="schedule-slots">
       <div class="device-history-head">
-        <strong>Műszakok / slotok</strong>
+        <strong>Napi műszaknaptár</strong>
         <span>${formatCount(slots.length)} idősáv</span>
       </div>
       ${slots.length

@@ -4535,6 +4535,43 @@ def schedule_slot_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def schedule_worker_slot_payloads(workers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for worker in workers:
+        day = str(worker.get("date") or "")[:10]
+        start = normalize_time(worker.get("start"))
+        start_minutes = schedule_time_minutes(start)
+        if not day or start_minutes is None:
+            continue
+        end = normalize_time(worker.get("end"))
+        warehouse = normalize_warehouse(worker.get("warehouse"))
+        shift_text = str(worker.get("shiftName") or worker.get("bookingCode") or "Beosztott műszak").strip()
+        key = (day, warehouse, start, end)
+        slot = grouped.setdefault(key, {
+            "date": day,
+            "warehouse": warehouse,
+            "warehouseId": warehouse_id_for_hub(warehouse) or 0,
+            "start": start,
+            "end": end,
+            "startMinutes": start_minutes,
+            "freeSlots": 0,
+            "opened": 0,
+            "assigned": 0,
+            "capacityPublished": False,
+            "status": "NOT_UPLOADED",
+            "blockKey": "",
+            "shiftTemplateId": "",
+            "shiftText": shift_text,
+        })
+        slot["assigned"] = safe_int(slot.get("assigned")) + 1
+        if shift_text and shift_text not in str(slot.get("shiftText") or ""):
+            slot["shiftText"] = f"{slot.get('shiftText')} / {shift_text}"
+    return sorted(
+        grouped.values(),
+        key=lambda item: (str(item.get("date") or ""), safe_int(item.get("startMinutes")), str(item.get("warehouse") or "")),
+    )
+
+
 def read_schedule_contact_rows(workers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     courier_ids = sorted({
         str(worker.get("courierId") or "").strip()
@@ -5100,6 +5137,25 @@ def read_coordinator_schedule(
             if not slot or not slot.get("date"):
                 continue
             slots_by_day.setdefault(slot["date"], []).append(slot)
+        existing_slot_keys = {
+            (
+                str(slot.get("date") or ""),
+                normalize_warehouse(slot.get("warehouse")),
+                normalize_time(slot.get("start")),
+            )
+            for day_slots in slots_by_day.values()
+            for slot in day_slots
+        }
+        for slot in schedule_worker_slot_payloads(workers):
+            slot_key = (
+                str(slot.get("date") or ""),
+                normalize_warehouse(slot.get("warehouse")),
+                normalize_time(slot.get("start")),
+            )
+            if slot_key in existing_slot_keys:
+                continue
+            slots_by_day.setdefault(str(slot.get("date") or ""), []).append(slot)
+            existing_slot_keys.add(slot_key)
         for day_slots in slots_by_day.values():
             day_slots.sort(key=lambda item: (safe_int(item.get("startMinutes")), str(item.get("shiftTemplateId") or "")))
 
