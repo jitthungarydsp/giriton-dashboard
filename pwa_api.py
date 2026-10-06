@@ -12717,10 +12717,6 @@ def read_route_report_giriton_shift_rows(month_value: date) -> list[dict[str, An
 
 
 def read_route_report_hub_shift_rows(month_value: date) -> list[dict[str, Any]]:
-    giriton_rows = read_route_report_giriton_shift_rows(month_value)
-    if giriton_rows:
-        return giriton_rows
-
     start, end = route_report_month_range(month_value)
     rows = optional_supabase_rows_paged(
         "courier_shift_overview",
@@ -12763,7 +12759,141 @@ def read_route_report_hub_shift_rows(month_value: date) -> list[dict[str, Any]]:
             "shift_end": shift_time_from_overview(work_date, row.get("shift_end") or row.get("planned_end_at") or raw_shift.get("plannedEndAt") or raw_shift.get("end")),
             "status": str(row.get("evaluation") or row.get("status") or raw_shift.get("status") or "").strip(),
         })
-    return result
+    if result:
+        return result
+    return read_route_report_giriton_shift_rows(month_value)
+
+
+def financial_route_label(route: dict[str, Any]) -> str:
+    route_layer = normalize_text(route.get("routeLayer") or route.get("routeType") or route.get("type"))
+    if "express" in route_layer:
+        return "Express"
+    if "region" in route_layer or "regio" in route_layer or "régio" in route_layer:
+        return "Regionális"
+    return "City"
+
+
+def financial_route_shift_name(route: dict[str, Any]) -> str:
+    shift = route.get("shift") if isinstance(route.get("shift"), dict) else {}
+    return str(
+        route.get("shiftName")
+        or route.get("shift_name")
+        or shift.get("shiftName")
+        or shift.get("name")
+        or shift.get("title")
+        or shift.get("label")
+        or ""
+    ).strip()
+
+
+def financial_route_datetime(route: dict[str, Any], *keys: str) -> str:
+    shift = route.get("shift") if isinstance(route.get("shift"), dict) else {}
+    for key in keys:
+        value = route.get(key)
+        if value:
+            return str(value).strip()
+        value = shift.get(key)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def read_route_report_financial_route_rows(month_value: date) -> list[dict[str, Any]]:
+    start, end = route_report_month_range(month_value)
+    source_batches: list[tuple[str, list[dict[str, Any]], int | None]] = []
+    for table_name, fallback_warehouse_id in (
+        ("courier_financial_overview_raw_bud1", 1),
+        ("courier_financial_overview_raw_bud2", 2),
+    ):
+        rows = optional_supabase_rows_paged(
+            table_name,
+            params={
+                "select": "courier_id,courier_name,warehouse_id,response_json,status_code,updated_at",
+                "year": f"eq.{start.year}",
+                "month": f"eq.{start.month}",
+                "status_code": "eq.200",
+                "order": "courier_id.asc",
+            },
+            timeout=60,
+            page_size=1000,
+            max_rows=50000,
+        )
+        if rows:
+            source_batches.append((f"public.{table_name}", rows, fallback_warehouse_id))
+
+    if not source_batches:
+        rows = optional_supabase_rows_paged(
+            "courier_financial_overview_raw",
+            params={
+                "select": "courier_id,courier_name,warehouse_id,response_json,status_code,updated_at",
+                "year": f"eq.{start.year}",
+                "month": f"eq.{start.month}",
+                "status_code": "eq.200",
+                "order": "warehouse_id.asc,courier_id.asc",
+            },
+            timeout=60,
+            page_size=1000,
+            max_rows=50000,
+        )
+        if rows:
+            source_batches.append(("public.courier_financial_overview_raw", rows, None))
+
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for source_name, rows, fallback_warehouse_id in source_batches:
+        for row in rows:
+            payload = row.get("response_json") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    payload = {}
+            if not isinstance(payload, dict):
+                continue
+            routes = payload.get("routes") if isinstance(payload.get("routes"), list) else []
+            courier_id = route_report_courier_id(row.get("courier_id") or payload.get("courierId"))
+            courier_name = str(row.get("courier_name") or payload.get("courierName") or payload.get("name") or "").strip()
+            warehouse_id = safe_int(row.get("warehouse_id") or payload.get("warehouseId") or fallback_warehouse_id)
+            warehouse = normalize_warehouse(f"BUD{warehouse_id}" if warehouse_id in {1, 2} else warehouse_id)
+            for index, route in enumerate(routes, start=1):
+                if not isinstance(route, dict):
+                    continue
+                route_date = parse_date_value(
+                    route.get("deliveryDate")
+                    or route.get("date")
+                    or route.get("workDate")
+                    or financial_route_datetime(route, "plannedDepartureAt", "plannedDeparture")
+                )
+                if not route_date or route_date < start or route_date > end:
+                    continue
+                route_id = str(route.get("routeId") or route.get("route_id") or route.get("id") or "").strip()
+                route_key = route_id or f"idx:{index}"
+                key = (route_date.isoformat(), courier_id, warehouse, route_key)
+                if not courier_id or key in seen:
+                    continue
+                seen.add(key)
+                planned_departure = financial_route_datetime(route, "plannedDepartureAt", "plannedDeparture")
+                planned_return = financial_route_datetime(route, "plannedReturnAt", "plannedReturn", "expectedReturnAt", "expectedReturn")
+                returned_at = financial_route_datetime(route, "returnedAt", "warehouseArrivalActual", "warehouse_arrival_actual", "finishedAt", "completedAt")
+                result.append({
+                    "date": route_date.isoformat(),
+                    "courierId": courier_id,
+                    "courierName": courier_name or f"Futár {courier_id}",
+                    "warehouse": warehouse,
+                    "warehouseId": warehouse_id,
+                    "routeId": route_id,
+                    "shiftName": financial_route_shift_name(route),
+                    "routeAssignedAt": financial_route_datetime(route, "assignedAt", "routeAssignedAt"),
+                    "plannedDepartureAt": planned_departure,
+                    "plannedReturnAt": planned_return,
+                    "returnedAt": returned_at,
+                    "orders": safe_int(route.get("orderCount") or route.get("orders")),
+                    "stops": safe_int(route.get("stopsTotal") or route.get("stops_total") or route.get("stops")),
+                    "routeType": str(route.get("routeLayer") or route.get("routeType") or "").strip(),
+                    "routeTypeLabel": financial_route_label(route),
+                    "dataSource": source_name,
+                })
+    return sorted(result, key=lambda item: (item.get("courierName") or "", item.get("date") or "", item.get("routeId") or ""))
 
 
 def planned_route_minutes_from_departure_return(item: dict[str, Any]) -> int | None:
@@ -12795,7 +12925,9 @@ def build_monthly_shift_route_report(month_value: date) -> dict[str, Any]:
     names = courier_name_lookup()
     muszakpro_rows = read_route_report_muszakpro_rows(month_value)
     hub_rows = read_route_report_hub_shift_rows(month_value)
-    route_rows = route_details_for_all_couriers(month_value).get("rows") or []
+    route_rows = read_route_report_financial_route_rows(month_value)
+    if not route_rows:
+        route_rows = route_details_for_all_couriers(month_value).get("rows") or []
     summary: dict[str, dict[str, Any]] = {}
     daily: dict[tuple[str, str, str], dict[str, Any]] = {}
 
@@ -12978,6 +13110,21 @@ def filtered_monthly_shift_route_report(
         if route_report_courier_matches(row, courier)
         and route_report_warehouse_matches(row, warehouse)
     ]
+    muszakpro_rows = [
+        row for row in payload.get("muszakpro_rows") or []
+        if route_report_courier_matches(row, courier)
+        and route_report_warehouse_matches(row, warehouse)
+    ]
+    hub_rows = [
+        row for row in payload.get("hub_rows") or []
+        if route_report_courier_matches(row, courier)
+        and route_report_warehouse_matches(row, warehouse)
+    ]
+    route_rows = [
+        row for row in payload.get("route_rows") or []
+        if route_report_courier_matches(row, courier)
+        and route_report_warehouse_matches(row, warehouse)
+    ]
     total_muszakpro = sum(safe_int(row.get("muszakpro_booked")) for row in summary)
     total_hub = sum(safe_int(row.get("hub_uploaded")) for row in summary)
     total_routes = sum(safe_int(row.get("routes_delivered")) for row in summary)
@@ -13000,24 +13147,17 @@ def filtered_monthly_shift_route_report(
             "hubToMuszakproRatio": route_report_ratio(total_hub, total_muszakpro),
             "routeToHubRatio": route_report_ratio(total_routes, total_hub),
         },
+        "sourceCounts": {
+            "muszakpro": len(muszakpro_rows),
+            "hub": len(hub_rows),
+            "routes": len(route_rows),
+        },
         "updatedAt": payload.get("updatedAt") or datetime.now(timezone.utc).isoformat(),
     }
     if include_raw:
-        result["muszakpro_rows"] = [
-            row for row in payload.get("muszakpro_rows") or []
-            if route_report_courier_matches(row, courier)
-            and route_report_warehouse_matches(row, warehouse)
-        ]
-        result["hub_rows"] = [
-            row for row in payload.get("hub_rows") or []
-            if route_report_courier_matches(row, courier)
-            and route_report_warehouse_matches(row, warehouse)
-        ]
-        result["route_rows"] = [
-            row for row in payload.get("route_rows") or []
-            if route_report_courier_matches(row, courier)
-            and route_report_warehouse_matches(row, warehouse)
-        ]
+        result["muszakpro_rows"] = muszakpro_rows
+        result["hub_rows"] = hub_rows
+        result["route_rows"] = route_rows
     return result
 
 

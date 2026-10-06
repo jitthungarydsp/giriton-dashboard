@@ -2399,7 +2399,7 @@ function routeDetailsExcelUrl() {
 
 function monthlyShiftRouteReportExcelUrl() {
   const month = $("#route-details-month")?.value || state.statisticsMonth;
-  const courier = $("#route-details-courier")?.value || "";
+  const courier = $("#route-details-courier")?.value || state.workflowPreviewCourierId || "";
   const warehouse = $("#route-stats-warehouse")?.value || "all";
   if (!month) return "";
   const params = new URLSearchParams({ month });
@@ -2410,7 +2410,7 @@ function monthlyShiftRouteReportExcelUrl() {
 
 function routeShiftReportRange() {
   const month = $("#route-details-month")?.value || state.statisticsMonth;
-  const courier = $("#route-details-courier")?.value || "";
+  const courier = $("#route-details-courier")?.value || state.workflowPreviewCourierId || "";
   const warehouse = $("#route-stats-warehouse")?.value || "all";
   return { month, courier, warehouse };
 }
@@ -2695,13 +2695,14 @@ function renderRouteShiftReport() {
   const daily = payload.daily || [];
   const cityRows = payload.cityOver5hRows || payload.city_over_5h_rows || [];
   const sourceRows = routeShiftReportSourceRows(payload);
+  const sourceCounts = payload.sourceCounts || {};
   const totals = payload.totals || {};
   panel.innerHTML = `
     <div class="route-details-head">
       <div>
         <span>${escapeHtml(payload.month || "-")}</span>
         <strong>Futár műszak/kör statisztika</strong>
-        <small>${escapeHtml(payload.filters?.warehouse === "all" ? "Összes raktár" : payload.filters?.warehouse || "Összes raktár")} · ${formatCount(rows.length)} futár</small>
+        <small>${escapeHtml(payload.filters?.warehouse === "all" ? "Összes raktár" : payload.filters?.warehouse || "Összes raktár")} · ${formatCount(rows.length)} futár · MűszakPro sor: ${formatCount(sourceCounts.muszakpro || 0)} · HUB sor: ${formatCount(sourceCounts.hub || 0)} · kör sor: ${formatCount(sourceCounts.routes || 0)}</small>
       </div>
       <div class="route-details-actions">
         ${excelUrl ? `<a class="download-link" href="${excelUrl}">Riport Excel</a>` : ""}
@@ -7107,11 +7108,16 @@ function updatePreviewCourier(value) {
   if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = state.workflowPreviewCourierId;
   if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = state.workflowPreviewCourierId;
   if (adminPreviewCourierInput) adminPreviewCourierInput.value = state.workflowPreviewCourierId;
+  if ($("#route-details-courier")) $("#route-details-courier").value = state.workflowPreviewCourierId;
   state.workflowProcess = "";
   state.workflowMonthsLoadedFor = "";
   state.workflowMonths = [];
   state.workflow = null;
   state.statistics = null;
+  state.routeDetails = null;
+  state.routeShiftReport = null;
+  state.routeStatistics = null;
+  state.routeDetailsSelectedIndex = 0;
   state.data = null;
   state.currentRoute = null;
   state.billingProfile = null;
@@ -7128,6 +7134,11 @@ function updatePreviewCourier(value) {
     if (state.section === "documents") renderDocumentsSection();
   });
   if (state.section === "statistics") loadStatistics({ resetHistory: true });
+  if (state.section === "route-details") {
+    renderRouteShiftReport();
+    renderRouteStatistics();
+    renderRouteDetails();
+  }
   if (state.section === "salary-advance") loadSalaryAdvanceRequests();
   if (state.section === "expense") loadExpenseRequests();
   if (state.section === "profile") loadBillingProfile();
