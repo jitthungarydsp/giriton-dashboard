@@ -1208,7 +1208,7 @@ def read_vehicle_assignment_rows(
         "dsp_vehicle_assignments",
         params={
             "select": "source_name,work_date,driver_name,shift_start,shift_end,car,license_plate,shift_type,fetched_at",
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "order": "work_date.desc,shift_start.desc.nullslast,fetched_at.desc",
             "limit": str(int(limit)),
         },
@@ -4157,7 +4157,7 @@ def read_schedule_comparison_rows(start: date, end: date) -> list[dict[str, Any]
                 "shift_start,shift_end,giriton_status,muszakpro_status,missing_source,"
                 "giriton_check,muszakpro_booking_code,updated_at"
             ),
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "order": "work_date.asc,warehouse.asc,shift_start.asc,courier_name.asc",
             "limit": "10000",
         },
@@ -4172,7 +4172,7 @@ def read_schedule_comparison_rows(start: date, end: date) -> list[dict[str, Any]
                     "attendance_status,muszakpro_status,missing_source,attendance_shift_id,"
                     "attendance_shift_name,muszakpro_shift_text,muszakpro_booking_code,collected_at"
                 ),
-                "work_date": f"gte.{start.isoformat()}",
+                "work_date": supabase_work_date_filter(start, end),
                 "order": "work_date.asc,shift_start.asc,courier_name.asc",
                 "limit": "10000",
             },
@@ -4193,7 +4193,7 @@ def read_schedule_hub_rows(start: date, end: date) -> list[dict[str, Any]]:
                 "shift_start,shift_end,planned_start_at,planned_end_at,actual_start_at,"
                 "evaluation,status,raw_shift,source_raw_updated_at,updated_at"
             ),
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "order": "work_date.asc,shift_start.asc,courier_name.asc",
             "limit": "10000",
         },
@@ -4213,7 +4213,7 @@ def read_schedule_giriton_rows(start: date, end: date) -> list[dict[str, Any]]:
                 "work_date,courier_id,courier_name,warehouse_name,"
                 "shift_id,shift_name,shift_start,shift_end,fetched_at"
             ),
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "order": "shift_start.asc,courier_name.asc",
             "limit": "10000",
         },
@@ -4248,7 +4248,7 @@ def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]
         "raw_muszakpro_bookings",
         params={
             "select": "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,status,fetched_at",
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "order": "work_date.asc,shift_text.asc,courier_name.asc",
             "limit": "10000",
         },
@@ -4259,7 +4259,7 @@ def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]
             "raw_muszakpro_bookings",
             params={
                 "select": "work_date,shift_text,warehouse,booking_code,courier_id,email,status,fetched_at",
-                "work_date": f"gte.{start.isoformat()}",
+                "work_date": supabase_work_date_filter(start, end),
                 "order": "work_date.asc,shift_text.asc",
                 "limit": "10000",
             },
@@ -4270,7 +4270,7 @@ def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]
             "foglalasok_raw",
             params={
                 "select": "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,fetched_at",
-                "work_date": f"gte.{start.isoformat()}",
+                "work_date": supabase_work_date_filter(start, end),
                 "order": "work_date.asc,shift_text.asc,courier_name.asc",
                 "limit": "10000",
             },
@@ -4281,7 +4281,7 @@ def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]
             "foglalasok_raw",
             params={
                 "select": "work_date,shift_text,warehouse,booking_code,courier_id,email,fetched_at",
-                "work_date": f"gte.{start.isoformat()}",
+                "work_date": supabase_work_date_filter(start, end),
                 "order": "work_date.asc,shift_text.asc",
                 "limit": "10000",
             },
@@ -4310,7 +4310,7 @@ def read_schedule_capacity_rows(start: date, end: date, allow_raw_fallback: bool
                 "free_slots,missing_slots,extra_slots,coverage_percent,source_block_count,"
                 "source_updated_at,refreshed_at,updated_at"
             ),
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "order": "work_date.asc,warehouse_code.asc",
             "limit": "10000",
         },
@@ -4331,7 +4331,7 @@ def read_schedule_capacity_rows(start: date, end: date, allow_raw_fallback: bool
                 "template_name,shift_text,slot_from,slot_to,status,assigned,opened,"
                 "free_slots,capacity_published,dsp_id,fetched_at,updated_at"
             ),
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc",
             "limit": "10000",
@@ -4366,7 +4366,7 @@ def read_schedule_free_slot_rows(start: date, end: date) -> list[dict[str, Any]]
                 "template_name,shift_text,slot_from,slot_to,status,assigned,opened,"
                 "free_slots,fetched_at,updated_at"
             ),
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc",
             "limit": "10000",
         },
@@ -4389,7 +4389,7 @@ def read_schedule_slot_rows(start: date, end: date) -> list[dict[str, Any]]:
                 "template_name,slot_from,slot_to,occupancy_from,occupancy_to,status,"
                 "assigned,opened,free_slots,capacity_published,fetched_at,updated_at"
             ),
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc,block_key.asc",
             "limit": "10000",
@@ -4412,7 +4412,7 @@ def read_schedule_slot_rows(start: date, end: date) -> list[dict[str, Any]]:
                 "template_name,shift_text,slot_from,slot_to,status,assigned,opened,"
                 "free_slots,capacity_published,dsp_id,fetched_at,updated_at"
             ),
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc",
             "limit": "10000",
@@ -4435,7 +4435,7 @@ def read_schedule_hub_booking_rows(start: date, end: date) -> list[dict[str, Any
                 "phone_number,block_key,shift_template_id,shift_text,slot_from,slot_to,"
                 "status,movement_type,active,first_seen_at,last_seen_at,updated_at"
             ),
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,courier_name.asc",
             "limit": "3000",
@@ -4450,7 +4450,7 @@ def read_schedule_hub_booking_rows(start: date, end: date) -> list[dict[str, Any
                 "phone_number,block_key,shift_template_id,shift_text,slot_from,slot_to,"
                 "status,fetched_at,updated_at"
             ),
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,courier_name.asc",
             "limit": "3000",
@@ -4802,8 +4802,9 @@ def read_schedule_contact_rows(workers: list[dict[str, Any]]) -> list[dict[str, 
     )
 
 
-def attach_schedule_contacts(workers: list[dict[str, Any]]) -> None:
-    rows = read_schedule_contact_rows(workers)
+def attach_schedule_contacts(workers: list[dict[str, Any]], rows: list[dict[str, Any]] | None = None) -> None:
+    if rows is None:
+        rows = read_schedule_contact_rows(workers)
     by_id: dict[str, dict[str, Any]] = {}
     by_name: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -5121,12 +5122,18 @@ def schedule_start_datetime(work_date: Any, start_time: Any) -> datetime | None:
         return None
 
 
+def supabase_work_date_filter(start: date, end: date) -> str:
+    if start == end:
+        return f"eq.{start.isoformat()}"
+    return f"gte.{start.isoformat()}"
+
+
 def read_giriton_attendance_login_rows(start: date, end: date) -> list[dict[str, Any]]:
     rows = optional_supabase_rows(
         "giriton_attendance_raw",
         params={
             "select": "work_date,courier_name,shift_text,activity_status,checkin_start,checkin_end,updated_at",
-            "work_date": f"gte.{start.isoformat()}",
+            "work_date": supabase_work_date_filter(start, end),
             "order": "work_date.asc,courier_name.asc",
             "limit": "10000",
         },
@@ -5138,8 +5145,14 @@ def read_giriton_attendance_login_rows(start: date, end: date) -> list[dict[str,
     ]
 
 
-def attach_giriton_attendance_logins(workers: list[dict[str, Any]], start: date, end: date) -> None:
-    attendance_rows = read_giriton_attendance_login_rows(start, end)
+def attach_giriton_attendance_logins(
+    workers: list[dict[str, Any]],
+    start: date,
+    end: date,
+    attendance_rows: list[dict[str, Any]] | None = None,
+) -> None:
+    if attendance_rows is None:
+        attendance_rows = read_giriton_attendance_login_rows(start, end)
     logins_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for row in attendance_rows:
         work_date = str(row.get("work_date") or "")[:10]
@@ -5380,9 +5393,17 @@ def merge_schedule_worker(existing: dict[str, Any], incoming: dict[str, Any]) ->
     return existing
 
 
-def attach_schedule_vehicles(workers: list[dict[str, Any]], start: date, end: date) -> None:
-    vehicle_rows = read_vehicle_assignment_rows(start, end, limit=10000)
-    live_rows = read_live_vehicle_assignment_rows(limit=1000)
+def attach_schedule_vehicles(
+    workers: list[dict[str, Any]],
+    start: date,
+    end: date,
+    vehicle_rows: list[dict[str, Any]] | None = None,
+    live_rows: list[dict[str, Any]] | None = None,
+) -> None:
+    if vehicle_rows is None:
+        vehicle_rows = read_vehicle_assignment_rows(start, end, limit=10000)
+    if live_rows is None:
+        live_rows = read_live_vehicle_assignment_rows(limit=1000)
     all_vehicle_rows = live_rows + vehicle_rows
     for worker in workers:
         wanted_name = normalize_person_match_text(worker.get("courierName"))
@@ -5413,17 +5434,12 @@ def read_coordinator_schedule(
         if detail_day and (detail_day < start or detail_day > end):
             detail_day = None
 
+    capacity_start = detail_day or start
+    capacity_end = detail_day or end
     capacity_by_day = schedule_capacity_summary(
-        read_schedule_capacity_rows(start, end, allow_raw_fallback=False),
+        read_schedule_capacity_rows(capacity_start, capacity_end, allow_raw_fallback=bool(detail_day)),
         warehouse_ids,
     )
-    if detail_day and detail_day.isoformat() not in capacity_by_day:
-        capacity_by_day.update(
-            schedule_capacity_summary(
-                read_schedule_capacity_rows(detail_day, detail_day, allow_raw_fallback=True),
-                warehouse_ids,
-            )
-        )
 
     workers: list[dict[str, Any]] = []
     recommendations_by_day: dict[str, list[dict[str, Any]]] = {}
@@ -5432,13 +5448,25 @@ def read_coordinator_schedule(
     if detail_day:
         detail_start = detail_day
         detail_end = detail_day
-        comparison_rows = read_schedule_comparison_rows(detail_start, detail_end)
-        hub_rows = read_schedule_hub_rows(detail_start, detail_end)
-        giriton_rows = read_schedule_giriton_rows(detail_start, detail_end)
-        muszakpro_rows = read_schedule_muszakpro_rows(detail_start, detail_end)
-        vehicle_rows = read_vehicle_assignment_rows(detail_start, detail_end, limit=10000)
-        slot_rows = read_schedule_slot_rows(detail_start, detail_end)
-        hub_booking_rows = read_schedule_hub_booking_rows(detail_start, detail_end)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                "comparison": executor.submit(read_schedule_comparison_rows, detail_start, detail_end),
+                "hub": executor.submit(read_schedule_hub_rows, detail_start, detail_end),
+                "giriton": executor.submit(read_schedule_giriton_rows, detail_start, detail_end),
+                "muszakpro": executor.submit(read_schedule_muszakpro_rows, detail_start, detail_end),
+                "vehicle": executor.submit(read_vehicle_assignment_rows, detail_start, detail_end, limit=10000),
+                "live_vehicle": executor.submit(read_live_vehicle_assignment_rows, limit=1000),
+                "slot": executor.submit(read_schedule_slot_rows, detail_start, detail_end),
+                "hub_booking": executor.submit(read_schedule_hub_booking_rows, detail_start, detail_end),
+            }
+            comparison_rows = futures["comparison"].result()
+            hub_rows = futures["hub"].result()
+            giriton_rows = futures["giriton"].result()
+            muszakpro_rows = futures["muszakpro"].result()
+            vehicle_rows = futures["vehicle"].result()
+            live_vehicle_rows = futures["live_vehicle"].result()
+            slot_rows = futures["slot"].result()
+            hub_booking_rows = futures["hub_booking"].result()
         workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
 
         for row in comparison_rows:
@@ -5491,9 +5519,14 @@ def read_coordinator_schedule(
             ],
             key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
         )
-        attach_schedule_vehicles(workers, detail_start, detail_end)
-        attach_schedule_contacts(workers)
-        attach_giriton_attendance_logins(workers, detail_start, detail_end)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            contact_future = executor.submit(read_schedule_contact_rows, workers)
+            attendance_future = executor.submit(read_giriton_attendance_login_rows, detail_start, detail_end)
+            contact_rows = contact_future.result()
+            attendance_rows = attendance_future.result()
+        attach_schedule_vehicles(workers, detail_start, detail_end, vehicle_rows=vehicle_rows, live_rows=live_vehicle_rows)
+        attach_schedule_contacts(workers, contact_rows)
+        attach_giriton_attendance_logins(workers, detail_start, detail_end, attendance_rows)
         for row in slot_rows:
             if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
                 continue
@@ -5533,8 +5566,10 @@ def read_coordinator_schedule(
         attach_schedule_slot_recommendations(slots_by_day, workers)
 
     days = []
-    cursor = start
-    while cursor <= end:
+    days_start = detail_day or start
+    days_end = detail_day or end
+    cursor = days_start
+    while cursor <= days_end:
         day_key = cursor.isoformat()
         day_workers = [worker for worker in workers if worker.get("date") == day_key]
         capacity = capacity_by_day.get(day_key, {})
@@ -5575,6 +5610,7 @@ def read_coordinator_schedule(
         "month": start.strftime("%Y-%m"),
         "from": start.isoformat(),
         "to": end.isoformat(),
+        "detailOnly": bool(detail_day),
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "summary": {
             "workers": len(workers),
