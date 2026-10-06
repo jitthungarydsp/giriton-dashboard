@@ -2587,6 +2587,84 @@ function routeShiftReportDailyRows(rows = []) {
   `).join("");
 }
 
+function routeShiftReportCityRows(rows = []) {
+  return rows.slice(0, 120).map((row) => `
+    <tr>
+      <td><strong>${escapeHtml(row.date || "-")}</strong></td>
+      <td>${escapeHtml(row.courierName || "-")} <small>#${escapeHtml(row.courierId || "-")}</small></td>
+      <td>${escapeHtml(row.warehouse || "-")}</td>
+      <td>${escapeHtml(row.routeId || "-")}</td>
+      <td>${escapeHtml(row.shiftName || "-")}</td>
+      <td>${escapeHtml(row.routeTypeLabel || row.routeType || "-")}</td>
+      <td>${escapeHtml(shortDateTime(row.plannedDepartureAt || ""))}</td>
+      <td>${escapeHtml(shortDateTime(row.plannedReturnAt || ""))}</td>
+      <td>${escapeHtml(routeDetailClock(row.plannedDepotToDepotMinutes))}</td>
+      <td>${escapeHtml(shortDateTime(row.returnedAt || ""))}</td>
+    </tr>
+  `).join("");
+}
+
+function routeShiftReportSourceRows(payload = {}) {
+  const rows = [];
+  (payload.muszakpro_rows || []).forEach((row) => rows.push({
+    source: row.source || "MűszakPro",
+    date: row.work_date,
+    courierId: row.courier_id,
+    courierName: row.courier_name,
+    warehouse: row.warehouse,
+    identifier: row.booking_code || row.serial,
+    name: row.shift_text,
+    start: row.shift_start,
+    end: "",
+    status: "Aktív",
+  }));
+  (payload.hub_rows || []).forEach((row) => rows.push({
+    source: row.source || "HUB/Giriton műszak",
+    date: row.work_date,
+    courierId: row.courier_id,
+    courierName: row.courier_name,
+    warehouse: row.warehouse,
+    identifier: row.shift_id,
+    name: row.shift_name,
+    start: row.shift_start,
+    end: row.shift_end,
+    status: row.status,
+  }));
+  (payload.route_rows || []).forEach((row) => rows.push({
+    source: "Kivitt kör",
+    date: row.date,
+    courierId: row.courierId,
+    courierName: row.courierName,
+    warehouse: row.warehouse,
+    identifier: row.routeId,
+    name: row.shiftName,
+    start: row.plannedDepartureAt || row.routeAssignedAt,
+    end: row.plannedReturnAt || row.returnedAt,
+    status: row.routeTypeLabel || row.routeType,
+  }));
+  return rows.sort((left, right) => (
+    String(left.date || "").localeCompare(String(right.date || ""))
+    || String(left.courierName || "").localeCompare(String(right.courierName || ""), "hu")
+    || String(left.source || "").localeCompare(String(right.source || ""), "hu")
+  ));
+}
+
+function routeShiftReportSourceTableRows(rows = []) {
+  return rows.slice(0, 300).map((row) => `
+    <tr>
+      <td>${escapeHtml(row.source || "-")}</td>
+      <td><strong>${escapeHtml(row.date || "-")}</strong></td>
+      <td>${escapeHtml(row.courierName || "-")} <small>#${escapeHtml(row.courierId || "-")}</small></td>
+      <td>${escapeHtml(row.warehouse || "-")}</td>
+      <td>${escapeHtml(row.identifier || "-")}</td>
+      <td>${escapeHtml(row.name || "-")}</td>
+      <td>${escapeHtml(row.start ? shortDateTime(row.start) : "-")}</td>
+      <td>${escapeHtml(row.end ? shortDateTime(row.end) : "-")}</td>
+      <td>${escapeHtml(row.status || "-")}</td>
+    </tr>
+  `).join("");
+}
+
 function renderRouteShiftReport() {
   const panel = $("#route-shift-report-panel");
   if (!panel) return;
@@ -2605,14 +2683,18 @@ function renderRouteShiftReport() {
           <small>Hónap, futár és raktár alapján nézhető a foglalás, a kapott műszak és a ténylegesen kivitt kör.</small>
         </div>
         <div class="route-details-actions">
+          <button class="secondary" type="button" data-route-shift-report-load>Megjelenítés</button>
           ${excelUrl ? `<a class="download-link" href="${excelUrl}">Riport Excel</a>` : ""}
         </div>
       </div>
     `;
+    panel.querySelector("[data-route-shift-report-load]")?.addEventListener("click", loadRouteShiftReport);
     return;
   }
   const rows = payload.summary || [];
   const daily = payload.daily || [];
+  const cityRows = payload.cityOver5hRows || payload.city_over_5h_rows || [];
+  const sourceRows = routeShiftReportSourceRows(payload);
   const totals = payload.totals || {};
   panel.innerHTML = `
     <div class="route-details-head">
@@ -2677,6 +2759,65 @@ function renderRouteShiftReport() {
           </thead>
           <tbody>
             ${daily.length ? routeShiftReportDailyRows(daily) : `<tr><td colspan="7">Nincs napi bontás.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    <details class="daily-route-details route-shift-daily">
+      <summary class="route-details-head">
+        <div>
+          <span>City 5 óra felett</span>
+          <strong>Excel ellenőrző lista</strong>
+          <small>${formatCount(cityRows.length)} sor${cityRows.length > 120 ? " · első 120 megjelenítve" : ""}</small>
+        </div>
+      </summary>
+      <div class="route-details-table-wrap route-stat-table-wrap">
+        <table class="route-details-table route-shift-report-table">
+          <thead>
+            <tr>
+              <th>Dátum</th>
+              <th>Futár</th>
+              <th>Raktár</th>
+              <th>Route ID</th>
+              <th>Műszak</th>
+              <th>Típus</th>
+              <th>Tervezett indulás</th>
+              <th>Tervezett vissza</th>
+              <th>Tervezett idő</th>
+              <th>Tényleges vissza</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${cityRows.length ? routeShiftReportCityRows(cityRows) : `<tr><td colspan="10">Nincs City 5 óra feletti sor.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    <details class="daily-route-details route-shift-daily">
+      <summary class="route-details-head">
+        <div>
+          <span>Forrás sorok</span>
+          <strong>Excel forrás nézet</strong>
+          <small>${formatCount(sourceRows.length)} sor${sourceRows.length > 300 ? " · első 300 megjelenítve" : ""}</small>
+        </div>
+      </summary>
+      <div class="route-details-table-wrap route-stat-table-wrap">
+        <table class="route-details-table route-shift-source-table">
+          <thead>
+            <tr>
+              <th>Forrás</th>
+              <th>Dátum</th>
+              <th>Futár</th>
+              <th>Raktár</th>
+              <th>Azonosító</th>
+              <th>Műszak / Route</th>
+              <th>Kezdés</th>
+              <th>Vége / vissza</th>
+              <th>Státusz</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sourceRows.length ? routeShiftReportSourceTableRows(sourceRows) : `<tr><td colspan="9">Nincs forrás sor a kiválasztott szűrésre.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -6176,6 +6317,19 @@ function scheduleDayOffset(date) {
   return Math.round((selected - today) / 86400000);
 }
 
+function scheduleDayWeekday(date) {
+  const value = new Date(`${date}T12:00:00`);
+  if (Number.isNaN(value.getTime())) return "";
+  return new Intl.DateTimeFormat("hu-HU", { weekday: "long" }).format(value);
+}
+
+function adjacentScheduleDay(payload, date, direction) {
+  const days = payload?.days || [];
+  const index = days.findIndex((day) => day.date === date);
+  if (index < 0) return null;
+  return days[index + direction] || null;
+}
+
 function scheduleCoverageTone(day = {}) {
   if (!day.capacityKnown || day.coveragePercent === null || day.coveragePercent === undefined) return "unknown";
   const value = Number(day.coveragePercent);
@@ -6213,6 +6367,7 @@ function renderScheduleDayButton(day) {
     <button class="schedule-day coverage-${tone} ${isSelected ? "active" : ""} ${day.missingSlots || day.missing ? "attention" : ""}" type="button" data-schedule-day="${escapeHtml(day.date)}">
       <span>${escapeHtml(offsetText)}</span>
       <strong>${escapeHtml(day.label || day.date)}</strong>
+      <small class="weekday-line">${escapeHtml(scheduleDayWeekday(day.date))}</small>
       <small class="slot-line">${escapeHtml(scheduleSlotText(day))}</small>
       <small class="coverage-pill">${escapeHtml(scheduleCoverageText(day))}</small>
       <small class="day-delta">${escapeHtml(scheduleDayDeltaText(day))}</small>
@@ -6506,6 +6661,8 @@ function renderScheduleRecommendations(day = {}) {
 
 function renderCoordinatorScheduleDayDetail(payload, day) {
   const workers = day?.workers || [];
+  const previousDay = adjacentScheduleDay(payload, day?.date, -1);
+  const nextDay = adjacentScheduleDay(payload, day?.date, 1);
   const dayCoverage = day?.capacityKnown ? scheduleCoverageText(day) : "-";
   const daySlotValue = day?.capacityKnown
     ? `${formatCount(day.bookedSlots || 0)}/${formatCount(day.requiredSlots || 0)}`
@@ -6517,7 +6674,11 @@ function renderCoordinatorScheduleDayDetail(payload, day) {
   return `
     ${payload.error ? `<div class="notice error">A beosztás nem tölthető be: ${escapeHtml(payload.error)}</div>` : ""}
     <section class="schedule-day-detail">
-      <button class="ghost-btn schedule-back-btn" type="button" data-schedule-back>Vissza a naptárhoz</button>
+      <div class="schedule-day-nav">
+        <button class="ghost-btn schedule-back-btn" type="button" data-schedule-back>Vissza a naptárhoz</button>
+        <button class="ghost-btn" type="button" data-schedule-prev-day="${escapeHtml(previousDay?.date || "")}" ${previousDay ? "" : "disabled"}>Előző nap</button>
+        <button class="ghost-btn" type="button" data-schedule-next-day="${escapeHtml(nextDay?.date || "")}" ${nextDay ? "" : "disabled"}>Következő nap</button>
+      </div>
       <div class="device-history-head">
         <strong>${day ? escapeHtml(dateLabel(day.date)) : "Nincs kiválasztott nap"}</strong>
         <span>${escapeHtml(selectedSlotText)} · ${formatCount(workers.length)} futár</span>
@@ -6562,6 +6723,15 @@ function renderCoordinatorSchedule() {
     target.querySelector("[data-schedule-back]")?.addEventListener("click", () => {
       state.coordinatorScheduleView = "calendar";
       renderCoordinatorSchedule();
+    });
+    target.querySelectorAll("[data-schedule-prev-day], [data-schedule-next-day]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const selectedDay = button.dataset.schedulePrevDay || button.dataset.scheduleNextDay || "";
+        if (!selectedDay) return;
+        state.coordinatorScheduleDay = selectedDay;
+        state.coordinatorScheduleView = "day";
+        loadCoordinatorScheduleDay(selectedDay);
+      });
     });
     return;
   }
@@ -6661,15 +6831,20 @@ async function loadCoordinatorScheduleDay(day, options = {}) {
   const selectedDay = String(day || state.coordinatorScheduleDay || "").slice(0, 10);
   if (!selectedDay) return;
   const requestSeq = ++state.coordinatorScheduleRequestSeq;
+  const fast = !options.full;
   if (!options.keepRendered) renderCoordinatorSchedule();
   try {
     const warehouseQuery = warehouse ? `&warehouse=${encodeURIComponent(warehouse)}` : "";
-    const payload = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}${warehouseQuery}&day=${encodeURIComponent(selectedDay)}`);
+    const fastQuery = fast ? "&fast=true" : "";
+    const payload = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}${warehouseQuery}&day=${encodeURIComponent(selectedDay)}${fastQuery}`);
     if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
     mergeCoordinatorScheduleDay(payload);
     state.coordinatorScheduleDay = selectedDay;
     state.coordinatorScheduleView = "day";
     renderCoordinatorSchedule();
+    if (fast) {
+      loadCoordinatorScheduleDay(selectedDay, { keepRendered: true, full: true }).catch(() => {});
+    }
   } catch (error) {
     if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
     if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;

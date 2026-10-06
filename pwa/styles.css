@@ -301,6 +301,7 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-day span { color: var(--green-dark); font-size: 11px; font-weight: 900; }
 .schedule-day strong { font-size: 16px; line-height: 1.05; }
 .schedule-day small { color: var(--muted); font-size: 10px; font-weight: 800; line-height: 1.2; }
+.schedule-day .weekday-line { color: var(--muted); text-transform: none; }
 .schedule-day .slot-line { color: var(--ink); font-size: 14px; font-weight: 950; }
 .schedule-day .coverage-pill { width: fit-content; padding: 3px 8px; border-radius: 999px; background: #e2f2df; color: var(--green-dark); font-size: 11px; }
 .schedule-day.coverage-warn .coverage-pill { background: #fff0c8; color: #8b5d00; }
@@ -309,6 +310,7 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-day.coverage-unknown .coverage-pill { background: #eef1eb; color: var(--muted); }
 .schedule-day .day-delta { overflow-wrap: anywhere; }
 .schedule-selected, .schedule-day-detail { display: grid; gap: 10px; }
+.schedule-day-nav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .schedule-back-btn { width: fit-content; min-height: 42px; padding: 0 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); color: var(--green-dark); font-size: 13px; font-weight: 950; }
 .schedule-slots { display: grid; gap: 10px; }
 .schedule-slot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -719,6 +721,8 @@ textarea { min-height: 96px; resize: vertical; }
 .route-stat-table { min-width: 900px; }
 .route-shift-report-table { min-width: 1180px; }
 .route-shift-report-table td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 800; }
+.route-shift-source-table { min-width: 1080px; }
+.route-shift-source-table td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 800; }
 .route-shift-daily { margin-top: 14px; }
 .bottom-nav { position: fixed; z-index: 10; right: 0; bottom: 0; left: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82px, 1fr); overflow-x: auto; padding: 9px 8px calc(9px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fffffff2; backdrop-filter: blur(18px); }
 .bottom-nav button { display: grid; gap: 3px; place-items: center; min-width: 0; border: 0; background: transparent; color: #8a938c; font-size: 10px; font-weight: 700; }

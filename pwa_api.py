@@ -5363,6 +5363,41 @@ def schedule_worker_from_vehicle(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def schedule_worker_from_hub_booking(row: dict[str, Any]) -> dict[str, Any]:
+    work_date = str(row.get("work_date") or "")[:10]
+    source_name = str(row.get("source_name") or "courier_hub_shift_bookings_raw").strip()
+    return {
+        "date": work_date,
+        "courierId": str(row.get("courier_id") or ""),
+        "courierName": str(row.get("courier_name") or "Futár"),
+        "start": normalize_time(row.get("slot_from")),
+        "end": normalize_time(row.get("slot_to")),
+        "warehouse": normalize_warehouse(row.get("warehouse_code") or row.get("warehouse_id")),
+        "shiftName": str(row.get("shift_text") or row.get("block_key") or ""),
+        "bookingCode": str(row.get("block_key") or row.get("shift_template_id") or ""),
+        "giritonStatus": "Nincs adat",
+        "giritonTone": "unknown",
+        "muszakproStatus": "Nincs adat",
+        "muszakproTone": "unknown",
+        "muszakproTime": "",
+        "giritonBookingTime": "",
+        "giritonOfferTime": "",
+        "missingSource": "",
+        "hubStatus": "Felvezetve",
+        "hubTone": "ok",
+        "hubUploadedAt": str(
+            row.get("first_seen_at")
+            or row.get("fetched_at")
+            or row.get("last_seen_at")
+            or row.get("updated_at")
+            or ""
+        ),
+        "phoneNumber": str(row.get("phone_number") or ""),
+        "vehicle": None,
+        "source": source_name,
+    }
+
+
 def merge_schedule_worker(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     for key in ("courierId", "courierName", "warehouse", "start", "end", "shiftName", "bookingCode"):
         if not existing.get(key) and incoming.get(key):
@@ -5422,6 +5457,7 @@ def read_coordinator_schedule(
     month: str,
     warehouse_ids: list[int] | None = None,
     detail_date: str = "",
+    fast_detail: bool = False,
 ) -> dict[str, Any]:
     start = parse_month(month or datetime.now(LOCAL_TIMEZONE).date().isoformat()[:7])
     end = month_end(start)
@@ -5448,85 +5484,100 @@ def read_coordinator_schedule(
     if detail_day:
         detail_start = detail_day
         detail_end = detail_day
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {
-                "comparison": executor.submit(read_schedule_comparison_rows, detail_start, detail_end),
-                "hub": executor.submit(read_schedule_hub_rows, detail_start, detail_end),
-                "giriton": executor.submit(read_schedule_giriton_rows, detail_start, detail_end),
-                "muszakpro": executor.submit(read_schedule_muszakpro_rows, detail_start, detail_end),
-                "vehicle": executor.submit(read_vehicle_assignment_rows, detail_start, detail_end, limit=10000),
-                "live_vehicle": executor.submit(read_live_vehicle_assignment_rows, limit=1000),
-                "slot": executor.submit(read_schedule_slot_rows, detail_start, detail_end),
-                "hub_booking": executor.submit(read_schedule_hub_booking_rows, detail_start, detail_end),
-            }
-            comparison_rows = futures["comparison"].result()
-            hub_rows = futures["hub"].result()
-            giriton_rows = futures["giriton"].result()
-            muszakpro_rows = futures["muszakpro"].result()
-            vehicle_rows = futures["vehicle"].result()
-            live_vehicle_rows = futures["live_vehicle"].result()
-            slot_rows = futures["slot"].result()
-            hub_booking_rows = futures["hub_booking"].result()
-        workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        if fast_detail:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                slot_future = executor.submit(read_schedule_slot_rows, detail_start, detail_end)
+                hub_booking_future = executor.submit(read_schedule_hub_booking_rows, detail_start, detail_end)
+                slot_rows = slot_future.result()
+                hub_booking_rows = hub_booking_future.result()
+            workers = sorted(
+                [
+                    schedule_worker_from_hub_booking(row)
+                    for row in hub_booking_rows
+                    if warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids)
+                ],
+                key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
+            )
+        else:
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = {
+                    "comparison": executor.submit(read_schedule_comparison_rows, detail_start, detail_end),
+                    "hub": executor.submit(read_schedule_hub_rows, detail_start, detail_end),
+                    "giriton": executor.submit(read_schedule_giriton_rows, detail_start, detail_end),
+                    "muszakpro": executor.submit(read_schedule_muszakpro_rows, detail_start, detail_end),
+                    "vehicle": executor.submit(read_vehicle_assignment_rows, detail_start, detail_end, limit=10000),
+                    "live_vehicle": executor.submit(read_live_vehicle_assignment_rows, limit=1000),
+                    "slot": executor.submit(read_schedule_slot_rows, detail_start, detail_end),
+                    "hub_booking": executor.submit(read_schedule_hub_booking_rows, detail_start, detail_end),
+                }
+                comparison_rows = futures["comparison"].result()
+                hub_rows = futures["hub"].result()
+                giriton_rows = futures["giriton"].result()
+                muszakpro_rows = futures["muszakpro"].result()
+                vehicle_rows = futures["vehicle"].result()
+                live_vehicle_rows = futures["live_vehicle"].result()
+                slot_rows = futures["slot"].result()
+                hub_booking_rows = futures["hub_booking"].result()
+            workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
 
-        for row in comparison_rows:
-            worker = schedule_worker_from_comparison(row)
-            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
-            workers_by_key[key] = worker
-
-        for row in hub_rows:
-            worker = schedule_worker_from_hub(row)
-            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
-            existing = workers_by_key.get(key)
-            if existing:
-                merge_schedule_worker(existing, worker)
-            else:
+            for row in comparison_rows:
+                worker = schedule_worker_from_comparison(row)
+                key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
                 workers_by_key[key] = worker
 
-        for row in giriton_rows:
-            worker = schedule_worker_from_giriton(row)
-            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
-            existing = workers_by_key.get(key)
-            if existing:
-                merge_schedule_worker(existing, worker)
-            else:
-                workers_by_key[key] = worker
+            for row in hub_rows:
+                worker = schedule_worker_from_hub(row)
+                key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+                existing = workers_by_key.get(key)
+                if existing:
+                    merge_schedule_worker(existing, worker)
+                else:
+                    workers_by_key[key] = worker
 
-        for row in muszakpro_rows:
-            worker = schedule_worker_from_muszakpro(row)
-            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
-            existing = workers_by_key.get(key)
-            if existing:
-                merge_schedule_worker(existing, worker)
-            else:
-                workers_by_key[key] = worker
+            for row in giriton_rows:
+                worker = schedule_worker_from_giriton(row)
+                key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+                existing = workers_by_key.get(key)
+                if existing:
+                    merge_schedule_worker(existing, worker)
+                else:
+                    workers_by_key[key] = worker
 
-        for row in vehicle_rows:
-            worker = schedule_worker_from_vehicle(row)
-            key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
-            existing = workers_by_key.get(key)
-            if existing:
-                if not existing.get("vehicle"):
-                    existing["vehicle"] = worker.get("vehicle")
-                merge_schedule_worker(existing, worker)
-            else:
-                workers_by_key[key] = worker
+            for row in muszakpro_rows:
+                worker = schedule_worker_from_muszakpro(row)
+                key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+                existing = workers_by_key.get(key)
+                if existing:
+                    merge_schedule_worker(existing, worker)
+                else:
+                    workers_by_key[key] = worker
 
-        workers = sorted(
-            [
-                worker for worker in workers_by_key.values()
-                if warehouse_allowed(worker.get("warehouse"), warehouse_ids)
-            ],
-            key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
-        )
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            contact_future = executor.submit(read_schedule_contact_rows, workers)
-            attendance_future = executor.submit(read_giriton_attendance_login_rows, detail_start, detail_end)
-            contact_rows = contact_future.result()
-            attendance_rows = attendance_future.result()
-        attach_schedule_vehicles(workers, detail_start, detail_end, vehicle_rows=vehicle_rows, live_rows=live_vehicle_rows)
-        attach_schedule_contacts(workers, contact_rows)
-        attach_giriton_attendance_logins(workers, detail_start, detail_end, attendance_rows)
+            for row in vehicle_rows:
+                worker = schedule_worker_from_vehicle(row)
+                key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+                existing = workers_by_key.get(key)
+                if existing:
+                    if not existing.get("vehicle"):
+                        existing["vehicle"] = worker.get("vehicle")
+                    merge_schedule_worker(existing, worker)
+                else:
+                    workers_by_key[key] = worker
+
+            workers = sorted(
+                [
+                    worker for worker in workers_by_key.values()
+                    if warehouse_allowed(worker.get("warehouse"), warehouse_ids)
+                ],
+                key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
+            )
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                contact_future = executor.submit(read_schedule_contact_rows, workers)
+                attendance_future = executor.submit(read_giriton_attendance_login_rows, detail_start, detail_end)
+                contact_rows = contact_future.result()
+                attendance_rows = attendance_future.result()
+            attach_schedule_vehicles(workers, detail_start, detail_end, vehicle_rows=vehicle_rows, live_rows=live_vehicle_rows)
+            attach_schedule_contacts(workers, contact_rows)
+            attach_giriton_attendance_logins(workers, detail_start, detail_end, attendance_rows)
         for row in slot_rows:
             if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
                 continue
@@ -5563,7 +5614,8 @@ def read_coordinator_schedule(
                 if warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids)
             ],
         )
-        attach_schedule_slot_recommendations(slots_by_day, workers)
+        if not fast_detail:
+            attach_schedule_slot_recommendations(slots_by_day, workers)
 
     days = []
     days_start = detail_day or start
@@ -17218,6 +17270,7 @@ def coordinator_schedule(
     month: str = Query(default=""),
     warehouse: str = Query(default=""),
     day: str = Query(default=""),
+    fast: bool = Query(default=False),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
@@ -17227,6 +17280,7 @@ def coordinator_schedule(
             selected_month,
             selected_coordinator_warehouse_ids(user, warehouse),
             detail_date=day,
+            fast_detail=fast,
         )
     except Exception as exc:
         print("Coordinator schedule failed:", exc)
@@ -17606,7 +17660,7 @@ def monthly_shift_route_report(
         raise HTTPException(status_code=403, detail="A havi műszak/kör riporthoz admin jogosultság szükséges.")
     month_value = parse_month(month)
     payload = build_monthly_shift_route_report(month_value)
-    return filtered_monthly_shift_route_report(payload, courier, warehouse)
+    return filtered_monthly_shift_route_report(payload, courier, warehouse, include_raw=True)
 
 
 @app.get("/api/routes/monthly-shift-report.xlsx")
