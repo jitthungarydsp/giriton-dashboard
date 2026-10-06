@@ -61,7 +61,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v151";
+const APP_VERSION = "v152";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -6135,6 +6135,65 @@ function renderScheduleSlotWorker(worker = {}) {
   `;
 }
 
+function scheduleRecommendationShiftLabel(shift = {}) {
+  const time = `${shift.start || "-"}${shift.end ? `-${shift.end}` : ""}`;
+  const name = shift.shiftName || shift.bookingCode || shift.shiftText || "Műszak";
+  return `${time} · ${name}`;
+}
+
+function renderScheduleSlotRecommendationBadge(item = {}) {
+  const needsMove = item.type === "move";
+  return `
+    <span class="schedule-slot-rec-pill ${needsMove ? "move" : "direct"}">
+      ${needsMove ? `<i aria-hidden="true">!</i>` : ""}
+      ${escapeHtml(item.courierName || "Futár")}
+    </span>
+  `;
+}
+
+function renderScheduleSlotRecommendationDetail(item = {}) {
+  const phone = String(item.phoneNumber || "").trim();
+  const current = (item.currentShifts || [])
+    .map((shift) => scheduleRecommendationShiftLabel(shift))
+    .join(", ");
+  const target = scheduleSlotLabel(item.targetSlot || {});
+  const move = item.moveSuggestion || {};
+  const moveText = item.type === "move"
+    ? `${scheduleRecommendationShiftLabel(move.moveFrom || {})} átrakása ide: ${scheduleSlotLabel(move.moveTo || {})}`
+    : "Nem kell átszervezni, közvetlenül befér.";
+  return `
+    <article class="schedule-slot-rec-card ${item.type === "move" ? "move" : "direct"}">
+      <div>
+        <strong>${item.type === "move" ? `<span class="schedule-rec-alert">!</span>` : ""}${escapeHtml(item.courierName || "Futár")}</strong>
+        <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")}</small>
+      </div>
+      <div class="schedule-slot-rec-lines">
+        <span>Cél: ${escapeHtml(target || "-")}</span>
+        <span>Most: ${escapeHtml(current || "-")}</span>
+        <span>${escapeHtml(moveText)}</span>
+      </div>
+      <div class="schedule-slot-rec-foot">
+        <small>${escapeHtml(item.reason || "")}</small>
+        ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : `<span>Telefon: -</span>`}
+      </div>
+    </article>
+  `;
+}
+
+function renderScheduleSlotRecommendations(slot = {}) {
+  const recommendations = slot.recommendations || [];
+  if (!recommendations.length) return "";
+  return `
+    <div class="schedule-slot-rec-section">
+      <div class="device-history-head compact">
+        <strong>Ajánlás</strong>
+        <span>${formatCount(recommendations.length)} találat</span>
+      </div>
+      <div class="schedule-slot-rec-list">${recommendations.map(renderScheduleSlotRecommendationDetail).join("")}</div>
+    </div>
+  `;
+}
+
 function renderScheduleSlotDetails(slot = {}) {
   const workers = slot.workers || [];
   const muszakproCount = workers.filter((worker) => worker.muszakproTone === "ok").length;
@@ -6150,6 +6209,7 @@ function renderScheduleSlotDetails(slot = {}) {
       ${workers.length
         ? `<div class="schedule-slot-worker-list">${workers.map(renderScheduleSlotWorker).join("")}</div>`
         : `<div class="empty-card compact">Nincs ehhez az idősávhoz kapcsolt futáradat.</div>`}
+      ${renderScheduleSlotRecommendations(slot)}
     </div>
   `;
 }
@@ -6167,6 +6227,7 @@ function scheduleSlotDomKey(slot = {}) {
 
 function renderScheduleSlotCard(slot = {}) {
   const tone = scheduleSlotTone(slot);
+  const recommendations = slot.recommendations || [];
   return `
     <details class="schedule-slot-card ${tone}" data-schedule-slot="${escapeHtml(scheduleSlotDomKey(slot))}">
       <summary>
@@ -6179,6 +6240,9 @@ function renderScheduleSlotCard(slot = {}) {
           <b>${escapeHtml(scheduleSlotCapacityText(slot))}</b>
         </div>
         <em>${escapeHtml(scheduleSlotStatusText(slot))}</em>
+        ${tone === "open" && recommendations.length
+          ? `<div class="schedule-slot-rec-badges">${recommendations.map(renderScheduleSlotRecommendationBadge).join("")}</div>`
+          : ""}
       </summary>
       ${renderScheduleSlotDetails(slot)}
     </details>
@@ -6242,7 +6306,7 @@ function renderScheduleRecommendations(day = {}) {
       </div>
       ${recommendations.length
         ? `<div class="schedule-recommendation-list">${recommendations.map(renderScheduleRecommendation).join("")}</div>`
-        : `<div class="empty-card">Nincs ajánlható futár a 4 óra 30 perc szabály és az aktuális raktár alapján.</div>`}
+        : `<div class="empty-card">Nincs ajánlható futár a 4 óra 45 perc szabály és az aktuális raktár alapján.</div>`}
     </section>
   `;
 }
