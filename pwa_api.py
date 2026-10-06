@@ -4426,6 +4426,46 @@ def read_schedule_slot_rows(start: date, end: date) -> list[dict[str, Any]]:
     ]
 
 
+def read_schedule_hub_booking_rows(start: date, end: date) -> list[dict[str, Any]]:
+    booking_rows = optional_supabase_rows(
+        "courier_hub_shift_bookings_raw",
+        params={
+            "select": (
+                "work_date,warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,"
+                "phone_number,block_key,shift_template_id,shift_text,slot_from,slot_to,"
+                "status,movement_type,active,first_seen_at,last_seen_at,updated_at"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+            "order": "work_date.asc,warehouse_code.asc,slot_from.asc,courier_name.asc",
+            "limit": "3000",
+        },
+        timeout=20,
+    )
+    subscriber_rows = optional_supabase_rows(
+        "courier_hub_roster_shift_subscribers_raw",
+        params={
+            "select": (
+                "work_date,warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,"
+                "phone_number,block_key,shift_template_id,shift_text,slot_from,slot_to,"
+                "status,fetched_at,updated_at"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+            "order": "work_date.asc,warehouse_code.asc,slot_from.asc,courier_name.asc",
+            "limit": "3000",
+        },
+        timeout=20,
+    )
+    rows = booking_rows + [{**row, "source_name": "courier_hub_roster_shift_subscribers"} for row in subscriber_rows]
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+        and str(row.get("status") or "ACTIVE").strip().upper() not in {"CANCELLED", "CANCELED", "DELETED"}
+        and row.get("active", True) is not False
+    ]
+
+
 def schedule_capacity_coverage(booked_slots: int, required_slots: int) -> int | None:
     if required_slots <= 0:
         return None
@@ -4555,6 +4595,8 @@ def schedule_slot_payload(row: dict[str, Any]) -> dict[str, Any] | None:
         "blockKey": str(row.get("block_key") or ""),
         "shiftTemplateId": str(row.get("shift_template_id") or ""),
         "shiftText": str(row.get("shift_text") or row.get("template_name") or row.get("block_key") or ""),
+        "fetchedAt": str(row.get("fetched_at") or ""),
+        "updatedAt": str(row.get("updated_at") or ""),
         "workers": [],
     }
 
@@ -4578,11 +4620,39 @@ def schedule_slot_worker_payload(worker: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def schedule_slot_booking_worker_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "courierId": str(row.get("courier_id") or ""),
+        "courierName": str(row.get("courier_name") or "Futár"),
+        "phoneNumber": str(row.get("phone_number") or ""),
+        "shiftName": str(row.get("shift_text") or row.get("block_key") or ""),
+        "bookingCode": str(row.get("block_key") or row.get("shift_template_id") or ""),
+        "giritonStatus": "Nincs adat",
+        "giritonTone": "unknown",
+        "muszakproStatus": "Nincs adat",
+        "muszakproTone": "unknown",
+        "hubStatus": "Felvezetve",
+        "hubTone": "ok",
+        "muszakproBookedAt": "",
+        "hubUploadedAt": str(
+            row.get("first_seen_at")
+            or row.get("fetched_at")
+            or row.get("last_seen_at")
+            or row.get("updated_at")
+            or ""
+        ),
+        "source": str(row.get("source_name") or "courier_hub_shift_bookings_raw"),
+    }
+
+
 def attach_schedule_slot_workers(
     slots_by_day: dict[str, list[dict[str, Any]]],
     workers: list[dict[str, Any]],
+    hub_booking_rows: list[dict[str, Any]] | None = None,
 ) -> None:
     slots_by_key: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    slots_by_block_key: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    slots_by_template_key: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for day_slots in slots_by_day.values():
         for slot in day_slots:
             key = (
@@ -4592,6 +4662,24 @@ def attach_schedule_slot_workers(
             )
             if key[0] and key[1] and key[2]:
                 slots_by_key.setdefault(key, []).append(slot)
+            block_key = str(slot.get("blockKey") or "").strip()
+            if key[0] and key[1] and block_key:
+                slots_by_block_key.setdefault((key[0], key[1], block_key), []).append(slot)
+            template_key = str(slot.get("shiftTemplateId") or "").strip()
+            if key[0] and key[1] and template_key:
+                slots_by_template_key.setdefault((key[0], key[1], template_key), []).append(slot)
+
+    def add_payload_to_slots(matching_slots: list[dict[str, Any]], payload: dict[str, Any]) -> None:
+        identity = str(payload.get("courierId") or "").strip() or normalize_person_match_text(payload.get("courierName"))
+        if not identity:
+            return
+        for slot in matching_slots:
+            existing_identities = {
+                str(worker.get("courierId") or "").strip() or normalize_person_match_text(worker.get("courierName"))
+                for worker in slot.get("workers") or []
+            }
+            if identity not in existing_identities:
+                slot.setdefault("workers", []).append(payload)
 
     for worker in workers:
         key = (
@@ -4603,8 +4691,23 @@ def attach_schedule_slot_workers(
         if not matching_slots:
             continue
         payload = schedule_slot_worker_payload(worker)
-        for slot in matching_slots:
-            slot.setdefault("workers", []).append(payload)
+        add_payload_to_slots(matching_slots, payload)
+
+    for row in hub_booking_rows or []:
+        day = str(row.get("work_date") or "")[:10]
+        warehouse = normalize_warehouse(row.get("warehouse_code") or row.get("warehouse_id"))
+        start = normalize_time(row.get("slot_from"))
+        block_key = str(row.get("block_key") or "").strip()
+        template_key = str(row.get("shift_template_id") or "").strip()
+        matching_slots = []
+        if block_key:
+            matching_slots = slots_by_block_key.get((day, warehouse, block_key)) or []
+        if not matching_slots and template_key:
+            matching_slots = slots_by_template_key.get((day, warehouse, template_key)) or []
+        if not matching_slots and start:
+            matching_slots = slots_by_key.get((day, warehouse, start)) or []
+        if matching_slots:
+            add_payload_to_slots(matching_slots, schedule_slot_booking_worker_payload(row))
 
     for day_slots in slots_by_day.values():
         for slot in day_slots:
@@ -5152,6 +5255,7 @@ def read_coordinator_schedule(
         vehicle_rows = read_vehicle_assignment_rows(detail_start, detail_end, limit=10000)
         free_slot_rows = read_schedule_free_slot_rows(detail_start, detail_end)
         slot_rows = read_schedule_slot_rows(detail_start, detail_end)
+        hub_booking_rows = read_schedule_hub_booking_rows(detail_start, detail_end)
         workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
 
         for row in comparison_rows:
@@ -5242,7 +5346,14 @@ def read_coordinator_schedule(
             existing_slot_keys.add(slot_key)
         for day_slots in slots_by_day.values():
             day_slots.sort(key=lambda item: (safe_int(item.get("startMinutes")), str(item.get("shiftTemplateId") or "")))
-        attach_schedule_slot_workers(slots_by_day, workers)
+        attach_schedule_slot_workers(
+            slots_by_day,
+            workers,
+            [
+                row for row in hub_booking_rows
+                if warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids)
+            ],
+        )
 
     days = []
     cursor = start

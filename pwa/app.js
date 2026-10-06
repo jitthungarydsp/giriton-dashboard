@@ -61,7 +61,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v148";
+const APP_VERSION = "v149";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -6136,12 +6136,15 @@ function renderScheduleSlotWorker(worker = {}) {
 
 function renderScheduleSlotDetails(slot = {}) {
   const workers = slot.workers || [];
+  const muszakproCount = workers.filter((worker) => worker.muszakproTone === "ok").length;
+  const hubCount = workers.filter((worker) => worker.hubTone === "ok").length;
+  const hubFallbackTime = shortDateTime(slot.updatedAt || slot.fetchedAt || "");
   return `
     <div class="schedule-slot-details">
       <div class="schedule-slot-detail-grid">
         <div><span>Állapot</span><strong>${escapeHtml(scheduleSlotPreparedText(slot))}</strong></div>
-        <div><span>MűszakPro foglalás</span><strong>${workers.length ? `${formatCount(workers.length)} futár` : "-"}</strong></div>
-        <div><span>Hub felvezetés</span><strong>${workers.filter((worker) => worker.hubTone === "ok").length ? `${formatCount(workers.filter((worker) => worker.hubTone === "ok").length)} futár` : "-"}</strong></div>
+        <div><span>MűszakPro foglalás</span><strong>${muszakproCount ? `${formatCount(muszakproCount)} futár` : "-"}</strong></div>
+        <div><span>Hub felvezetés</span><strong>${hubCount ? `${formatCount(hubCount)} futár` : escapeHtml(hubFallbackTime || "-")}</strong></div>
       </div>
       ${workers.length
         ? `<div class="schedule-slot-worker-list">${workers.map(renderScheduleSlotWorker).join("")}</div>`
@@ -6234,7 +6237,6 @@ function renderScheduleRecommendations(day = {}) {
 
 function renderCoordinatorScheduleDayDetail(payload, day) {
   const workers = day?.workers || [];
-  const dayRecommendations = day?.recommendations || [];
   const dayCoverage = day?.capacityKnown ? scheduleCoverageText(day) : "-";
   const daySlotValue = day?.capacityKnown
     ? `${formatCount(day.bookedSlots || 0)}/${formatCount(day.requiredSlots || 0)}`
@@ -6255,16 +6257,8 @@ function renderCoordinatorScheduleDayDetail(payload, day) {
         ["Töltöttség", dayCoverage, "napi slot alapján"],
         ["Slot", daySlotValue, "foglalt / nyitott"],
         ["Hiány", dayMissingValue, "nyitott slot"],
-        ["Ajánlás", dayRecommendations.length || 0, "4ó30 szabály"],
       ])}
       ${day?.detailsLoaded ? renderScheduleSlots(day) : `<div class="empty-card">Napi műszakok betöltése...</div>`}
-      ${day?.detailsLoaded ? renderScheduleRecommendations(day) : ""}
-      <details class="schedule-worker-list-panel">
-        <summary>Beosztott futárok · ${formatCount(workers.length)} fő</summary>
-        <div class="ops-card-list">
-          ${workers.length ? workers.map(renderScheduleWorker).join("") : `<div class="empty-card">Ezen a napon nincs beosztott futár.</div>`}
-        </div>
-      </details>
     </section>
   `;
 }
