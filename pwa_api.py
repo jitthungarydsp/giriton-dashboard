@@ -12836,6 +12836,139 @@ def build_monthly_shift_route_report(month_value: date) -> dict[str, Any]:
     }
 
 
+def route_report_ratio(numerator: Any, denominator: Any) -> float:
+    top = safe_float_value(numerator) or 0
+    bottom = safe_float_value(denominator) or 0
+    return round(top / bottom, 4) if bottom else 0
+
+
+def route_report_courier_matches(row: dict[str, Any], courier: str = "") -> bool:
+    wanted = str(courier or "").strip()
+    if not wanted:
+        return True
+    wanted_id = route_report_courier_id(wanted)
+    row_id = route_report_courier_id(row.get("courier_id") or row.get("courierId"))
+    if wanted_id and row_id and wanted_id == row_id:
+        return True
+    wanted_name = normalize_person_match_text(wanted)
+    row_name = normalize_person_match_text(row.get("courier_name") or row.get("courierName"))
+    return bool(wanted_name and row_name and wanted_name == row_name)
+
+
+def route_report_warehouse_matches(row: dict[str, Any], warehouse: str = "") -> bool:
+    wanted = normalize_warehouse(warehouse)
+    if normalize_text(warehouse) in {"", "all", "osszes", "összes"}:
+        return True
+    return bool(wanted and normalize_warehouse(row.get("warehouse")) == wanted)
+
+
+def route_report_summary_from_daily(daily_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in daily_rows:
+        courier_id = route_report_courier_id(row.get("courier_id"))
+        courier_name = str(row.get("courier_name") or "").strip() or (f"Futár {courier_id}" if courier_id else "Ismeretlen futár")
+        key = courier_id or normalize_person_match_text(courier_name)
+        item = grouped.setdefault(key, {
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "warehouse": normalize_warehouse(row.get("warehouse")),
+            "muszakpro_booked": 0,
+            "hub_uploaded": 0,
+            "routes_delivered": 0,
+            "city_over_5h": 0,
+            "_muszakpro_days": set(),
+            "_hub_days": set(),
+            "_route_days": set(),
+        })
+        item["muszakpro_booked"] += safe_int(row.get("muszakpro_booked"))
+        item["hub_uploaded"] += safe_int(row.get("hub_uploaded"))
+        item["routes_delivered"] += safe_int(row.get("routes_delivered"))
+        item["city_over_5h"] += safe_int(row.get("city_over_5h"))
+        if row.get("work_date") and safe_int(row.get("muszakpro_booked")):
+            item["_muszakpro_days"].add(row.get("work_date"))
+        if row.get("work_date") and safe_int(row.get("hub_uploaded")):
+            item["_hub_days"].add(row.get("work_date"))
+        if row.get("work_date") and safe_int(row.get("routes_delivered")):
+            item["_route_days"].add(row.get("work_date"))
+
+    output: list[dict[str, Any]] = []
+    for item in grouped.values():
+        clean_item = dict(item)
+        clean_item["muszakpro_days"] = len(clean_item.pop("_muszakpro_days", set()))
+        clean_item["hub_days"] = len(clean_item.pop("_hub_days", set()))
+        clean_item["route_days"] = len(clean_item.pop("_route_days", set()))
+        output.append(clean_item)
+    return sorted(output, key=lambda item: (normalize_text(item.get("courier_name")), str(item.get("courier_id"))))
+
+
+def filtered_monthly_shift_route_report(
+    payload: dict[str, Any],
+    courier: str = "",
+    warehouse: str = "all",
+    *,
+    include_raw: bool = False,
+) -> dict[str, Any]:
+    warehouse_filter_active = normalize_text(warehouse) not in {"", "all", "osszes", "összes"}
+    daily = [
+        row for row in payload.get("daily") or []
+        if route_report_courier_matches(row, courier)
+        and route_report_warehouse_matches(row, warehouse)
+    ]
+    if warehouse_filter_active:
+        summary = route_report_summary_from_daily(daily)
+    else:
+        summary = [
+            row for row in payload.get("summary") or []
+            if route_report_courier_matches(row, courier)
+        ]
+    city_over_5h_rows = [
+        row for row in payload.get("city_over_5h_rows") or []
+        if route_report_courier_matches(row, courier)
+        and route_report_warehouse_matches(row, warehouse)
+    ]
+    total_muszakpro = sum(safe_int(row.get("muszakpro_booked")) for row in summary)
+    total_hub = sum(safe_int(row.get("hub_uploaded")) for row in summary)
+    total_routes = sum(safe_int(row.get("routes_delivered")) for row in summary)
+    result = {
+        "month": payload.get("month"),
+        "filters": {
+            "courier": str(courier or "").strip(),
+            "warehouse": normalize_warehouse(warehouse) if warehouse_filter_active else "all",
+        },
+        "summary": summary,
+        "daily": daily,
+        "cityOver5hRows": city_over_5h_rows,
+        "city_over_5h_rows": city_over_5h_rows,
+        "totals": {
+            "couriers": len(summary),
+            "muszakproBooked": total_muszakpro,
+            "hubUploaded": total_hub,
+            "routesDelivered": total_routes,
+            "cityOver5h": sum(safe_int(row.get("city_over_5h")) for row in summary),
+            "hubToMuszakproRatio": route_report_ratio(total_hub, total_muszakpro),
+            "routeToHubRatio": route_report_ratio(total_routes, total_hub),
+        },
+        "updatedAt": payload.get("updatedAt") or datetime.now(timezone.utc).isoformat(),
+    }
+    if include_raw:
+        result["muszakpro_rows"] = [
+            row for row in payload.get("muszakpro_rows") or []
+            if route_report_courier_matches(row, courier)
+            and route_report_warehouse_matches(row, warehouse)
+        ]
+        result["hub_rows"] = [
+            row for row in payload.get("hub_rows") or []
+            if route_report_courier_matches(row, courier)
+            and route_report_warehouse_matches(row, warehouse)
+        ]
+        result["route_rows"] = [
+            row for row in payload.get("route_rows") or []
+            if route_report_courier_matches(row, courier)
+            and route_report_warehouse_matches(row, warehouse)
+        ]
+    return result
+
+
 def route_quality_shift_key(row: dict[str, Any]) -> str:
     story = row.get("routeStory") or {}
     return str(
@@ -17461,9 +17594,11 @@ def route_details_excel(
     )
 
 
-@app.get("/api/routes/monthly-shift-report.xlsx")
-def monthly_shift_route_report_excel(
+@app.get("/api/routes/monthly-shift-report")
+def monthly_shift_route_report(
     month: str = Query(default=""),
+    courier: str = Query(default=""),
+    warehouse: str = Query(default="all"),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
@@ -17471,6 +17606,26 @@ def monthly_shift_route_report_excel(
         raise HTTPException(status_code=403, detail="A havi műszak/kör riporthoz admin jogosultság szükséges.")
     month_value = parse_month(month)
     payload = build_monthly_shift_route_report(month_value)
+    return filtered_monthly_shift_route_report(payload, courier, warehouse)
+
+
+@app.get("/api/routes/monthly-shift-report.xlsx")
+def monthly_shift_route_report_excel(
+    month: str = Query(default=""),
+    courier: str = Query(default=""),
+    warehouse: str = Query(default="all"),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not can_preview_couriers(user):
+        raise HTTPException(status_code=403, detail="A havi műszak/kör riporthoz admin jogosultság szükséges.")
+    month_value = parse_month(month)
+    payload = filtered_monthly_shift_route_report(
+        build_monthly_shift_route_report(month_value),
+        courier,
+        warehouse,
+        include_raw=True,
+    )
 
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill

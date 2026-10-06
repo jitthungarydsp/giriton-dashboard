@@ -55,13 +55,14 @@ const state = {
   silentLoading: false,
   routeDetails: null,
   routeStatistics: null,
+  routeShiftReport: null,
   routeDetailsSelectedIndex: 0,
   section: "home",
   routeAutoDelayKeys: new Set(),
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v153";
+const APP_VERSION = "v154";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -174,6 +175,7 @@ function currentSectionRefresh() {
   if (state.section === "statistics") return loadStatistics();
   if (state.section === "route-details") {
     if (state.routeDetails) return loadRouteDetails();
+    if (state.routeShiftReport) return loadRouteShiftReport();
     if (state.routeStatistics) return loadRouteStatistics();
     return Promise.resolve();
   }
@@ -474,6 +476,7 @@ function showSection(section) {
       if (!$("#route-stats-end")?.value) $("#route-stats-end").value = monthEndDate($("#route-details-month")?.value || state.statisticsMonth);
       if (state.workflowPreviewCourierId && $("#route-details-courier")) $("#route-details-courier").value = state.workflowPreviewCourierId;
     });
+    renderRouteShiftReport();
     renderRouteStatistics();
     renderRouteDetails();
   }
@@ -2385,9 +2388,20 @@ function routeDetailsExcelUrl() {
 
 function monthlyShiftRouteReportExcelUrl() {
   const month = $("#route-details-month")?.value || state.statisticsMonth;
+  const courier = $("#route-details-courier")?.value || "";
+  const warehouse = $("#route-stats-warehouse")?.value || "all";
   if (!month) return "";
   const params = new URLSearchParams({ month });
+  if (courier) params.set("courier", courier);
+  if (warehouse && warehouse !== "all") params.set("warehouse", warehouse);
   return `/api/routes/monthly-shift-report.xlsx?${params.toString()}`;
+}
+
+function routeShiftReportRange() {
+  const month = $("#route-details-month")?.value || state.statisticsMonth;
+  const courier = $("#route-details-courier")?.value || "";
+  const warehouse = $("#route-stats-warehouse")?.value || "all";
+  return { month, courier, warehouse };
 }
 
 function routeStatisticsRange() {
@@ -2519,6 +2533,143 @@ function renderRouteStatistics() {
         </tbody>
       </table>
     </div>
+  `;
+}
+
+function routeShiftPercent(value) {
+  return formatPercent(Number(value || 0) * 100);
+}
+
+function routeShiftRatio(numerator, denominator) {
+  const bottom = Number(denominator || 0);
+  return bottom ? Number(numerator || 0) / bottom : 0;
+}
+
+function routeShiftReportSummaryRows(rows = []) {
+  return rows.map((row) => `
+    <tr>
+      <td><strong>${escapeHtml(row.courier_name || "-")}</strong><small>#${escapeHtml(row.courier_id || "-")} · ${escapeHtml(row.warehouse || "-")}</small></td>
+      <td>${formatCount(row.muszakpro_booked || 0)}</td>
+      <td>${formatCount(row.hub_uploaded || 0)}</td>
+      <td>${formatCount(row.routes_delivered || 0)}</td>
+      <td>${formatCount(row.muszakpro_days || 0)}</td>
+      <td>${formatCount(row.hub_days || 0)}</td>
+      <td>${formatCount(row.route_days || 0)}</td>
+      <td>${routeShiftPercent(routeShiftRatio(row.hub_uploaded, row.muszakpro_booked))}</td>
+      <td>${routeShiftPercent(routeShiftRatio(row.routes_delivered, row.hub_uploaded))}</td>
+      <td>${formatCount(row.city_over_5h || 0)}</td>
+    </tr>
+  `).join("");
+}
+
+function routeShiftReportDailyRows(rows = []) {
+  return rows.slice(0, 120).map((row) => `
+    <tr>
+      <td><strong>${escapeHtml(row.work_date || "-")}</strong></td>
+      <td>${escapeHtml(row.courier_name || "-")} <small>#${escapeHtml(row.courier_id || "-")}</small></td>
+      <td>${escapeHtml(row.warehouse || "-")}</td>
+      <td>${formatCount(row.muszakpro_booked || 0)}</td>
+      <td>${formatCount(row.hub_uploaded || 0)}</td>
+      <td>${formatCount(row.routes_delivered || 0)}</td>
+      <td>${formatCount(row.city_over_5h || 0)}</td>
+    </tr>
+  `).join("");
+}
+
+function renderRouteShiftReport() {
+  const panel = $("#route-shift-report-panel");
+  if (!panel) return;
+  if (!state.user?.canPreviewCouriers) {
+    panel.innerHTML = "";
+    return;
+  }
+  const payload = state.routeShiftReport;
+  const excelUrl = monthlyShiftRouteReportExcelUrl();
+  if (!payload) {
+    panel.innerHTML = `
+      <div class="route-details-head">
+        <div>
+          <span>Futár statisztika</span>
+          <strong>MűszakPro / HUB / kivitt kör</strong>
+          <small>Hónap, futár és raktár alapján nézhető a foglalás, a kapott műszak és a ténylegesen kivitt kör.</small>
+        </div>
+        <div class="route-details-actions">
+          ${excelUrl ? `<a class="download-link" href="${excelUrl}">Riport Excel</a>` : ""}
+        </div>
+      </div>
+    `;
+    return;
+  }
+  const rows = payload.summary || [];
+  const daily = payload.daily || [];
+  const totals = payload.totals || {};
+  panel.innerHTML = `
+    <div class="route-details-head">
+      <div>
+        <span>${escapeHtml(payload.month || "-")}</span>
+        <strong>Futár műszak/kör statisztika</strong>
+        <small>${escapeHtml(payload.filters?.warehouse === "all" ? "Összes raktár" : payload.filters?.warehouse || "Összes raktár")} · ${formatCount(rows.length)} futár</small>
+      </div>
+      <div class="route-details-actions">
+        ${excelUrl ? `<a class="download-link" href="${excelUrl}">Riport Excel</a>` : ""}
+      </div>
+    </div>
+    <div class="statistics-grid route-stat-kpis">
+      <div class="stat-card"><span>MűszakPro foglalás</span><strong>${formatCount(totals.muszakproBooked || 0)}</strong><small>foglalt műszak</small></div>
+      <div class="stat-card"><span>HUB-on kapott</span><strong>${formatCount(totals.hubUploaded || 0)}</strong><small>felvezetett műszak</small></div>
+      <div class="stat-card"><span>Kivitt kör</span><strong>${formatCount(totals.routesDelivered || 0)}</strong><small>route stat alapján</small></div>
+      <div class="stat-card"><span>HUB / MűszakPro</span><strong>${routeShiftPercent(totals.hubToMuszakproRatio || 0)}</strong><small>arány</small></div>
+      <div class="stat-card"><span>Kivitt / HUB</span><strong>${routeShiftPercent(totals.routeToHubRatio || 0)}</strong><small>arány</small></div>
+      <div class="stat-card"><span>City 5 óra felett</span><strong>${formatCount(totals.cityOver5h || 0)}</strong><small>ellenőrzéshez</small></div>
+    </div>
+    <div class="route-details-table-wrap route-stat-table-wrap">
+      <table class="route-details-table route-shift-report-table">
+        <thead>
+          <tr>
+            <th>Futár</th>
+            <th>MűszakPro foglalt</th>
+            <th>HUB-on kapott</th>
+            <th>Kivitt kör</th>
+            <th>MűszakPro nap</th>
+            <th>HUB nap</th>
+            <th>Körös nap</th>
+            <th>HUB / MűszakPro</th>
+            <th>Kivitt / HUB</th>
+            <th>City 5h+</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.length ? routeShiftReportSummaryRows(rows) : `<tr><td colspan="10">Nincs adat a kiválasztott szűrésre.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    <details class="daily-route-details route-shift-daily">
+      <summary class="route-details-head">
+        <div>
+          <span>Napi bontás</span>
+          <strong>Futár napi adatok</strong>
+          <small>${formatCount(daily.length)} sor${daily.length > 120 ? " · első 120 megjelenítve" : ""}</small>
+        </div>
+      </summary>
+      <div class="route-details-table-wrap route-stat-table-wrap">
+        <table class="route-details-table route-stat-table">
+          <thead>
+            <tr>
+              <th>Dátum</th>
+              <th>Futár</th>
+              <th>Raktár</th>
+              <th>MűszakPro</th>
+              <th>HUB</th>
+              <th>Kivitt kör</th>
+              <th>City 5h+</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${daily.length ? routeShiftReportDailyRows(daily) : `<tr><td colspan="7">Nincs napi bontás.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </details>
   `;
 }
 
@@ -2708,6 +2859,25 @@ async function loadRouteStatistics() {
     state.routeStatistics = await api(`/api/routes/statistics?${params.toString()}`);
     if (message) message.innerHTML = "";
     renderRouteStatistics();
+  } catch (error) {
+    if (message) message.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadRouteShiftReport() {
+  const message = $("#route-details-message");
+  const { month, courier, warehouse } = routeShiftReportRange();
+  if (!month) {
+    if (message) message.innerHTML = `<div class="notice error">Válassz hónapot.</div>`;
+    return;
+  }
+  try {
+    if (message) message.innerHTML = `<div class="notice">Futár műszak/kör statisztika betöltése...</div>`;
+    const params = new URLSearchParams({ month, warehouse });
+    if (courier) params.set("courier", courier);
+    state.routeShiftReport = await api(`/api/routes/monthly-shift-report?${params.toString()}`);
+    if (message) message.innerHTML = "";
+    renderRouteShiftReport();
   } catch (error) {
     if (message) message.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
@@ -7081,6 +7251,7 @@ $("#logout").addEventListener("click", async () => {
   state.statistics = null;
   state.routeDetails = null;
   state.routeStatistics = null;
+  state.routeShiftReport = null;
   state.routeDetailsSelectedIndex = 0;
   state.game = null;
   state.gameStartedAt = null;
@@ -7130,24 +7301,31 @@ $("#nav-coordinator").addEventListener("click", () => showSection("coordinator")
 $("#nav-registration-admin").addEventListener("click", () => showSection("registration-admin"));
 $("#route-details-load")?.addEventListener("click", loadRouteDetails);
 $("#route-stats-load")?.addEventListener("click", loadRouteStatistics);
+$("#route-shift-report-load")?.addEventListener("click", loadRouteShiftReport);
 $("#route-details-courier")?.addEventListener("change", () => {
   state.routeDetails = null;
+  state.routeShiftReport = null;
   state.routeDetailsSelectedIndex = 0;
+  renderRouteShiftReport();
   renderRouteDetails();
 });
 $("#route-details-month")?.addEventListener("change", () => {
   state.routeDetails = null;
   state.routeStatistics = null;
+  state.routeShiftReport = null;
   state.routeDetailsSelectedIndex = 0;
   const month = $("#route-details-month")?.value || state.statisticsMonth;
   if ($("#route-stats-start")) $("#route-stats-start").value = monthStartDate(month);
   if ($("#route-stats-end")) $("#route-stats-end").value = monthEndDate(month);
+  renderRouteShiftReport();
   renderRouteStatistics();
   renderRouteDetails();
 });
 ["#route-stats-start", "#route-stats-end", "#route-stats-warehouse"].forEach((selector) => {
   $(selector)?.addEventListener("change", () => {
     state.routeStatistics = null;
+    state.routeShiftReport = null;
+    renderRouteShiftReport();
     renderRouteStatistics();
   });
 });

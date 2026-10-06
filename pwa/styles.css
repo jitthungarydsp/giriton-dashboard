@@ -717,6 +717,9 @@ textarea { min-height: 96px; resize: vertical; }
 .route-stat-bar-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--green-dark), var(--green)); }
 .route-stat-table-wrap { margin-top: 14px; }
 .route-stat-table { min-width: 900px; }
+.route-shift-report-table { min-width: 1180px; }
+.route-shift-report-table td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 800; }
+.route-shift-daily { margin-top: 14px; }
 .bottom-nav { position: fixed; z-index: 10; right: 0; bottom: 0; left: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82px, 1fr); overflow-x: auto; padding: 9px 8px calc(9px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fffffff2; backdrop-filter: blur(18px); }
 .bottom-nav button { display: grid; gap: 3px; place-items: center; min-width: 0; border: 0; background: transparent; color: #8a938c; font-size: 10px; font-weight: 700; }
 .bottom-nav button span { font-size: 20px; }
