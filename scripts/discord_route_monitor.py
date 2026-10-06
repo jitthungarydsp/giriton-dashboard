@@ -1116,19 +1116,28 @@ def load_courier_hub_route_statistics_row(courier_id, route_id, warehouse=""):
         COURIER_HUB_ROUTE_STATISTICS_CACHE[cache_key] = {}
         return {}
 
-    endpoint = (
-        f"{supabase_url}/rest/v1/courier_hub_route_statistics"
-        "?select=courier_id,route_id,warehouse_id,planned_departure_at,planned_return_at,returned_at,order_count,stops_total,planned_km,mileage_km,updated_at"
+    endpoint_base = f"{supabase_url}/rest/v1/courier_hub_route_statistics"
+    endpoint_filters = (
         f"&courier_id=eq.{normalized_courier_id}"
         f"&route_id=eq.{normalized_route_id}"
         "&order=updated_at.desc"
         "&limit=5"
     )
+    select_columns = (
+        "courier_id,route_id,warehouse_id,planned_departure_at,"
+        "planned_return_at,planned_route_minutes,updated_at"
+    )
     response = requests.get(
-        endpoint,
+        f"{endpoint_base}?select={select_columns}{endpoint_filters}",
         headers=supabase_headers(service_role_key),
         timeout=20,
     )
+    if response.status_code == 400 and "planned_route_minutes" in response.text:
+        response = requests.get(
+            f"{endpoint_base}?select=courier_id,route_id,warehouse_id,planned_departure_at,planned_return_at,updated_at{endpoint_filters}",
+            headers=supabase_headers(service_role_key),
+            timeout=20,
+        )
     if response.status_code in [404, 406]:
         COURIER_HUB_ROUTE_STATISTICS_CACHE[cache_key] = {}
         return {}
@@ -1160,6 +1169,20 @@ def route_planned_departure_value(route, driver_detail=None, statistics_row=None
     )
 
 
+def route_planned_return_from_statistics(statistics_row):
+    statistics_row = statistics_row or {}
+    planned_return = statistics_row.get("planned_return_at")
+    if planned_return:
+        return planned_return
+
+    planned_departure = parse_datetime(statistics_row.get("planned_departure_at"))
+    planned_route_minutes = safe_int(statistics_row.get("planned_route_minutes"))
+    if planned_departure and planned_route_minutes and planned_route_minutes > 0:
+        return (planned_departure + timedelta(minutes=planned_route_minutes)).isoformat()
+
+    return ""
+
+
 def route_planned_return_value(route, driver_detail=None, statistics_row=None):
     return coalesce(
         route.get("plannedReturn"),
@@ -1168,7 +1191,7 @@ def route_planned_return_value(route, driver_detail=None, statistics_row=None):
         route.get("expectedReturnAt"),
         first_value_by_names(route, PLANNED_RETURN_FIELD_NAMES),
         first_value_by_names(driver_detail, PLANNED_RETURN_FIELD_NAMES),
-        (statistics_row or {}).get("planned_return_at"),
+        route_planned_return_from_statistics(statistics_row),
     )
 
 
