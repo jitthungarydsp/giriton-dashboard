@@ -61,7 +61,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v149";
+const APP_VERSION = "v150";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -6086,9 +6086,10 @@ function scheduleSlotTone(slot = {}) {
   const free = Number(slot.freeSlots || 0);
   const status = String(slot.status || "OPEN").toUpperCase();
   if (status === "NOT_UPLOADED") return "missing";
-  if (opened <= 0 || status !== "OPEN") return "closed";
+  if (opened <= 0) return "closed";
   if (free > 0 || assigned < opened) return "open";
-  return "full";
+  if (opened > 0 && assigned >= opened) return "full";
+  return "closed";
 }
 
 function scheduleSlotStatusText(slot = {}) {
@@ -6366,11 +6367,7 @@ async function loadCoordinatorScheduleDay(day) {
     mergeCoordinatorScheduleDay(payload);
     state.coordinatorScheduleDay = selectedDay;
     state.coordinatorScheduleView = "day";
-    if (state.coordinatorScheduleView === "day") {
-      await loadCoordinatorScheduleDay(state.coordinatorScheduleDay);
-    } else {
-      renderCoordinatorSchedule();
-    }
+    renderCoordinatorSchedule();
   } catch (error) {
     if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
