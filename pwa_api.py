@@ -4674,11 +4674,14 @@ def attach_schedule_slot_workers(
         if not identity:
             return
         for slot in matching_slots:
+            assigned_count = safe_int(slot.get("assigned"))
+            if assigned_count <= 0:
+                continue
             existing_identities = {
                 str(worker.get("courierId") or "").strip() or normalize_person_match_text(worker.get("courierName"))
                 for worker in slot.get("workers") or []
             }
-            if identity not in existing_identities:
+            if identity not in existing_identities and len(existing_identities) < assigned_count:
                 slot.setdefault("workers", []).append(payload)
 
     for worker in workers:

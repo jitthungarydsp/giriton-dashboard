@@ -61,7 +61,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v150";
+const APP_VERSION = "v151";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -6154,10 +6154,21 @@ function renderScheduleSlotDetails(slot = {}) {
   `;
 }
 
+function scheduleSlotDomKey(slot = {}) {
+  return [
+    slot.date || "",
+    slot.warehouse || "",
+    slot.blockKey || "",
+    slot.shiftTemplateId || "",
+    slot.start || "",
+    slot.end || "",
+  ].join("|");
+}
+
 function renderScheduleSlotCard(slot = {}) {
   const tone = scheduleSlotTone(slot);
   return `
-    <details class="schedule-slot-card ${tone}">
+    <details class="schedule-slot-card ${tone}" data-schedule-slot="${escapeHtml(scheduleSlotDomKey(slot))}">
       <summary>
         <div>
           <strong>${escapeHtml(slot.start || "-")}${slot.end ? `-${escapeHtml(slot.end)}` : ""}</strong>
@@ -6267,6 +6278,11 @@ function renderCoordinatorScheduleDayDetail(payload, day) {
 function renderCoordinatorSchedule() {
   const target = $("#coordinator-schedule-panel");
   if (!target) return;
+  const openSlotKeys = new Set(
+    Array.from(target.querySelectorAll(".schedule-slot-card[open][data-schedule-slot]"))
+      .map((item) => item.getAttribute("data-schedule-slot") || "")
+      .filter(Boolean)
+  );
   const payload = state.coordinatorSchedule;
   if (!payload) {
     target.innerHTML = `<div class="empty-card">Beosztás betöltése...</div>`;
@@ -6283,6 +6299,9 @@ function renderCoordinatorSchedule() {
   const dayMissingValue = day?.capacityKnown ? formatCount(day.missingSlots || 0) : "-";
   if (state.coordinatorScheduleView === "day") {
     target.innerHTML = renderCoordinatorScheduleDayDetail(payload, day);
+    target.querySelectorAll(".schedule-slot-card[data-schedule-slot]").forEach((item) => {
+      if (openSlotKeys.has(item.getAttribute("data-schedule-slot") || "")) item.setAttribute("open", "");
+    });
     target.querySelector("[data-schedule-back]")?.addEventListener("click", () => {
       state.coordinatorScheduleView = "calendar";
       renderCoordinatorSchedule();
