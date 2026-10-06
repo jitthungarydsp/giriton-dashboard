@@ -15,6 +15,7 @@ const state = {
   coordinatorScheduleDay: localDate(),
   coordinatorScheduleView: "calendar",
   coordinatorScheduleWarehouse: "",
+  coordinatorScheduleRequestSeq: 0,
   todayWorkers: null,
   todayWorkersQuery: "",
   couriers: [],
@@ -186,7 +187,11 @@ function currentSectionRefresh() {
   if (state.section === "coordinator-live") return loadCoordinatorLiveMap();
   if (state.section === "departure-helper") return loadDepartureHelper();
   if (state.section === "today-workers") return loadTodayWorkers();
-  if (state.section === "coordinator-schedule") return loadCoordinatorSchedule();
+  if (state.section === "coordinator-schedule") {
+    return state.coordinatorScheduleView === "day"
+      ? loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true })
+      : loadCoordinatorSchedule();
+  }
   if (state.section === "vehicle") return loadVehicleSection();
   if (state.section === "game") return loadGame();
   return Promise.resolve();
@@ -499,7 +504,13 @@ function showSection(section) {
   if (section === "coordinator-live") loadCoordinatorLiveMap();
   if (section === "departure-helper") loadDepartureHelper();
   if (section === "today-workers") loadTodayWorkers();
-  if (section === "coordinator-schedule") loadCoordinatorSchedule();
+  if (section === "coordinator-schedule") {
+    if (state.coordinatorScheduleView === "day") {
+      loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true });
+    } else {
+      loadCoordinatorSchedule();
+    }
+  }
   if (section === "registration-admin") loadRegistrationRequests();
 
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -6352,7 +6363,19 @@ function renderScheduleSlotRecommendationDetail(item = {}) {
 
 function renderScheduleSlotRecommendations(slot = {}) {
   const recommendations = slot.recommendations || [];
-  if (!recommendations.length) return "";
+  const tone = scheduleSlotTone(slot);
+  if (!recommendations.length) {
+    if (tone !== "open") return "";
+    return `
+      <div class="schedule-slot-rec-section empty">
+        <div class="device-history-head compact">
+          <strong>Ajánlás</strong>
+          <span>0 találat</span>
+        </div>
+        <div class="empty-card compact">Nincs ajánlható futár erre a szabad slotra a raktár és a 4 óra 45 perc szabály alapján.</div>
+      </div>
+    `;
+  }
   return `
     <div class="schedule-slot-rec-section">
       <div class="device-history-head compact">
@@ -6578,6 +6601,26 @@ function mergeCoordinatorScheduleDay(payload) {
   if (!payload.detailOnly) state.coordinatorSchedule.summary = payload.summary || state.coordinatorSchedule.summary;
 }
 
+function mergeCoordinatorScheduleMonth(payload) {
+  const previous = state.coordinatorSchedule;
+  if (!previous?.days?.length || !payload?.days?.length) {
+    state.coordinatorSchedule = payload;
+    return;
+  }
+  const detailedDays = new Map(
+    previous.days
+      .filter((day) => day?.detailsLoaded)
+      .map((day) => [day.date, day])
+  );
+  state.coordinatorSchedule = {
+    ...payload,
+    days: payload.days.map((day) => {
+      const detailed = detailedDays.get(day.date);
+      return detailed ? { ...day, ...detailed } : day;
+    }),
+  };
+}
+
 async function loadCoordinatorSchedule() {
   const target = $("#coordinator-schedule-panel");
   const monthInput = $("#coordinator-schedule-month");
@@ -6592,19 +6635,23 @@ async function loadCoordinatorSchedule() {
     return;
   }
   if (target && !state.coordinatorSchedule) target.innerHTML = `<div class="empty-card">Beosztás betöltése...</div>`;
+  const requestSeq = ++state.coordinatorScheduleRequestSeq;
   try {
     const warehouseQuery = warehouse ? `&warehouse=${encodeURIComponent(warehouse)}` : "";
-    state.coordinatorSchedule = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}${warehouseQuery}`);
+    const payload = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}${warehouseQuery}`);
+    if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
+    mergeCoordinatorScheduleMonth(payload);
     if (!state.coordinatorScheduleDay || !String(state.coordinatorScheduleDay).startsWith(month)) {
       state.coordinatorScheduleDay = localDate().startsWith(month) ? localDate() : `${month}-01`;
     }
     renderCoordinatorSchedule();
   } catch (error) {
+    if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
     if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
 }
 
-async function loadCoordinatorScheduleDay(day) {
+async function loadCoordinatorScheduleDay(day, options = {}) {
   const target = $("#coordinator-schedule-panel");
   const monthInput = $("#coordinator-schedule-month");
   const warehouseInput = $("#coordinator-schedule-warehouse");
@@ -6613,15 +6660,18 @@ async function loadCoordinatorScheduleDay(day) {
   const warehouse = role === "admin" ? String(warehouseInput?.value || state.coordinatorScheduleWarehouse || "").trim() : "";
   const selectedDay = String(day || state.coordinatorScheduleDay || "").slice(0, 10);
   if (!selectedDay) return;
-  renderCoordinatorSchedule();
+  const requestSeq = ++state.coordinatorScheduleRequestSeq;
+  if (!options.keepRendered) renderCoordinatorSchedule();
   try {
     const warehouseQuery = warehouse ? `&warehouse=${encodeURIComponent(warehouse)}` : "";
     const payload = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}${warehouseQuery}&day=${encodeURIComponent(selectedDay)}`);
+    if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
     mergeCoordinatorScheduleDay(payload);
     state.coordinatorScheduleDay = selectedDay;
     state.coordinatorScheduleView = "day";
     renderCoordinatorSchedule();
   } catch (error) {
+    if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
     if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
 }
@@ -7283,14 +7333,22 @@ $("#nav-coordinator-schedule").addEventListener("click", () => showSection("coor
 $("#coordinator-live-refresh")?.addEventListener("click", loadCoordinatorLiveMap);
 $("#departure-helper-refresh")?.addEventListener("click", loadDepartureHelper);
 $("#today-workers-refresh")?.addEventListener("click", loadTodayWorkers);
-$("#coordinator-schedule-refresh")?.addEventListener("click", loadCoordinatorSchedule);
+$("#coordinator-schedule-refresh")?.addEventListener("click", () => {
+  if (state.coordinatorScheduleView === "day") {
+    loadCoordinatorScheduleDay(state.coordinatorScheduleDay);
+  } else {
+    loadCoordinatorSchedule();
+  }
+});
 $("#coordinator-schedule-month")?.addEventListener("change", () => {
+  state.coordinatorScheduleRequestSeq += 1;
   state.coordinatorSchedule = null;
   state.coordinatorScheduleDay = "";
   state.coordinatorScheduleView = "calendar";
   loadCoordinatorSchedule();
 });
 $("#coordinator-schedule-warehouse")?.addEventListener("change", (event) => {
+  state.coordinatorScheduleRequestSeq += 1;
   state.coordinatorScheduleWarehouse = event.currentTarget.value || "";
   state.coordinatorSchedule = null;
   state.coordinatorScheduleDay = localDate();
