@@ -61,7 +61,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v147";
+const APP_VERSION = "v148";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -6106,20 +6106,67 @@ function scheduleSlotCapacityText(slot = {}) {
   return `${formatCount(slot.assigned || 0)}/${formatCount(opened)}`;
 }
 
+function scheduleSlotPreparedText(slot = {}) {
+  const status = String(slot.status || "").trim();
+  if (status && status.toUpperCase() !== "OPEN") return status;
+  if (slot.capacityPublished) return "Közzétéve";
+  return "Előkészületben";
+}
+
+function renderScheduleSlotWorker(worker = {}) {
+  const phone = String(worker.phoneNumber || "").trim();
+  return `
+    <div class="schedule-slot-worker">
+      <div>
+        <strong>${escapeHtml(worker.courierName || "Futár")}</strong>
+        <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.shiftName || worker.bookingCode || "Műszak")}</small>
+      </div>
+      <div class="schedule-chip-row">
+        ${scheduleStatusChip(`MűszakPro: ${String(worker.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, worker.muszakproTone)}
+        ${scheduleStatusChip(`Hub: ${String(worker.hubStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, worker.hubTone)}
+      </div>
+      <div class="schedule-slot-worker-meta">
+        <span>MűszakPro: ${escapeHtml(shortDateTime(worker.muszakproBookedAt || "") || "-")}</span>
+        <span>Hub: ${escapeHtml(shortDateTime(worker.hubUploadedAt || "") || "-")}</span>
+        ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : `<span>Telefon: -</span>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderScheduleSlotDetails(slot = {}) {
+  const workers = slot.workers || [];
+  return `
+    <div class="schedule-slot-details">
+      <div class="schedule-slot-detail-grid">
+        <div><span>Állapot</span><strong>${escapeHtml(scheduleSlotPreparedText(slot))}</strong></div>
+        <div><span>MűszakPro foglalás</span><strong>${workers.length ? `${formatCount(workers.length)} futár` : "-"}</strong></div>
+        <div><span>Hub felvezetés</span><strong>${workers.filter((worker) => worker.hubTone === "ok").length ? `${formatCount(workers.filter((worker) => worker.hubTone === "ok").length)} futár` : "-"}</strong></div>
+      </div>
+      ${workers.length
+        ? `<div class="schedule-slot-worker-list">${workers.map(renderScheduleSlotWorker).join("")}</div>`
+        : `<div class="empty-card compact">Nincs ehhez az idősávhoz kapcsolt futáradat.</div>`}
+    </div>
+  `;
+}
+
 function renderScheduleSlotCard(slot = {}) {
   const tone = scheduleSlotTone(slot);
   return `
-    <article class="schedule-slot-card ${tone}">
-      <div>
-        <strong>${escapeHtml(slot.start || "-")}${slot.end ? `-${escapeHtml(slot.end)}` : ""}</strong>
-        <small>${escapeHtml(slot.shiftText || slot.blockKey || "Műszak")}</small>
-      </div>
-      <div>
-        <span>Kapacitás</span>
-        <b>${escapeHtml(scheduleSlotCapacityText(slot))}</b>
-      </div>
-      <em>${escapeHtml(scheduleSlotStatusText(slot))}</em>
-    </article>
+    <details class="schedule-slot-card ${tone}">
+      <summary>
+        <div>
+          <strong>${escapeHtml(slot.start || "-")}${slot.end ? `-${escapeHtml(slot.end)}` : ""}</strong>
+          <small>${escapeHtml(slot.shiftText || slot.blockKey || "Műszak")}</small>
+        </div>
+        <div>
+          <span>Kapacitás</span>
+          <b>${escapeHtml(scheduleSlotCapacityText(slot))}</b>
+        </div>
+        <em>${escapeHtml(scheduleSlotStatusText(slot))}</em>
+      </summary>
+      ${renderScheduleSlotDetails(slot)}
+    </details>
   `;
 }
 

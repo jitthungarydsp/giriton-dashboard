@@ -4138,7 +4138,7 @@ def read_today_worker_shift_rows(target_date: date) -> list[dict[str, Any]]:
             "select": (
                 "work_date,courier_id,courier_name,warehouse_id,shift_id,shift_name,"
                 "shift_start,shift_end,planned_start_at,planned_end_at,actual_start_at,"
-                "evaluation,status,raw_shift"
+                "evaluation,status,raw_shift,source_raw_updated_at,updated_at"
             ),
             "work_date": f"eq.{target_date.isoformat()}",
             "order": "shift_start.asc,courier_name.asc",
@@ -4191,7 +4191,7 @@ def read_schedule_hub_rows(start: date, end: date) -> list[dict[str, Any]]:
             "select": (
                 "work_date,courier_id,courier_name,warehouse_id,shift_id,shift_name,"
                 "shift_start,shift_end,planned_start_at,planned_end_at,actual_start_at,"
-                "evaluation,status,raw_shift"
+                "evaluation,status,raw_shift,source_raw_updated_at,updated_at"
             ),
             "work_date": f"gte.{start.isoformat()}",
             "order": "work_date.asc,shift_start.asc,courier_name.asc",
@@ -4555,7 +4555,63 @@ def schedule_slot_payload(row: dict[str, Any]) -> dict[str, Any] | None:
         "blockKey": str(row.get("block_key") or ""),
         "shiftTemplateId": str(row.get("shift_template_id") or ""),
         "shiftText": str(row.get("shift_text") or row.get("template_name") or row.get("block_key") or ""),
+        "workers": [],
     }
+
+
+def schedule_slot_worker_payload(worker: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "courierId": str(worker.get("courierId") or ""),
+        "courierName": str(worker.get("courierName") or "Futár"),
+        "phoneNumber": str(worker.get("phoneNumber") or ""),
+        "shiftName": str(worker.get("shiftName") or worker.get("bookingCode") or ""),
+        "bookingCode": str(worker.get("bookingCode") or ""),
+        "giritonStatus": str(worker.get("giritonStatus") or "Nincs adat"),
+        "giritonTone": str(worker.get("giritonTone") or "unknown"),
+        "muszakproStatus": str(worker.get("muszakproStatus") or "Nincs adat"),
+        "muszakproTone": str(worker.get("muszakproTone") or "unknown"),
+        "hubStatus": str(worker.get("hubStatus") or "Nincs adat"),
+        "hubTone": str(worker.get("hubTone") or "unknown"),
+        "muszakproBookedAt": str(worker.get("muszakproBookedAt") or ""),
+        "hubUploadedAt": str(worker.get("hubUploadedAt") or ""),
+        "source": str(worker.get("source") or ""),
+    }
+
+
+def attach_schedule_slot_workers(
+    slots_by_day: dict[str, list[dict[str, Any]]],
+    workers: list[dict[str, Any]],
+) -> None:
+    slots_by_key: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for day_slots in slots_by_day.values():
+        for slot in day_slots:
+            key = (
+                str(slot.get("date") or "")[:10],
+                normalize_warehouse(slot.get("warehouse")),
+                normalize_time(slot.get("start")),
+            )
+            if key[0] and key[1] and key[2]:
+                slots_by_key.setdefault(key, []).append(slot)
+
+    for worker in workers:
+        key = (
+            str(worker.get("date") or "")[:10],
+            normalize_warehouse(worker.get("warehouse")),
+            normalize_time(worker.get("start")),
+        )
+        matching_slots = slots_by_key.get(key) or []
+        if not matching_slots:
+            continue
+        payload = schedule_slot_worker_payload(worker)
+        for slot in matching_slots:
+            slot.setdefault("workers", []).append(payload)
+
+    for day_slots in slots_by_day.values():
+        for slot in day_slots:
+            slot["workers"] = sorted(
+                slot.get("workers") or [],
+                key=lambda item: normalize_person_match_text(item.get("courierName")),
+            )
 
 
 def schedule_worker_slot_payloads(workers: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -4913,6 +4969,7 @@ def schedule_worker_from_hub(row: dict[str, Any]) -> dict[str, Any]:
         "missingSource": "",
         "hubStatus": status_label,
         "hubTone": "ok" if status == "confirmed" else "missing",
+        "hubUploadedAt": str(row.get("source_raw_updated_at") or row.get("updated_at") or ""),
         "vehicle": None,
         "source": "courier_shift_overview",
     }
@@ -4968,6 +5025,7 @@ def schedule_worker_from_muszakpro(row: dict[str, Any]) -> dict[str, Any]:
         "muszakproStatus": "OK",
         "muszakproTone": "ok",
         "muszakproTime": shift_start(row.get("shift_text")),
+        "muszakproBookedAt": str(row.get("fetched_at") or ""),
         "giritonBookingTime": "",
         "giritonOfferTime": "",
         "missingSource": "Giriton egyezés még nincs párosítva",
@@ -5008,6 +5066,9 @@ def schedule_worker_from_vehicle(row: dict[str, Any]) -> dict[str, Any]:
 def merge_schedule_worker(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     for key in ("courierId", "courierName", "warehouse", "start", "end", "shiftName", "bookingCode"):
         if not existing.get(key) and incoming.get(key):
+            existing[key] = incoming[key]
+    for key in ("muszakproBookedAt", "hubUploadedAt"):
+        if incoming.get(key) and (not existing.get(key) or str(incoming.get(key)) < str(existing.get(key))):
             existing[key] = incoming[key]
     existing_source = str(existing.get("source") or "")
     incoming_source = str(incoming.get("source") or "")
@@ -5181,6 +5242,7 @@ def read_coordinator_schedule(
             existing_slot_keys.add(slot_key)
         for day_slots in slots_by_day.values():
             day_slots.sort(key=lambda item: (safe_int(item.get("startMinutes")), str(item.get("shiftTemplateId") or "")))
+        attach_schedule_slot_workers(slots_by_day, workers)
 
     days = []
     cursor = start
