@@ -1169,22 +1169,38 @@ def route_planned_departure_value(route, driver_detail=None, statistics_row=None
     )
 
 
-def route_planned_return_from_statistics(statistics_row):
-    statistics_row = statistics_row or {}
-    planned_return = statistics_row.get("planned_return_at")
-    if planned_return:
-        return planned_return
+def planned_route_minutes_value(*sources):
+    for source in sources:
+        value = first_value_by_names(source, PLANNED_ROUTE_MINUTE_FIELD_NAMES)
+        minutes = safe_float(value)
+        if minutes and minutes > 0:
+            return int(round(minutes))
 
-    planned_departure = parse_datetime(statistics_row.get("planned_departure_at"))
-    planned_route_minutes = safe_int(statistics_row.get("planned_route_minutes"))
+    return None
+
+
+def planned_return_from_departure_and_minutes(planned_departure_value, planned_route_minutes):
+    planned_departure = parse_datetime(planned_departure_value)
     if planned_departure and planned_route_minutes and planned_route_minutes > 0:
         return (planned_departure + timedelta(minutes=planned_route_minutes)).isoformat()
 
     return ""
 
 
+def route_planned_return_from_statistics(statistics_row):
+    statistics_row = statistics_row or {}
+    planned_return = statistics_row.get("planned_return_at")
+    if planned_return:
+        return planned_return
+
+    return planned_return_from_departure_and_minutes(
+        statistics_row.get("planned_departure_at"),
+        planned_route_minutes_value(statistics_row),
+    )
+
+
 def route_planned_return_value(route, driver_detail=None, statistics_row=None):
-    return coalesce(
+    planned_return = coalesce(
         route.get("plannedReturn"),
         route.get("plannedReturnAt"),
         route.get("expectedReturn"),
@@ -1192,6 +1208,13 @@ def route_planned_return_value(route, driver_detail=None, statistics_row=None):
         first_value_by_names(route, PLANNED_RETURN_FIELD_NAMES),
         first_value_by_names(driver_detail, PLANNED_RETURN_FIELD_NAMES),
         route_planned_return_from_statistics(statistics_row),
+    )
+    if planned_return:
+        return planned_return
+
+    return planned_return_from_departure_and_minutes(
+        route_planned_departure_value(route, driver_detail, statistics_row),
+        planned_route_minutes_value(route, driver_detail, statistics_row),
     )
 
 
@@ -1281,6 +1304,20 @@ PLANNED_RETURN_FIELD_NAMES = {
     "routePlannedReturnAt",
     "expectedReturn",
     "expectedReturnAt",
+}
+
+
+PLANNED_ROUTE_MINUTE_FIELD_NAMES = {
+    "plannedRouteMinutes",
+    "planned_route_minutes",
+    "plannedDurationMinutes",
+    "planned_duration_minutes",
+    "plannedRouteDurationMinutes",
+    "planned_route_duration_minutes",
+    "routePlannedMinutes",
+    "route_planned_minutes",
+    "estimatedRouteMinutes",
+    "estimated_route_minutes",
 }
 
 
