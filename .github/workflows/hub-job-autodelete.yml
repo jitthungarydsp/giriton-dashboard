@@ -1,4 +1,4 @@
-name: KULSO_TORLES_LOG Shift Delete Sync
+name: HUB_JOB_AUTODELETE
 
 on:
   workflow_dispatch:
@@ -16,12 +16,12 @@ on:
     - cron: "37 * * * *"
 
 concurrency:
-  group: kulso-torles-log-shift-delete-sync
+  group: hub-job-autodelete
   cancel-in-progress: false
 
 jobs:
   sync:
-    name: KULSO_TORLES_LOG shift deletions
+    name: HUB_JOB_AUTODELETE
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -32,12 +32,12 @@ jobs:
       COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
       COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
       COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
-      COURIER_HUB_AUTH_CACHE_FILE: /tmp/kulso-torles-log-courier-hub-auth.json
-      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/kulso-torles-log-courier-hub-auth.json --debug-dir results/kulso-torles-log/auth
+      COURIER_HUB_AUTH_CACHE_FILE: /tmp/hub-job-autodelete-courier-hub-auth.json
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/hub-job-autodelete-courier-hub-auth.json --debug-dir results/hub-job-autodelete/auth
       KIFLI_COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
       KIFLI_COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
-      KIFLI_COURIER_HUB_AUTH_CACHE_FILE: /tmp/kulso-torles-log-courier-hub-auth.json
-      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/kulso-torles-log-courier-hub-auth.json --debug-dir results/kulso-torles-log/auth
+      KIFLI_COURIER_HUB_AUTH_CACHE_FILE: /tmp/hub-job-autodelete-courier-hub-auth.json
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/hub-job-autodelete-courier-hub-auth.json --debug-dir results/hub-job-autodelete/auth
 
     steps:
       - name: Checkout
@@ -73,10 +73,10 @@ jobs:
         run: |
           python scripts/refresh_courier_hub_auth.py \
             --cache-file "$COURIER_HUB_AUTH_CACHE_FILE" \
-            --debug-dir results/kulso-torles-log/auth \
+            --debug-dir results/hub-job-autodelete/auth \
             --probe-path "/services/courier-hub-service/external/warehouses/1/dsps/8/shift-blocks?dateFrom=$(TZ=Europe/Budapest date +%F)&dateTo=$(TZ=Europe/Budapest date +%F)"
 
-      - name: Sync KULSO_TORLES_LOG deletions
+      - name: HUB_JOB_AUTODELETE sync deletions
         shell: bash
         run: |
           DRY_RUN="${{ inputs.dry_run }}"
@@ -97,7 +97,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## KULSO_TORLES_LOG Shift Delete Sync"
+            echo "## HUB_JOB_AUTODELETE"
             echo ""
             echo "- Sheet: KULSO_TORLES_LOG gid=965356959"
             echo "- Pending status: TÖRLÉSRE_VAR"

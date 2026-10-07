@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync KULSO_TORLES_LOG sheet rows, delete matching active Hub bookings, and mark the sheet."""
+"""HUB_JOB_AUTODELETE: delete matching active Hub bookings from the KULSO_TORLES_LOG sheet."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ class SheetDeletionRow:
 
     @property
     def source_key(self) -> str:
-        return f"external_shift_delete:{DEFAULT_SHEET_ID}:{DEFAULT_WORKSHEET_GID}:{self.row_number}"
+        return f"hub_job_autodelete:{DEFAULT_SHEET_ID}:{DEFAULT_WORKSHEET_GID}:{self.row_number}"
 
 
 def supabase_config() -> tuple[str, str]:
@@ -187,7 +187,7 @@ def request_payload(row: SheetDeletionRow, sheet_id: str, worksheet_gid: int) ->
         "source_sheet_id": sheet_id,
         "source_gid": int(worksheet_gid),
         "source_row": row.row_number,
-        "source_key": f"external_shift_delete:{sheet_id}:{worksheet_gid}:{row.row_number}",
+        "source_key": f"hub_job_autodelete:{sheet_id}:{worksheet_gid}:{row.row_number}",
         "requested_at_text": row.requested_at_text,
         "work_date": row.work_date,
         "shift_text": row.shift_text,
@@ -339,7 +339,7 @@ def mark_sheet_written(source_keys: list[str]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="KULSO_TORLES_LOG Google Sheet -> Hub shift deletion sync.")
+    parser = argparse.ArgumentParser(description="HUB_JOB_AUTODELETE Google Sheet -> Hub shift deletion sync.")
     parser.add_argument("--sheet-id", default=DEFAULT_SHEET_ID)
     parser.add_argument("--gid", type=int, default=DEFAULT_WORKSHEET_GID)
     parser.add_argument("--dsp-id", type=int, default=int(os.getenv("COURIER_HUB_DSP_ID") or "8"))
@@ -357,7 +357,7 @@ def main() -> int:
     if args.limit > 0:
         rows = rows[: args.limit]
 
-    print(f"EXTERNAL_SHIFT_DELETE_PENDING_ROWS={len(rows)}")
+    print(f"HUB_JOB_AUTODELETE_PENDING_ROWS={len(rows)}")
     if args.dry_run:
         args.apply = False
         args.live_delete = False
@@ -369,9 +369,9 @@ def main() -> int:
     error_count = 0
 
     for row in rows:
-        source_key = f"external_shift_delete:{args.sheet_id}:{args.gid}:{row.row_number}"
+        source_key = f"hub_job_autodelete:{args.sheet_id}:{args.gid}:{row.row_number}"
         print(
-            "EXTERNAL_SHIFT_DELETE_ROW "
+            "HUB_JOB_AUTODELETE_ROW "
             f"row={row.row_number} date={row.work_date} warehouse={row.warehouse} "
             f"shift={row.shift_text!r} email={row.email}",
             flush=True,
@@ -383,7 +383,7 @@ def main() -> int:
             booking, match_message = find_matching_hub_booking(row, args.dsp_id)
             if not booking:
                 not_found_count += 1
-                print(f"EXTERNAL_SHIFT_DELETE_NOT_FOUND row={row.row_number} message={match_message}", flush=True)
+                print(f"HUB_JOB_AUTODELETE_NOT_FOUND row={row.row_number} message={match_message}", flush=True)
                 if args.apply:
                     update_request(source_key, "not_found", match_message)
                 continue
@@ -402,7 +402,7 @@ def main() -> int:
                 continue
 
             deleted_count += 1
-            print(f"EXTERNAL_SHIFT_DELETE_OK row={row.row_number} courier_id={booking.get('courier_id')}", flush=True)
+            print(f"HUB_JOB_AUTODELETE_OK row={row.row_number} courier_id={booking.get('courier_id')}", flush=True)
             if args.apply:
                 mark_hub_booking_deleted(booking, payload)
                 update_request(source_key, "deleted", message, booking, payload)
@@ -411,7 +411,7 @@ def main() -> int:
         except Exception as exc:
             error_count += 1
             message = f"{type(exc).__name__}: {str(exc)[:1500]}"
-            print(f"EXTERNAL_SHIFT_DELETE_ERROR row={row.row_number} {message}", flush=True)
+            print(f"HUB_JOB_AUTODELETE_ERROR row={row.row_number} {message}", flush=True)
             if args.apply:
                 update_request(source_key, "error", message)
 
@@ -420,7 +420,7 @@ def main() -> int:
         mark_sheet_written(done_source_keys)
 
     print(
-        "EXTERNAL_SHIFT_DELETE_DONE "
+        "HUB_JOB_AUTODELETE_DONE "
         f"deleted={deleted_count} not_found={not_found_count} errors={error_count} "
         f"sheet_updated={len(done_sheet_rows) if args.apply else 0} "
         f"mode={'live' if args.live_delete else 'dry-run'}",
