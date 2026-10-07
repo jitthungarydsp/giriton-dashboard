@@ -39,6 +39,7 @@ DEFAULT_SHEET_ID = "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
 DEFAULT_WORKSHEET_GID = 965356959
 REQUEST_TABLE = "external_shift_deletion_requests"
 HUB_BOOKINGS_TABLE = "courier_hub_shift_bookings_raw"
+HUB_IDENTITY_TABLE = "courier_hub_courier_identity_raw"
 SHEET_DONE_STATUS = "törölve"
 
 
@@ -89,6 +90,16 @@ def supabase_get(table: str, params: dict[str, str] | list[tuple[str, str]]) -> 
     return payload if isinstance(payload, list) else []
 
 
+def supabase_get_optional(table: str, params: dict[str, str] | list[tuple[str, str]]) -> list[dict[str, Any]]:
+    try:
+        return supabase_get(table, params)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else 0
+        if status_code == 404:
+            return []
+        raise
+
+
 def supabase_upsert(table: str, row: dict[str, Any], on_conflict: str) -> dict[str, Any]:
     url, _key = supabase_config()
     response = requests.post(
@@ -121,6 +132,10 @@ def normalize_key(value: Any) -> str:
     text = unicodedata.normalize("NFKD", str(value or "").casefold())
     text = "".join(character for character in text if not unicodedata.combining(character))
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def normalize_email(value: Any) -> str:
+    return re.sub(r"\s+", "", clean_text(value).casefold())
 
 
 def normalize_status(value: Any) -> str:
@@ -162,7 +177,7 @@ def read_sheet_rows(sheet_id: str, worksheet_gid: int) -> list[SheetDeletionRow]
         requested_at_text = clean_text(cells[0] if len(cells) > 0 else "")
         work_date = parse_work_date(cells[1] if len(cells) > 1 else "")
         shift_text = clean_text(cells[2] if len(cells) > 2 else "")
-        email = clean_text(cells[3] if len(cells) > 3 else "").casefold()
+        email = normalize_email(cells[3] if len(cells) > 3 else "")
         warehouse = clean_text(cells[4] if len(cells) > 4 else "").upper()
         sheet_status = clean_text(cells[5] if len(cells) > 5 else "")
         if not any([requested_at_text, work_date, shift_text, email, warehouse, sheet_status]):
@@ -200,21 +215,141 @@ def request_payload(row: SheetDeletionRow, sheet_id: str, worksheet_gid: int) ->
     }
 
 
-def load_active_hub_candidates(row: SheetDeletionRow, dsp_id: int) -> list[dict[str, Any]]:
+def int_value(value: Any) -> int | None:
+    try:
+        return int(str(value or "").strip())
+    except ValueError:
+        return None
+
+
+def collect_identity_values(rows: list[dict[str, Any]]) -> tuple[set[int], set[str]]:
+    courier_ids: set[int] = set()
+    jitt_ids: set[str] = set()
+    for item in rows:
+        courier_id = int_value(item.get("courier_id"))
+        if courier_id is not None:
+            courier_ids.add(courier_id)
+        jitt_id = clean_text(item.get("jitt_internal_id"))
+        if jitt_id:
+            jitt_ids.add(jitt_id)
+    return courier_ids, jitt_ids
+
+
+def load_sheet_email_identity(row: SheetDeletionRow, dsp_id: int) -> tuple[set[int], set[str]]:
+    courier_ids: set[int] = set()
+    jitt_ids: set[str] = set()
+    if not row.email:
+        return courier_ids, jitt_ids
+
+    identity_rows = supabase_get_optional(
+        HUB_IDENTITY_TABLE,
+        {
+            "select": "courier_id,jitt_internal_id,email",
+            "dsp_id": f"eq.{int(dsp_id)}",
+            "email": f"eq.{row.email}",
+            "limit": "50",
+        },
+    )
+    ids, jitts = collect_identity_values(identity_rows)
+    courier_ids.update(ids)
+    jitt_ids.update(jitts)
+
+    for table_name in ("courier_master", "courier_master_sheet_import"):
+        for email_column in ("email", "billing_email"):
+            master_rows = supabase_get_optional(
+                table_name,
+                {
+                    "select": "courier_id,email,billing_email",
+                    email_column: f"eq.{row.email}",
+                    "limit": "50",
+                },
+            )
+            ids, _jitts = collect_identity_values(master_rows)
+            courier_ids.update(ids)
+
+    if courier_ids:
+        id_filter = ",".join(str(value) for value in sorted(courier_ids))
+        identity_by_id_rows = supabase_get_optional(
+            HUB_IDENTITY_TABLE,
+            [
+                ("select", "courier_id,jitt_internal_id,email"),
+                ("dsp_id", f"eq.{int(dsp_id)}"),
+                ("courier_id", f"in.({id_filter})"),
+                ("limit", "200"),
+            ],
+        )
+        ids, jitts = collect_identity_values(identity_by_id_rows)
+        courier_ids.update(ids)
+        jitt_ids.update(jitts)
+
+    return courier_ids, jitt_ids
+
+
+def unique_rows_by_id(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for item in rows:
+        key = clean_text(item.get("id")) or "|".join(
+            clean_text(item.get(field))
+            for field in ("work_date", "warehouse_id", "dsp_id", "courier_id", "block_key")
+        )
+        if key:
+            result[key] = item
+    return list(result.values())
+
+
+def active_hub_booking_select() -> str:
+    return (
+        "id,work_date,warehouse_id,warehouse_code,dsp_id,courier_id,jitt_internal_id,"
+        "courier_name,email,block_key,shift_template_id,shift_text,slot_from,slot_to,"
+        "status,active,movement_type"
+    )
+
+
+def load_active_hub_candidates(row: SheetDeletionRow, dsp_id: int) -> tuple[list[dict[str, Any]], str]:
+    warehouse_id = normalize_warehouse_id(row.warehouse)
+    courier_ids, jitt_ids = load_sheet_email_identity(row, dsp_id)
+    common_filters = [
+        ("select", active_hub_booking_select()),
+        ("work_date", f"eq.{row.work_date}"),
+        ("warehouse_id", f"eq.{warehouse_id}"),
+        ("dsp_id", f"eq.{int(dsp_id)}"),
+        ("active", "eq.true"),
+        ("limit", "200"),
+    ]
+    query_sets: list[list[tuple[str, str]]] = []
+    if row.email:
+        query_sets.append([*common_filters, ("email", f"eq.{row.email}")])
+    if courier_ids:
+        id_filter = ",".join(str(value) for value in sorted(courier_ids))
+        query_sets.append([*common_filters, ("courier_id", f"in.({id_filter})")])
+    if jitt_ids:
+        jitt_filter = ",".join(sorted(jitt_ids))
+        query_sets.append([*common_filters, ("jitt_internal_id", f"in.({jitt_filter})")])
+    if not query_sets:
+        query_sets.append(common_filters)
+
+    rows: list[dict[str, Any]] = []
+    for params in query_sets:
+        rows.extend(supabase_get(HUB_BOOKINGS_TABLE, params))
+    identity_text = (
+        f"email={row.email or '-'} "
+        f"courier_ids={','.join(str(value) for value in sorted(courier_ids)) or '-'} "
+        f"jitt_ids={','.join(sorted(jitt_ids)) or '-'}"
+    )
+    return unique_rows_by_id(rows), identity_text
+
+
+def load_same_day_hub_rows(row: SheetDeletionRow, dsp_id: int) -> list[dict[str, Any]]:
     warehouse_id = normalize_warehouse_id(row.warehouse)
     return supabase_get(
         HUB_BOOKINGS_TABLE,
         [
-            ("select", (
-                "id,work_date,warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,email,"
-                "block_key,shift_template_id,shift_text,slot_from,slot_to,status,active,movement_type"
-            )),
+            ("select", active_hub_booking_select()),
             ("work_date", f"eq.{row.work_date}"),
             ("warehouse_id", f"eq.{warehouse_id}"),
             ("dsp_id", f"eq.{int(dsp_id)}"),
-            ("email", f"eq.{row.email}"),
             ("active", "eq.true"),
-            ("limit", "50"),
+            ("limit", "500"),
         ],
     )
 
@@ -225,6 +360,8 @@ def candidate_score(row: SheetDeletionRow, candidate: dict[str, Any]) -> int:
     requested_shift_key = normalize_key(row.shift_text)
     candidate_shift_key = normalize_key(candidate.get("shift_text"))
     score = 0
+    if row.email and normalize_email(candidate.get("email")) == row.email:
+        score += 25
     if requested_start and candidate_slot == requested_start:
         score += 100
     if requested_shift_key and candidate_shift_key == requested_shift_key:
@@ -235,9 +372,14 @@ def candidate_score(row: SheetDeletionRow, candidate: dict[str, Any]) -> int:
 
 
 def find_matching_hub_booking(row: SheetDeletionRow, dsp_id: int) -> tuple[dict[str, Any] | None, str]:
-    candidates = load_active_hub_candidates(row, dsp_id)
+    candidates, identity_text = load_active_hub_candidates(row, dsp_id)
     if not candidates:
-        return None, "Nincs aktív Hub foglalás ezzel a dátum/email/raktár kulccsal."
+        same_day_rows = load_same_day_hub_rows(row, dsp_id)
+        same_shift_count = sum(1 for item in same_day_rows if candidate_score(row, item) >= 100)
+        return None, (
+            "Nincs aktív Hub foglalás a feloldott futár azonosítókkal. "
+            f"{identity_text}; same_day_active={len(same_day_rows)}; same_shift_active={same_shift_count}."
+        )
 
     scored = sorted(
         ((candidate_score(row, item), item) for item in candidates),
@@ -246,7 +388,7 @@ def find_matching_hub_booking(row: SheetDeletionRow, dsp_id: int) -> tuple[dict[
     )
     best_score, best = scored[0]
     if best_score <= 0:
-        return None, "Van aktív Hub foglalás erre a futárra és napra, de a műszak nem egyezik."
+        return None, f"Van aktív Hub foglalás erre a futárra és napra, de a műszak nem egyezik. {identity_text}."
     same_best = [item for score, item in scored if score == best_score]
     if len(same_best) > 1:
         return None, f"Több egyező aktív Hub foglalás van ({len(same_best)} db), kézi ellenőrzés kell."
