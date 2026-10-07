@@ -71,38 +71,56 @@ def dedupe_booking_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(by_key.values())
 
 
-def read_booking_rows(start_date: date, end_date: date, limit: int = 50000) -> list[dict[str, Any]]:
+def read_booking_rows(
+    start_date: date,
+    end_date: date,
+    limit: int = 50000,
+    page_size: int = 1000,
+) -> list[dict[str, Any]]:
     supabase_url, service_role_key = get_supabase_config()
     if not supabase_url or not service_role_key:
         raise RuntimeError("Hiányzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY.")
 
-    params = [
-        (
-            "select",
-            (
-                "work_date,warehouse_code,dsp_id,jitt_internal_id,courier_id,"
-                "courier_name,email,phone_number,block_key,shift_template_id,"
-                "shift_text,slot_from,slot_to,status,movement_type,active,"
-                "first_seen_at,last_seen_at,deleted_at,updated_at"
-            ),
-        ),
-        ("work_date", f"gte.{start_date.isoformat()}"),
-        ("work_date", f"lte.{end_date.isoformat()}"),
-        ("order", "work_date.asc,warehouse_code.asc,slot_from.asc,courier_name.asc,block_key.asc"),
-        ("limit", str(int(limit))),
-    ]
-    response = requests.get(
-        f"{supabase_url}/rest/v1/{VIEW_NAME}",
-        headers={
-            "apikey": service_role_key,
-            "Authorization": f"Bearer {service_role_key}",
-        },
-        params=params,
-        timeout=60,
+    select_clause = (
+        "work_date,warehouse_code,dsp_id,jitt_internal_id,courier_id,"
+        "courier_name,email,phone_number,block_key,shift_template_id,"
+        "shift_text,slot_from,slot_to,status,movement_type,active,"
+        "first_seen_at,last_seen_at,deleted_at,updated_at"
     )
-    raise_for_supabase_error(response)
-    payload = response.json()
-    return payload if isinstance(payload, list) else []
+    headers = {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+    }
+    records: list[dict[str, Any]] = []
+    offset = 0
+    max_rows = max(int(limit), 1)
+    requested_page_size = max(min(int(page_size), 1000), 1)
+
+    while len(records) < max_rows:
+        current_limit = min(requested_page_size, max_rows - len(records))
+        params = [
+            ("select", select_clause),
+            ("work_date", f"gte.{start_date.isoformat()}"),
+            ("work_date", f"lte.{end_date.isoformat()}"),
+            ("order", "work_date.asc,warehouse_code.asc,slot_from.asc,courier_name.asc,block_key.asc"),
+            ("limit", str(current_limit)),
+            ("offset", str(offset)),
+        ]
+        response = requests.get(
+            f"{supabase_url}/rest/v1/{VIEW_NAME}",
+            headers=headers,
+            params=params,
+            timeout=60,
+        )
+        raise_for_supabase_error(response)
+        payload = response.json()
+        page = payload if isinstance(payload, list) else []
+        records.extend(page)
+        if len(page) < current_limit:
+            break
+        offset += len(page)
+
+    return records
 
 
 def row_to_sheet_row(row: dict[str, Any], exported_at: str) -> list[Any]:

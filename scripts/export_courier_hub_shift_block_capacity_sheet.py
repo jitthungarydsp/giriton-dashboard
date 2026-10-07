@@ -65,7 +65,8 @@ def read_capacity_rows(
     start_date: date,
     end_date: date,
     warehouse_code: str,
-    limit: int = 10000,
+    limit: int = 50000,
+    page_size: int = 1000,
 ) -> list[dict[str, Any]]:
     supabase_url, service_role_key = get_supabase_config()
     if not supabase_url or not service_role_key:
@@ -83,47 +84,55 @@ def read_capacity_rows(
         "occupancy_from,occupancy_to,status,assigned,opened,"
         "free_slots,capacity_published,fetched_at,updated_at"
     )
-    params = [
-        (
-            "select",
-            select_with_booking,
-        ),
-        ("work_date", f"gte.{start_date.isoformat()}"),
-        ("work_date", f"lte.{end_date.isoformat()}"),
-        ("warehouse_code", f"eq.{warehouse_code}"),
-        ("order", "work_date.asc,slot_from.asc,shift_template_id.asc,block_key.asc"),
-        ("limit", str(int(limit))),
-    ]
-
     headers = {
         "apikey": service_role_key,
         "Authorization": f"Bearer {service_role_key}",
     }
-    response = requests.get(
-        f"{supabase_url}/rest/v1/{VIEW_NAME}",
-        headers=headers,
-        params=params,
-        timeout=60,
-    )
-    if response.status_code == 400 and (
-        "kifli_booking" in response.text.lower()
-        or "muszakpro_booking" in response.text.lower()
-    ):
-        print(
-            "COURIER_HUB_SHIFT_BLOCK_CAPACITY_OPTIONAL_COLUMNS_SKIPPED "
-            f"warehouse={warehouse_code}",
-            flush=True,
-        )
-        params[0] = ("select", select_without_booking)
+
+    select_clause = select_with_booking
+    records: list[dict[str, Any]] = []
+    offset = 0
+    max_rows = max(int(limit), 1)
+    requested_page_size = max(min(int(page_size), 1000), 1)
+
+    while len(records) < max_rows:
+        current_limit = min(requested_page_size, max_rows - len(records))
+        params = [
+            ("select", select_clause),
+            ("work_date", f"gte.{start_date.isoformat()}"),
+            ("work_date", f"lte.{end_date.isoformat()}"),
+            ("warehouse_code", f"eq.{warehouse_code}"),
+            ("order", "work_date.asc,slot_from.asc,shift_template_id.asc,block_key.asc"),
+            ("limit", str(current_limit)),
+            ("offset", str(offset)),
+        ]
         response = requests.get(
             f"{supabase_url}/rest/v1/{VIEW_NAME}",
             headers=headers,
             params=params,
             timeout=60,
         )
-    raise_for_supabase_error(response)
-    payload = response.json()
-    return payload if isinstance(payload, list) else []
+        if response.status_code == 400 and select_clause == select_with_booking and (
+            "kifli_booking" in response.text.lower()
+            or "muszakpro_booking" in response.text.lower()
+        ):
+            print(
+                "COURIER_HUB_SHIFT_BLOCK_CAPACITY_OPTIONAL_COLUMNS_SKIPPED "
+                f"warehouse={warehouse_code}",
+                flush=True,
+            )
+            select_clause = select_without_booking
+            continue
+
+        raise_for_supabase_error(response)
+        payload = response.json()
+        page = payload if isinstance(payload, list) else []
+        records.extend(page)
+        if len(page) < current_limit:
+            break
+        offset += len(page)
+
+    return records
 
 
 def row_to_sheet_row(row: dict[str, Any], exported_at: str) -> list[Any]:
