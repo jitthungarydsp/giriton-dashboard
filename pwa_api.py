@@ -7287,6 +7287,9 @@ def workflow_process_label(process_id: str | None) -> str:
 
 def document_belongs_to_process(document: dict[str, Any], process_id: str | None) -> bool:
     clean_process = normalize_process_id(process_id)
+    document_process = process_id_from_action_key(str(document.get("document_type") or ""))
+    if document_process:
+        return document_process == clean_process
     note = str(document.get("note") or "")
     match = re.search(r"Folyamat azonosító:\s*([a-z0-9_-]+)", note, flags=re.IGNORECASE)
     document_process = normalize_process_id(match.group(1)) if match else ""

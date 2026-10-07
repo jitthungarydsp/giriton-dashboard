@@ -5909,7 +5909,7 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
     document_types_by_courier: dict[str, set[str]] = {}
     if not documents.empty:
         for item in documents.to_dict("records"):
-            if process_id_from_note(item.get("note")):
+            if not document_belongs_to_process(item, ""):
                 continue
             courier_key = _courier_id_key(item.get("courier_id"))
             document_type = str(item.get("document_type") or "").strip()
@@ -6083,18 +6083,35 @@ def process_action_key(action: str, process_id: object = "") -> str:
 
 
 def base_action_key(action_key: object) -> str:
-    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", str(action_key or "").strip())
-    return match.group(2) if match else str(action_key or "").strip()
+    text = str(action_key or "").strip().lower()
+    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", text)
+    return match.group(2) if match else text
 
 
 def process_id_from_action_key(action_key: object) -> str:
-    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", str(action_key or "").strip())
+    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", str(action_key or "").strip().lower())
     return match.group(1) if match else ""
 
 
 def process_id_from_note(note: object) -> str:
     match = re.search(r"Folyamat azonos[íi]t[óo]:\s*([a-z0-9_-]+)", str(note or ""), flags=re.IGNORECASE)
     return normalize_process_id(match.group(1)) if match else ""
+
+
+PROCESS_NOTE_PREFIX = "Folyamat azonosító:"
+
+
+def process_note_marker(process_id: object) -> str:
+    clean_process = normalize_process_id(process_id)
+    return f"{PROCESS_NOTE_PREFIX} {clean_process}" if clean_process else ""
+
+
+def document_belongs_to_process(document: dict[str, object], process_id: object) -> bool:
+    clean_process = normalize_process_id(process_id)
+    document_process = process_id_from_action_key(document.get("document_type"))
+    if document_process:
+        return document_process == clean_process
+    return process_id_from_note(document.get("note")) == clean_process
 
 
 KP_INVOICE_PROCESS_PREFIX = "kp_invoice_"
@@ -6478,7 +6495,7 @@ def backstep_peopleforce_workflow(*, courier_id: str, courier_name: str, documen
 
 def load_courier_payment_documents(courier_id: str, period_start: date) -> pd.DataFrame:
     try:
-        documents = read_peopleforce_documents_for_month(period_start.replace(day=1), "invoice")
+        documents = read_peopleforce_documents_for_month(period_start.replace(day=1))
     except Exception:
         return pd.DataFrame()
     if documents.empty:
@@ -6486,6 +6503,10 @@ def load_courier_payment_documents(courier_id: str, period_start: date) -> pd.Da
     result = documents[
         documents.get("courier_id", pd.Series("", index=documents.index))
         .astype(str).map(_courier_id_key).eq(_courier_id_key(courier_id))
+    ].copy()
+    result = result[
+        result.get("document_type", pd.Series("", index=result.index))
+        .map(base_action_key).eq("invoice")
     ].copy()
     if "uploaded_at" in result.columns:
         result["_uploaded_at_sort"] = pd.to_datetime(result["uploaded_at"], errors="coerce")
@@ -6501,7 +6522,7 @@ def latest_peopleforce_document(
     process_id: object = "",
 ) -> dict[str, object]:
     try:
-        documents = read_peopleforce_documents_for_month(period_start.replace(day=1), document_type)
+        documents = read_peopleforce_documents_for_month(period_start.replace(day=1))
     except Exception:
         return {}
     if documents.empty:
@@ -6511,11 +6532,15 @@ def latest_peopleforce_document(
         documents.get("courier_id", pd.Series("", index=documents.index))
         .astype(str).map(_courier_id_key).eq(_courier_id_key(courier_id))
     ].copy()
-    if clean_process:
-        result = result[
-            result.get("note", pd.Series("", index=result.index))
-            .astype(str).map(process_id_from_note).eq(clean_process)
-        ].copy()
+    result = result[
+        result.get("document_type", pd.Series("", index=result.index))
+        .map(base_action_key).eq(str(document_type or "").strip().lower())
+    ].copy()
+    if result.empty:
+        return {}
+    result = result[
+        result.apply(lambda item: document_belongs_to_process(item.to_dict(), clean_process), axis=1)
+    ].copy()
     if result.empty:
         return {}
     if "uploaded_at" in result.columns:
@@ -7170,7 +7195,7 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
     except Exception:
         workflow_statuses = pd.DataFrame()
     try:
-        invoice_documents = read_peopleforce_documents_for_month(period_start.replace(day=1), "invoice")
+        invoice_documents = read_peopleforce_documents_for_month(period_start.replace(day=1))
     except Exception:
         invoice_documents = pd.DataFrame()
 
@@ -7189,15 +7214,17 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
                     str(item.get("status") or "").strip().casefold(),
                 )
     invoice_document_processes: set[tuple[str, str]] = set()
-    invoice_document_couriers: set[str] = set()
     if not invoice_documents.empty:
         for item in invoice_documents.to_dict("records"):
+            if base_action_key(item.get("document_type")) != "invoice":
+                continue
             courier_key = _courier_id_key(item.get("courier_id"))
-            process_id = process_id_from_note(item.get("note"))
+            process_id = (
+                process_id_from_action_key(item.get("document_type"))
+                or process_id_from_note(item.get("note"))
+            )
             if process_id:
                 workflow_process_ids.add(process_id)
-            if courier_key:
-                invoice_document_couriers.add(courier_key)
             if courier_key and process_id:
                 invoice_document_processes.add((courier_key, process_id))
 
@@ -7228,9 +7255,6 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
                 status_by_courier[courier_key] = "Kifizetésre vár (Fizetés előleg)"
             else:
                 status_by_courier[courier_key] = "Új fizetés előleg"
-            continue
-        if request_status == "approved" and courier_key in invoice_document_couriers:
-            status_by_courier[courier_key] = "Kifizetésre vár (Fizetés előleg)"
             continue
         if request_status in {"requested", "approved"}:
             status_by_courier[courier_key] = "Új fizetés előleg"
@@ -11454,10 +11478,15 @@ def show_accounting_invoice_archive_page() -> None:
     selected_month = parse_month_option(selected_month_label).replace(day=1)
 
     try:
-        documents = read_peopleforce_documents_for_month(selected_month, "invoice", limit=10000)
+        documents = read_peopleforce_documents_for_month(selected_month, limit=10000)
     except Exception as exc:
         st.error(f"A számlák betöltése sikertelen: {exc}")
         return
+    if not documents.empty:
+        documents = documents[
+            documents.get("document_type", pd.Series("", index=documents.index))
+            .map(base_action_key).eq("invoice")
+        ].copy()
 
     if documents.empty:
         st.info("Nincs feltöltött számla erre a hónapra.")
@@ -17712,7 +17741,7 @@ def render_courier_detail_page() -> None:
             )
         if not invoice_documents.empty:
             process_ids.update(
-                process_id_from_note(item.get("note"))
+                process_id_from_action_key(item.get("document_type")) or process_id_from_note(item.get("note"))
                 for item in invoice_documents.to_dict("records")
             )
         if not advance_requests.empty:
@@ -17746,7 +17775,8 @@ def render_courier_detail_page() -> None:
         invoice_rows_by_process: dict[str, list[dict[str, object]]] = {}
         if not invoice_documents.empty:
             for item in invoice_documents.to_dict("records"):
-                invoice_rows_by_process.setdefault(process_id_from_note(item.get("note")), []).append(item)
+                invoice_process = process_id_from_action_key(item.get("document_type")) or process_id_from_note(item.get("note"))
+                invoice_rows_by_process.setdefault(invoice_process, []).append(item)
         rejected_advance_process_ids = {
             normalize_process_id(item.get("process_id"))
             for item in advance_requests.to_dict("records")
@@ -18512,7 +18542,7 @@ def render_courier_detail_page() -> None:
                                 if (
                                     base_action_key(document_item.get("document_type")) == "invoice"
                                     and document_month_value.date().replace(day=1) == (request_start.date().replace(day=1) if not pd.isna(request_start) else period_start)
-                                    and process_id_from_note(document_item.get("note")) == process_id
+                                    and document_belongs_to_process(document_item, process_id)
                                 ):
                                     related_invoice_documents.append(document_item)
                         if related_invoice_documents:
@@ -19419,22 +19449,66 @@ def render_courier_detail_page() -> None:
         doc_note = st.text_input("Megjegyzés", key=f"new_doc_note_{courier_id}")
         reverse_type_labels = {"Elszámolás": "settlement", "TIG": "tig", "Számla": "invoice", "Szerződés": "contract"}
         selected_upload_type = reverse_type_labels.get(doc_type_label, "settlement")
+        salary_advance_process_options: dict[str, dict[str, object]] = {}
+        if selected_upload_type == "invoice":
+            try:
+                upload_advance_requests = load_courier_salary_advance_requests(courier_id)
+            except Exception as exc:
+                st.warning(f"A fizetés előleg folyamatok nem tölthetők be: {exc}")
+                upload_advance_requests = pd.DataFrame()
+            if not upload_advance_requests.empty:
+                for request_item in upload_advance_requests.to_dict("records"):
+                    process_id = normalize_process_id(request_item.get("process_id"))
+                    if not process_id:
+                        continue
+                    request_status = str(request_item.get("status") or "requested").strip().casefold()
+                    if request_status in {"rejected", "cancelled", "closed", "paid"}:
+                        continue
+                    request_start = pd.to_datetime(request_item.get("start_date"), errors="coerce")
+                    request_month = request_start.date().replace(day=1) if not pd.isna(request_start) else period_start.replace(day=1)
+                    amount = parse_huf_value(request_item.get("requested_amount_huf"))
+                    salary_advance_process_options[process_id] = {
+                        "label": f"Fizetés előleg - {request_month:%Y-%m} - {format_huf(amount)}",
+                        "month": request_month,
+                        "status": request_status,
+                    }
+        selected_salary_advance_process = ""
+        if salary_advance_process_options:
+            process_choice_values = [""] + list(salary_advance_process_options)
+            selected_salary_advance_process = st.selectbox(
+                "Kapcsolódó fizetés előleg szál",
+                process_choice_values,
+                format_func=lambda value: "Havi / általános dokumentum" if not value else str(salary_advance_process_options[value]["label"]),
+                key=f"new_doc_salary_advance_process_{courier_id}",
+            )
+            if selected_salary_advance_process:
+                process_month = salary_advance_process_options[selected_salary_advance_process]["month"]
+                if doc_period.replace(day=1) != process_month:
+                    st.info(f"A kiválasztott előleg szál hónapja: {process_month:%Y-%m}. A dokumentum erre a hónapra lesz mentve.")
         upload_month_closed = (
             closure_done
             and doc_period.replace(day=1) == period_start.replace(day=1)
             and selected_upload_type in {"settlement", "tig", "invoice"}
+            and not selected_salary_advance_process
         )
         if upload_month_closed:
             st.warning("Ez a havi folyamat már le van zárva, új elszámolás/TIG/számla nem tölthető fel rá.")
         if st.button("Dokumentum feltöltése", type="primary", use_container_width=True, disabled=uploaded_file is None or upload_month_closed, key=f"new_doc_save_{courier_id}"):
             try:
+                upload_document_type = selected_upload_type
+                upload_document_month = doc_period.replace(day=1)
+                upload_note_parts = [str(doc_note or "").strip()]
+                if selected_salary_advance_process:
+                    upload_document_type = process_action_key(selected_upload_type, selected_salary_advance_process)
+                    upload_document_month = salary_advance_process_options[selected_salary_advance_process]["month"]
+                    upload_note_parts.insert(0, process_note_marker(selected_salary_advance_process))
                 upload_peopleforce_document(
                     courier_id=courier_id,
                     courier_name=str(row["Futár"]),
-                    document_type=selected_upload_type,
-                    document_month=doc_period.replace(day=1),
+                    document_type=upload_document_type,
+                    document_month=upload_document_month,
                     title=doc_title,
-                    note=doc_note,
+                    note="\n".join(part for part in upload_note_parts if part),
                     uploaded_file=uploaded_file,
                     uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
                 )
