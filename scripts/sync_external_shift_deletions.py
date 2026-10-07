@@ -7,6 +7,7 @@ import argparse
 import os
 import re
 import sys
+import time
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from gspread.exceptions import APIError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -42,6 +44,7 @@ HUB_BOOKINGS_TABLE = "courier_hub_shift_bookings_raw"
 HUB_IDENTITY_TABLE = "courier_hub_courier_identity_raw"
 SHEET_DONE_STATUS = "törölve"
 SHEET_DIAGNOSTIC_COLUMNS = ("G", "H", "I")
+SHEET_RETRY_DELAYS_SECONDS = (70, 95, 130, 180, 240)
 
 
 @dataclass
@@ -148,6 +151,38 @@ def pending_status(value: Any) -> bool:
     return normalized in {"torlesre_var", "torlesrevar", "torles_var", "torlesvar", "pending"}
 
 
+def google_api_status_code(exc: BaseException) -> int | None:
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    match = re.search(r"\[(\d{3})\]", str(exc))
+    return int(match.group(1)) if match else None
+
+
+def retry_google_sheet_call(label: str, action):
+    last_error: BaseException | None = None
+    attempts = len(SHEET_RETRY_DELAYS_SECONDS) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return action()
+        except APIError as exc:
+            last_error = exc
+            status_code = google_api_status_code(exc)
+            if status_code not in {429, 500, 502, 503, 504} or attempt == attempts:
+                raise
+            delay = SHEET_RETRY_DELAYS_SECONDS[attempt - 1]
+            print(
+                "HUB_JOB_AUTODELETE_SHEET_RETRY "
+                f"label={label} status={status_code} attempt={attempt}/{attempts} wait_seconds={delay}",
+                flush=True,
+            )
+            time.sleep(delay)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"Google Sheet muvelet nem adott eredmenyt: {label}")
+
+
 def parse_work_date(value: Any) -> str:
     text = clean_text(value)
     if not text:
@@ -170,8 +205,11 @@ def slot_text(value: Any) -> str:
 
 
 def read_sheet_rows(sheet_id: str, worksheet_gid: int) -> list[SheetDeletionRow]:
-    worksheet = get_client().open_by_key(sheet_id).get_worksheet_by_id(int(worksheet_gid))
-    values = worksheet.get_all_values()
+    def read_values() -> list[list[str]]:
+        worksheet = get_client().open_by_key(sheet_id).get_worksheet_by_id(int(worksheet_gid))
+        return worksheet.get_all_values()
+
+    values = retry_google_sheet_call("read_deletion_rows", read_values)
     rows: list[SheetDeletionRow] = []
     for row_number, cells in enumerate(values, start=1):
         cells = list(cells)
@@ -472,7 +510,6 @@ def write_status_updates_to_sheet(
 ) -> None:
     if not updates_by_row:
         return
-    worksheet = get_client().open_by_key(sheet_id).get_worksheet_by_id(int(worksheet_gid))
     updates: list[dict[str, Any]] = []
     for row_number, values in sorted(updates_by_row.items()):
         row_index = int(row_number)
@@ -486,7 +523,11 @@ def write_status_updates_to_sheet(
                 values.get("processed_at", ""),
             ]],
         })
-    worksheet.batch_update(updates, value_input_option="USER_ENTERED")
+    def write_updates() -> None:
+        worksheet = get_client().open_by_key(sheet_id).get_worksheet_by_id(int(worksheet_gid))
+        worksheet.batch_update(updates, value_input_option="USER_ENTERED")
+
+    retry_google_sheet_call("write_deletion_status", write_updates)
 
 
 def mark_sheet_written(source_keys: list[str]) -> None:
