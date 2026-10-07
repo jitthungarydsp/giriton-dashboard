@@ -8426,7 +8426,8 @@ def visible_mobile_settlement_month_keys() -> list[str]:
 def workflow_month_allowed_for_user(user: dict[str, Any], month: date, *, preview: bool = False) -> bool:
     if preview or can_view_financial_amounts(user) or is_unrestricted_legacy_settlement_month(month):
         return True
-    return month.strftime("%Y-%m") in visible_mobile_settlement_month_keys()
+    month_key = month.strftime("%Y-%m")
+    return month_key in visible_mobile_settlement_month_keys() or month_key in salary_advance_month_options(user)
 
 
 def require_workflow_month_allowed(user: dict[str, Any], month: date, *, preview: bool = False) -> None:
@@ -8435,6 +8436,27 @@ def require_workflow_month_allowed(user: dict[str, Any], month: date, *, preview
             status_code=404,
             detail="Ez az elszámolási hónap nincs publikálva a PWA felületre.",
         )
+
+
+def salary_advance_month_options(user: dict[str, Any]) -> list[str]:
+    courier_id, _courier_name = courier_identity(user)
+    rows = optional_supabase_rows(
+        "courier_salary_advance_request",
+        params={
+            "select": "start_date",
+            "courier_id": f"eq.{courier_id}",
+            "order": "start_date.desc",
+            "limit": "100",
+        },
+        schema="settlement",
+        timeout=15,
+    )
+    months: list[str] = []
+    for row in rows:
+        month_key = str(row.get("start_date") or "")[:7]
+        if month_key and month_key not in months:
+            months.append(month_key)
+    return months
 
 
 def latest_settlement_session_for_month(
@@ -18134,11 +18156,15 @@ def workflow_months(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    _view_user, preview = workflow_view_user(user, courier)
+    view_user, preview = workflow_view_user(user, courier)
     privileged_viewer = can_view_financial_amounts(user)
     configs = list_mobile_settlement_period_configs()
-    months = [
-        {
+    month_by_key: dict[str, dict[str, Any]] = {}
+    for config in configs:
+        month_key = str(config.get("period_start") or "")[:7]
+        if not month_key:
+            continue
+        month_by_key[month_key] = {
             "month": str(config.get("period_start") or "")[:7],
             "calculationMode": str(config.get("calculation_mode") or ""),
             "warehouseLabel": str(config.get("warehouse_label") or ""),
@@ -18146,12 +18172,35 @@ def workflow_months(
             "visibilityMode": normalize_mobile_visibility_mode(config.get("visibility_mode")),
             "updatedAt": config.get("updated_at"),
         }
-        for config in configs
-        if str(config.get("period_start") or "")[:7]
-    ]
-    if not months and (preview or privileged_viewer):
+
+    for month_key in salary_advance_month_options(view_user):
+        month_by_key.setdefault(
+            month_key,
+            {
+                "month": month_key,
+                "calculationMode": "salary_advance",
+                "warehouseLabel": "Fizetés előleg",
+                "sessionId": "",
+                "visibilityMode": "salary_advance",
+                "updatedAt": "",
+            },
+        )
+
+    if preview or privileged_viewer:
         current_month = datetime.now(LOCAL_TIMEZONE).date().replace(day=1).strftime("%Y-%m")
-        months = [{"month": current_month, "calculationMode": "", "warehouseLabel": "", "sessionId": "", "visibilityMode": "original", "updatedAt": ""}]
+        month_by_key.setdefault(
+            current_month,
+            {
+                "month": current_month,
+                "calculationMode": "",
+                "warehouseLabel": "",
+                "sessionId": "",
+                "visibilityMode": "admin",
+                "updatedAt": "",
+            },
+        )
+
+    months = [month_by_key[key] for key in sorted(month_by_key.keys(), reverse=True)]
     default_month = months[0]["month"] if months else ""
     return {
         "defaultMonth": default_month,

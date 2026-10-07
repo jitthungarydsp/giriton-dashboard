@@ -63,7 +63,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v154";
+const APP_VERSION = "v155";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -256,6 +256,10 @@ function localDate(offset = 0) {
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function localMonth() {
+  return localDate().slice(0, 7);
 }
 
 function monthStartDate(month) {
@@ -487,7 +491,11 @@ function showSection(section) {
   }
   if (section === "phonebook") renderPhonebook();
   if (section === "atm") loadAtmPayments();
-  if (section === "salary-advance") loadSalaryAdvanceRequests();
+  if (section === "salary-advance") {
+    const startInput = $("#salary-advance-start-date");
+    if (startInput && !startInput.value) startInput.value = localMonth();
+    loadSalaryAdvanceRequests();
+  }
   if (section === "expense") loadExpenseRequests();
   if (section === "documents") loadDocuments();
   if (section === "profile") {
@@ -836,6 +844,8 @@ async function approveSalaryAdvanceRequest(requestId) {
       body: JSON.stringify({ month: state.workflowMonth }),
     });
     state.salaryAdvanceRequests = payload.requests || [];
+    state.workflowMonthsLoadedFor = "";
+    state.workflowMonths = [];
     renderSalaryAdvanceRequests();
     if (message) message.textContent = "Előleg jóváhagyva, a kifizetési folyamat létrejött.";
   } catch (error) {
@@ -4532,7 +4542,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=154");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=155");
   }
   return navigator.serviceWorker.ready;
 }
@@ -7222,7 +7232,7 @@ $("#statistics-breakdown").addEventListener("submit", (event) => {
   saveRouteNote(form);
 });
 
-$("#salary-advance-start-date").value = state.workflowMonth;
+$("#salary-advance-start-date").value = localMonth();
 updateSalaryAdvancePreview();
 ["#salary-advance-amount", "#salary-advance-months"].forEach((selector) => {
   $(selector)?.addEventListener("input", updateSalaryAdvancePreview);
@@ -7252,9 +7262,11 @@ $("#salary-advance-form")?.addEventListener("submit", async (event) => {
       }),
     });
     state.salaryAdvanceRequests = payload.requests || [];
+    state.workflowMonthsLoadedFor = "";
+    state.workflowMonths = [];
     renderSalaryAdvanceRequests();
     form.reset();
-    $("#salary-advance-start-date").value = state.workflowMonth;
+    $("#salary-advance-start-date").value = localMonth();
     $("#salary-advance-months").value = "1";
     updateSalaryAdvancePreview();
     if (message) message.textContent = "Az előleg igény rögzítve, jóváhagyásra vár.";
