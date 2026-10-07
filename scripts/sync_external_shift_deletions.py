@@ -104,6 +104,26 @@ def supabase_get_optional(table: str, params: dict[str, str] | list[tuple[str, s
         raise
 
 
+def supabase_get_optional_column(
+    table: str,
+    params: dict[str, str] | list[tuple[str, str]],
+    column_name: str,
+) -> list[dict[str, Any]]:
+    try:
+        return supabase_get_optional(table, params)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else 0
+        response_text = exc.response.text if exc.response is not None else ""
+        if status_code == 400 and column_name in response_text and "does not exist" in response_text:
+            print(
+                "HUB_JOB_AUTODELETE_OPTIONAL_COLUMN_SKIPPED "
+                f"table={table} column={column_name}",
+                flush=True,
+            )
+            return []
+        raise
+
+
 def supabase_upsert(table: str, row: dict[str, Any], on_conflict: str) -> dict[str, Any]:
     url, _key = supabase_config()
     response = requests.post(
@@ -294,17 +314,28 @@ def load_sheet_email_identity(row: SheetDeletionRow, dsp_id: int) -> tuple[set[i
     jitt_ids.update(jitts)
 
     for table_name in ("courier_master", "courier_master_sheet_import"):
-        for email_column in ("email", "billing_email"):
-            master_rows = supabase_get_optional(
-                table_name,
-                {
-                    "select": "courier_id,email,billing_email",
-                    email_column: f"eq.{row.email}",
-                    "limit": "50",
-                },
-            )
-            ids, _jitts = collect_identity_values(master_rows)
-            courier_ids.update(ids)
+        master_rows = supabase_get_optional(
+            table_name,
+            {
+                "select": "courier_id,email",
+                "email": f"eq.{row.email}",
+                "limit": "50",
+            },
+        )
+        ids, _jitts = collect_identity_values(master_rows)
+        courier_ids.update(ids)
+
+        billing_rows = supabase_get_optional_column(
+            table_name,
+            {
+                "select": "courier_id,email",
+                "billing_email": f"eq.{row.email}",
+                "limit": "50",
+            },
+            "billing_email",
+        )
+        ids, _jitts = collect_identity_values(billing_rows)
+        courier_ids.update(ids)
 
     if courier_ids:
         id_filter = ",".join(str(value) for value in sorted(courier_ids))
