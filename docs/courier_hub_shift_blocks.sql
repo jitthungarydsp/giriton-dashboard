@@ -18,6 +18,8 @@ create table if not exists public.courier_hub_shift_blocks_raw (
     assigned integer,
     opened integer,
     free_slots integer,
+    kifli_booking text,
+    muszakpro_booking text,
     capacity_published boolean,
     subscribe_locked boolean,
     unsubscribe_locked boolean,
@@ -45,6 +47,10 @@ create index if not exists idx_courier_hub_shift_blocks_raw_template
 
 create index if not exists idx_courier_hub_shift_blocks_raw_status
     on public.courier_hub_shift_blocks_raw (status);
+
+alter table public.courier_hub_shift_blocks_raw
+    add column if not exists kifli_booking text,
+    add column if not exists muszakpro_booking text;
 
 create table if not exists public.courier_hub_roster_shift_subscribers_raw (
     id uuid primary key default gen_random_uuid(),
@@ -106,7 +112,11 @@ select
     assigned,
     opened,
     free_slots,
+    kifli_booking,
+    muszakpro_booking,
     capacity_published,
     fetched_at,
     updated_at
 from public.courier_hub_shift_blocks_raw;
+
+notify pgrst, 'reload schema';

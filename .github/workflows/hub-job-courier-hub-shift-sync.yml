@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       start_date:
-        description: "Kezdő dátum, pl. 2026-09-23. Üresen: mai nap Budapest szerint."
+        description: "Bázis dátum, pl. 2026-10-07. Üresen: mai nap Budapest szerint. A job a hónap 1. napjától következő hónap végéig fut."
         required: false
         default: ""
       lookahead_days:
-        description: "Hány napot nézzen előre a shift block/foglalás rész."
+        description: "Kompatibilitási mező. Üresen a job automatikusan az aktuális + következő teljes hónapot számolja."
         required: false
-        default: "21"
+        default: ""
       year:
         description: "Év, példa: 2026. Üresen: aktuális év Budapest szerint."
         required: false
@@ -88,17 +88,39 @@ jobs:
           MONTH="${{ inputs.month }}"
           DRY_RUN="${{ inputs.dry_run }}"
 
-          START_DATE="${START_DATE:-$(TZ=Europe/Budapest date +%F)}"
-          LOOKAHEAD_DAYS="${LOOKAHEAD_DAYS:-21}"
+          BASE_DATE="${START_DATE:-$(TZ=Europe/Budapest date +%F)}"
+          MONTH_WINDOW="$(BASE_DATE="$BASE_DATE" LOOKAHEAD_DAYS="$LOOKAHEAD_DAYS" python - <<'PY'
+          import os
+          from datetime import date, timedelta
+
+          base = date.fromisoformat(os.environ["BASE_DATE"])
+          start = base.replace(day=1)
+          if base.month == 12:
+              following_month = date(base.year + 1, 1, 1)
+          else:
+              following_month = date(base.year, base.month + 1, 1)
+          if following_month.month == 12:
+              month_after_following = date(following_month.year + 1, 1, 1)
+          else:
+              month_after_following = date(following_month.year, following_month.month + 1, 1)
+          end = month_after_following - timedelta(days=1)
+          manual_lookahead = os.environ.get("LOOKAHEAD_DAYS", "").strip()
+          if manual_lookahead.isdigit():
+              end = start + timedelta(days=int(manual_lookahead))
+          print(f"{start.isoformat()}|{end.isoformat()}|{(end - start).days}")
+          PY
+          )"
+          START_DATE="${MONTH_WINDOW%%|*}"
+          REST="${MONTH_WINDOW#*|}"
+          END_DATE="${REST%%|*}"
+          LOOKAHEAD_DAYS="${REST##*|}"
           YEAR="${YEAR:-$(TZ=Europe/Budapest date +%Y)}"
           MONTH="${MONTH:-$(TZ=Europe/Budapest date +%-m)}"
           DRY_RUN="${DRY_RUN:-false}"
-          if ! [[ "$LOOKAHEAD_DAYS" =~ ^[0-9]+$ ]]; then
-            LOOKAHEAD_DAYS="21"
-          fi
           COMPARISON_DAYS=$((LOOKAHEAD_DAYS + 1))
 
           echo "start_date=$START_DATE" >> "$GITHUB_OUTPUT"
+          echo "end_date=$END_DATE" >> "$GITHUB_OUTPUT"
           echo "lookahead_days=$LOOKAHEAD_DAYS" >> "$GITHUB_OUTPUT"
           echo "comparison_days=$COMPARISON_DAYS" >> "$GITHUB_OUTPUT"
           echo "year=$YEAR" >> "$GITHUB_OUTPUT"
@@ -106,6 +128,7 @@ jobs:
           echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
 
           echo "HUB_JOB_START_DATE=$START_DATE"
+          echo "HUB_JOB_END_DATE=$END_DATE"
           echo "HUB_JOB_LOOKAHEAD_DAYS=$LOOKAHEAD_DAYS"
           echo "HUB_JOB_COMPARISON_DAYS=$COMPARISON_DAYS"
           echo "HUB_JOB_YEAR=$YEAR"

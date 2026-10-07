@@ -49,6 +49,8 @@ HEADER = [
     "Megnyitott slot",
     "Foglalt slot",
     "Szabad slot",
+    "KIFLI_BOOKING",
+    "MUSZAKPRO_BOOKING",
     "Kapacitás publikált",
 ]
 
@@ -69,15 +71,22 @@ def read_capacity_rows(
     if not supabase_url or not service_role_key:
         raise RuntimeError("Hiányzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY.")
 
+    select_with_booking = (
+        "work_date,warehouse_id,warehouse_code,dsp_id,block_key,"
+        "shift_template_id,template_name,slot_from,slot_to,"
+        "occupancy_from,occupancy_to,status,assigned,opened,"
+        "free_slots,kifli_booking,muszakpro_booking,capacity_published,fetched_at,updated_at"
+    )
+    select_without_booking = (
+        "work_date,warehouse_id,warehouse_code,dsp_id,block_key,"
+        "shift_template_id,template_name,slot_from,slot_to,"
+        "occupancy_from,occupancy_to,status,assigned,opened,"
+        "free_slots,capacity_published,fetched_at,updated_at"
+    )
     params = [
         (
             "select",
-            (
-                "work_date,warehouse_id,warehouse_code,dsp_id,block_key,"
-                "shift_template_id,template_name,slot_from,slot_to,"
-                "occupancy_from,occupancy_to,status,assigned,opened,"
-                "free_slots,capacity_published,fetched_at,updated_at"
-            ),
+            select_with_booking,
         ),
         ("work_date", f"gte.{start_date.isoformat()}"),
         ("work_date", f"lte.{end_date.isoformat()}"),
@@ -86,15 +95,32 @@ def read_capacity_rows(
         ("limit", str(int(limit))),
     ]
 
+    headers = {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+    }
     response = requests.get(
         f"{supabase_url}/rest/v1/{VIEW_NAME}",
-        headers={
-            "apikey": service_role_key,
-            "Authorization": f"Bearer {service_role_key}",
-        },
+        headers=headers,
         params=params,
         timeout=60,
     )
+    if response.status_code == 400 and (
+        "kifli_booking" in response.text.lower()
+        or "muszakpro_booking" in response.text.lower()
+    ):
+        print(
+            "COURIER_HUB_SHIFT_BLOCK_CAPACITY_OPTIONAL_COLUMNS_SKIPPED "
+            f"warehouse={warehouse_code}",
+            flush=True,
+        )
+        params[0] = ("select", select_without_booking)
+        response = requests.get(
+            f"{supabase_url}/rest/v1/{VIEW_NAME}",
+            headers=headers,
+            params=params,
+            timeout=60,
+        )
     raise_for_supabase_error(response)
     payload = response.json()
     return payload if isinstance(payload, list) else []
@@ -118,6 +144,8 @@ def row_to_sheet_row(row: dict[str, Any], exported_at: str) -> list[Any]:
         row.get("opened") if row.get("opened") is not None else "",
         row.get("assigned") if row.get("assigned") is not None else "",
         row.get("free_slots") if row.get("free_slots") is not None else "",
+        clean_text(row.get("kifli_booking")),
+        clean_text(row.get("muszakpro_booking")),
         row.get("capacity_published") if row.get("capacity_published") is not None else "",
     ]
 

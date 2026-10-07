@@ -40,6 +40,9 @@ from sync_courier_hub_master import (  # noqa: E402
 SHIFT_BLOCK_TABLE = "courier_hub_shift_blocks_raw"
 SUBSCRIBER_TABLE = "courier_hub_roster_shift_subscribers_raw"
 BOOKING_TABLE = "courier_hub_shift_bookings_raw"
+OPTIONAL_COLUMNS_BY_TABLE = {
+    SHIFT_BLOCK_TABLE: {"kifli_booking", "muszakpro_booking"},
+}
 SUBSCRIBER_COLUMNS = [
     "source_name",
     "work_date",
@@ -133,6 +136,33 @@ def normalize_time(value: Any) -> str | None:
     return text
 
 
+def collect_giriton_person_ids_from_assignments(block: dict[str, Any]) -> str | None:
+    assignments = block.get("assignments")
+    if not isinstance(assignments, list):
+        return None
+
+    values: list[str] = []
+    seen: set[str] = set()
+    for assignment in assignments:
+        if not isinstance(assignment, dict):
+            continue
+        courier = assignment.get("courier") if isinstance(assignment.get("courier"), dict) else {}
+        giriton_person_id = text_or_none(first_value(
+            assignment,
+            "giritonPersonId",
+            "giriton_person_id",
+        )) or text_or_none(first_value(
+            courier,
+            "giritonPersonId",
+            "giriton_person_id",
+        ))
+        if giriton_person_id and giriton_person_id not in seen:
+            seen.add(giriton_person_id)
+            values.append(giriton_person_id)
+
+    return ";".join(values) if values else None
+
+
 def build_block_row(
     *,
     warehouse_id: int,
@@ -173,6 +203,8 @@ def build_block_row(
         "assigned": assigned,
         "opened": opened,
         "free_slots": free_slots,
+        "kifli_booking": collect_giriton_person_ids_from_assignments(item),
+        "muszakpro_booking": None,
         "capacity_published": bool_or_none(item.get("capacityPublished") or item.get("capacity_published")),
         "subscribe_locked": bool_or_none(item.get("subscribeLocked") or item.get("subscribe_locked")),
         "unsubscribe_locked": bool_or_none(item.get("unsubscribeLocked") or item.get("unsubscribe_locked")),
@@ -374,6 +406,35 @@ def supabase_upsert(table: str, rows: list[dict[str, Any]], conflict: str, *, ch
             json=chunk,
             timeout=60,
         )
+        if response.status_code == 400 and OPTIONAL_COLUMNS_BY_TABLE.get(table):
+            response_text = response.text.lower()
+            optional_columns = OPTIONAL_COLUMNS_BY_TABLE[table]
+            missing_columns = {
+                column
+                for column in optional_columns
+                if column.lower() in response_text and "does not exist" in response_text
+            }
+            if missing_columns:
+                print(
+                    "COURIER_HUB_SHIFT_BLOCK_OPTIONAL_COLUMNS_SKIPPED "
+                    f"table={table} columns={','.join(sorted(missing_columns))}",
+                    flush=True,
+                )
+                chunk = [
+                    {
+                        key: value
+                        for key, value in row.items()
+                        if key not in optional_columns
+                    }
+                    for row in chunk
+                ]
+                response = requests.post(
+                    f"{supabase_url}/rest/v1/{table}",
+                    headers=supabase_headers("resolution=merge-duplicates,return=minimal"),
+                    params={"on_conflict": conflict},
+                    json=chunk,
+                    timeout=60,
+                )
         raise_for_response(response, f"{table} upsert")
         written += len(chunk)
     return written
@@ -617,6 +678,7 @@ def main() -> int:
     block_rows: list[dict[str, Any]] = []
     subscriber_rows: list[dict[str, Any]] = []
     failures = 0
+    unavailable_days = 0
 
     for work_date in work_dates:
         for warehouse_id in warehouse_ids:
@@ -629,7 +691,15 @@ def main() -> int:
             status_code, payload = request_json(shift_blocks_url)
             items = payload_items(payload)
             if status_code >= 400:
-                failures += 1
+                if status_code in {400, 404}:
+                    unavailable_days += 1
+                    print(
+                        f"COURIER_HUB_SHIFT_BLOCKS_UNAVAILABLE date={work_date.isoformat()} "
+                        f"warehouse={warehouse_id} status={status_code}",
+                        flush=True,
+                    )
+                else:
+                    failures += 1
             for item in items:
                 row = build_block_row(
                     warehouse_id=warehouse_id,
@@ -670,7 +740,15 @@ def main() -> int:
                 roster_status, roster_payload = request_json(roster_url)
                 roster_rows = roster_items(roster_payload)
                 if roster_status >= 400:
-                    failures += 1
+                    if roster_status in {400, 404}:
+                        unavailable_days += 1
+                        print(
+                            f"COURIER_HUB_SHIFT_SUBSCRIBERS_UNAVAILABLE date={work_date.isoformat()} "
+                            f"warehouse={warehouse_id} page={page} status={roster_status}",
+                            flush=True,
+                        )
+                    else:
+                        failures += 1
 
                 for index, roster_row in enumerate(roster_rows):
                     subscriber_rows.extend(build_subscriber_rows(
@@ -697,7 +775,7 @@ def main() -> int:
     if args.dry_run:
         print(
             f"DRY_RUN courier_hub_shift_blocks={len(block_rows)} "
-            f"subscribers={len(subscriber_rows)} failures={failures}",
+            f"subscribers={len(subscriber_rows)} unavailable_days={unavailable_days} failures={failures}",
             flush=True,
         )
         return 1 if failures else 0
@@ -762,7 +840,7 @@ def main() -> int:
         f"COURIER_HUB_SHIFT_BLOCK_SYNC blocks={len(block_rows)} "
         f"blocks_written={blocks_written} subscribers={len(subscriber_rows)} "
         f"subscribers_written={subscribers_written} bookings={len(booking_rows)} "
-        f"bookings_written={bookings_written} failures={failures}",
+        f"bookings_written={bookings_written} unavailable_days={unavailable_days} failures={failures}",
         flush=True,
     )
     return 1 if failures else 0
