@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from resources.giriton_auto_booking import log_giriton_booking_result  # noqa: E402
 from scripts.courier_hub_api_book_shift import (  # noqa: E402
+    build_assign_url,
     dry_run_check,
     hub_request,
     normalize_time,
@@ -32,10 +33,8 @@ from scripts.sync_courier_hub_master import DEFAULT_BASE_URL, clean_text  # noqa
 
 
 def build_delete_url(base_url: str, warehouse_id: int, dsp_id: int, shift_block_id: int) -> str:
-    return (
-        f"{base_url.rstrip('/')}/external/warehouses/{int(warehouse_id)}"
-        f"/dsps/{int(dsp_id)}/shift-blocks/{int(shift_block_id)}/assignments"
-    )
+    _unused_shift_block_id = shift_block_id
+    return build_assign_url(base_url, warehouse_id, dsp_id)
 
 
 def response_payload(response: requests.Response) -> Any:
@@ -82,7 +81,7 @@ def main() -> int:
         "--shift-block-id",
         type=int,
         default=int(os.getenv("COURIER_HUB_DELETE_SHIFT_BLOCK_ID") or "0"),
-        help="A Courier Hub delete endpoint path shift-block id-ja. A UI hivasban jelenleg 0.",
+        help="Elavult kompatibilitasi opcio. A torles is a shift-blocks/assign endpointet hasznalja DELETE metoddal.",
     )
     parser.add_argument("--base-url", default=os.getenv("COURIER_HUB_BASE_URL") or DEFAULT_BASE_URL)
     mode = parser.add_mutually_exclusive_group()
@@ -110,7 +109,7 @@ def main() -> int:
         f"mode={'LIVE' if args.live else 'DRY_RUN'} "
         f"date={args.date} warehouse={clean_text(args.warehouse).upper()} "
         f"shiftTemplateId={args.shift_template_id} slotFrom={slot_from} "
-        f"courierId={args.courier_id} shiftBlockId={args.shift_block_id}",
+        f"courierId={args.courier_id} endpoint=shift-blocks/assign",
         flush=True,
     )
 
