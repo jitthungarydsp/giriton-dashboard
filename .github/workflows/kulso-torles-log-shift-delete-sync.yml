@@ -1,0 +1,106 @@
+name: KULSO_TORLES_LOG Shift Delete Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true esetén csak ellenőriz, nem töröl és nem ír vissza."
+        required: false
+        default: "false"
+      limit:
+        description: "Maximum feldolgozandó TÖRLÉSRE_VAR sor."
+        required: false
+        default: "100"
+  schedule:
+    # A HUB_JOB óránként :07-kor indul, ez utána dolgozza fel a sheet törléseket.
+    - cron: "37 * * * *"
+
+concurrency:
+  group: kulso-torles-log-shift-delete-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: KULSO_TORLES_LOG shift deletions
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
+      COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      COURIER_HUB_AUTH_CACHE_FILE: /tmp/kulso-torles-log-courier-hub-auth.json
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/kulso-torles-log-courier-hub-auth.json --debug-dir results/kulso-torles-log/auth
+      KIFLI_COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      KIFLI_COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      KIFLI_COURIER_HUB_AUTH_CACHE_FILE: /tmp/kulso-torles-log-courier-hub-auth.json
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/kulso-torles-log-courier-hub-auth.json --debug-dir results/kulso-torles-log/auth
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate secrets
+        shell: bash
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+          if [ -z "$COURIER_HUB_COOKIE" ] && { [ -z "$COURIER_HUB_USERNAME" ] || [ -z "$COURIER_HUB_PASSWORD" ]; }; then
+            echo "Missing Courier Hub auth. Add COURIER_HUB_USERNAME and COURIER_HUB_PASSWORD secrets, or COURIER_HUB_COOKIE."
+            exit 1
+          fi
+
+      - name: Refresh Courier Hub token
+        if: ${{ inputs.dry_run != 'true' }}
+        shell: bash
+        run: |
+          python scripts/refresh_courier_hub_auth.py \
+            --cache-file "$COURIER_HUB_AUTH_CACHE_FILE" \
+            --debug-dir results/kulso-torles-log/auth \
+            --probe-path "/services/courier-hub-service/external/warehouses/1/dsps/8/shift-blocks?dateFrom=$(TZ=Europe/Budapest date +%F)&dateTo=$(TZ=Europe/Budapest date +%F)"
+
+      - name: Sync KULSO_TORLES_LOG deletions
+        shell: bash
+        run: |
+          DRY_RUN="${{ inputs.dry_run }}"
+          LIMIT="${{ inputs.limit }}"
+          DRY_RUN="${DRY_RUN:-false}"
+          LIMIT="${LIMIT:-100}"
+
+          CMD=(python scripts/sync_external_shift_deletions.py --limit "$LIMIT")
+          if [ "$DRY_RUN" = "true" ]; then
+            CMD+=(--dry-run)
+          else
+            CMD+=(--apply --live-delete)
+          fi
+          "${CMD[@]}"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## KULSO_TORLES_LOG Shift Delete Sync"
+            echo ""
+            echo "- Sheet: KULSO_TORLES_LOG gid=965356959"
+            echo "- Pending status: TÖRLÉSRE_VAR"
+            echo "- Success writeback: F oszlop = törölve"
+            echo "- Dry run: ${{ inputs.dry_run }}"
+          } >> "$GITHUB_STEP_SUMMARY"
