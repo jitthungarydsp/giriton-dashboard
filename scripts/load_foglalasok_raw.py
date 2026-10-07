@@ -15,6 +15,7 @@ from resources.foglalasok_db import (
     FOGLALASOK_SHEET_NAME,
     SOURCE_SPREADSHEET_ID,
     build_db_rows,
+    dedupe_foglalasok_rows,
     upsert_foglalasok_rows,
 )
 from resources.google_sheets_values import read_sheet_values
@@ -42,12 +43,19 @@ def main():
     rows = build_db_rows(
         values
     )
+    deduped_rows = dedupe_foglalasok_rows(
+        rows
+    )
 
     print(
         f"Foglalasok sheet sorok: {max(len(values) - 1, 0)}"
     )
     print(
         f"DB-re elokeszitett sorok: {len(rows)}"
+    )
+    print(
+        f"DB-re kuldendo egyedi sorok: {len(deduped_rows)} "
+        f"(duplikalt kulcsok: {len(rows) - len(deduped_rows)})"
     )
 
     if rows:

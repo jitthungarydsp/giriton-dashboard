@@ -1028,6 +1028,24 @@ def build_db_rows(values, courier_lookup=None):
     return rows
 
 
+def dedupe_foglalasok_rows(db_rows):
+    conflict_columns = (
+        "source_name",
+        "work_date",
+        "email",
+        "shift_text",
+        "booking_code",
+    )
+    deduped_by_key = {}
+    for row in db_rows:
+        conflict_key = tuple(
+            clean(row.get(column))
+            for column in conflict_columns
+        )
+        deduped_by_key[conflict_key] = row
+    return list(deduped_by_key.values())
+
+
 def upsert_foglalasok_rows(values, db_rows=None):
     if db_rows is None:
         db_rows = build_db_rows(
@@ -1039,6 +1057,8 @@ def upsert_foglalasok_rows(values, db_rows=None):
             "rows": 0,
             "status": "empty",
         }
+
+    deduped_rows = dedupe_foglalasok_rows(db_rows)
 
     supabase_url, headers = get_headers()
     table_name = resolve_foglalasok_table(
@@ -1069,17 +1089,19 @@ def upsert_foglalasok_rows(values, db_rows=None):
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates",
     }
-    for index in range(0, len(db_rows), 500):
+    for index in range(0, len(deduped_rows), 500):
         response = requests.post(
             endpoint,
             headers=headers,
-            json=db_rows[index:index + 500],
+            json=deduped_rows[index:index + 500],
             timeout=60,
         )
         raise_for_supabase_error(response)
 
     return {
-        "rows": len(db_rows),
+        "rows": len(deduped_rows),
+        "source_rows": len(db_rows),
+        "deduplicated_rows": len(db_rows) - len(deduped_rows),
         "status": "ok",
     }
 
