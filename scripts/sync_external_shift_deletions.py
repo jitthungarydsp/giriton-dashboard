@@ -41,6 +41,7 @@ REQUEST_TABLE = "external_shift_deletion_requests"
 HUB_BOOKINGS_TABLE = "courier_hub_shift_bookings_raw"
 HUB_IDENTITY_TABLE = "courier_hub_courier_identity_raw"
 SHEET_DONE_STATUS = "törölve"
+SHEET_DIAGNOSTIC_COLUMNS = ("G", "H", "I")
 
 
 @dataclass
@@ -459,14 +460,32 @@ def delete_hub_booking(row: SheetDeletionRow, booking: dict[str, Any], *, dsp_id
     return False, payload, "Hub API törlés sikertelen."
 
 
-def write_done_status_to_sheet(sheet_id: str, worksheet_gid: int, row_numbers: list[int]) -> None:
-    if not row_numbers:
+def truncate_sheet_text(value: Any, limit: int = 450) -> str:
+    text = clean_text(value).replace("\r", " ").replace("\n", " ")
+    return text[:limit]
+
+
+def write_status_updates_to_sheet(
+    sheet_id: str,
+    worksheet_gid: int,
+    updates_by_row: dict[int, dict[str, str]],
+) -> None:
+    if not updates_by_row:
         return
     worksheet = get_client().open_by_key(sheet_id).get_worksheet_by_id(int(worksheet_gid))
-    updates = [
-        {"range": f"F{int(row_number)}", "values": [[SHEET_DONE_STATUS]]}
-        for row_number in row_numbers
-    ]
+    updates: list[dict[str, Any]] = []
+    for row_number, values in sorted(updates_by_row.items()):
+        row_index = int(row_number)
+        if "sheet_status" in values:
+            updates.append({"range": f"F{row_index}", "values": [[values["sheet_status"]]]})
+        updates.append({
+            "range": f"{SHEET_DIAGNOSTIC_COLUMNS[0]}{row_index}:{SHEET_DIAGNOSTIC_COLUMNS[-1]}{row_index}",
+            "values": [[
+                values.get("job_status", ""),
+                truncate_sheet_text(values.get("message", "")),
+                values.get("processed_at", ""),
+            ]],
+        })
     worksheet.batch_update(updates, value_input_option="USER_ENTERED")
 
 
@@ -506,6 +525,7 @@ def main() -> int:
 
     done_sheet_rows: list[int] = []
     done_source_keys: list[str] = []
+    sheet_updates: dict[int, dict[str, str]] = {}
     deleted_count = 0
     not_found_count = 0
     error_count = 0
@@ -528,6 +548,11 @@ def main() -> int:
                 print(f"HUB_JOB_AUTODELETE_NOT_FOUND row={row.row_number} message={match_message}", flush=True)
                 if args.apply:
                     update_request(source_key, "not_found", match_message)
+                    sheet_updates[row.row_number] = {
+                        "job_status": "not_found",
+                        "message": match_message,
+                        "processed_at": datetime.now(timezone.utc).isoformat(),
+                    }
                 continue
 
             ok, payload, message = delete_hub_booking(
@@ -541,6 +566,11 @@ def main() -> int:
                 error_count += 1
                 if args.apply:
                     update_request(source_key, "error", message, booking, payload)
+                    sheet_updates[row.row_number] = {
+                        "job_status": "error",
+                        "message": message,
+                        "processed_at": datetime.now(timezone.utc).isoformat(),
+                    }
                 continue
 
             deleted_count += 1
@@ -550,21 +580,33 @@ def main() -> int:
                 update_request(source_key, "deleted", message, booking, payload)
                 done_sheet_rows.append(row.row_number)
                 done_source_keys.append(source_key)
+                sheet_updates[row.row_number] = {
+                    "sheet_status": SHEET_DONE_STATUS,
+                    "job_status": "deleted",
+                    "message": message,
+                    "processed_at": datetime.now(timezone.utc).isoformat(),
+                }
         except Exception as exc:
             error_count += 1
             message = f"{type(exc).__name__}: {str(exc)[:1500]}"
             print(f"HUB_JOB_AUTODELETE_ERROR row={row.row_number} {message}", flush=True)
             if args.apply:
                 update_request(source_key, "error", message)
+                sheet_updates[row.row_number] = {
+                    "job_status": "error",
+                    "message": message,
+                    "processed_at": datetime.now(timezone.utc).isoformat(),
+                }
 
+    if args.apply and sheet_updates:
+        write_status_updates_to_sheet(args.sheet_id, args.gid, sheet_updates)
     if args.apply and done_sheet_rows:
-        write_done_status_to_sheet(args.sheet_id, args.gid, done_sheet_rows)
         mark_sheet_written(done_source_keys)
 
     print(
         "HUB_JOB_AUTODELETE_DONE "
         f"deleted={deleted_count} not_found={not_found_count} errors={error_count} "
-        f"sheet_updated={len(done_sheet_rows) if args.apply else 0} "
+        f"sheet_updated={len(sheet_updates) if args.apply else 0} "
         f"mode={'live' if args.live_delete else 'dry-run'}",
         flush=True,
     )
