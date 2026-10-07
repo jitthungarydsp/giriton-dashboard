@@ -19,11 +19,11 @@ select
     assigned,
     opened,
     free_slots,
-    kifli_booking,
-    muszakpro_booking,
     capacity_published,
     fetched_at,
-    updated_at
+    updated_at,
+    kifli_booking,
+    muszakpro_booking
 from public.courier_hub_shift_blocks_raw;
 
 notify pgrst, 'reload schema';
