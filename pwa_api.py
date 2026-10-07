@@ -4301,6 +4301,16 @@ def schedule_capacity_source_key(row: dict[str, Any]) -> tuple[str, int, int]:
     return day_key, warehouse_id or 0, dsp_id
 
 
+def schedule_capacity_updated_at(row: dict[str, Any]) -> str:
+    return str(
+        row.get("source_updated_at")
+        or row.get("refreshed_at")
+        or row.get("updated_at")
+        or row.get("fetched_at")
+        or ""
+    )
+
+
 def read_schedule_capacity_rows(start: date, end: date, allow_raw_fallback: bool = True) -> list[dict[str, Any]]:
     daily_rows = optional_supabase_rows(
         "pwa_schedule_capacity_calendar_daily",
@@ -4345,16 +4355,36 @@ def read_schedule_capacity_rows(start: date, end: date, allow_raw_fallback: bool
     if not daily_rows:
         return raw_rows
 
-    covered_daily_keys = {
-        schedule_capacity_source_key(row)
+    daily_by_key = {
+        schedule_capacity_source_key(row): row
         for row in daily_rows
         if schedule_capacity_source_key(row)[0]
     }
+    raw_updated_by_key: dict[tuple[str, int, int], str] = {}
+    for row in raw_rows:
+        source_key = schedule_capacity_source_key(row)
+        if not source_key[0]:
+            continue
+        raw_updated_by_key[source_key] = max(
+            raw_updated_by_key.get(source_key, ""),
+            schedule_capacity_updated_at(row),
+        )
+
+    stale_daily_keys = {
+        source_key
+        for source_key, row in daily_by_key.items()
+        if raw_updated_by_key.get(source_key, "") > schedule_capacity_updated_at(row)
+    }
     raw_fallback_rows = [
         row for row in raw_rows
-        if schedule_capacity_source_key(row) not in covered_daily_keys
+        if schedule_capacity_source_key(row) not in daily_by_key
+        or schedule_capacity_source_key(row) in stale_daily_keys
     ]
-    return daily_rows + raw_fallback_rows
+    fresh_daily_rows = [
+        row for row in daily_rows
+        if schedule_capacity_source_key(row) not in stale_daily_keys
+    ]
+    return fresh_daily_rows + raw_fallback_rows
 
 
 def read_schedule_free_slot_rows(start: date, end: date) -> list[dict[str, Any]]:
@@ -5473,7 +5503,7 @@ def read_coordinator_schedule(
     capacity_start = detail_day or start
     capacity_end = detail_day or end
     capacity_by_day = schedule_capacity_summary(
-        read_schedule_capacity_rows(capacity_start, capacity_end, allow_raw_fallback=bool(detail_day)),
+        read_schedule_capacity_rows(capacity_start, capacity_end, allow_raw_fallback=True),
         warehouse_ids,
     )
 
