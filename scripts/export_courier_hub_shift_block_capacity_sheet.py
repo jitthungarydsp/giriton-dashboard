@@ -170,9 +170,13 @@ def export_capacity(start_date: date, end_date: date, dry_run: bool = False) -> 
     exported_at = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
     output: dict[str, list[list[Any]]] = {}
     counts: dict[str, int] = {}
+    kifli_booking_counts: dict[str, int] = {}
+    muszakpro_booking_counts: dict[str, int] = {}
 
     for warehouse_code in sorted(WAREHOUSE_WORKSHEETS):
         records = read_capacity_rows(start_date, end_date, warehouse_code)
+        kifli_booking_counts[warehouse_code] = sum(1 for record in records if clean_text(record.get("kifli_booking")))
+        muszakpro_booking_counts[warehouse_code] = sum(1 for record in records if clean_text(record.get("muszakpro_booking")))
         rows = [
             HEADER,
             *[
@@ -182,6 +186,13 @@ def export_capacity(start_date: date, end_date: date, dry_run: bool = False) -> 
         ]
         output[warehouse_code] = rows
         counts[warehouse_code] = len(records)
+        print(
+            "COURIER_HUB_SHIFT_BLOCK_CAPACITY_VIEW_VALUES "
+            f"warehouse={warehouse_code} rows={len(records)} "
+            f"kifli_booking_rows={kifli_booking_counts[warehouse_code]} "
+            f"muszakpro_booking_rows={muszakpro_booking_counts[warehouse_code]}",
+            flush=True,
+        )
 
     if dry_run:
         return counts
