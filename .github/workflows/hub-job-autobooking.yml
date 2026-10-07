@@ -49,6 +49,8 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      GIRITON_USER: ${{ secrets.GIRITON_USER }}
+      GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
       COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
       COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
       COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
@@ -81,6 +83,8 @@ jobs:
         run: |
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          test -n "$GIRITON_USER" || (echo "Missing GIRITON_USER secret" && exit 1)
+          test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
           if [ -z "$COURIER_HUB_COOKIE" ] && { [ -z "$COURIER_HUB_USERNAME" ] || [ -z "$COURIER_HUB_PASSWORD" ]; }; then
             echo "Missing Courier Hub auth. Add COURIER_HUB_USERNAME and COURIER_HUB_PASSWORD secrets, or COURIER_HUB_COOKIE."
             exit 1
@@ -206,6 +210,31 @@ jobs:
             CMD+=(--dry-run)
           else
             CMD+=(--live)
+          fi
+
+          "${CMD[@]}"
+
+      - name: HUB_JOB_AUTOBOOKING build Giriton fallback candidates
+        shell: bash
+        run: |
+          python scripts/build_hub_autobooking_giriton_fallback.py \
+            --input results/hub-job-autobooking/failures.json \
+            --output results/hub-job-autobooking/giriton-fallback-candidates.json
+
+      - name: HUB_JOB_AUTOBOOKING run old Giriton fallback
+        shell: bash
+        run: |
+          CMD=(
+            python scripts/run_shift_auto_booking_candidates.py
+            --candidate-file results/hub-job-autobooking/giriton-fallback-candidates.json
+            --output-root results/hub-job-autobooking/giriton-fallback
+            --phase hub-fallback
+            --engine robot
+            --continue-on-error
+          )
+
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
           fi
 
           "${CMD[@]}"
