@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -24,7 +25,9 @@ from resources.supabase_raw import (  # noqa: E402
 
 
 SPREADSHEET_ID = "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
-VIEW_NAME = "vw_courier_hub_shift_block_capacity"
+SHIFT_BLOCK_TABLE = "courier_hub_shift_blocks_raw"
+MUSZAKPRO_SCHEMA = "muszakpro"
+MUSZAKPRO_TABLE = "bookings"
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 
 WAREHOUSE_WORKSHEETS = {
@@ -61,35 +64,36 @@ def clean_text(value: Any) -> str:
     return str(value).strip()
 
 
-def read_capacity_rows(
-    start_date: date,
-    end_date: date,
-    warehouse_code: str,
-    limit: int = 50000,
-    page_size: int = 1000,
-) -> list[dict[str, Any]]:
+def supabase_config() -> tuple[str, str]:
     supabase_url, service_role_key = get_supabase_config()
     if not supabase_url or not service_role_key:
         raise RuntimeError("Hiányzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY.")
+    return supabase_url.rstrip("/"), service_role_key
 
-    select_with_booking = (
-        "work_date,warehouse_id,warehouse_code,dsp_id,block_key,"
-        "shift_template_id,template_name,slot_from,slot_to,"
-        "occupancy_from,occupancy_to,status,assigned,opened,"
-        "free_slots,kifli_booking,muszakpro_booking,capacity_published,fetched_at,updated_at"
-    )
-    select_without_booking = (
-        "work_date,warehouse_id,warehouse_code,dsp_id,block_key,"
-        "shift_template_id,template_name,slot_from,slot_to,"
-        "occupancy_from,occupancy_to,status,assigned,opened,"
-        "free_slots,capacity_published,fetched_at,updated_at"
-    )
-    headers = {
+
+def public_headers(service_role_key: str) -> dict[str, str]:
+    return {
         "apikey": service_role_key,
         "Authorization": f"Bearer {service_role_key}",
     }
 
-    select_clause = select_with_booking
+
+def schema_headers(service_role_key: str, schema: str) -> dict[str, str]:
+    return {
+        **public_headers(service_role_key),
+        "Accept-Profile": schema,
+        "Content-Profile": schema,
+    }
+
+
+def paged_get(
+    *,
+    endpoint: str,
+    headers: dict[str, str],
+    base_params: list[tuple[str, str]],
+    limit: int = 50000,
+    page_size: int = 1000,
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     offset = 0
     max_rows = max(int(limit), 1)
@@ -98,32 +102,16 @@ def read_capacity_rows(
     while len(records) < max_rows:
         current_limit = min(requested_page_size, max_rows - len(records))
         params = [
-            ("select", select_clause),
-            ("work_date", f"gte.{start_date.isoformat()}"),
-            ("work_date", f"lte.{end_date.isoformat()}"),
-            ("warehouse_code", f"eq.{warehouse_code}"),
-            ("order", "work_date.asc,slot_from.asc,shift_template_id.asc,block_key.asc"),
+            *base_params,
             ("limit", str(current_limit)),
             ("offset", str(offset)),
         ]
         response = requests.get(
-            f"{supabase_url}/rest/v1/{VIEW_NAME}",
+            endpoint,
             headers=headers,
             params=params,
             timeout=60,
         )
-        if response.status_code == 400 and select_clause == select_with_booking and (
-            "kifli_booking" in response.text.lower()
-            or "muszakpro_booking" in response.text.lower()
-        ):
-            print(
-                "COURIER_HUB_SHIFT_BLOCK_CAPACITY_OPTIONAL_COLUMNS_SKIPPED "
-                f"warehouse={warehouse_code}",
-                flush=True,
-            )
-            select_clause = select_without_booking
-            continue
-
         raise_for_supabase_error(response)
         payload = response.json()
         page = payload if isinstance(payload, list) else []
@@ -133,6 +121,148 @@ def read_capacity_rows(
         offset += len(page)
 
     return records
+
+
+def read_capacity_rows(start_date: date, end_date: date, warehouse_code: str) -> list[dict[str, Any]]:
+    supabase_url, service_role_key = supabase_config()
+    select_clause = (
+        "work_date,warehouse_id,warehouse_code,dsp_id,block_key,"
+        "shift_template_id,template_name,slot_from,slot_to,"
+        "occupancy_from,occupancy_to,status,assigned,opened,"
+        "free_slots,kifli_booking,muszakpro_booking,capacity_published,fetched_at,updated_at"
+    )
+    return paged_get(
+        endpoint=f"{supabase_url}/rest/v1/{SHIFT_BLOCK_TABLE}",
+        headers=public_headers(service_role_key),
+        base_params=[
+            ("select", select_clause),
+            ("work_date", f"gte.{start_date.isoformat()}"),
+            ("work_date", f"lte.{end_date.isoformat()}"),
+            ("warehouse_code", f"eq.{warehouse_code}"),
+            ("order", "work_date.asc,slot_from.asc,shift_template_id.asc,block_key.asc"),
+        ],
+    )
+
+
+def parse_shift_start(value: Any) -> str:
+    match = re.search(r"(\d{1,2}:\d{2})", clean_text(value))
+    if not match:
+        return ""
+    hour, minute = match.group(1).split(":", 1)
+    return f"{int(hour):02d}:{int(minute):02d}:00"
+
+
+def parse_warehouse(value: Any) -> str:
+    match = re.search(r"(BUD[12])", clean_text(value).upper())
+    return match.group(1) if match else ""
+
+
+def logical_booking_key(row: dict[str, Any]) -> str:
+    serial = clean_text(row.get("serial"))
+    if serial:
+        return serial
+    legacy_key = re.sub(r"_[0-9]+$", "", clean_text(row.get("legacy_key")))
+    if legacy_key:
+        return legacy_key
+    return "|".join([
+        clean_text(row.get("work_date")),
+        clean_text(row.get("email")).casefold(),
+        clean_text(row.get("shift_text")),
+        clean_text(row.get("booking_code")),
+    ])
+
+
+def muszakpro_row_is_deleted(row: dict[str, Any]) -> bool:
+    status = clean_text(row.get("status")).upper()
+    event_type = clean_text(row.get("event_type")).upper()
+    return (
+        status in {"TÖRÖLVE", "TOROLVE", "CANCELLED", "CANCELED", "DELETED", "DELETE"}
+        or event_type in {"DELETE", "CANCEL", "CANCELLED", "CANCELED", "DELETED"}
+        or bool(clean_text(row.get("cancelled_at")))
+    )
+
+
+def muszakpro_event_sort_key(row: dict[str, Any]) -> tuple[str, int, str]:
+    return (
+        clean_text(row.get("cancelled_at") or row.get("updated_at") or row.get("fetched_at") or row.get("created_at")),
+        int(row.get("source_row") or 0),
+        clean_text(row.get("id")),
+    )
+
+
+def read_muszakpro_rows(start_date: date, end_date: date) -> list[dict[str, Any]]:
+    supabase_url, service_role_key = supabase_config()
+    return paged_get(
+        endpoint=f"{supabase_url}/rest/v1/{MUSZAKPRO_TABLE}",
+        headers=schema_headers(service_role_key, MUSZAKPRO_SCHEMA),
+        base_params=[
+            (
+                "select",
+                (
+                    "id,source_row,work_date,email,shift_text,warehouse,booking_code,"
+                    "legacy_key,courier_id,serial,status,event_type,cancelled_at,"
+                    "updated_at,fetched_at,created_at"
+                ),
+            ),
+            ("work_date", f"gte.{start_date.isoformat()}"),
+            ("work_date", f"lte.{end_date.isoformat()}"),
+            ("order", "work_date.asc,updated_at.asc,source_row.asc,id.asc"),
+        ],
+    )
+
+
+def build_muszakpro_booking_lookup(start_date: date, end_date: date) -> dict[tuple[str, str, str], str]:
+    latest_by_key: dict[str, dict[str, Any]] = {}
+    for row in read_muszakpro_rows(start_date, end_date):
+        key = logical_booking_key(row)
+        if not key:
+            continue
+        existing = latest_by_key.get(key)
+        if existing is None or muszakpro_event_sort_key(row) >= muszakpro_event_sort_key(existing):
+            latest_by_key[key] = row
+
+    values_by_slot: dict[tuple[str, str, str], set[str]] = {}
+    for row in latest_by_key.values():
+        if muszakpro_row_is_deleted(row):
+            continue
+        warehouse_code = (
+            parse_warehouse(row.get("warehouse"))
+            or parse_warehouse(row.get("shift_text"))
+            or parse_warehouse(row.get("booking_code"))
+            or parse_warehouse(row.get("serial"))
+        )
+        shift_start = (
+            parse_shift_start(row.get("shift_text"))
+            or parse_shift_start(row.get("booking_code"))
+            or parse_shift_start(row.get("serial"))
+        )
+        work_date = clean_text(row.get("work_date"))
+        booking_value = clean_text(row.get("courier_id")) or clean_text(row.get("serial")) or clean_text(row.get("email"))
+        if not all([work_date, warehouse_code, shift_start, booking_value]):
+            continue
+        values_by_slot.setdefault((work_date, warehouse_code, shift_start), set()).add(booking_value)
+
+    return {
+        key: ";".join(sorted(values, key=lambda value: (len(value), value)))
+        for key, values in values_by_slot.items()
+    }
+
+
+def apply_muszakpro_booking_lookup(
+    records: list[dict[str, Any]],
+    lookup: dict[tuple[str, str, str], str],
+) -> None:
+    for record in records:
+        work_date = clean_text(record.get("work_date"))
+        warehouse_code = clean_text(record.get("warehouse_code")).upper()
+        slot_from = clean_text(record.get("slot_from"))
+        occupancy_from = parse_shift_start(record.get("occupancy_from"))
+        value = (
+            lookup.get((work_date, warehouse_code, slot_from))
+            or lookup.get((work_date, warehouse_code, occupancy_from))
+            or clean_text(record.get("muszakpro_booking"))
+        )
+        record["muszakpro_booking"] = value
 
 
 def row_to_sheet_row(row: dict[str, Any], exported_at: str) -> list[Any]:
@@ -172,9 +302,11 @@ def export_capacity(start_date: date, end_date: date, dry_run: bool = False) -> 
     counts: dict[str, int] = {}
     kifli_booking_counts: dict[str, int] = {}
     muszakpro_booking_counts: dict[str, int] = {}
+    muszakpro_lookup = build_muszakpro_booking_lookup(start_date, end_date)
 
     for warehouse_code in sorted(WAREHOUSE_WORKSHEETS):
         records = read_capacity_rows(start_date, end_date, warehouse_code)
+        apply_muszakpro_booking_lookup(records, muszakpro_lookup)
         kifli_booking_counts[warehouse_code] = sum(1 for record in records if clean_text(record.get("kifli_booking")))
         muszakpro_booking_counts[warehouse_code] = sum(1 for record in records if clean_text(record.get("muszakpro_booking")))
         rows = [
@@ -187,10 +319,11 @@ def export_capacity(start_date: date, end_date: date, dry_run: bool = False) -> 
         output[warehouse_code] = rows
         counts[warehouse_code] = len(records)
         print(
-            "COURIER_HUB_SHIFT_BLOCK_CAPACITY_VIEW_VALUES "
+            "COURIER_HUB_SHIFT_BLOCK_CAPACITY_EXPORT_VALUES "
             f"warehouse={warehouse_code} rows={len(records)} "
             f"kifli_booking_rows={kifli_booking_counts[warehouse_code]} "
-            f"muszakpro_booking_rows={muszakpro_booking_counts[warehouse_code]}",
+            f"muszakpro_booking_rows={muszakpro_booking_counts[warehouse_code]} "
+            f"muszakpro_lookup_slots={len(muszakpro_lookup)}",
             flush=True,
         )
 
