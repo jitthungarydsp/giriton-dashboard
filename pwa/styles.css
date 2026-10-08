@@ -377,6 +377,17 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-chip.ok { background: #e2f2df; color: var(--green-dark); }
 .schedule-chip.missing { background: #fff0ef; color: #b93c33; }
 .schedule-chip.unknown { background: #eef1eb; color: var(--muted); }
+.settlement-dashboard-list { display: grid; gap: 8px; }
+.settlement-dashboard-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(130px, .8fr) minmax(92px, auto); gap: 10px; align-items: center; width: 100%; min-height: 72px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); text-align: left; box-shadow: 0 7px 20px #3141340a; }
+.settlement-dashboard-row strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
+.settlement-dashboard-row > strong { text-align: right; font-size: 15px; }
+.settlement-dashboard-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
+.settlement-dashboard-status { display: inline-flex; width: fit-content; max-width: 100%; min-height: 28px; align-items: center; padding: 6px 10px; border-radius: 999px; background: #eef1eb; color: var(--muted); font-size: 11px; font-weight: 950; text-transform: uppercase; overflow-wrap: anywhere; }
+.settlement-dashboard-status.done { background: #e2f2df; color: var(--green-dark); }
+.settlement-dashboard-status.attention { background: #fff0ef; color: #b93c33; }
+.settlement-dashboard-status.warning { background: #fff0c8; color: #8b5d00; }
+.settlement-dashboard-status.waiting { background: #edf3ff; color: #26548f; }
+.settlement-dashboard-status.active { background: #eef6e9; color: var(--green-dark); }
 .schedule-recommendations { display: grid; gap: 10px; }
 .schedule-recommendation-list { display: grid; gap: 8px; }
 .schedule-recommendation { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, .9fr); gap: 10px; align-items: center; padding: 12px; border: 1px solid #cfe2c8; border-radius: 14px; background: #f7fcf4; }
@@ -807,6 +818,8 @@ textarea { min-height: 96px; resize: vertical; }
   .schedule-slot-detail-grid { grid-template-columns: 1fr; }
   .schedule-recommendation { grid-template-columns: 1fr; }
   .schedule-rec-foot { justify-items: start; text-align: left; }
+  .settlement-dashboard-row { grid-template-columns: 1fr; }
+  .settlement-dashboard-row > strong { text-align: left; }
   .tig-row { grid-template-columns: minmax(0, 1fr) 1fr; }
   .tig-party-grid { grid-template-columns: 1fr; }
   .tig-row.head { display: none; }

@@ -316,6 +316,7 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "canPreviewCouriers": can_preview_couriers(user),
         "canManageVehicles": can_manage_vehicle_history(user),
         "canApproveRegistrations": can_approve_pwa_registrations(user),
+        "canViewSettlementDashboard": can_view_settlement_dashboard(user),
     }
 
 
@@ -332,6 +333,12 @@ def can_preview_couriers(user: dict[str, Any]) -> bool:
 
 def can_view_financial_amounts(user: dict[str, Any]) -> bool:
     return can_preview_couriers(user)
+
+
+def can_view_settlement_dashboard(user: dict[str, Any]) -> bool:
+    role = str(user.get("role") or "").strip().lower()
+    username_key = normalize_text(user.get("username"))
+    return role in {"admin", "superadmin"} or username_key == normalize_text("admin")
 
 
 def can_manage_vehicle_history(user: dict[str, Any]) -> bool:
@@ -388,6 +395,12 @@ def require_vehicle_history_manager(user: dict[str, Any]) -> dict[str, Any]:
 
 def require_registration_admin(user: dict[str, Any]) -> dict[str, Any]:
     if not can_approve_pwa_registrations(user):
+        raise HTTPException(status_code=403, detail="Ehhez admin jogosultság szükséges.")
+    return user
+
+
+def require_settlement_dashboard_admin(user: dict[str, Any]) -> dict[str, Any]:
+    if not can_view_settlement_dashboard(user):
         raise HTTPException(status_code=403, detail="Ehhez admin jogosultság szükséges.")
     return user
 
@@ -15792,6 +15805,195 @@ def list_workflow_processes(user: dict[str, Any], month: date) -> list[dict[str,
     ]
 
 
+def workflow_dashboard_open_complaints(workflow: dict[str, Any]) -> list[dict[str, Any]]:
+    complaints: list[dict[str, Any]] = []
+    for rows in (workflow.get("complaints") or {}).values():
+        for complaint in rows or []:
+            status = str(complaint.get("status") or "").strip().lower()
+            has_admin_answer = bool(
+                str(complaint.get("admin_response") or "").strip()
+                or str(complaint.get("responded_at") or "").strip()
+            )
+            if status not in {"resolved", "closed", "deleted"} and not has_admin_answer:
+                complaints.append(complaint)
+    return complaints
+
+
+def workflow_dashboard_status(workflow: dict[str, Any]) -> dict[str, Any]:
+    steps = {str(step.get("key") or ""): step for step in workflow.get("steps") or []}
+    states = workflow.get("states") or {}
+    open_complaints = workflow_dashboard_open_complaints(workflow)
+    if open_complaints:
+        return {
+            "label": "Reklamáció",
+            "detail": f"{len(open_complaints)} nyitott reklamáció",
+            "tone": "attention",
+            "sort": 20,
+        }
+    if workflow_done(states, "invoice_payment") or bool((steps.get("invoice_payment") or {}).get("done")):
+        return {"label": "Kifizetve", "detail": "Folyamat lezárva", "tone": "done", "sort": 90}
+    if workflow_open(states, "invoice_check") or (
+        bool((steps.get("invoice_submit") or {}).get("done"))
+        and not bool((steps.get("invoice_check") or {}).get("done"))
+    ):
+        return {"label": "Számla ellenőrzésre vár", "detail": "Számla beérkezett", "tone": "warning", "sort": 70}
+    if workflow_open(states, "invoice_submit") or (
+        bool((steps.get("tig") or {}).get("done"))
+        and not bool((steps.get("invoice_submit") or {}).get("done"))
+    ):
+        return {"label": "Számlafeltöltésre vár", "detail": "Futár teendő", "tone": "waiting", "sort": 60}
+    if bool((steps.get("tig_document") or {}).get("done")) and not bool((steps.get("tig") or {}).get("done")):
+        return {"label": "TIG elfogadásra vár", "detail": "Futár teendő", "tone": "waiting", "sort": 50}
+    if bool((steps.get("settlement_document") or {}).get("done")) and not bool((steps.get("settlement") or {}).get("done")):
+        return {"label": "Elszámolás elfogadásra vár", "detail": "Futár teendő", "tone": "waiting", "sort": 40}
+    if bool((steps.get("settlement_document") or {}).get("done")):
+        return {"label": "Elszámolás", "detail": "Folyamatban", "tone": "active", "sort": 30}
+    return {"label": "Elszámolás készül", "detail": "Várakozás", "tone": "muted", "sort": 10}
+
+
+def workflow_dashboard_candidate_rows(month: date) -> dict[str, dict[str, Any]]:
+    month_start = month.replace(day=1)
+    month_key = month_start.isoformat()
+    candidates: dict[str, dict[str, Any]] = {}
+
+    def add_candidate(courier_id: Any, courier_name: Any = "", source: str = "") -> None:
+        clean_id = str(courier_id or "").strip()
+        if not clean_id:
+            return
+        row = candidates.setdefault(clean_id, {
+            "courierId": clean_id,
+            "courierName": "",
+            "sources": set(),
+        })
+        if courier_name and not row.get("courierName"):
+            row["courierName"] = str(courier_name or "").strip()
+        if source:
+            row["sources"].add(source)
+
+    snapshots = optional_supabase_rows_paged(
+        "courier_finance_snapshot",
+        schema="settlement",
+        params={
+            "select": "courier_id,courier_name,period_start,version,created_at",
+            "period_start": f"eq.{month_key}",
+            "order": "courier_name.asc,courier_id.asc,version.desc",
+        },
+        timeout=30,
+        page_size=1000,
+        max_rows=20000,
+    )
+    for row in snapshots:
+        add_candidate(row.get("courier_id"), row.get("courier_name"), "snapshot")
+
+    config = read_mobile_settlement_period_config(month_start)
+    session_id = str(config.get("session_id") or "").strip()
+    if session_id:
+        summary_rows = optional_supabase_rows_paged(
+            "courier_settlement_summary",
+            schema="settlement",
+            params={
+                "select": "courier_id,courier_name,session_id",
+                "session_id": f"eq.{session_id}",
+                "order": "courier_name.asc,courier_id.asc",
+            },
+            timeout=45,
+            page_size=1000,
+            max_rows=30000,
+        )
+        for row in summary_rows:
+            add_candidate(row.get("courier_id"), row.get("courier_name"), "summary")
+
+    for table, id_column, source in (
+        ("peopleforce_documents", "courier_id", "document"),
+        ("peopleforce_card_statuses", "courier_id", "status"),
+        ("peopleforce_complaints", "courier_id", "complaint"),
+    ):
+        rows = optional_supabase_rows_paged(
+            table,
+            params={
+                "select": f"{id_column},document_month",
+                "document_month": f"eq.{month_key}",
+                "order": f"{id_column}.asc",
+            },
+            timeout=30,
+            page_size=1000,
+            max_rows=20000,
+        )
+        for row in rows:
+            add_candidate(row.get(id_column), "", source)
+
+    if candidates:
+        master_rows = optional_supabase_rows_paged(
+            "courier_master",
+            params={
+                "select": "courier_id,courier_name,warehouse_name",
+                "order": "courier_name.asc,courier_id.asc",
+            },
+            timeout=30,
+            page_size=1000,
+            max_rows=50000,
+        )
+        for row in master_rows:
+            clean_id = str(row.get("courier_id") or "").strip()
+            if clean_id in candidates:
+                candidates[clean_id]["courierName"] = str(row.get("courier_name") or candidates[clean_id].get("courierName") or "").strip()
+                candidates[clean_id]["warehouse"] = str(row.get("warehouse_name") or "").strip()
+
+    return candidates
+
+
+def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, Any]:
+    month_start = month.replace(day=1)
+    candidates = workflow_dashboard_candidate_rows(month_start)
+    rows: list[dict[str, Any]] = []
+    clean_query = normalize_text(query)
+    for courier_id, candidate in candidates.items():
+        courier_name = str(candidate.get("courierName") or f"Futár {courier_id}").strip()
+        if clean_query and clean_query not in normalize_text(f"{courier_id} {courier_name} {candidate.get('warehouse') or ''}"):
+            continue
+        view_user = {"courierId": courier_id, "username": courier_name, "role": "user"}
+        try:
+            workflow = build_workflow(
+                view_user,
+                month_start,
+                "",
+                preview_read_only=True,
+                allow_unpublished=True,
+                can_view_amounts=True,
+            )
+            status = workflow_dashboard_status(workflow)
+            total_huf = money_int((workflow.get("financialBreakdown") or {}).get("totalPayableHuf"))
+            updated_at = str(workflow.get("updatedAt") or "")
+        except Exception as exc:
+            status = {"label": "Nem olvasható", "detail": str(exc), "tone": "attention", "sort": 0}
+            total_huf = 0
+            updated_at = ""
+        rows.append({
+            "courierId": courier_id,
+            "courierName": courier_name,
+            "warehouse": str(candidate.get("warehouse") or ""),
+            "status": status,
+            "totalPayableHuf": total_huf,
+            "sources": sorted(candidate.get("sources") or []),
+            "updatedAt": updated_at,
+        })
+    rows.sort(key=lambda row: (-safe_int((row.get("status") or {}).get("sort")), normalize_person_match_text(row.get("courierName")), str(row.get("courierId") or "")))
+    status_counts: dict[str, int] = {}
+    for row in rows:
+        label = str((row.get("status") or {}).get("label") or "Ismeretlen")
+        status_counts[label] = status_counts.get(label, 0) + 1
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "rows": rows,
+        "summary": {
+            "couriers": len(rows),
+            "totalPayableHuf": sum(money_int(row.get("totalPayableHuf")) for row in rows),
+            "statusCounts": status_counts,
+        },
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def expected_tig_amount(user: dict[str, Any], month: date, process_id: str | None = "") -> int:
     courier_id, _courier_name = courier_identity(user)
     clean_process_id = normalize_process_id(process_id)
@@ -18304,6 +18506,17 @@ def workflow_processes(
     month_value = parse_month(month)
     require_workflow_month_allowed(user, month_value, preview=preview)
     return {"processes": list_workflow_processes(view_user, month_value)}
+
+
+@app.get("/api/admin/settlement-dashboard")
+def admin_settlement_dashboard(
+    month: str = Query(default=""),
+    q: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
+    return build_admin_settlement_dashboard(month_value, q)
 
 
 @app.post("/api/workflow/{action}/accept")

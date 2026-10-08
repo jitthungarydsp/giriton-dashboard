@@ -62,8 +62,12 @@ const state = {
   routeAutoDelayKeys: new Set(),
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
+  settlementDashboard: null,
+  settlementDashboardMonth: localMonth(),
+  settlementDashboardQuery: "",
+  settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v155";
+const APP_VERSION = "v156";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -187,6 +191,7 @@ function currentSectionRefresh() {
   if (state.section === "coordinator-live") return loadCoordinatorLiveMap();
   if (state.section === "departure-helper") return loadDepartureHelper();
   if (state.section === "today-workers") return loadTodayWorkers();
+  if (state.section === "settlement-dashboard") return loadSettlementDashboard();
   if (state.section === "coordinator-schedule") {
     return state.coordinatorScheduleView === "day"
       ? loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true })
@@ -409,12 +414,13 @@ function showApp() {
   $("#nav-coordinator-schedule").classList.toggle("hidden", !canCoordinate);
   $("#nav-registration-admin").classList.toggle("hidden", !state.user.canApproveRegistrations);
   $("#nav-route-details").classList.toggle("hidden", !state.user.canPreviewCouriers);
+  $("#nav-settlement-dashboard").classList.toggle("hidden", !state.user.canViewSettlementDashboard);
   const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
   if (hrOnly) {
-    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin"]
+    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard"]
       .forEach((selector) => $(selector)?.classList.add("hidden"));
     ["#nav-profile", "#nav-vehicle"].forEach((selector) => $(selector)?.classList.remove("hidden"));
   }
@@ -454,6 +460,7 @@ function showSection(section) {
   $("#today-workers-content").classList.toggle("hidden", section !== "today-workers");
   $("#coordinator-schedule-content").classList.toggle("hidden", section !== "coordinator-schedule");
   $("#registration-admin-content").classList.toggle("hidden", section !== "registration-admin");
+  $("#settlement-dashboard-content").classList.toggle("hidden", section !== "settlement-dashboard");
 
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
@@ -475,8 +482,10 @@ function showSection(section) {
   $("#nav-today-workers").classList.toggle("active", section === "today-workers");
   $("#nav-coordinator-schedule").classList.toggle("active", section === "coordinator-schedule");
   $("#nav-registration-admin").classList.toggle("active", section === "registration-admin");
+  $("#nav-settlement-dashboard").classList.toggle("active", section === "settlement-dashboard");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
+  if (section === "settlement-dashboard") loadSettlementDashboard();
   if (section === "statistics" && !state.statistics) loadStatistics();
   if (section === "route-details") {
     loadCourierMasterOptions().then(() => {
@@ -4366,6 +4375,81 @@ async function loadWorkflow(options = {}) {
   }
 }
 
+function renderSettlementDashboardStatus(status = {}) {
+  return `<span class="settlement-dashboard-status ${escapeHtml(status.tone || "muted")}">${escapeHtml(status.label || "Ismeretlen")}</span>`;
+}
+
+function renderSettlementDashboard() {
+  const target = $("#settlement-dashboard-panel");
+  if (!target) return;
+  const payload = state.settlementDashboard;
+  if (!payload) {
+    target.innerHTML = `<div class="empty-card">Elszámolási dashboard betöltése...</div>`;
+    return;
+  }
+  const rows = payload.rows || [];
+  const summary = payload.summary || {};
+  target.innerHTML = `
+    ${renderOpsSummary(summary, [
+      ["Futár", summary.couriers || 0, "elszámolással"],
+      ["Összesen", formatHuf(summary.totalPayableHuf || 0), "kifizetendő"],
+      ["Reklamáció", (summary.statusCounts || {})["Reklamáció"] || 0, "nyitott"],
+      ["Kifizetve", (summary.statusCounts || {})["Kifizetve"] || 0, "lezárt"],
+    ])}
+    <p class="updated-at">${escapeHtml(payload.month || state.settlementDashboardMonth)} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
+    <div class="settlement-dashboard-list">
+      ${rows.length ? rows.map((row) => `
+        <button class="settlement-dashboard-row" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
+          <div>
+            <strong>${escapeHtml(row.courierName || "Futár")}</strong>
+            <small>#${escapeHtml(row.courierId || "-")}${row.warehouse ? ` · ${escapeHtml(row.warehouse)}` : ""}</small>
+          </div>
+          <div>
+            ${renderSettlementDashboardStatus(row.status || {})}
+            <small>${escapeHtml(row.status?.detail || "")}</small>
+          </div>
+          <strong>${escapeHtml(formatHuf(row.totalPayableHuf || 0))}</strong>
+        </button>
+      `).join("") : `<div class="empty-card">Nincs futár a kiválasztott hónapban.</div>`}
+    </div>
+  `;
+}
+
+async function loadSettlementDashboard() {
+  const target = $("#settlement-dashboard-panel");
+  if (target && !state.settlementDashboard) target.innerHTML = `<div class="empty-card">Elszámolási dashboard betöltése...</div>`;
+  const month = $("#settlement-dashboard-month")?.value || state.settlementDashboardMonth || localMonth();
+  const query = $("#settlement-dashboard-search")?.value || state.settlementDashboardQuery || "";
+  state.settlementDashboardMonth = month;
+  state.settlementDashboardQuery = query;
+  try {
+    const params = new URLSearchParams({ month, q: query, _: String(Date.now()) });
+    state.settlementDashboard = await api(`/api/admin/settlement-dashboard?${params}`);
+    renderSettlementDashboard();
+  } catch (error) {
+    if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function openSettlementDashboardCourier(courierId) {
+  const cleanId = String(courierId || "").trim();
+  if (!cleanId) return;
+  state.workflowMonth = state.settlementDashboardMonth || localMonth();
+  state.workflowPreviewCourierId = cleanId;
+  if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = cleanId;
+  if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = cleanId;
+  if (adminPreviewCourierInput) adminPreviewCourierInput.value = cleanId;
+  if ($("#route-details-courier")) $("#route-details-courier").value = cleanId;
+  state.workflowProcess = "";
+  state.workflowMonthsLoadedFor = "";
+  state.workflowMonths = [];
+  state.workflow = null;
+  state.checkedInvoiceFile = null;
+  state.checkedInvoiceMonth = null;
+  setAdminPreviewStatus(`Előnézet aktív: ${cleanId}`);
+  showSection("settlement");
+}
+
 async function acceptDocument(action) {
   showWorkflowMessage("Elfogadás mentése…");
   try {
@@ -4542,7 +4626,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=155");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=156");
   }
   return navigator.serviceWorker.ready;
 }
@@ -7080,6 +7164,7 @@ $("#salary-advance-list")?.addEventListener("click", (event) => {
 });
 
 $("#workflow-month").value = state.workflowMonth;
+if ($("#settlement-dashboard-month")) $("#settlement-dashboard-month").value = state.settlementDashboardMonth;
 const workflowPreviewCourierInput = $("#workflow-preview-courier");
 if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = state.workflowPreviewCourierId;
 const statisticsPreviewCourierInput = $("#statistics-preview-courier");
@@ -7136,6 +7221,7 @@ function updatePreviewCourier(value) {
   state.salaryAdvanceRequests = [];
   state.expenseRequests = [];
   state.atmPayments = [];
+  state.settlementDashboard = null;
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
   setAdminPreviewStatus(state.workflowPreviewCourierId ? `Előnézet aktív: ${state.workflowPreviewCourierId}` : "Saját profil aktív.");
@@ -7155,6 +7241,7 @@ function updatePreviewCourier(value) {
   if (state.section === "device") loadDeviceReports();
   if (state.section === "vehicle") loadVehicleReports();
   if (state.section === "tours") loadCurrentRoute();
+  if (state.section === "settlement-dashboard") loadSettlementDashboard();
 }
 
 workflowPreviewCourierInput?.addEventListener("change", (event) => {
@@ -7522,6 +7609,7 @@ $("#nav-device").addEventListener("click", () => showSection("device"));
 $("#nav-vehicle").addEventListener("click", () => showSection("vehicle"));
 $("#nav-tours").addEventListener("click", () => showSection("tours"));
 $("#nav-route-details").addEventListener("click", () => showSection("route-details"));
+$("#nav-settlement-dashboard")?.addEventListener("click", () => showSection("settlement-dashboard"));
 $("#nav-game").addEventListener("click", () => showSection("game"));
 $("#game-refresh")?.addEventListener("click", loadGame);
 $("#nav-coordinator-live").addEventListener("click", () => showSection("coordinator-live"));
@@ -7555,6 +7643,28 @@ $("#coordinator-schedule-warehouse")?.addEventListener("change", (event) => {
 });
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
 $("#nav-registration-admin").addEventListener("click", () => showSection("registration-admin"));
+$("#settlement-dashboard-refresh")?.addEventListener("click", () => {
+  state.settlementDashboard = null;
+  loadSettlementDashboard();
+});
+$("#settlement-dashboard-month")?.addEventListener("change", (event) => {
+  state.settlementDashboardMonth = event.currentTarget.value || localMonth();
+  state.settlementDashboard = null;
+  loadSettlementDashboard();
+});
+$("#settlement-dashboard-search")?.addEventListener("input", (event) => {
+  state.settlementDashboardQuery = event.currentTarget.value || "";
+  window.clearTimeout(state.settlementDashboardSearchTimer);
+  state.settlementDashboardSearchTimer = window.setTimeout(() => {
+    state.settlementDashboard = null;
+    loadSettlementDashboard();
+  }, 350);
+});
+$("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
+  const row = event.target.closest("[data-courier-id]");
+  if (!row) return;
+  openSettlementDashboardCourier(row.dataset.courierId || "");
+});
 $("#route-details-load")?.addEventListener("click", loadRouteDetails);
 $("#route-stats-load")?.addEventListener("click", loadRouteStatistics);
 $("#route-shift-report-load")?.addEventListener("click", loadRouteShiftReport);

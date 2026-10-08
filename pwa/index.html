@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#17231c" />
     <meta name="description" content="Jitt futár mobilalkalmazás" />
-    <link rel="manifest" href="/manifest.webmanifest?v=155" />
-    <link rel="icon" href="/icon.svg?v=155" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icon.svg?v=155" />
-    <link rel="stylesheet" href="/styles.css?v=155" />
+    <link rel="manifest" href="/manifest.webmanifest?v=156" />
+    <link rel="icon" href="/icon.svg?v=156" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg?v=156" />
+    <link rel="stylesheet" href="/styles.css?v=156" />
     <title>Jitt</title>
   </head>
   <body>
@@ -709,6 +709,22 @@
         <section id="registration-admin-list" class="process-card"></section>
       </div>
 
+      <div id="settlement-dashboard-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">ADMIN</p>
+            <h2>Elszámolási dashboard</h2>
+            <p class="muted">Havi elszámolási folyamatok, státuszok és gyors futárnézet.</p>
+          </div>
+          <div class="workflow-controls">
+            <label class="month-picker">Hónap<input id="settlement-dashboard-month" type="month" /></label>
+            <label class="month-picker">Futár<input id="settlement-dashboard-search" placeholder="Futár név vagy ID" autocomplete="off" /></label>
+            <button id="settlement-dashboard-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
+        </section>
+        <section id="settlement-dashboard-panel" class="ops-panel"></section>
+      </div>
+
       <nav class="bottom-nav" aria-label="Főmenü">
         <button id="nav-home" class="active"><span>⌂</span>Kezdőlap</button>
         <button id="nav-settlement"><span>▣</span>Elszámolásom</button>
@@ -723,6 +739,7 @@
         <button id="nav-vehicle"><span>A</span>Autó</button>
         <button id="nav-tours"><span>🚚</span>Túráim</button>
         <button id="nav-route-details" class="hidden"><span>⇲</span>Túra részletező</button>
+        <button id="nav-settlement-dashboard" class="hidden"><span>ED</span>Elszámolási dashboard</button>
         <button id="nav-game"><span>★</span>Játék</button>
         <button id="nav-coordinator-live" class="hidden"><span>◎</span>Live map</button>
         <button id="nav-departure-helper" class="hidden"><span>⇥</span>Indulás segítő</button>
@@ -733,6 +750,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=155" defer></script>
+    <script src="/app.js?v=156" defer></script>
   </body>
 </html>
