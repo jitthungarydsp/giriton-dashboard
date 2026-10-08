@@ -4244,24 +4244,53 @@ def read_schedule_giriton_rows(start: date, end: date) -> list[dict[str, Any]]:
 
 
 def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]:
-    rows = optional_supabase_rows_paged(
-        "bookings",
-        schema="muszakpro",
+    rows = optional_supabase_rows(
+        "raw_muszakpro_bookings",
         params={
-            "select": (
-                "id,source_row,timestamp_text,work_date,email,shift_text,warehouse,"
-                "booking_code,courier_id,courier_name,serial,status,fetched_at,created_at,updated_at"
-            ),
+            "select": "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,status,fetched_at",
             "work_date": supabase_work_date_filter(start, end),
-            "order": "work_date.asc,shift_text.asc,courier_name.asc,email.asc",
+            "order": "work_date.asc,shift_text.asc,courier_name.asc",
+            "limit": "10000",
         },
         timeout=40,
-        page_size=1000,
-        max_rows=50000,
     )
+    if not rows:
+        rows = optional_supabase_rows(
+            "raw_muszakpro_bookings",
+            params={
+                "select": "work_date,shift_text,warehouse,booking_code,courier_id,email,status,fetched_at",
+                "work_date": supabase_work_date_filter(start, end),
+                "order": "work_date.asc,shift_text.asc",
+                "limit": "10000",
+            },
+            timeout=40,
+        )
+    if not rows:
+        rows = optional_supabase_rows(
+            "foglalasok_raw",
+            params={
+                "select": "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,fetched_at",
+                "work_date": supabase_work_date_filter(start, end),
+                "order": "work_date.asc,shift_text.asc,courier_name.asc",
+                "limit": "10000",
+            },
+            timeout=40,
+        )
+    if not rows:
+        rows = optional_supabase_rows(
+            "foglalasok_raw",
+            params={
+                "select": "work_date,shift_text,warehouse,booking_code,courier_id,email,fetched_at",
+                "work_date": supabase_work_date_filter(start, end),
+                "order": "work_date.asc,shift_text.asc",
+                "limit": "10000",
+            },
+            timeout=40,
+        )
     return [
         row for row in rows
         if str(row.get("work_date") or "")[:10] <= end.isoformat()
+        and str(row.get("status") or "ACTIVE").upper() != "CANCELLED"
     ]
 
 
@@ -4428,7 +4457,7 @@ def read_schedule_slot_rows(start: date, end: date) -> list[dict[str, Any]]:
 
 
 def read_schedule_hub_booking_rows(start: date, end: date) -> list[dict[str, Any]]:
-    booking_rows = optional_supabase_rows_paged(
+    booking_rows = optional_supabase_rows(
         "courier_hub_shift_bookings_raw",
         params={
             "select": (
@@ -4439,12 +4468,11 @@ def read_schedule_hub_booking_rows(start: date, end: date) -> list[dict[str, Any
             "work_date": supabase_work_date_filter(start, end),
             "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,courier_name.asc",
+            "limit": "3000",
         },
         timeout=20,
-        page_size=1000,
-        max_rows=50000,
     )
-    subscriber_rows = optional_supabase_rows_paged(
+    subscriber_rows = optional_supabase_rows(
         "courier_hub_roster_shift_subscribers_raw",
         params={
             "select": (
@@ -4455,10 +4483,9 @@ def read_schedule_hub_booking_rows(start: date, end: date) -> list[dict[str, Any
             "work_date": supabase_work_date_filter(start, end),
             "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,courier_name.asc",
+            "limit": "3000",
         },
         timeout=20,
-        page_size=1000,
-        max_rows=50000,
     )
     rows = booking_rows + [{**row, "source_name": "courier_hub_roster_shift_subscribers"} for row in subscriber_rows]
     return [
@@ -4467,100 +4494,6 @@ def read_schedule_hub_booking_rows(start: date, end: date) -> list[dict[str, Any
         and str(row.get("status") or "ACTIVE").strip().upper() not in {"CANCELLED", "CANCELED", "DELETED"}
         and row.get("active", True) is not False
     ]
-
-
-def schedule_extract_warehouse(*values: Any) -> str:
-    for value in values:
-        normalized = normalize_warehouse(value)
-        if normalized in {"BUD1", "BUD2"}:
-            return normalized
-        match = re.search(r"\b(BUD[12])\b", str(value or "").upper())
-        if match:
-            return match.group(1)
-    return ""
-
-
-def schedule_muszakpro_courier_id(row: dict[str, Any]) -> str:
-    courier_id = safe_int(row.get("courier_id"))
-    if courier_id > 0:
-        return str(courier_id)
-    serial = str(row.get("serial") or "").strip()
-    match = re.search(r"(?:^|_)(\d{3,10})(?:_|$)", serial)
-    if match:
-        return match.group(1)
-    return ""
-
-
-def schedule_muszakpro_start(row: dict[str, Any]) -> str:
-    return extract_shift_time(
-        row.get("shift_text")
-        or row.get("booking_code")
-        or row.get("serial")
-        or ""
-    )
-
-
-def schedule_muszakpro_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
-    return (
-        str(row.get("work_date") or "")[:10],
-        schedule_extract_warehouse(
-            row.get("warehouse"),
-            row.get("shift_text"),
-            row.get("booking_code"),
-            row.get("serial"),
-        ),
-        schedule_muszakpro_start(row),
-        schedule_muszakpro_courier_id(row),
-    )
-
-
-def schedule_hub_booking_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
-    courier_id = safe_int(row.get("courier_id"))
-    return (
-        str(row.get("work_date") or "")[:10],
-        normalize_warehouse(row.get("warehouse_code") or row.get("warehouse_id")),
-        normalize_time(row.get("slot_from")),
-        str(courier_id) if courier_id > 0 else str(row.get("courier_id") or "").strip(),
-    )
-
-
-def schedule_muszakpro_booking_summary(
-    muszakpro_rows: list[dict[str, Any]],
-    hub_booking_rows: list[dict[str, Any]],
-    warehouse_ids: list[int] | None = None,
-) -> dict[str, dict[str, int | None]]:
-    hub_keys = {
-        key for key in (schedule_hub_booking_key(row) for row in hub_booking_rows)
-        if key[0] and key[1] and key[2] and key[3]
-    }
-    latest_by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-    for row in muszakpro_rows:
-        key = schedule_muszakpro_key(row)
-        if not key[0] or not key[1] or not key[2] or not key[3]:
-            continue
-        if not warehouse_allowed(key[1], warehouse_ids):
-            continue
-        latest_by_key[key] = row
-
-    summary_by_day: dict[str, dict[str, int | None]] = {}
-    for key in latest_by_key:
-        day_key = key[0]
-        day_summary = summary_by_day.setdefault(day_key, {
-            "total": 0,
-            "hubBooked": 0,
-            "failed": 0,
-            "coveragePercent": None,
-        })
-        day_summary["total"] = safe_int(day_summary.get("total")) + 1
-        if key in hub_keys:
-            day_summary["hubBooked"] = safe_int(day_summary.get("hubBooked")) + 1
-
-    for day_summary in summary_by_day.values():
-        total = safe_int(day_summary.get("total"))
-        hub_booked = safe_int(day_summary.get("hubBooked"))
-        day_summary["failed"] = max(total - hub_booked, 0)
-        day_summary["coveragePercent"] = schedule_capacity_coverage(hub_booked, total)
-    return summary_by_day
 
 
 def schedule_capacity_coverage(booked_slots: int, required_slots: int) -> int | None:
@@ -4795,16 +4728,15 @@ def attach_schedule_slot_workers(
         identity = str(payload.get("courierId") or "").strip() or normalize_person_match_text(payload.get("courierName"))
         if not identity:
             return
-        is_muszakpro_payload = payload.get("muszakproTone") == "ok"
         for slot in matching_slots:
             assigned_count = safe_int(slot.get("assigned"))
-            if assigned_count <= 0 and not is_muszakpro_payload:
+            if assigned_count <= 0:
                 continue
             existing_identities = {
                 str(worker.get("courierId") or "").strip() or normalize_person_match_text(worker.get("courierName"))
                 for worker in slot.get("workers") or []
             }
-            if identity not in existing_identities and (is_muszakpro_payload or len(existing_identities) < assigned_count):
+            if identity not in existing_identities and len(existing_identities) < assigned_count:
                 slot.setdefault("workers", []).append(payload)
 
     for worker in workers:
@@ -5401,43 +5333,36 @@ def schedule_worker_from_giriton(row: dict[str, Any]) -> dict[str, Any]:
 
 def schedule_worker_from_muszakpro(row: dict[str, Any]) -> dict[str, Any]:
     work_date = str(row.get("work_date") or "")[:10]
-    start = schedule_muszakpro_start(row)
-    shift_text = str(row.get("shift_text") or row.get("booking_code") or row.get("serial") or "")
     courier_name = str(
         row.get("courier_name")
         or row.get("driver_name")
         or row.get("email")
         or row.get("booking_code")
-        or schedule_muszakpro_courier_id(row)
+        or row.get("courier_id")
         or "Futár"
     )
     return {
         "date": work_date,
-        "courierId": schedule_muszakpro_courier_id(row),
+        "courierId": str(row.get("courier_id") or ""),
         "courierName": courier_name,
-        "start": start,
+        "start": shift_start(row.get("shift_text")),
         "end": shift_end(row.get("shift_text")),
-        "warehouse": schedule_extract_warehouse(
-            row.get("warehouse"),
-            row.get("shift_text"),
-            row.get("booking_code"),
-            row.get("serial"),
-        ),
-        "shiftName": shift_text,
-        "bookingCode": str(row.get("booking_code") or row.get("serial") or ""),
+        "warehouse": str(row.get("warehouse") or ""),
+        "shiftName": str(row.get("shift_text") or ""),
+        "bookingCode": str(row.get("booking_code") or ""),
         "giritonStatus": "Hiányzik",
         "giritonTone": "missing",
         "muszakproStatus": "OK",
         "muszakproTone": "ok",
-        "muszakproTime": start,
-        "muszakproBookedAt": str(row.get("timestamp_text") or row.get("fetched_at") or row.get("created_at") or ""),
+        "muszakproTime": shift_start(row.get("shift_text")),
+        "muszakproBookedAt": str(row.get("fetched_at") or ""),
         "giritonBookingTime": "",
         "giritonOfferTime": "",
         "missingSource": "Giriton egyezés még nincs párosítva",
         "hubStatus": "",
         "hubTone": "unknown",
         "vehicle": None,
-        "source": "muszakpro.bookings",
+        "source": "raw_muszakpro_bookings",
     }
 
 
@@ -5579,16 +5504,6 @@ def read_coordinator_schedule(
     capacity_end = detail_day or end
     capacity_by_day = schedule_capacity_summary(
         read_schedule_capacity_rows(capacity_start, capacity_end, allow_raw_fallback=True),
-        warehouse_ids,
-    )
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        muszakpro_summary_future = executor.submit(read_schedule_muszakpro_rows, capacity_start, capacity_end)
-        hub_booking_summary_future = executor.submit(read_schedule_hub_booking_rows, capacity_start, capacity_end)
-        muszakpro_summary_rows = muszakpro_summary_future.result()
-        hub_booking_summary_rows = hub_booking_summary_future.result()
-    muszakpro_booking_by_day = schedule_muszakpro_booking_summary(
-        muszakpro_summary_rows,
-        hub_booking_summary_rows,
         warehouse_ids,
     )
 
@@ -5740,12 +5655,9 @@ def read_coordinator_schedule(
         day_key = cursor.isoformat()
         day_workers = [worker for worker in workers if worker.get("date") == day_key]
         capacity = capacity_by_day.get(day_key, {})
-        muszakpro_day = muszakpro_booking_by_day.get(day_key, {})
         required_slots = safe_int(capacity.get("requiredSlots"))
         booked_slots = safe_int(capacity.get("bookedSlots"))
         coverage_percent = schedule_capacity_coverage(booked_slots, required_slots)
-        muszakpro_total = safe_int(muszakpro_day.get("total"))
-        muszakpro_hub_booked = safe_int(muszakpro_day.get("hubBooked"))
         days.append({
             "date": day_key,
             "label": cursor.strftime("%m.%d."),
@@ -5761,10 +5673,6 @@ def read_coordinator_schedule(
             "capacityBlockCount": safe_int(capacity.get("blockCount")),
             "capacityUpdatedAt": str(capacity.get("updatedAt") or ""),
             "capacityByWarehouse": capacity.get("warehouses") or [],
-            "muszakproTotal": muszakpro_total,
-            "muszakproHubBooked": muszakpro_hub_booked,
-            "muszakproFailed": max(muszakpro_total - muszakpro_hub_booked, 0),
-            "muszakproCoveragePercent": schedule_capacity_coverage(muszakpro_hub_booked, muszakpro_total),
             "slots": slots_by_day.get(day_key, []),
             "recommendations": recommendations_by_day.get(day_key, []),
             "detailsLoaded": bool(detail_day and day_key == detail_day.isoformat()),
@@ -5780,8 +5688,6 @@ def read_coordinator_schedule(
 
     required_slots_total = sum(safe_int(day.get("requiredSlots")) for day in days)
     booked_slots_total = sum(safe_int(day.get("bookedSlots")) for day in days)
-    muszakpro_total = sum(safe_int(day.get("muszakproTotal")) for day in days)
-    muszakpro_hub_booked = sum(safe_int(day.get("muszakproHubBooked")) for day in days)
     return {
         "month": start.strftime("%Y-%m"),
         "from": start.isoformat(),
@@ -5797,10 +5703,6 @@ def read_coordinator_schedule(
             "freeSlots": sum(safe_int(day.get("freeSlots")) for day in days),
             "missingSlots": sum(safe_int(day.get("missingSlots")) for day in days),
             "coveragePercent": schedule_capacity_coverage(booked_slots_total, required_slots_total),
-            "muszakproTotal": muszakpro_total,
-            "muszakproHubBooked": muszakpro_hub_booked,
-            "muszakproFailed": max(muszakpro_total - muszakpro_hub_booked, 0),
-            "muszakproCoveragePercent": schedule_capacity_coverage(muszakpro_hub_booked, muszakpro_total),
             "recommendations": sum(len(day.get("recommendations") or []) for day in days),
             "giritonOk": len([worker for worker in workers if worker.get("giritonTone") == "ok"]),
             "muszakproOk": len([worker for worker in workers if worker.get("muszakproTone") == "ok"]),

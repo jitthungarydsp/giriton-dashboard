@@ -63,7 +63,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v156";
+const APP_VERSION = "v155";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -6463,7 +6463,6 @@ function scheduleSlotPreparedText(slot = {}) {
 
 function renderScheduleSlotWorker(worker = {}) {
   const phone = String(worker.phoneNumber || "").trim();
-  const isOk = worker.muszakproTone === "ok" && worker.hubTone === "ok";
   return `
     <div class="schedule-slot-worker">
       <div>
@@ -6471,7 +6470,12 @@ function renderScheduleSlotWorker(worker = {}) {
         <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.shiftName || worker.bookingCode || "Műszak")}</small>
       </div>
       <div class="schedule-chip-row">
-        ${scheduleStatusChip(isOk ? "OK" : "Nem OK", isOk ? "ok" : "missing")}
+        ${scheduleStatusChip(`MűszakPro: ${String(worker.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, worker.muszakproTone)}
+        ${scheduleStatusChip(`Hub: ${String(worker.hubStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, worker.hubTone)}
+      </div>
+      <div class="schedule-slot-worker-meta">
+        <span>MűszakPro: ${escapeHtml(shortDateTime(worker.muszakproBookedAt || "") || "-")}</span>
+        <span>Hub: ${escapeHtml(shortDateTime(worker.hubUploadedAt || "") || "-")}</span>
         ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : `<span>Telefon: -</span>`}
       </div>
     </div>
@@ -6583,9 +6587,8 @@ function scheduleSlotDomKey(slot = {}) {
 function renderScheduleSlotCard(slot = {}) {
   const tone = scheduleSlotTone(slot);
   const recommendations = slot.recommendations || [];
-  const hasNotOkWorker = (slot.workers || []).some((worker) => !(worker.muszakproTone === "ok" && worker.hubTone === "ok"));
   return `
-    <details class="schedule-slot-card ${tone} ${hasNotOkWorker ? "not-ok" : ""}" data-schedule-slot="${escapeHtml(scheduleSlotDomKey(slot))}">
+    <details class="schedule-slot-card ${tone}" data-schedule-slot="${escapeHtml(scheduleSlotDomKey(slot))}">
       <summary>
         <div>
           <strong>${escapeHtml(slot.start || "-")}${slot.end ? `-${escapeHtml(slot.end)}` : ""}</strong>
@@ -6676,11 +6679,6 @@ function renderCoordinatorScheduleDayDetail(payload, day) {
     ? `${formatCount(day.bookedSlots || 0)}/${formatCount(day.requiredSlots || 0)}`
     : "-";
   const dayMissingValue = day?.capacityKnown ? formatCount(day.missingSlots || 0) : "-";
-  const dayMuszakproValue = day ? `${formatCount(day.muszakproHubBooked || 0)}/${formatCount(day.muszakproTotal || 0)}` : "-";
-  const dayMuszakproCoverage = Number.isFinite(Number(day?.muszakproCoveragePercent))
-    ? `${formatCount(day.muszakproCoveragePercent)}%`
-    : "-";
-  const dayMuszakproFailed = day ? formatCount(day.muszakproFailed || 0) : "-";
   const selectedSlotText = day?.capacityKnown
     ? `${scheduleSlotText(day)} slot · ${scheduleCoverageText(day)}`
     : "Nincs slot adat";
@@ -6700,9 +6698,6 @@ function renderCoordinatorScheduleDayDetail(payload, day) {
         ["Töltöttség", dayCoverage, "napi slot alapján"],
         ["Slot", daySlotValue, "foglalt / nyitott"],
         ["Hiány", dayMissingValue, "nyitott slot"],
-        ["MűszakPro", dayMuszakproValue, "HUB OK / MűszakPro"],
-        ["MűszakPro arány", dayMuszakproCoverage, "HUB-ban lefoglalva"],
-        ["Sikertelen", dayMuszakproFailed, "MűszakPro műszak"],
       ])}
       ${day?.detailsLoaded ? renderScheduleSlots(day) : `<div class="empty-card">Napi műszakok betöltése...</div>`}
     </section>
@@ -6731,11 +6726,6 @@ function renderCoordinatorSchedule() {
     ? `${formatCount(day.bookedSlots || 0)}/${formatCount(day.requiredSlots || 0)}`
     : "-";
   const dayMissingValue = day?.capacityKnown ? formatCount(day.missingSlots || 0) : "-";
-  const dayMuszakproValue = day ? `${formatCount(day.muszakproHubBooked || 0)}/${formatCount(day.muszakproTotal || 0)}` : "-";
-  const dayMuszakproCoverage = Number.isFinite(Number(day?.muszakproCoveragePercent))
-    ? `${formatCount(day.muszakproCoveragePercent)}%`
-    : "-";
-  const dayMuszakproFailed = day ? formatCount(day.muszakproFailed || 0) : "-";
   if (state.coordinatorScheduleView === "day") {
     target.innerHTML = renderCoordinatorScheduleDayDetail(payload, day);
     target.querySelectorAll(".schedule-slot-card[data-schedule-slot]").forEach((item) => {
@@ -6762,9 +6752,6 @@ function renderCoordinatorSchedule() {
       ["Töltöttség", dayCoverage, "napi slot alapján"],
       ["Slot", daySlotValue, "foglalt / nyitott"],
       ["Hiány", dayMissingValue, "nyitott slot"],
-      ["MűszakPro", dayMuszakproValue, "HUB OK / MűszakPro"],
-      ["MűszakPro arány", dayMuszakproCoverage, "HUB-ban lefoglalva"],
-      ["Sikertelen", dayMuszakproFailed, "MűszakPro műszak"],
       ["Nap", day ? (day.label || day.date) : "-", "kiválasztva"],
     ])}
     <p class="updated-at">${escapeHtml(payload.month || "")} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
