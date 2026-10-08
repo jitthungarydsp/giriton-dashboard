@@ -1,5 +1,5 @@
-const CACHE = "jitt-pwa-v156";
-const APP_SHELL = ["/", "/styles.css?v=156", "/app.js?v=156", "/sw.js?v=156", "/manifest.webmanifest?v=156", "/icon.svg?v=156"];
+const CACHE = "jitt-pwa-v155";
+const APP_SHELL = ["/", "/styles.css?v=155", "/app.js?v=155", "/sw.js?v=155", "/manifest.webmanifest?v=155", "/icon.svg?v=155"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
@@ -41,8 +41,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title || "Kifli Futár", {
       body: payload.body || "Új értesítés érkezett.",
-      icon: payload.icon || "/icon.svg?v=156",
-      badge: payload.badge || "/icon.svg?v=156",
+      icon: payload.icon || "/icon.svg?v=155",
+      badge: payload.badge || "/icon.svg?v=155",
       tag: payload.tag || "jitt-notification",
       data: { url: payload.url || "/", ...(payload.data || {}) }
     })

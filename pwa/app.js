@@ -4542,7 +4542,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=156");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=155");
   }
   return navigator.serviceWorker.ready;
 }
