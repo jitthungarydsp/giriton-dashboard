@@ -4480,26 +4480,14 @@ def schedule_extract_warehouse(*values: Any) -> str:
     return ""
 
 
-def schedule_normalize_courier_id(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    if re.fullmatch(r"\d+(?:\.0+)?", text):
-        return str(safe_int(text))
-    match = re.search(r"(?<!\d)(\d{3,10})(?:\.0+)?(?!\d)", text)
-    if match:
-        return str(safe_int(match.group(1)))
-    return text
-
-
 def schedule_muszakpro_courier_id(row: dict[str, Any]) -> str:
-    courier_id = schedule_normalize_courier_id(row.get("courier_id"))
-    if courier_id:
-        return courier_id
+    courier_id = safe_int(row.get("courier_id"))
+    if courier_id > 0:
+        return str(courier_id)
     serial = str(row.get("serial") or "").strip()
     match = re.search(r"(?:^|_)(\d{3,10})(?:_|$)", serial)
     if match:
-        return schedule_normalize_courier_id(match.group(1))
+        return match.group(1)
     return ""
 
 
@@ -4527,11 +4515,12 @@ def schedule_muszakpro_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
 
 
 def schedule_hub_booking_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
+    courier_id = safe_int(row.get("courier_id"))
     return (
         str(row.get("work_date") or "")[:10],
         normalize_warehouse(row.get("warehouse_code") or row.get("warehouse_id")),
         normalize_time(row.get("slot_from")),
-        schedule_normalize_courier_id(row.get("courier_id")),
+        str(courier_id) if courier_id > 0 else str(row.get("courier_id") or "").strip(),
     )
 
 
@@ -4803,7 +4792,7 @@ def attach_schedule_slot_workers(
                 slots_by_template_key.setdefault((key[0], key[1], template_key), []).append(slot)
 
     def add_payload_to_slots(matching_slots: list[dict[str, Any]], payload: dict[str, Any]) -> None:
-        identity = schedule_normalize_courier_id(payload.get("courierId")) or normalize_person_match_text(payload.get("courierName"))
+        identity = str(payload.get("courierId") or "").strip() or normalize_person_match_text(payload.get("courierName"))
         if not identity:
             return
         is_muszakpro_payload = payload.get("muszakproTone") == "ok"
@@ -4812,7 +4801,7 @@ def attach_schedule_slot_workers(
             if assigned_count <= 0 and not is_muszakpro_payload:
                 continue
             existing_identities = {
-                schedule_normalize_courier_id(worker.get("courierId")) or normalize_person_match_text(worker.get("courierName"))
+                str(worker.get("courierId") or "").strip() or normalize_person_match_text(worker.get("courierName"))
                 for worker in slot.get("workers") or []
             }
             if identity not in existing_identities and (is_muszakpro_payload or len(existing_identities) < assigned_count):
@@ -5216,7 +5205,7 @@ def schedule_status_tone(value: Any) -> str:
 
 
 def schedule_row_key(work_date: str, courier_id: Any, courier_name: Any, start_time: Any) -> tuple[str, str, str]:
-    identity = schedule_normalize_courier_id(courier_id) or normalize_person_match_text(courier_name)
+    identity = str(courier_id or "").strip() or normalize_person_match_text(courier_name)
     return (str(work_date or "")[:10], identity, normalize_time(start_time))
 
 
@@ -5484,7 +5473,7 @@ def schedule_worker_from_hub_booking(row: dict[str, Any]) -> dict[str, Any]:
     source_name = str(row.get("source_name") or "courier_hub_shift_bookings_raw").strip()
     return {
         "date": work_date,
-        "courierId": schedule_normalize_courier_id(row.get("courier_id")),
+        "courierId": str(row.get("courier_id") or ""),
         "courierName": str(row.get("courier_name") or "Futár"),
         "start": normalize_time(row.get("slot_from")),
         "end": normalize_time(row.get("slot_to")),
