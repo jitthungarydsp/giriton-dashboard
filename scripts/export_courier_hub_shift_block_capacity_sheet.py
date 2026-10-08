@@ -157,6 +157,26 @@ def parse_warehouse(value: Any) -> str:
     return match.group(1) if match else ""
 
 
+def normalize_courier_id(value: Any) -> str:
+    text = clean_text(value)
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text if text.isdigit() else ""
+
+
+def courier_id_from_serial(value: Any) -> str:
+    for part in clean_text(value).split("_"):
+        courier_id = normalize_courier_id(part)
+        if courier_id:
+            return courier_id
+    return ""
+
+
+def muszakpro_booking_value(row: dict[str, Any]) -> str:
+    courier_id = normalize_courier_id(row.get("courier_id")) or courier_id_from_serial(row.get("serial"))
+    return f"D{courier_id}" if courier_id else ""
+
+
 def logical_booking_key(row: dict[str, Any]) -> str:
     serial = clean_text(row.get("serial"))
     if serial:
@@ -237,7 +257,7 @@ def build_muszakpro_booking_lookup(start_date: date, end_date: date) -> dict[tup
             or parse_shift_start(row.get("serial"))
         )
         work_date = clean_text(row.get("work_date"))
-        booking_value = clean_text(row.get("courier_id")) or clean_text(row.get("serial")) or clean_text(row.get("email"))
+        booking_value = muszakpro_booking_value(row)
         if not all([work_date, warehouse_code, shift_start, booking_value]):
             continue
         values_by_slot.setdefault((work_date, warehouse_code, shift_start), set()).add(booking_value)
