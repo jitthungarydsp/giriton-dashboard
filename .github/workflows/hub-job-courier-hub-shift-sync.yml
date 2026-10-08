@@ -238,6 +238,22 @@ jobs:
           "${RAW_CMD[@]}"
           "${BOOKINGS_CMD[@]}"
 
+      - name: HUB_JOB export MuszakPro Hub bookable sheet
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, MuszakPro Hub bookable export skipped."
+            exit 0
+          fi
+          CMD=(
+            python scripts/export_muszakpro_hub_bookable_sheet.py
+            --start-date "${{ steps.window.outputs.start_date }}"
+            --lookahead-days "${{ steps.window.outputs.lookahead_days }}"
+          )
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
       - name: HUB_JOB refresh ops shift comparison
         continue-on-error: true
         shell: bash
