@@ -321,6 +321,7 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-slot-card.open { border-color: #e0a39e; background: #fff0ef; }
 .schedule-slot-card.closed { border-color: #d7ded4; background: #eef1eb; color: #6a756b; opacity: .78; }
 .schedule-slot-card.missing { border-color: #29362d; background: #102018; color: #fff; }
+.schedule-slot-card.not-ok { border-color: #d6382f; box-shadow: inset 0 0 0 1px #d6382f, 0 7px 20px #3141340a; }
 .schedule-slot-card strong { display: block; font-size: 16px; line-height: 1.2; overflow-wrap: anywhere; }
 .schedule-slot-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
 .schedule-slot-card.closed small { color: #7c887f; }
@@ -349,10 +350,7 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-slot-worker-list { display: grid; gap: 8px; }
 .schedule-slot-worker { display: grid; gap: 7px; padding: 10px; border-radius: 12px; background: #ffffffc7; }
 .schedule-slot-card.missing .schedule-slot-worker { background: #ffffff12; }
-.schedule-slot-worker-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 11px; font-weight: 850; }
-.schedule-slot-card.missing .schedule-slot-worker-meta { color: #cbd8cc; }
-.schedule-slot-worker-meta a { color: var(--green-dark); font-weight: 950; text-decoration: none; }
-.schedule-slot-card.missing .schedule-slot-worker-meta a { color: #dff6b5; }
+.schedule-chip-row a { display: inline-flex; align-items: center; min-height: 30px; padding: 6px 10px; border-radius: 999px; background: #eef1eb; color: var(--green-dark); font-size: 12px; font-weight: 950; text-decoration: none; }
 .schedule-slot-rec-section { display: grid; gap: 8px; }
 .device-history-head.compact { margin-top: 0; }
 .schedule-slot-rec-list { display: grid; gap: 8px; }
