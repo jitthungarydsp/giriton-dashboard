@@ -324,6 +324,12 @@ jobs:
 
           sheet_pause
 
+          run_with_retry python scripts/export_muszakpro_hub_shift_time_mismatch_sheet.py \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --end-date "${{ steps.window.outputs.end_date }}"
+
+          sheet_pause
+
           run_with_retry python scripts/export_hub_autobooking_failures_sheet.py \
             --input results/hub-job-autobooking/failures.json \
             --start-date "${{ steps.window.outputs.start_date }}" \

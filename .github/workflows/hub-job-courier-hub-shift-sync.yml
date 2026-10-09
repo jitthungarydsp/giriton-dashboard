@@ -254,6 +254,22 @@ jobs:
           if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
           "${CMD[@]}"
 
+      - name: HUB_JOB export MuszakPro Hub shift time mismatch sheet
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, MuszakPro Hub shift time mismatch export skipped."
+            exit 0
+          fi
+          CMD=(
+            python scripts/export_muszakpro_hub_shift_time_mismatch_sheet.py
+            --start-date "${{ steps.window.outputs.start_date }}"
+            --end-date "${{ steps.window.outputs.end_date }}"
+          )
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
       - name: HUB_JOB refresh ops shift comparison
         continue-on-error: true
         shell: bash
