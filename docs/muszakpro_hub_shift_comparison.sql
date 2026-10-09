@@ -276,6 +276,197 @@ select
     end as comparison_reason
 from hub_booking_match;
 
+create or replace view public.vw_muszakpro_hub_shift_time_mismatch as
+with muszakpro_rows as (
+    select
+        b.id as muszakpro_booking_id,
+        b.source_row,
+        b.work_date,
+        b.email,
+        lower(regexp_replace(coalesce(b.email, ''), '\s+', '', 'g')) as email_normalized,
+        b.shift_text as muszakpro_shift_text,
+        coalesce(
+            substring(upper(coalesce(b.warehouse, '')) from '(BUD[12])'),
+            substring(upper(coalesce(b.shift_text, '')) from '(BUD[12])'),
+            substring(upper(coalesce(b.booking_code, '')) from '(BUD[12])'),
+            substring(upper(coalesce(b.serial, '')) from '(BUD[12])')
+        ) as warehouse_code,
+        b.booking_code,
+        b.legacy_key,
+        b.courier_id as muszakpro_courier_id,
+        b.courier_name as muszakpro_courier_name,
+        b.serial,
+        b.status as muszakpro_status,
+        b.event_type,
+        b.cancelled_at,
+        b.fetched_at,
+        b.updated_at,
+        coalesce(
+            substring(coalesce(b.shift_text, '') from '(\d{1,2}:\d{2})'),
+            substring(coalesce(b.booking_code, '') from '(\d{1,2}:\d{2})'),
+            substring(coalesce(b.serial, '') from '(\d{1,2}:\d{2})')
+        )::time as muszakpro_shift_start_time,
+        coalesce(
+            nullif(b.serial, ''),
+            nullif(regexp_replace(coalesce(b.legacy_key, ''), '_[0-9]+$', ''), ''),
+            concat_ws('|', b.work_date::text, lower(coalesce(b.email, '')), coalesce(b.shift_text, ''), coalesce(b.booking_code, ''))
+        ) as logical_booking_key,
+        (
+            upper(coalesce(b.status, '')) in ('TÖRÖLVE', 'TOROLVE', 'CANCELLED', 'CANCELED', 'DELETED', 'DELETE')
+            or upper(coalesce(b.event_type, '')) in ('DELETE', 'CANCEL', 'CANCELLED', 'CANCELED', 'DELETED')
+            or b.cancelled_at is not null
+        ) as is_deleted,
+        coalesce(b.cancelled_at, b.updated_at, b.fetched_at, b.created_at) as event_at
+    from muszakpro.bookings b
+    where b.work_date is not null
+),
+muszakpro_latest as (
+    select *
+    from (
+        select
+            m.*,
+            row_number() over (
+                partition by m.logical_booking_key
+                order by m.event_at desc nulls last, m.source_row desc nulls last, m.muszakpro_booking_id desc
+            ) as latest_rank
+        from muszakpro_rows m
+    ) ranked
+    where latest_rank = 1
+      and not is_deleted
+      and warehouse_code is not null
+      and muszakpro_shift_start_time is not null
+),
+identity_match as (
+    select
+        m.*,
+        i.courier_id as hub_courier_id,
+        i.jitt_internal_id,
+        i.name_without_identifier,
+        i.name_json,
+        i.email as hub_identity_email,
+        i.phone_number as hub_phone_number,
+        i.giriton_person_id
+    from muszakpro_latest m
+    left join lateral (
+        select i.*
+        from public.courier_hub_courier_identity_raw i
+        where
+            (
+                m.muszakpro_courier_id is not null
+                and i.courier_id = m.muszakpro_courier_id
+            )
+            or (
+                m.email_normalized <> ''
+                and lower(regexp_replace(coalesce(i.email, ''), '\s+', '', 'g')) = m.email_normalized
+            )
+        order by
+            case
+                when m.muszakpro_courier_id is not null and i.courier_id = m.muszakpro_courier_id then 0
+                else 1
+            end,
+            i.last_seen_at desc nulls last
+        limit 1
+    ) i on true
+),
+hub_booking_match as (
+    select
+        i.*,
+        chb.id as hub_booking_id,
+        chb.courier_id as hub_booking_courier_id,
+        chb.jitt_internal_id as hub_booking_jitt_internal_id,
+        chb.courier_name as hub_booking_courier_name,
+        chb.email as hub_booking_email,
+        chb.phone_number as hub_booking_phone_number,
+        chb.warehouse_code as hub_warehouse_code,
+        chb.block_key as hub_block_key,
+        chb.shift_template_id as hub_shift_template_id,
+        chb.shift_text as hub_shift_text,
+        chb.slot_from as hub_slot_from,
+        chb.slot_to as hub_slot_to,
+        chb.status as hub_booking_status,
+        chb.movement_type as hub_booking_movement_type,
+        chb.active as hub_booking_active,
+        chb.first_seen_at as hub_booking_first_seen_at,
+        chb.last_seen_at as hub_booking_last_seen_at,
+        chb.deleted_at as hub_booking_deleted_at,
+        abs(extract(epoch from (chb.slot_from - i.muszakpro_shift_start_time)) / 60)::integer as absolute_diff_minutes,
+        (extract(epoch from (chb.slot_from - i.muszakpro_shift_start_time)) / 60)::integer as signed_diff_minutes
+    from identity_match i
+    left join lateral (
+        select chb.*
+        from public.courier_hub_shift_bookings_raw chb
+        where chb.work_date = i.work_date
+          and upper(chb.warehouse_code) = i.warehouse_code
+          and chb.active is true
+          and (
+              chb.courier_id = i.hub_courier_id
+              or (
+                  i.jitt_internal_id is not null
+                  and chb.jitt_internal_id = i.jitt_internal_id
+              )
+              or (
+                  i.email_normalized <> ''
+                  and lower(regexp_replace(coalesce(chb.email, ''), '\s+', '', 'g')) = i.email_normalized
+              )
+          )
+        order by
+            abs(extract(epoch from (chb.slot_from - i.muszakpro_shift_start_time))),
+            chb.last_seen_at desc nulls last
+        limit 1
+    ) chb on true
+)
+select
+    now() as comparison_generated_at,
+    work_date,
+    warehouse_code,
+    coalesce(hub_courier_id, muszakpro_courier_id) as courier_id,
+    coalesce(name_json, name_without_identifier, muszakpro_courier_name, hub_booking_courier_name) as courier_name,
+    email as muszakpro_email,
+    hub_identity_email,
+    jitt_internal_id,
+    giriton_person_id,
+    muszakpro_shift_text,
+    muszakpro_shift_start_time,
+    booking_code as muszakpro_booking_code,
+    serial as muszakpro_serial,
+    muszakpro_status,
+    source_row as muszakpro_source_row,
+    hub_booking_id,
+    hub_booking_courier_id,
+    hub_booking_jitt_internal_id,
+    hub_booking_courier_name,
+    hub_booking_email,
+    hub_warehouse_code,
+    hub_block_key,
+    hub_shift_template_id,
+    hub_shift_text,
+    hub_slot_from,
+    hub_slot_to,
+    hub_booking_status,
+    hub_booking_movement_type,
+    hub_booking_active,
+    absolute_diff_minutes,
+    signed_diff_minutes,
+    case
+        when hub_courier_id is null and jitt_internal_id is null
+            then 'NINCS_HUB_FUTAR_AZONOSITAS'
+        when hub_booking_id is null
+            then 'NINCS_AKTIV_HUB_FOGLALAS'
+        when hub_slot_from = muszakpro_shift_start_time
+            then 'PONTOS'
+        else 'ELTERO_IDOPONT'
+    end as comparison_status,
+    case
+        when hub_courier_id is null and jitt_internal_id is null
+            then 'A MűszakPro courierId/e-mail alapján nincs Hub futár/JITT azonosítás.'
+        when hub_booking_id is null
+            then 'Ehhez a futárhoz ezen a napon/raktáron nincs aktív Hub foglalás.'
+        when hub_slot_from = muszakpro_shift_start_time
+            then 'A MűszakPro és Hub kezdési időpont egyezik.'
+        else 'A futár Hubon rögzített foglalása más időpontban van, mint a MűszakPro foglalás.'
+    end as comparison_reason
+from hub_booking_match;
+
 create index if not exists idx_muszakpro_bookings_work_date
     on muszakpro.bookings (work_date);
 
