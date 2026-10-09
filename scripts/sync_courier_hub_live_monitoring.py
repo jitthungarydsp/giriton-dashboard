@@ -86,6 +86,13 @@ def build_list_url(base_url: str, warehouse_id: int, dsp_id: int) -> str:
     )
 
 
+def build_departure_dashboard_url(base_url: str, warehouse_id: int, dsp_id: int) -> str:
+    return (
+        f"{base_url.rstrip('/')}/external/warehouses/{int(warehouse_id)}"
+        f"/dsps/{int(dsp_id)}/departure-dashboard"
+    )
+
+
 def build_courier_url(base_url: str, warehouse_id: int, courier_id: int, dsp_id: int) -> str:
     return (
         f"{base_url.rstrip('/')}/external/warehouses/{int(warehouse_id)}"
@@ -271,6 +278,48 @@ def build_list_row(
     }
 
 
+def departure_dashboard_route_rows(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict) and isinstance(value.get("routes"), list):
+        return [item for item in value["routes"] if isinstance(item, dict)]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def departure_dashboard_waiting_rows(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict) and isinstance(value.get("couriersWithoutRoute"), list):
+        return [item for item in value["couriersWithoutRoute"] if isinstance(item, dict)]
+    return []
+
+
+def build_departure_dashboard_row(
+    *,
+    snapshot_key: str,
+    warehouse_id: int,
+    dsp_id: int,
+    request_url: str,
+    status_code: int,
+    response_json: Any,
+    fetched_at: datetime,
+) -> dict[str, Any]:
+    routes = departure_dashboard_route_rows(response_json)
+    waiting = departure_dashboard_waiting_rows(response_json)
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "snapshot_key": f"{snapshot_key}-departure",
+        "warehouse_id": warehouse_id,
+        "warehouse_code": WAREHOUSE_CODES.get(warehouse_id, f"WH{warehouse_id}"),
+        "dsp_id": dsp_id,
+        "request_url": request_url,
+        "status_code": status_code,
+        "response_json": response_json,
+        "route_count": len(routes),
+        "couriers_without_route_count": len(waiting),
+        "fetched_at": fetched_at.isoformat(),
+        "updated_at": now,
+    }
+
+
 def build_detail_row(
     *,
     snapshot_key: str,
@@ -371,6 +420,7 @@ def main() -> int:
 
     fetched_at = datetime.now(timezone.utc)
     list_rows: list[dict[str, Any]] = []
+    departure_rows: list[dict[str, Any]] = []
     compact_courier_rows: list[dict[str, Any]] = []
     detail_rows: list[dict[str, Any]] = []
     failures = 0
@@ -392,6 +442,26 @@ def main() -> int:
             fetched_at=fetched_at,
         )
         list_rows.append(list_row)
+
+        departure_url = build_departure_dashboard_url(args.base_url, warehouse_id, args.dsp_id)
+        departure_status_code, departure_payload = request_courier_hub_json(departure_url)
+        if departure_status_code >= 400:
+            failures += 1
+        departure_row = build_departure_dashboard_row(
+            snapshot_key=snapshot_key,
+            warehouse_id=warehouse_id,
+            dsp_id=args.dsp_id,
+            request_url=departure_url,
+            status_code=departure_status_code,
+            response_json=departure_payload,
+            fetched_at=fetched_at,
+        )
+        departure_rows.append(departure_row)
+        print(
+            f"HUB_DEPARTURE_DASHBOARD warehouse={warehouse_id} status={departure_status_code} "
+            f"routes={departure_row['route_count']} waiting={departure_row['couriers_without_route_count']}",
+            flush=True,
+        )
 
         compact_courier_rows.extend(
             build_compact_courier_snapshot_row(
@@ -449,7 +519,8 @@ def main() -> int:
 
     if args.dry_run:
         print(
-            f"DRY_RUN list_rows={len(list_rows)} compact_courier_rows={len(compact_courier_rows)} "
+            f"DRY_RUN list_rows={len(list_rows)} departure_rows={len(departure_rows)} "
+            f"compact_courier_rows={len(compact_courier_rows)} "
             f"detail_rows={len(detail_rows)} failures={failures}",
             flush=True,
         )
@@ -459,6 +530,16 @@ def main() -> int:
         "courier_hub_live_monitoring_raw",
         list_rows,
         "snapshot_key",
+    )
+    written_departure = supabase_post_optional(
+        "courier_hub_departure_dashboard_raw",
+        departure_rows,
+        "snapshot_key",
+    )
+    written_latest_departure = supabase_post_optional(
+        "courier_hub_departure_dashboard_latest",
+        departure_rows,
+        "warehouse_id,dsp_id",
     )
     written_compact_couriers = supabase_post_optional(
         "courier_hub_live_monitoring_courier_snapshots",
@@ -484,6 +565,8 @@ def main() -> int:
     print(
         "SUMMARY "
         f"live_snapshots={written_lists} "
+        f"departure_snapshots={written_departure} "
+        f"departure_latest={written_latest_departure} "
         f"courier_snapshots={written_compact_couriers} "
         f"courier_snapshots_latest={written_latest_compact_couriers} "
         f"courier_details_raw={written_raw_details} "

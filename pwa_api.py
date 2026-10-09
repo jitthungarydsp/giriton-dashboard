@@ -4258,12 +4258,58 @@ def departure_helper_waiting_couriers_from_payload(payload: Any) -> list[dict[st
     return []
 
 
+def read_departure_helper_db_payloads(warehouse_ids: list[int] | None = None) -> tuple[list[dict[str, Any]], list[str], str]:
+    selected_ids = warehouse_ids or [1, 2]
+    rows = optional_supabase_rows(
+        "courier_hub_departure_dashboard_latest",
+        params={
+            "select": "warehouse_id,warehouse_code,dsp_id,status_code,response_json,fetched_at,updated_at",
+            "warehouse_id": f"in.({','.join(str(int(item)) for item in selected_ids)})",
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+            "order": "warehouse_id.asc",
+            "limit": "10",
+        },
+        timeout=20,
+    )
+    payloads: list[dict[str, Any]] = []
+    errors: list[str] = []
+    updated_at = ""
+    for row in rows:
+        warehouse_id = warehouse_id_for_hub(row.get("warehouse_id") or row.get("warehouse_code")) or 0
+        if not warehouse_id:
+            continue
+        status_code = safe_int(row.get("status_code"))
+        if status_code >= 400:
+            errors.append(f"BUD{warehouse_id}: DB-ben mentett Hub hiba HTTP {status_code}.")
+            continue
+        payload = row.get("response_json")
+        if isinstance(payload, dict):
+            payloads.append({"warehouse_id": warehouse_id, "payload": payload})
+        updated_at = max(updated_at, str(row.get("updated_at") or row.get("fetched_at") or ""))
+    return payloads, errors, updated_at
+
+
 def read_departure_helper(warehouse_ids: list[int] | None = None) -> dict[str, Any]:
     routes: list[dict[str, Any]] = []
     errors: list[str] = []
-    for warehouse_id in (warehouse_ids or [1, 2]):
+    updated_at = ""
+    db_payloads, db_errors, db_updated_at = read_departure_helper_db_payloads(warehouse_ids)
+    errors.extend(db_errors)
+    source_payloads = db_payloads
+    if db_payloads:
+        updated_at = db_updated_at
+    else:
+        for warehouse_id in (warehouse_ids or [1, 2]):
+            try:
+                payload = read_courier_hub_departure_dashboard(warehouse_id)
+                source_payloads.append({"warehouse_id": warehouse_id, "payload": payload})
+            except Exception as exc:
+                errors.append(str(exc))
+
+    for source in source_payloads:
+        warehouse_id = safe_int(source.get("warehouse_id"))
+        payload = source.get("payload")
         try:
-            payload = read_courier_hub_departure_dashboard(warehouse_id)
             raw_routes = departure_helper_routes_from_payload(payload)
             routes.extend(
                 departure_helper_route_payload(row, warehouse_id)
@@ -4289,7 +4335,7 @@ def read_departure_helper(warehouse_ids: list[int] | None = None) -> dict[str, A
     )
     return {
         "date": datetime.now(LOCAL_TIMEZONE).date().isoformat(),
-        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "updatedAt": updated_at or datetime.now(timezone.utc).isoformat(),
         "summary": {
             "total": len(routes),
             "onRamp": len([item for item in routes if item.get("statusGroup") == "ramp"]),
