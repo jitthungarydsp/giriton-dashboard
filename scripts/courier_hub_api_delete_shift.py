@@ -34,7 +34,7 @@ from scripts.sync_courier_hub_master import DEFAULT_BASE_URL, clean_text  # noqa
 
 def build_delete_url(base_url: str, warehouse_id: int, dsp_id: int, shift_block_id: int) -> str:
     _unused_shift_block_id = shift_block_id
-    return build_assign_url(base_url, warehouse_id, dsp_id)
+    return build_assign_url(base_url, warehouse_id, dsp_id).replace("/shift-blocks/assign", "/shift-blocks/unassign")
 
 
 def response_payload(response: requests.Response) -> Any:
@@ -81,7 +81,7 @@ def main() -> int:
         "--shift-block-id",
         type=int,
         default=int(os.getenv("COURIER_HUB_DELETE_SHIFT_BLOCK_ID") or "0"),
-        help="Elavult kompatibilitasi opcio. A torles is a shift-blocks/assign endpointet hasznalja DELETE metoddal.",
+        help="Elavult kompatibilitasi opcio. A torles a shift-blocks/unassign endpointet hasznalja.",
     )
     parser.add_argument("--base-url", default=os.getenv("COURIER_HUB_BASE_URL") or DEFAULT_BASE_URL)
     mode = parser.add_mutually_exclusive_group()
@@ -109,7 +109,7 @@ def main() -> int:
         f"mode={'LIVE' if args.live else 'DRY_RUN'} "
         f"date={args.date} warehouse={clean_text(args.warehouse).upper()} "
         f"shiftTemplateId={args.shift_template_id} slotFrom={slot_from} "
-        f"courierId={args.courier_id} endpoint=shift-blocks/assign",
+        f"courierId={args.courier_id} endpoint=shift-blocks/unassign",
         flush=True,
     )
 
@@ -128,7 +128,7 @@ def main() -> int:
         return 0 if check.get("found") else 3
 
     url = build_delete_url(args.base_url, warehouse_id, args.dsp_id, args.shift_block_id)
-    response = hub_request("DELETE", url, json=request_body)
+    response = hub_request("POST", url, json=request_body)
     payload = response_payload(response)
     if response.ok:
         log_result(args, "COURIER_DELETED", "HUB API delete accepted.", payload)
