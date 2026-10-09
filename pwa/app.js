@@ -69,7 +69,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v158";
+const APP_VERSION = "v159";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4662,7 +4662,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=156");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=159");
   }
   return navigator.serviceWorker.ready;
 }
@@ -7146,7 +7146,7 @@ function bindSchedulePrepActions(target) {
       button.disabled = true;
       if (select) select.disabled = true;
       try {
-        await api("/api/coordinator/schedule/hub-shift", {
+        const result = await api("/api/coordinator/schedule/hub-shift", {
           method: "POST",
           body: JSON.stringify({
             action: "book",
@@ -7158,8 +7158,11 @@ function bindSchedulePrepActions(target) {
             courier_name: name,
           }),
         });
-        if (status) status.textContent = `Foglalás elküldve a Hubnak: ${name} (#${id}).`;
-        loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true }).catch(() => {});
+        if (status) {
+          status.textContent = result?.queued
+            ? `Foglalási job elindítva: ${name} (#${id}). Pár perc múlva frissíts.`
+            : `Foglalás elküldve a Hubnak: ${name} (#${id}).`;
+        }
       } catch (error) {
         button.disabled = false;
         if (select) select.disabled = false;

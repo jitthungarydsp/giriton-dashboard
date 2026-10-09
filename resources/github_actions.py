@@ -36,12 +36,17 @@ def _secret(name, default=""):
 
 
 def get_config():
+    token = ""
+    for token_name in ("GITHUB_ACTIONS_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT"):
+        token = _secret(token_name, "")
+        if token:
+            break
     return {
         "owner": _secret("GITHUB_OWNER", DEFAULT_OWNER),
         "repo": _secret("GITHUB_REPO", DEFAULT_REPO),
         "workflow": _secret("GITHUB_WORKFLOW", DEFAULT_WORKFLOW),
         "ref": _secret("GITHUB_REF", DEFAULT_REF),
-        "token": _secret("GITHUB_ACTIONS_TOKEN", ""),
+        "token": token,
     }
 
 
@@ -54,7 +59,7 @@ def _headers(config):
     token = config.get("token")
     if not token:
         raise GitHubActionsError(
-            "Hiányzik a GITHUB_ACTIONS_TOKEN secret. Streamlit Cloudban add hozzá a Secrets részhez."
+            "Hiányzik a GitHub workflow token. Add meg valamelyiket: GITHUB_ACTIONS_TOKEN, GITHUB_TOKEN, GH_TOKEN vagy GITHUB_PAT."
         )
 
     return {

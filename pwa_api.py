@@ -262,7 +262,7 @@ class ScheduleHubShiftActionRequest(BaseModel):
     action: str
     work_date: str
     warehouse: str
-    shift_template_id: int
+    shift_template_id: int | None = 0
     slot_from: str
     courier_id: int
     courier_name: str = ""
@@ -698,6 +698,90 @@ def selected_coordinator_warehouse_ids(user: dict[str, Any], warehouse: str = ""
     return allowed_ids
 
 
+def resolve_schedule_shift_template_id(
+    payload: ScheduleHubShiftActionRequest,
+    work_date: date,
+    warehouse_id: int,
+) -> tuple[int, str]:
+    slot_from = normalize_time(payload.slot_from)
+    shift_template_id = safe_int(payload.shift_template_id)
+    if shift_template_id > 0:
+        return shift_template_id, slot_from
+    if not slot_from:
+        raise HTTPException(status_code=422, detail="Hiányzik a slotFrom.")
+
+    rows = optional_supabase_rows(
+        "courier_hub_shift_blocks_raw",
+        params={
+            "select": "work_date,warehouse_id,dsp_id,shift_template_id,slot_from,status",
+            "work_date": f"eq.{work_date.isoformat()}",
+            "warehouse_id": f"eq.{warehouse_id}",
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+            "order": "slot_from.asc,shift_template_id.asc,block_key.asc",
+            "limit": "1000",
+        },
+        timeout=20,
+    )
+    candidates = [
+        row for row in rows
+        if safe_int(row.get("shift_template_id")) > 0
+        and normalize_time(row.get("slot_from")) == slot_from
+        and str(row.get("status") or "OPEN").strip().upper() not in {"CANCELLED", "CANCELED", "DELETED"}
+    ]
+    if not candidates:
+        raise HTTPException(status_code=422, detail="Nem található shiftTemplateId ehhez a naphoz, raktárhoz és idősávhoz.")
+    return safe_int(candidates[0].get("shift_template_id")), slot_from
+
+
+def dispatch_schedule_hub_booking_job(
+    payload: ScheduleHubShiftActionRequest,
+    work_date: date,
+    warehouse_id: int,
+    shift_template_id: int,
+    slot_from: str,
+) -> dict[str, Any]:
+    try:
+        from resources.github_actions import GitHubActionsError, dispatch_workflow, get_config  # noqa: WPS433
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"GitHub Actions modul nem tölthető be: {exc}") from exc
+
+    inputs = {
+        "start_date": work_date.isoformat(),
+        "days": "1",
+        "max_courier_days": "1",
+        "courier_ids": str(int(payload.courier_id)),
+        "tolerance_minutes": "30",
+        "min_gap_minutes": "270",
+        "dry_run": "false",
+    }
+    try:
+        result = dispatch_workflow("hub-job-autobooking.yml", inputs=inputs)
+    except GitHubActionsError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    config = get_config()
+    return {
+        "ok": True,
+        "queued": True,
+        "action": "book",
+        "workflow": result.get("workflow") or "hub-job-autobooking.yml",
+        "workflow_name": "HUB_JOB_AUTOBOOKING",
+        "workflow_url": f"https://github.com/{config['owner']}/{config['repo']}/actions/workflows/hub-job-autobooking.yml",
+        "ref": result.get("ref") or config["ref"],
+        "triggered_at": result.get("triggered_at"),
+        "request": {
+            "work_date": work_date.isoformat(),
+            "warehouse_id": warehouse_id,
+            "warehouse": payload.warehouse,
+            "shift_template_id": shift_template_id,
+            "slot_from": slot_from,
+            "courier_id": int(payload.courier_id),
+            "courier_name": payload.courier_name,
+            "workflow_inputs": inputs,
+        },
+    }
+
+
 def run_schedule_hub_shift_action(payload: ScheduleHubShiftActionRequest, user: dict[str, Any]) -> dict[str, Any]:
     action = str(payload.action or "").strip().lower()
     if action not in {"book", "delete"}:
@@ -711,10 +795,12 @@ def run_schedule_hub_shift_action(payload: ScheduleHubShiftActionRequest, user: 
         raise HTTPException(status_code=422, detail="Hibás raktár.")
     if warehouse_id not in coordinator_warehouse_ids(user):
         raise HTTPException(status_code=403, detail="Ehhez a raktárhoz nincs jogosultság.")
-    if payload.shift_template_id <= 0:
-        raise HTTPException(status_code=422, detail="Hiányzik a shiftTemplateId.")
     if payload.courier_id <= 0:
         raise HTTPException(status_code=422, detail="Hiányzik a futár ID.")
+    shift_template_id, slot_from = resolve_schedule_shift_template_id(payload, work_date, warehouse_id)
+
+    if action == "book":
+        return dispatch_schedule_hub_booking_job(payload, work_date, warehouse_id, shift_template_id, slot_from)
 
     try:
         from scripts.courier_hub_api_book_shift import (  # noqa: WPS433
@@ -732,13 +818,13 @@ def run_schedule_hub_shift_action(payload: ScheduleHubShiftActionRequest, user: 
     if not courier_hub_auth_configured():
         raise HTTPException(status_code=503, detail="Hiányzik a Courier Hub auth. COURIER_HUB_COOKIE vagy auth cache szükséges.")
 
-    slot_from = hub_normalize_time(payload.slot_from)
+    slot_from = hub_normalize_time(slot_from)
     if not slot_from:
         raise HTTPException(status_code=422, detail="Hiányzik a slotFrom.")
 
     request_body = {
         "date": work_date.isoformat(),
-        "shiftTemplateId": int(payload.shift_template_id),
+        "shiftTemplateId": int(shift_template_id),
         "slotFrom": slot_from,
         "courierIds": [int(payload.courier_id)],
     }
