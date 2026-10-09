@@ -69,7 +69,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v162";
+const APP_VERSION = "v163";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4664,7 +4664,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=162");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=163");
   }
   return navigator.serviceWorker.ready;
 }
@@ -6782,7 +6782,9 @@ function scheduleSlotPreparedText(slot = {}) {
 
 function renderScheduleSlotWorker(worker = {}, slot = {}) {
   const phone = String(worker.phoneNumber || "").trim();
-  const hubBooked = worker.hubTone === "ok" || String(worker.hubStatus || "").toLowerCase().includes("felvezet");
+  const hasCourierId = Boolean(String(worker.courierId || "").trim());
+  const slotHasBookedCapacity = Number(slot.assigned || 0) > 0 && Number(slot.opened || 0) > 0;
+  const hubBooked = worker.hubTone === "ok" || String(worker.hubStatus || "").toLowerCase().includes("felvezet") || slotHasBookedCapacity;
   return `
     <div class="schedule-slot-worker">
       <div>
@@ -6807,8 +6809,9 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
             data-shift-template-id="${escapeHtml(slot.shiftTemplateId || "")}"
             data-slot-from="${escapeHtml(slot.start || "")}"
             data-courier-id="${escapeHtml(worker.courierId || "")}"
-            data-courier-name="${escapeHtml(worker.courierName || "Futár")}">
-            Törlés indítása
+            data-courier-name="${escapeHtml(worker.courierName || "Futár")}"
+            ${hasCourierId ? "" : "disabled"}>
+            ${hasCourierId ? "Törlés indítása" : "Törléshez hiányzik futár ID"}
           </button>
           <div class="schedule-slot-action-status" data-schedule-action-status role="status" aria-live="polite"></div>
         </div>
