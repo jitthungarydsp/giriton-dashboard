@@ -23,6 +23,10 @@ on:
         description: "Teszt kézi törlés futár ID vagy e-mail, pl. 7644."
         required: false
         default: ""
+      manual_shift_template_id:
+        description: "Teszt kézi törlés shiftTemplateId, pl. 147."
+        required: false
+        default: ""
       manual_warehouse:
         description: "Teszt kézi törlés raktára, pl. BUD1."
         required: false
@@ -100,18 +104,20 @@ jobs:
           MANUAL_WORK_DATE="${{ inputs.manual_work_date }}"
           MANUAL_SHIFT="${{ inputs.manual_shift }}"
           MANUAL_IDENTITY="${{ inputs.manual_identity }}"
+          MANUAL_SHIFT_TEMPLATE_ID="${{ inputs.manual_shift_template_id }}"
           MANUAL_WAREHOUSE="${{ inputs.manual_warehouse }}"
           DRY_RUN="${DRY_RUN:-false}"
           LIMIT="${LIMIT:-100}"
           MANUAL_WAREHOUSE="${MANUAL_WAREHOUSE:-BUD1}"
 
           CMD=(python scripts/sync_external_shift_deletions.py --limit "$LIMIT")
-          if [ -n "$MANUAL_WORK_DATE" ] || [ -n "$MANUAL_SHIFT" ] || [ -n "$MANUAL_IDENTITY" ]; then
+          if [ -n "$MANUAL_WORK_DATE" ] || [ -n "$MANUAL_SHIFT" ] || [ -n "$MANUAL_IDENTITY" ] || [ -n "$MANUAL_SHIFT_TEMPLATE_ID" ]; then
             CMD+=(
               --manual-work-date "$MANUAL_WORK_DATE"
               --manual-shift "$MANUAL_SHIFT"
               --manual-identity "$MANUAL_IDENTITY"
               --manual-warehouse "$MANUAL_WAREHOUSE"
+              --manual-shift-template-id "$MANUAL_SHIFT_TEMPLATE_ID"
             )
           fi
           if [ "$DRY_RUN" = "true" ]; then
@@ -135,4 +141,5 @@ jobs:
             echo "- Manual date: ${{ inputs.manual_work_date }}"
             echo "- Manual shift: ${{ inputs.manual_shift }}"
             echo "- Manual identity: ${{ inputs.manual_identity }}"
+            echo "- Manual shiftTemplateId: ${{ inputs.manual_shift_template_id }}"
           } >> "$GITHUB_STEP_SUMMARY"

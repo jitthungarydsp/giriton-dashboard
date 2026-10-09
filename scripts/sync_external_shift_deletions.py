@@ -55,6 +55,7 @@ class SheetDeletionRow:
     shift_text: str
     email: str
     courier_id: int | None
+    shift_template_id: int | None
     warehouse: str
     sheet_status: str
 
@@ -266,6 +267,7 @@ def read_sheet_rows(sheet_id: str, worksheet_gid: int) -> list[SheetDeletionRow]
             shift_text=shift_text,
             email=email,
             courier_id=courier_id,
+            shift_template_id=None,
             warehouse=warehouse,
             sheet_status=sheet_status,
         ))
@@ -277,10 +279,15 @@ def build_manual_row(
     shift_text_value: str,
     identity_value: str,
     warehouse_value: str,
+    shift_template_id_value: str = "",
 ) -> SheetDeletionRow:
     work_date = parse_work_date(work_date_value)
     shift_text = clean_text(shift_text_value)
     email, courier_id = split_sheet_identity(identity_value)
+    shift_template_text = clean_text(shift_template_id_value)
+    shift_template_id = normalize_courier_id(shift_template_text)
+    if shift_template_text and shift_template_id is None:
+        raise ValueError("A manualis shiftTemplateId csak szam lehet.")
     warehouse = clean_text(warehouse_value).upper()
     if not all([work_date, shift_text, warehouse]) or (not email and courier_id is None):
         raise ValueError("Manualis torleshez datum, muszak, futar azonosito/e-mail es raktar is kell.")
@@ -291,6 +298,7 @@ def build_manual_row(
         shift_text=shift_text,
         email=email,
         courier_id=courier_id,
+        shift_template_id=shift_template_id,
         warehouse=warehouse,
         sheet_status="TÖRLÉSRE_VAR",
     )
@@ -302,7 +310,8 @@ def row_source_key(row: SheetDeletionRow, sheet_id: str, worksheet_gid: int) -> 
         return (
             "hub_job_autodelete:manual:"
             f"{row.work_date}:{normalize_key(row.warehouse)}:"
-            f"{normalize_key(row.shift_text)}:{normalize_key(identity)}"
+            f"{normalize_key(row.shift_text)}:{normalize_key(identity)}:"
+            f"{row.shift_template_id or 'template-any'}"
         )
     return f"hub_job_autodelete:{sheet_id}:{worksheet_gid}:{row.row_number}"
 
@@ -466,6 +475,8 @@ def load_active_hub_candidates(row: SheetDeletionRow, dsp_id: int) -> tuple[list
         query_sets.append([*common_filters, ("jitt_internal_id", f"in.({jitt_filter})")])
     if not query_sets:
         query_sets.append(common_filters)
+    if row.shift_template_id is not None:
+        query_sets = [[*params, ("shift_template_id", f"eq.{row.shift_template_id}")] for params in query_sets]
 
     rows: list[dict[str, Any]] = []
     for params in query_sets:
@@ -500,6 +511,8 @@ def candidate_score(row: SheetDeletionRow, candidate: dict[str, Any]) -> int:
     requested_shift_key = normalize_key(row.shift_text)
     candidate_shift_key = normalize_key(candidate.get("shift_text"))
     score = 0
+    if row.shift_template_id is not None and int_value(candidate.get("shift_template_id")) == row.shift_template_id:
+        score += 200
     if row.courier_id is not None and int_value(candidate.get("courier_id")) == row.courier_id:
         score += 80
     if row.email and normalize_email(candidate.get("email")) == row.email:
@@ -659,22 +672,30 @@ def main() -> int:
     parser.add_argument("--manual-shift", default="", help="Opcionális kézi törlés műszakja, pl. BUD1_04:45.")
     parser.add_argument("--manual-identity", default="", help="Opcionális kézi törlés futár ID vagy e-mail.")
     parser.add_argument("--manual-warehouse", default="", help="Opcionális kézi törlés raktára, pl. BUD1.")
+    parser.add_argument("--manual-shift-template-id", default="", help="Kézi törlés shiftTemplateId értéke.")
     args = parser.parse_args()
 
     if args.live_delete and not courier_hub_auth_configured():
         raise RuntimeError("Hianyzik a Courier Hub auth. COURIER_HUB_COOKIE vagy auth cache szukseges.")
 
-    manual_values = [args.manual_work_date, args.manual_shift, args.manual_identity, args.manual_warehouse]
+    manual_values = [
+        args.manual_work_date,
+        args.manual_shift,
+        args.manual_identity,
+        args.manual_warehouse,
+        args.manual_shift_template_id,
+    ]
     manual_mode = any(clean_text(value) for value in manual_values)
     if manual_mode:
         if not all(clean_text(value) for value in manual_values):
-            raise ValueError("Manualis torlesnel mind a 4 mezo kotelezo: datum, muszak, futar, raktar.")
+            raise ValueError("Manualis torlesnel mind az 5 mezo kotelezo: datum, muszak, futar, raktar, shiftTemplateId.")
         rows = [
             build_manual_row(
                 args.manual_work_date,
                 args.manual_shift,
                 args.manual_identity,
                 args.manual_warehouse,
+                args.manual_shift_template_id,
             )
         ]
     else:
@@ -699,7 +720,8 @@ def main() -> int:
         print(
             "HUB_JOB_AUTODELETE_ROW "
             f"row={row.row_number} date={row.work_date} warehouse={row.warehouse} "
-            f"shift={row.shift_text!r} email={row.email or '-'} courier_id={row.courier_id or '-'}",
+            f"shift={row.shift_text!r} email={row.email or '-'} courier_id={row.courier_id or '-'} "
+            f"shift_template_id={row.shift_template_id or '-'}",
             flush=True,
         )
         if args.apply:
