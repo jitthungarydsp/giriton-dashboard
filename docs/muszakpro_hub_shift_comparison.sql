@@ -370,6 +370,34 @@ identity_match as (
         limit 1
     ) i on true
 ),
+hub_bookings as (
+    select
+        chb.*,
+        lower(regexp_replace(coalesce(chb.email, ''), '\s+', '', 'g')) as hub_booking_email_normalized,
+        substring(coalesce(chb.shift_text, '') from '(\d{1,2}:\d{2})')::time as hub_booking_shift_start_time
+    from public.courier_hub_shift_bookings_raw chb
+    where chb.active is true
+),
+exact_hub_matches as (
+    select distinct
+        hb.id as hub_booking_id
+    from identity_match i
+    join hub_bookings hb
+      on hb.work_date = i.work_date
+     and upper(hb.warehouse_code) = i.warehouse_code
+     and hb.hub_booking_shift_start_time = i.muszakpro_shift_start_time
+     and (
+         hb.courier_id = i.hub_courier_id
+         or (
+             i.jitt_internal_id is not null
+             and hb.jitt_internal_id = i.jitt_internal_id
+         )
+         or (
+             i.email_normalized <> ''
+             and hb.hub_booking_email_normalized = i.email_normalized
+         )
+     )
+),
 hub_booking_match as (
     select
         i.*,
@@ -383,7 +411,7 @@ hub_booking_match as (
         chb.block_key as hub_block_key,
         chb.shift_template_id as hub_shift_template_id,
         chb.shift_text as hub_shift_text,
-        substring(coalesce(chb.shift_text, '') from '(\d{1,2}:\d{2})')::time as hub_booking_shift_start_time,
+        chb.hub_booking_shift_start_time,
         chb.slot_from as hub_slot_from,
         chb.slot_to as hub_slot_to,
         chb.status as hub_booking_status,
@@ -392,15 +420,15 @@ hub_booking_match as (
         chb.first_seen_at as hub_booking_first_seen_at,
         chb.last_seen_at as hub_booking_last_seen_at,
         chb.deleted_at as hub_booking_deleted_at,
-        abs(extract(epoch from (substring(coalesce(chb.shift_text, '') from '(\d{1,2}:\d{2})')::time - i.muszakpro_shift_start_time)) / 60)::integer as absolute_diff_minutes,
-        (extract(epoch from (substring(coalesce(chb.shift_text, '') from '(\d{1,2}:\d{2})')::time - i.muszakpro_shift_start_time)) / 60)::integer as signed_diff_minutes
+        abs(extract(epoch from (chb.hub_booking_shift_start_time - i.muszakpro_shift_start_time)) / 60)::integer as absolute_diff_minutes,
+        (extract(epoch from (chb.hub_booking_shift_start_time - i.muszakpro_shift_start_time)) / 60)::integer as signed_diff_minutes
     from identity_match i
     left join lateral (
         select chb.*
-        from public.courier_hub_shift_bookings_raw chb
+        from hub_bookings chb
         where chb.work_date = i.work_date
           and upper(chb.warehouse_code) = i.warehouse_code
-          and chb.active is true
+          and chb.hub_booking_shift_start_time is not null
           and (
               chb.courier_id = i.hub_courier_id
               or (
@@ -409,11 +437,23 @@ hub_booking_match as (
               )
               or (
                   i.email_normalized <> ''
-                  and lower(regexp_replace(coalesce(chb.email, ''), '\s+', '', 'g')) = i.email_normalized
+                  and chb.hub_booking_email_normalized = i.email_normalized
+              )
+          )
+          and (
+              chb.hub_booking_shift_start_time = i.muszakpro_shift_start_time
+              or (
+                  not exists (
+                      select 1
+                      from exact_hub_matches exact_match
+                      where exact_match.hub_booking_id = chb.id
+                  )
+                  and abs(extract(epoch from (chb.hub_booking_shift_start_time - i.muszakpro_shift_start_time))) <= 3600
               )
           )
         order by
-            abs(extract(epoch from (substring(coalesce(chb.shift_text, '') from '(\d{1,2}:\d{2})')::time - i.muszakpro_shift_start_time))) nulls last,
+            case when chb.hub_booking_shift_start_time = i.muszakpro_shift_start_time then 0 else 1 end,
+            abs(extract(epoch from (chb.hub_booking_shift_start_time - i.muszakpro_shift_start_time))) nulls last,
             chb.last_seen_at desc nulls last
         limit 1
     ) chb on true
@@ -455,7 +495,7 @@ select
         when hub_courier_id is null and jitt_internal_id is null
             then 'NINCS_HUB_FUTAR_AZONOSITAS'
         when hub_booking_id is null
-            then 'NINCS_AKTIV_HUB_FOGLALAS'
+            then 'NINCS_AKTIV_HUB_FOGLALAS_ERRE_AZ_IDOPONTRA'
         when hub_booking_shift_start_time is null
             then 'HUB_MUSZAK_IDO_HIANYZIK'
         when hub_booking_shift_start_time = muszakpro_shift_start_time
@@ -466,7 +506,7 @@ select
         when hub_courier_id is null and jitt_internal_id is null
             then 'A MűszakPro courierId/e-mail alapján nincs Hub futár/JITT azonosítás.'
         when hub_booking_id is null
-            then 'Ehhez a futárhoz ezen a napon/raktáron nincs aktív Hub foglalás.'
+            then 'Ehhez a futárhoz ezen a napon/raktáron nincs aktív Hub foglalás erre a MűszakPro kezdésre.'
         when hub_booking_shift_start_time is null
             then 'A Hub foglalás shift_text mezőjéből nem olvasható ki kezdési időpont.'
         when hub_booking_shift_start_time = muszakpro_shift_start_time
