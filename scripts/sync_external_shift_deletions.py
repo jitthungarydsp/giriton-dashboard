@@ -595,7 +595,7 @@ def delete_hub_booking(row: SheetDeletionRow, booking: dict[str, Any], *, dsp_id
 
     warehouse_id = normalize_warehouse_id(row.warehouse)
     url = build_delete_url(base_url, warehouse_id, int(dsp_id), 0)
-    response = hub_request("POST", url, json=request_body)
+    response = hub_request("DELETE", url, json=request_body)
     payload = response_payload(response)
     if response.ok:
         return True, payload, "Hub API törlés sikeres."
