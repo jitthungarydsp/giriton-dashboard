@@ -16,6 +16,7 @@ const state = {
   coordinatorScheduleView: "calendar",
   coordinatorScheduleWarehouse: "",
   coordinatorScheduleRequestSeq: 0,
+  coordinatorScheduleActionActive: false,
   todayWorkers: null,
   todayWorkersQuery: "",
   couriers: [],
@@ -69,7 +70,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v163";
+const APP_VERSION = "v164";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -218,6 +219,7 @@ function currentSectionRefresh() {
   if (state.section === "today-workers") return loadTodayWorkers();
   if (state.section === "settlement-dashboard") return loadSettlementDashboard();
   if (state.section === "coordinator-schedule") {
+    if (state.coordinatorScheduleActionActive) return Promise.resolve();
     return state.coordinatorScheduleView === "day"
       ? loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true })
       : loadCoordinatorSchedule();
@@ -4664,7 +4666,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=163");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=164");
   }
   return navigator.serviceWorker.ready;
 }
@@ -7011,6 +7013,11 @@ function renderScheduleSlotCard(slot = {}, day = {}) {
   `;
 }
 
+function preserveScrollAfterRender(previousScrollY) {
+  if (typeof previousScrollY !== "number") return;
+  requestAnimationFrame(() => window.scrollTo({ top: previousScrollY, behavior: "auto" }));
+}
+
 function renderScheduleSlots(day = {}) {
   const slots = day.slots || [];
   return `
@@ -7119,6 +7126,7 @@ function bindSchedulePrepActions(target) {
         status.classList.add("active");
         status.textContent = `${name} (#${id}) nevében törlés indítása...`;
       }
+      state.coordinatorScheduleActionActive = true;
       button.disabled = true;
       try {
         const result = await api("/api/coordinator/schedule/hub-shift", {
@@ -7144,6 +7152,7 @@ function bindSchedulePrepActions(target) {
         }
       } catch (error) {
         button.disabled = false;
+        state.coordinatorScheduleActionActive = false;
         if (status) {
           status.classList.add("active", "error");
           status.textContent = error.message || "A törlés nem sikerült.";
@@ -7164,6 +7173,7 @@ function bindSchedulePrepActions(target) {
         status.classList.add("active");
         status.textContent = `${name} (#${id}) nevében foglalás indítása...`;
       }
+      state.coordinatorScheduleActionActive = true;
       button.disabled = true;
       if (select) select.disabled = true;
       try {
@@ -7191,6 +7201,7 @@ function bindSchedulePrepActions(target) {
       } catch (error) {
         button.disabled = false;
         if (select) select.disabled = false;
+        state.coordinatorScheduleActionActive = false;
         if (status) {
           status.classList.add("active", "error");
           status.textContent = error.message || "A foglalás nem sikerült.";
@@ -7239,8 +7250,9 @@ function pollScheduleHubActionJob(result, { status, button, select, name, id, at
         status.textContent = scheduleHubActionJobStatusText(job, result, name, id);
       }
       if (job?.status === "completed") {
+        state.coordinatorScheduleActionActive = false;
         if (job.conclusion === "success") {
-          loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true }).catch(() => {});
+          loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true, preserveScroll: true }).catch(() => {});
           return;
         }
         if (button) button.disabled = false;
@@ -7248,6 +7260,7 @@ function pollScheduleHubActionJob(result, { status, button, select, name, id, at
         return;
       }
       if (attempt + 1 >= SCHEDULE_BOOKING_JOB_MAX_POLLS) {
+        state.coordinatorScheduleActionActive = false;
         if (status) {
           status.classList.add("active");
           status.textContent = `${name} (#${id}) nevében ${label.toLowerCase()} job még fut vagy nem található. Frissíts később.`;
@@ -7259,6 +7272,7 @@ function pollScheduleHubActionJob(result, { status, button, select, name, id, at
       pollScheduleHubActionJob(result, { status, button, select, name, id, attempt: attempt + 1 });
     } catch (error) {
       if (attempt + 1 >= 3) {
+        state.coordinatorScheduleActionActive = false;
         if (status) {
           status.classList.add("active", "error");
           status.textContent = error.message || "A job állapotát nem sikerült lekérni.";
@@ -7412,6 +7426,7 @@ async function loadCoordinatorScheduleDay(day, options = {}) {
   if (!selectedDay) return;
   const requestSeq = ++state.coordinatorScheduleRequestSeq;
   const fast = !options.full;
+  const previousScrollY = options.preserveScroll ? window.scrollY : null;
   if (!options.keepRendered) renderCoordinatorSchedule();
   try {
     const warehouseQuery = warehouse ? `&warehouse=${encodeURIComponent(warehouse)}` : "";
@@ -7422,8 +7437,9 @@ async function loadCoordinatorScheduleDay(day, options = {}) {
     state.coordinatorScheduleDay = selectedDay;
     state.coordinatorScheduleView = "day";
     renderCoordinatorSchedule();
-    if (fast) {
-      loadCoordinatorScheduleDay(selectedDay, { keepRendered: true, full: true }).catch(() => {});
+    preserveScrollAfterRender(previousScrollY);
+    if (fast && !state.coordinatorScheduleActionActive) {
+      loadCoordinatorScheduleDay(selectedDay, { keepRendered: true, full: true, preserveScroll: true }).catch(() => {});
     }
   } catch (error) {
     if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
@@ -8107,7 +8123,7 @@ $("#departure-helper-refresh")?.addEventListener("click", loadDepartureHelper);
 $("#today-workers-refresh")?.addEventListener("click", loadTodayWorkers);
 $("#coordinator-schedule-refresh")?.addEventListener("click", () => {
   if (state.coordinatorScheduleView === "day") {
-    loadCoordinatorScheduleDay(state.coordinatorScheduleDay);
+    loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { preserveScroll: true });
   } else {
     loadCoordinatorSchedule();
   }
