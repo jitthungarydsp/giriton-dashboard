@@ -40,6 +40,12 @@ def int_or_none(value: Any) -> int | None:
         return None
 
 
+def bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return clean_text(value).lower() in {"1", "true", "yes", "y", "igen"}
+
+
 def parse_warehouse_ids(value: str) -> list[int]:
     ids: list[int] = []
     for part in str(value or "").split(","):
@@ -138,7 +144,7 @@ def read_shift_block_rows(
                 "select",
                 (
                     "work_date,warehouse_id,warehouse_code,dsp_id,block_key,status,"
-                    "assigned,opened,free_slots,fetched_at,updated_at"
+                    "assigned,opened,free_slots,capacity_published,fetched_at,updated_at"
                 ),
             ),
             ("work_date", f"gte.{start_date.isoformat()}"),
@@ -172,6 +178,8 @@ def aggregate_capacity(
             continue
         status = clean_text(row.get("status")).upper()
         if status in {"CANCELLED", "CANCELED", "DELETED"}:
+            continue
+        if not bool_value(row.get("capacity_published")):
             continue
 
         assigned = int_or_none(row.get("assigned")) or 0

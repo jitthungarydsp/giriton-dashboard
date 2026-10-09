@@ -4383,6 +4383,17 @@ def read_schedule_capacity_rows(start: date, end: date, allow_raw_fallback: bool
             schedule_capacity_updated_at(row),
         )
 
+    # Prefer live Hub block rows whenever they are available. The daily cache may
+    # have been built with an older aggregation rule, while raw rows carry the
+    # capacity_published flag needed to match the Courier Hub admin summary.
+    if raw_rows:
+        raw_keys = set(raw_updated_by_key)
+        daily_without_raw = [
+            row for row in daily_rows
+            if schedule_capacity_source_key(row) not in raw_keys
+        ]
+        return raw_rows + daily_without_raw
+
     stale_daily_keys = {
         source_key
         for source_key, row in daily_by_key.items()
@@ -4529,6 +4540,8 @@ def schedule_capacity_summary(
             continue
         status = str(row.get("status") or "").strip().upper()
         if status in {"CANCELLED", "CANCELED", "DELETED"}:
+            continue
+        if "capacity_published" in row and not safe_bool(row.get("capacity_published")):
             continue
 
         assigned = safe_int(row.get("assigned") if "assigned" in row else row.get("booked_slots"))
@@ -10932,6 +10945,12 @@ def safe_int(value: Any) -> int:
         return int(float(str(value or "0").replace(",", ".")))
     except Exception:
         return 0
+
+
+def safe_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "igen"}
 
 
 def safe_money_amount(value: Any) -> int:
