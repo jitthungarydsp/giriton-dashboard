@@ -290,6 +290,9 @@ def load_setting(name: str) -> str:
             or settings.get("supabase", {}).get(name)
             or settings.get("discord", {}).get(name)
             or settings.get("pwa", {}).get(name)
+            or settings.get("kifli", {}).get(name)
+            or settings.get("courier_hub", {}).get(name)
+            or settings.get("courierHub", {}).get(name)
         )
         return clean(value)
     except Exception:
@@ -2621,9 +2624,15 @@ def attach_route_map_config(card: dict[str, Any]) -> dict[str, Any]:
 
 
 def courier_hub_header_config() -> dict[str, str]:
-    authorization = load_setting("COURIER_HUB_AUTHORIZATION") or load_setting("KIFLI_COURIER_HUB_AUTHORIZATION")
+    authorization = (
+        load_setting("COURIER_HUB_AUTHORIZATION")
+        or load_setting("KIFLI_COURIER_HUB_AUTHORIZATION")
+        or load_setting("COURIER_HUB_BEARER_TOKEN")
+        or load_setting("KIFLI_COURIER_HUB_BEARER_TOKEN")
+    )
     cookie = load_setting("COURIER_HUB_COOKIE") or load_setting("KIFLI_COURIER_HUB_COOKIE")
     api_key = load_setting("COURIER_HUB_API_KEY") or load_setting("KIFLI_COURIER_HUB_API_KEY")
+    extra_headers_json = load_setting("COURIER_HUB_EXTRA_HEADERS_JSON") or load_setting("KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON")
     cache_file = (
         load_setting("COURIER_HUB_AUTH_CACHE_FILE")
         or load_setting("KIFLI_COURIER_HUB_AUTH_CACHE_FILE")
@@ -2642,12 +2651,19 @@ def courier_hub_header_config() -> dict[str, str]:
         "User-Agent": "giriton-pwa/1.0",
     }
     if authorization:
-        headers["Authorization"] = authorization
+        headers["Authorization"] = authorization if authorization.lower().startswith(("bearer ", "basic ", "token ")) else f"Bearer {authorization}"
     if cookie:
         headers["Cookie"] = cookie
     if api_key:
         headers["x-api-key"] = api_key
         headers["apikey"] = api_key
+    if extra_headers_json:
+        try:
+            extra_headers = json.loads(extra_headers_json)
+            if isinstance(extra_headers, dict):
+                headers.update({str(key): str(value) for key, value in extra_headers.items() if value is not None})
+        except json.JSONDecodeError:
+            pass
     return headers
 
 
