@@ -812,8 +812,12 @@ def main() -> int:
             dsp_id=args.dsp_id,
         )
         identity_lookup = load_identity_lookup(args.dsp_id)
+        booking_source_rows = [
+            row for row in subscriber_rows
+            if row.get("source_name") == "courier_hub_shift_block_assignments"
+        ]
         booking_rows = build_booking_state_rows(
-            subscriber_rows=subscriber_rows,
+            subscriber_rows=booking_source_rows,
             existing_active=existing_active,
             identity_lookup=identity_lookup,
             fetched_at=fetched_at,
@@ -839,7 +843,8 @@ def main() -> int:
     print(
         f"COURIER_HUB_SHIFT_BLOCK_SYNC blocks={len(block_rows)} "
         f"blocks_written={blocks_written} subscribers={len(subscriber_rows)} "
-        f"subscribers_written={subscribers_written} bookings={len(booking_rows)} "
+        f"subscribers_written={subscribers_written} booking_source_rows={len(booking_source_rows) if 'booking_source_rows' in locals() else 0} "
+        f"bookings={len(booking_rows)} "
         f"bookings_written={bookings_written} unavailable_days={unavailable_days} failures={failures}",
         flush=True,
     )
