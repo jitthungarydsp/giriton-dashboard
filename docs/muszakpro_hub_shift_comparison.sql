@@ -40,9 +40,9 @@ with muszakpro_rows as (
         b.fetched_at,
         b.updated_at,
         coalesce(
-            substring(coalesce(b.shift_text, '') from '((0?[0-9]|1[0-9]|2[0-3]):[0-5][0-9])'),
-            substring(coalesce(b.booking_code, '') from '((0?[0-9]|1[0-9]|2[0-3]):[0-5][0-9])'),
-            substring(coalesce(b.serial, '') from '((0?[0-9]|1[0-9]|2[0-3]):[0-5][0-9])')
+            (regexp_match(coalesce(b.shift_text, ''), '(0?[0-9]:[0-5][0-9]|1[0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])'))[1],
+            (regexp_match(coalesce(b.booking_code, ''), '(0?[0-9]:[0-5][0-9]|1[0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])'))[1],
+            (regexp_match(coalesce(b.serial, ''), '(0?[0-9]:[0-5][0-9]|1[0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])'))[1]
         )::time as muszakpro_shift_start_time,
         coalesce(
             nullif(b.serial, ''),
@@ -304,9 +304,9 @@ with muszakpro_rows as (
         b.fetched_at,
         b.updated_at,
         coalesce(
-            substring(coalesce(b.shift_text, '') from '((0?[0-9]|1[0-9]|2[0-3]):[0-5][0-9])'),
-            substring(coalesce(b.booking_code, '') from '((0?[0-9]|1[0-9]|2[0-3]):[0-5][0-9])'),
-            substring(coalesce(b.serial, '') from '((0?[0-9]|1[0-9]|2[0-3]):[0-5][0-9])')
+            (regexp_match(coalesce(b.shift_text, ''), '(0?[0-9]:[0-5][0-9]|1[0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])'))[1],
+            (regexp_match(coalesce(b.booking_code, ''), '(0?[0-9]:[0-5][0-9]|1[0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])'))[1],
+            (regexp_match(coalesce(b.serial, ''), '(0?[0-9]:[0-5][0-9]|1[0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])'))[1]
         )::time as muszakpro_shift_start_time,
         coalesce(
             nullif(b.serial, ''),
@@ -374,7 +374,7 @@ hub_bookings as (
     select
         chb.*,
         lower(regexp_replace(coalesce(chb.email, ''), '\s+', '', 'g')) as hub_booking_email_normalized,
-        substring(coalesce(chb.shift_text, '') from '((0?[0-9]|1[0-9]|2[0-3]):[0-5][0-9])')::time as hub_booking_shift_start_time
+        ((regexp_match(coalesce(chb.shift_text, ''), '(0?[0-9]:[0-5][0-9]|1[0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])'))[1])::time as hub_booking_shift_start_time
     from public.courier_hub_shift_bookings_raw chb
     where chb.active is true
 ),
