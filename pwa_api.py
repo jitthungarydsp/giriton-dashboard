@@ -77,6 +77,41 @@ COURIER_HUB_WAREHOUSE_ADDRESSES = {
     1: "Budapest, Jászberényi út 45, 1106",
     2: "Biatorbágy, Mészárosok útja 6, 2051",
 }
+HUNGARIAN_COUNTIES = [
+    "Bács-Kiskun",
+    "Baranya",
+    "Békés",
+    "Borsod-Abaúj-Zemplén",
+    "Csongrád-Csanád",
+    "Fejér",
+    "Győr-Moson-Sopron",
+    "Hajdú-Bihar",
+    "Heves",
+    "Jász-Nagykun-Szolnok",
+    "Komárom-Esztergom",
+    "Nógrád",
+    "Pest",
+    "Somogy",
+    "Szabolcs-Szatmár-Bereg",
+    "Tolna",
+    "Vas",
+    "Veszprém",
+    "Zala",
+]
+VEHICLE_TOLL_TYPES = {
+    "none": "Nincs",
+    "has": "Van",
+    "county": "Megyei",
+    "national": "Országos",
+}
+VEHICLE_CONFIGURATION_STATUSES = {
+    "service": "Szervízben",
+    "garage_master": "Garázsmesternél",
+    "other": "Egyéb",
+    "assignable": "Futárhoz kiosztható",
+    "retired": "Kivezetve",
+    "out_of_order": "Üzemen kívül",
+}
 
 
 class LoginRequest(BaseModel):
@@ -219,6 +254,25 @@ class ScheduleHubShiftActionRequest(BaseModel):
     slot_from: str
     courier_id: int
     courier_name: str = ""
+
+
+class VehicleConfigurationRequest(BaseModel):
+    jitt_car_id: str
+    license_plate: str
+    warehouse_code: str
+    toll_vignette_type: str = "none"
+    toll_counties: list[str] = []
+    toll_valid_from: str = ""
+    toll_valid_to: str = ""
+    service_from: str = ""
+    service_to: str = ""
+    car_status: str = "assignable"
+    condition_label: str = ""
+    condition_description: str = ""
+    minimum_route_length: int | None = None
+    dedicated_courier_id: int | None = None
+    dedicated_courier_name: str = ""
+    active: bool = True
 
 
 class DailyGameSubmitRequest(BaseModel):
@@ -16451,6 +16505,14 @@ def normalize_device_serial(value: str) -> str:
     return serial
 
 
+def normalize_vehicle_license_plate(value: str) -> str:
+    license_plate = clean_text(value, limit=32).upper()
+    license_plate = re.sub(r"[^A-Z0-9-]", "", license_plate)
+    if len(license_plate) < 3:
+        raise HTTPException(status_code=422, detail="A rendszám legalább 3 karakter legyen.")
+    return license_plate
+
+
 def normalize_device_imei(value: str) -> str:
     imei = re.sub(r"\D+", "", str(value or ""))
     if imei and len(imei) not in {14, 15, 16}:
@@ -16523,6 +16585,75 @@ def build_vehicle_condition_note(
         lines.extend(["", f"Megjegyzes: {clean_base_note}"])
     condition_status = "ok" if normalized_damage_count == 0 and all(value == "ok" for _label, value in checks) else "other"
     return "\n".join(lines), condition_status
+
+
+def normalize_vehicle_configuration_status(value: Any) -> str:
+    status = clean_text(value, limit=40).lower() or "assignable"
+    if status not in VEHICLE_CONFIGURATION_STATUSES:
+        raise HTTPException(status_code=422, detail="Ismeretlen autó státusz.")
+    return status
+
+
+def normalize_vehicle_toll_type(value: Any) -> str:
+    toll_type = clean_text(value, limit=40).lower() or "none"
+    if toll_type not in VEHICLE_TOLL_TYPES:
+        raise HTTPException(status_code=422, detail="Ismeretlen autópálya matrica típus.")
+    return toll_type
+
+
+def normalize_vehicle_configuration_date(value: Any, label: str) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    parsed = parse_date_value(text)
+    if not parsed:
+        raise HTTPException(status_code=422, detail=f"A(z) {label} dátum nem megfelelő.")
+    return parsed.isoformat()
+
+
+def normalize_vehicle_counties(values: Any) -> list[str]:
+    if values is None:
+        return []
+    raw_values = values if isinstance(values, list) else [values]
+    known = {normalize_text(county): county for county in HUNGARIAN_COUNTIES}
+    counties: list[str] = []
+    for raw_value in raw_values:
+        if raw_value is None:
+            continue
+        parts = raw_value if not isinstance(raw_value, str) else raw_value.split(",")
+        for part in parts:
+            key = normalize_text(part)
+            county = known.get(key)
+            if county and county not in counties:
+                counties.append(county)
+    return counties
+
+
+def safe_vehicle_configuration(row: dict[str, Any]) -> dict[str, Any]:
+    toll_type = str(row.get("toll_vignette_type") or "none")
+    car_status = str(row.get("car_status") or "assignable")
+    return {
+        "id": row.get("id") or "",
+        "jittCarId": row.get("jitt_car_id") or "",
+        "licensePlate": row.get("license_plate") or "",
+        "warehouseCode": row.get("warehouse_code") or "",
+        "tollVignetteType": toll_type,
+        "tollVignetteLabel": VEHICLE_TOLL_TYPES.get(toll_type, toll_type),
+        "tollCounties": row.get("toll_counties") or [],
+        "tollValidFrom": str(row.get("toll_valid_from") or "")[:10],
+        "tollValidTo": str(row.get("toll_valid_to") or "")[:10],
+        "serviceFrom": str(row.get("service_from") or "")[:10],
+        "serviceTo": str(row.get("service_to") or "")[:10],
+        "carStatus": car_status,
+        "carStatusLabel": VEHICLE_CONFIGURATION_STATUSES.get(car_status, car_status),
+        "conditionLabel": row.get("condition_label") or "",
+        "conditionDescription": row.get("condition_description") or "",
+        "minimumRouteLength": safe_int(row.get("minimum_route_length")),
+        "dedicatedCourierId": safe_int(row.get("dedicated_courier_id")) or "",
+        "dedicatedCourierName": row.get("dedicated_courier_name") or "",
+        "active": safe_bool(row.get("active")),
+        "updatedAt": row.get("updated_at") or "",
+    }
 
 
 def device_report_label(row: dict[str, Any]) -> str:
@@ -17621,6 +17752,97 @@ def search_vehicle_assignments(
         "items": matches,
         "lastUsage": matches[0] if matches else None,
     }
+
+
+@app.get("/api/vehicles/configurations")
+def list_vehicle_configurations(
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_vehicle_history_manager(require_user(giriton_pwa_session))
+    rows = supabase_rest(
+        "GET",
+        "pwa_vehicle_configurations",
+        params={
+            "select": "*",
+            "order": "warehouse_code.asc,license_plate.asc",
+            "limit": "1000",
+        },
+        timeout=30,
+    )
+    return {
+        "items": [safe_vehicle_configuration(row) for row in rows or []],
+        "setup": {
+            "tollTypes": [{"value": key, "label": label} for key, label in VEHICLE_TOLL_TYPES.items()],
+            "statuses": [{"value": key, "label": label} for key, label in VEHICLE_CONFIGURATION_STATUSES.items()],
+            "counties": HUNGARIAN_COUNTIES,
+            "warehouses": ["BUD1", "BUD2"],
+        },
+    }
+
+
+@app.post("/api/vehicles/configurations")
+def upsert_vehicle_configuration(
+    payload: VehicleConfigurationRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_vehicle_history_manager(require_user(giriton_pwa_session))
+    jitt_car_id = clean_text(payload.jitt_car_id, limit=80).upper()
+    if len(jitt_car_id) < 2:
+        raise HTTPException(status_code=422, detail="A JITT_CAR_ID legalább 2 karakter legyen.")
+    license_plate = normalize_vehicle_license_plate(payload.license_plate)
+    warehouse = normalize_warehouse(payload.warehouse_code)
+    if warehouse not in {"BUD1", "BUD2"}:
+        raise HTTPException(status_code=422, detail="A raktár csak BUD1 vagy BUD2 lehet.")
+    toll_type = normalize_vehicle_toll_type(payload.toll_vignette_type)
+    counties = normalize_vehicle_counties(payload.toll_counties)
+    if toll_type == "county" and not counties:
+        raise HTTPException(status_code=422, detail="Megyei matrica esetén legalább egy megyét válassz.")
+    if toll_type != "county":
+        counties = []
+    minimum_route_length = payload.minimum_route_length
+    if minimum_route_length is not None:
+        minimum_route_length = max(0, safe_int(minimum_route_length))
+    dedicated_courier_id = safe_int(payload.dedicated_courier_id)
+    dedicated_courier_name = clean_text(payload.dedicated_courier_name, limit=160)
+    if dedicated_courier_id and not dedicated_courier_name:
+        rows = supabase_rest(
+            "GET",
+            "courier_master",
+            params={"select": "courier_name", "courier_id": f"eq.{dedicated_courier_id}", "limit": "1"},
+            timeout=30,
+        )
+        dedicated_courier_name = str((rows[0] if rows else {}).get("courier_name") or "")
+    now = datetime.now(timezone.utc).isoformat()
+    username = clean_text(user.get("username") or user.get("email") or "PWA", limit=160)
+    rows = supabase_rest(
+        "POST",
+        "pwa_vehicle_configurations",
+        params={"on_conflict": "license_plate"},
+        payload={
+            "jitt_car_id": jitt_car_id,
+            "license_plate": license_plate,
+            "warehouse_code": warehouse,
+            "toll_vignette_type": toll_type,
+            "toll_counties": counties,
+            "toll_valid_from": normalize_vehicle_configuration_date(payload.toll_valid_from, "matrica érvényesség kezdete"),
+            "toll_valid_to": normalize_vehicle_configuration_date(payload.toll_valid_to, "matrica érvényesség vége"),
+            "service_from": normalize_vehicle_configuration_date(payload.service_from, "szervíz kezdete"),
+            "service_to": normalize_vehicle_configuration_date(payload.service_to, "szervíz vége"),
+            "car_status": normalize_vehicle_configuration_status(payload.car_status),
+            "condition_label": clean_text(payload.condition_label, limit=120),
+            "condition_description": clean_text(payload.condition_description, limit=1200),
+            "minimum_route_length": minimum_route_length,
+            "dedicated_courier_id": dedicated_courier_id or None,
+            "dedicated_courier_name": dedicated_courier_name,
+            "active": bool(payload.active),
+            "created_by": username,
+            "updated_by": username,
+            "updated_at": now,
+        },
+        prefer="resolution=merge-duplicates,return=representation",
+        timeout=30,
+    )
+    return {"stored": True, "item": safe_vehicle_configuration((rows or [{}])[0])}
 
 
 @app.post("/api/devices/reports")

@@ -23,6 +23,8 @@ const state = {
   vehicleReports: [],
   vehicleAssignments: [],
   vehicleSearchResults: [],
+  vehicleConfigurations: [],
+  vehicleConfigurationSetup: null,
   queueStatus: null,
   queueTimer: null,
   salaryAdvanceRequests: [],
@@ -67,7 +69,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v156";
+const APP_VERSION = "v157";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -198,6 +200,7 @@ function currentSectionRefresh() {
       : loadCoordinatorSchedule();
   }
   if (state.section === "vehicle") return loadVehicleSection();
+  if (state.section === "vehicle-config") return loadVehicleConfigurations();
   if (state.section === "game") return loadGame();
   return Promise.resolve();
 }
@@ -228,6 +231,14 @@ function renderCourierMasterOptions() {
       .map((courier) => `<option value="${escapeHtml(courier.courierId)}">${escapeHtml(courierOptionLabel(courier))}</option>`)
       .join("")}`;
     if (currentValue) vehicleCourier.value = currentValue;
+  }
+  const vehicleConfigCourier = $("#vehicle-config-dedicated-courier");
+  if (vehicleConfigCourier) {
+    const currentValue = vehicleConfigCourier.value;
+    vehicleConfigCourier.innerHTML = `<option value="">Nincs dedikált futár</option>${(state.couriers || [])
+      .map((courier) => `<option value="${escapeHtml(courier.courierId)}" data-name="${escapeHtml(courier.courierName || "")}">${escapeHtml(courierOptionLabel(courier))}</option>`)
+      .join("")}`;
+    if (currentValue) vehicleConfigCourier.value = currentValue;
   }
   const routeDetailsCourier = $("#route-details-courier");
   if (routeDetailsCourier) {
@@ -415,14 +426,15 @@ function showApp() {
   $("#nav-registration-admin").classList.toggle("hidden", !state.user.canApproveRegistrations);
   $("#nav-route-details").classList.toggle("hidden", !state.user.canPreviewCouriers);
   $("#nav-settlement-dashboard").classList.toggle("hidden", !state.user.canViewSettlementDashboard);
+  $("#nav-vehicle-config").classList.toggle("hidden", !state.user.canManageVehicles);
   const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-vehicle-config", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
   if (hrOnly) {
     ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard"]
       .forEach((selector) => $(selector)?.classList.add("hidden"));
-    ["#nav-profile", "#nav-vehicle"].forEach((selector) => $(selector)?.classList.remove("hidden"));
+    ["#nav-profile", "#nav-vehicle", "#nav-vehicle-config"].forEach((selector) => $(selector)?.classList.remove("hidden"));
   }
   $("#nav-expense")?.classList.add("hidden");
   ["#workflow-preview-wrapper", "#statistics-preview-wrapper"].forEach((selector) => {
@@ -452,6 +464,7 @@ function showSection(section) {
   $("#profile-content").classList.toggle("hidden", section !== "profile");
   $("#device-content").classList.toggle("hidden", section !== "device");
   $("#vehicle-content").classList.toggle("hidden", section !== "vehicle");
+  $("#vehicle-config-content").classList.toggle("hidden", section !== "vehicle-config");
   $("#tours-content").classList.toggle("hidden", section !== "tours");
   $("#game-content").classList.toggle("hidden", section !== "game");
   $("#coordinator-content").classList.toggle("hidden", section !== "coordinator");
@@ -474,6 +487,7 @@ function showSection(section) {
   $("#nav-profile").classList.toggle("active", section === "profile");
   $("#nav-device").classList.toggle("active", section === "device");
   $("#nav-vehicle").classList.toggle("active", section === "vehicle");
+  $("#nav-vehicle-config").classList.toggle("active", section === "vehicle-config");
   $("#nav-tours").classList.toggle("active", section === "tours");
   $("#nav-game").classList.toggle("active", section === "game");
   $("#nav-coordinator").classList.toggle("active", section === "coordinator");
@@ -513,6 +527,7 @@ function showSection(section) {
   }
   if (section === "device") loadDeviceReports();
   if (section === "vehicle") loadVehicleSection();
+  if (section === "vehicle-config") loadVehicleConfigurations();
   if (section === "tours") {
     loadCurrentRoute();
   }
@@ -5212,6 +5227,109 @@ async function loadVehicleSection() {
   await Promise.all([loadCourierMasterOptions(), loadVehicleAssignments(), loadVehicleReports()]);
 }
 
+function setVehicleConfigMessage(message, isError = false) {
+  const target = $("#vehicle-config-message");
+  if (!target) return;
+  target.textContent = message || "";
+  target.classList.toggle("error", Boolean(isError));
+}
+
+function renderVehicleConfigSetup() {
+  const countiesSelect = $("#vehicle-config-toll-counties");
+  if (countiesSelect && !countiesSelect.dataset.loaded) {
+    const counties = state.vehicleConfigurationSetup?.counties || [];
+    countiesSelect.innerHTML = counties
+      .map((county) => `<option value="${escapeHtml(county)}">${escapeHtml(county)}</option>`)
+      .join("");
+    countiesSelect.dataset.loaded = "1";
+  }
+  renderCourierMasterOptions();
+}
+
+function selectedVehicleConfigCounties() {
+  const select = $("#vehicle-config-toll-counties");
+  return Array.from(select?.selectedOptions || []).map((option) => option.value);
+}
+
+function fillVehicleConfigForm(item = {}) {
+  $("#vehicle-config-jitt-id").value = item.jittCarId || "";
+  $("#vehicle-config-license-plate").value = item.licensePlate || "";
+  $("#vehicle-config-warehouse").value = item.warehouseCode || "BUD1";
+  $("#vehicle-config-toll-type").value = item.tollVignetteType || "none";
+  $("#vehicle-config-toll-from").value = item.tollValidFrom || "";
+  $("#vehicle-config-toll-to").value = item.tollValidTo || "";
+  $("#vehicle-config-service-from").value = item.serviceFrom || "";
+  $("#vehicle-config-service-to").value = item.serviceTo || "";
+  $("#vehicle-config-status").value = item.carStatus || "assignable";
+  $("#vehicle-config-condition-label").value = item.conditionLabel || "";
+  $("#vehicle-config-condition-description").value = item.conditionDescription || "";
+  $("#vehicle-config-min-route").value = item.minimumRouteLength || "";
+  $("#vehicle-config-dedicated-courier").value = item.dedicatedCourierId || "";
+  $("#vehicle-config-active").checked = item.active !== false;
+  const counties = new Set(item.tollCounties || []);
+  Array.from($("#vehicle-config-toll-counties")?.options || []).forEach((option) => {
+    option.selected = counties.has(option.value);
+  });
+  setVehicleConfigMessage(item.licensePlate ? `${item.licensePlate} szerkesztése.` : "");
+}
+
+function vehicleConfigStatusClass(item) {
+  if (!item.active) return "muted";
+  if (["service", "out_of_order"].includes(item.carStatus)) return "error";
+  if (["garage_master", "other"].includes(item.carStatus)) return "attention";
+  return "done";
+}
+
+function renderVehicleConfigurations() {
+  const target = $("#vehicle-config-list");
+  if (!target) return;
+  const items = state.vehicleConfigurations || [];
+  if (!items.length) {
+    target.innerHTML = `<div class="empty-card">Még nincs autó konfiguráció.</div>`;
+    return;
+  }
+  target.innerHTML = items.map((item) => `
+    <article class="vehicle-config-row">
+      <div>
+        <strong>${escapeHtml(item.licensePlate || "-")}</strong>
+        <small>${escapeHtml(item.jittCarId || "-")} · ${escapeHtml(item.warehouseCode || "-")}</small>
+      </div>
+      <div>
+        <span class="settlement-dashboard-status ${vehicleConfigStatusClass(item)}">${escapeHtml(item.carStatusLabel || "-")}</span>
+        <small>${escapeHtml(item.conditionLabel || "Nincs állapot megjegyzés")}</small>
+      </div>
+      <div>
+        <strong>${escapeHtml(item.tollVignetteLabel || "-")}</strong>
+        <small>${escapeHtml((item.tollCounties || []).join(", ") || [item.tollValidFrom, item.tollValidTo].filter(Boolean).join(" - ") || "-")}</small>
+      </div>
+      <div>
+        <strong>${item.dedicatedCourierId ? escapeHtml(`${item.dedicatedCourierName || "Futár"} · #${item.dedicatedCourierId}`) : "Nincs dedikálás"}</strong>
+        <small>${item.minimumRouteLength ? `Minimum túra: ${escapeHtml(item.minimumRouteLength)} ` : "Nincs minimum túra hossz"}${item.serviceFrom || item.serviceTo ? ` · Szervíz: ${escapeHtml([item.serviceFrom, item.serviceTo].filter(Boolean).join(" - "))}` : ""}</small>
+      </div>
+      <button class="secondary" type="button" data-vehicle-config-edit="${escapeHtml(item.licensePlate || "")}">Szerkesztés</button>
+    </article>
+  `).join("");
+}
+
+async function loadVehicleConfigurations() {
+  const target = $("#vehicle-config-list");
+  if (!state.user?.canManageVehicles) {
+    if (target) target.innerHTML = `<div class="notice error">Ehhez admin vagy HR jogosultság szükséges.</div>`;
+    return;
+  }
+  if (target) target.innerHTML = `<div class="empty-card">Autó konfigurációk betöltése...</div>`;
+  await loadCourierMasterOptions();
+  try {
+    const payload = await api("/api/vehicles/configurations");
+    state.vehicleConfigurations = payload.items || [];
+    state.vehicleConfigurationSetup = payload.setup || null;
+    renderVehicleConfigSetup();
+    renderVehicleConfigurations();
+  } catch (error) {
+    if (target) target.innerHTML = `<div class="notice error">Az autó konfigurációk nem tölthetők be: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
 const deviceConditionForm = $("#device-condition-form");
 if (deviceConditionForm) {
   deviceConditionForm.addEventListener("submit", async (event) => {
@@ -5266,6 +5384,61 @@ vehiclePlateInput?.addEventListener("keydown", (event) => {
 $("#vehicle-hr-search-form")?.addEventListener("submit", (event) => {
   event.preventDefault();
   searchVehicleAssignments();
+});
+
+$("#vehicle-config-refresh")?.addEventListener("click", () => loadVehicleConfigurations());
+
+$("#vehicle-config-list")?.addEventListener("click", (event) => {
+  const button = event.target?.closest?.("[data-vehicle-config-edit]");
+  if (!button) return;
+  const plate = button.getAttribute("data-vehicle-config-edit") || "";
+  const item = (state.vehicleConfigurations || []).find((row) => row.licensePlate === plate);
+  if (item) {
+    fillVehicleConfigForm(item);
+    $("#vehicle-config-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
+
+$("#vehicle-config-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const courierSelect = $("#vehicle-config-dedicated-courier");
+  const selectedCourier = courierSelect?.selectedOptions?.[0];
+  const payload = {
+    jitt_car_id: $("#vehicle-config-jitt-id")?.value || "",
+    license_plate: $("#vehicle-config-license-plate")?.value || "",
+    warehouse_code: $("#vehicle-config-warehouse")?.value || "BUD1",
+    toll_vignette_type: $("#vehicle-config-toll-type")?.value || "none",
+    toll_counties: selectedVehicleConfigCounties(),
+    toll_valid_from: $("#vehicle-config-toll-from")?.value || "",
+    toll_valid_to: $("#vehicle-config-toll-to")?.value || "",
+    service_from: $("#vehicle-config-service-from")?.value || "",
+    service_to: $("#vehicle-config-service-to")?.value || "",
+    car_status: $("#vehicle-config-status")?.value || "assignable",
+    condition_label: $("#vehicle-config-condition-label")?.value || "",
+    condition_description: $("#vehicle-config-condition-description")?.value || "",
+    minimum_route_length: $("#vehicle-config-min-route")?.value ? Number($("#vehicle-config-min-route").value) : null,
+    dedicated_courier_id: courierSelect?.value ? Number(courierSelect.value) : null,
+    dedicated_courier_name: selectedCourier?.dataset?.name || "",
+    active: Boolean($("#vehicle-config-active")?.checked),
+  };
+  setVehicleConfigMessage("Autó konfiguráció mentése...");
+  if (button) button.disabled = true;
+  try {
+    await api("/api/vehicles/configurations", { method: "POST", body: JSON.stringify(payload) });
+    form.reset();
+    $("#vehicle-config-active").checked = true;
+    Array.from($("#vehicle-config-toll-counties")?.options || []).forEach((option) => {
+      option.selected = false;
+    });
+    setVehicleConfigMessage("Autó konfiguráció mentve.");
+    await loadVehicleConfigurations();
+  } catch (error) {
+    setVehicleConfigMessage(`A mentés sikertelen: ${error.message}`, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
 });
 
 function selectedVehicleDamageCount() {
@@ -7757,6 +7930,7 @@ $("#nav-documents").addEventListener("click", () => showSection("documents"));
 $("#nav-profile").addEventListener("click", () => showSection("profile"));
 $("#nav-device").addEventListener("click", () => showSection("device"));
 $("#nav-vehicle").addEventListener("click", () => showSection("vehicle"));
+$("#nav-vehicle-config")?.addEventListener("click", () => showSection("vehicle-config"));
 $("#nav-tours").addEventListener("click", () => showSection("tours"));
 $("#nav-route-details").addEventListener("click", () => showSection("route-details"));
 $("#nav-settlement-dashboard")?.addEventListener("click", () => showSection("settlement-dashboard"));

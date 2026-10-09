@@ -561,6 +561,87 @@
           <section id="vehicle-condition-history" class="device-history"></section>
         </section>
       </div>
+
+      <div id="vehicle-config-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">AUTÓ</p>
+            <h2>Autó konfigurálása</h2>
+            <p class="muted">Autó törzsadatok, matrica, szervízablak, állapot és dedikált futár beállítása.</p>
+          </div>
+          <button id="vehicle-config-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">CAR</span>
+            <div>
+              <h3>Új autó / módosítás</h3>
+              <p>A rendszám alapján meglévő autót frissít, új rendszámnál új rekordot hoz létre.</p>
+            </div>
+          </div>
+          <form id="vehicle-config-form" class="process-form two-column">
+            <label>JITT_CAR_ID<input id="vehicle-config-jitt-id" required autocomplete="off" /></label>
+            <label>Rendszám<input id="vehicle-config-license-plate" required autocomplete="off" /></label>
+            <label>Raktár
+              <select id="vehicle-config-warehouse" required>
+                <option value="BUD1">BUD1</option>
+                <option value="BUD2">BUD2</option>
+              </select>
+            </label>
+            <label>Autópálya matrica
+              <select id="vehicle-config-toll-type">
+                <option value="none">Nincs</option>
+                <option value="has">Van</option>
+                <option value="county">Megyei</option>
+                <option value="national">Országos</option>
+              </select>
+            </label>
+            <label class="full-width">Megyei matrica
+              <select id="vehicle-config-toll-counties" multiple size="5"></select>
+            </label>
+            <label>Matrica érvényesség kezdete<input id="vehicle-config-toll-from" type="date" /></label>
+            <label>Matrica érvényesség vége<input id="vehicle-config-toll-to" type="date" /></label>
+            <label>Szervíz kezdete<input id="vehicle-config-service-from" type="date" /></label>
+            <label>Szervíz vége<input id="vehicle-config-service-to" type="date" /></label>
+            <label>Állapot
+              <select id="vehicle-config-status">
+                <option value="assignable">Futárhoz kiosztható</option>
+                <option value="service">Szervízben</option>
+                <option value="garage_master">Garázsmesternél</option>
+                <option value="other">Egyéb</option>
+                <option value="retired">Kivezetve</option>
+                <option value="out_of_order">Üzemen kívül</option>
+              </select>
+            </label>
+            <label>Autó állapota<input id="vehicle-config-condition-label" autocomplete="off" placeholder="pl. jobb első sárvédő sérült" /></label>
+            <label class="full-width">Állapot leírás<textarea id="vehicle-config-condition-description" rows="3"></textarea></label>
+            <label>Minimum túra hossz<input id="vehicle-config-min-route" type="number" min="0" step="1" /></label>
+            <label>Egyedi dedikálás
+              <select id="vehicle-config-dedicated-courier">
+                <option value="">Nincs dedikált futár</option>
+              </select>
+            </label>
+            <label class="vehicle-config-active"><input id="vehicle-config-active" type="checkbox" checked /> Aktív autó</label>
+            <button class="primary" type="submit">Autó konfiguráció mentése</button>
+          </form>
+          <p id="vehicle-config-message" class="updated-at" aria-live="polite"></p>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">LISTA</span>
+            <div>
+              <h3>Autó konfigurációk</h3>
+              <p>Az aktív és korábban felvett autók törzsadatai.</p>
+            </div>
+          </div>
+          <section id="vehicle-config-list" class="vehicle-config-list">
+            <div class="empty-card">Autó konfigurációk betöltése...</div>
+          </section>
+        </section>
+      </div>
+
       <div id="tours-content" class="hidden">
         <section class="workflow-header">
           <div>
@@ -737,6 +818,7 @@
         <button id="nav-profile"><span>☻</span>Profil</button>
         <button id="nav-device"><span>□</span>Telefon</button>
         <button id="nav-vehicle"><span>A</span>Autó</button>
+        <button id="nav-vehicle-config" class="hidden"><span>AC</span>Autó konfigurálása</button>
         <button id="nav-tours"><span>🚚</span>Túráim</button>
         <button id="nav-route-details" class="hidden"><span>⇲</span>Túra részletező</button>
         <button id="nav-settlement-dashboard" class="hidden"><span>ED</span>Elszámolási dashboard</button>
