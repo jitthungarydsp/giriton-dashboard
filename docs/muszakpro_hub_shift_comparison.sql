@@ -389,6 +389,24 @@ hub_booking_match as (
         chb.first_seen_at as hub_booking_first_seen_at,
         chb.last_seen_at as hub_booking_last_seen_at,
         chb.deleted_at as hub_booking_deleted_at,
+        (
+            chb.slot_from is not null
+            and chb.slot_to is not null
+            and (
+                (
+                    chb.slot_from <= chb.slot_to
+                    and i.muszakpro_shift_start_time >= chb.slot_from
+                    and i.muszakpro_shift_start_time < chb.slot_to
+                )
+                or (
+                    chb.slot_from > chb.slot_to
+                    and (
+                        i.muszakpro_shift_start_time >= chb.slot_from
+                        or i.muszakpro_shift_start_time < chb.slot_to
+                    )
+                )
+            )
+        ) as hub_booking_contains_muszakpro_start,
         abs(extract(epoch from (chb.slot_from - i.muszakpro_shift_start_time)) / 60)::integer as absolute_diff_minutes,
         (extract(epoch from (chb.slot_from - i.muszakpro_shift_start_time)) / 60)::integer as signed_diff_minutes
     from identity_match i
@@ -410,6 +428,26 @@ hub_booking_match as (
               )
           )
         order by
+            case
+                when chb.slot_from is not null
+                 and chb.slot_to is not null
+                 and (
+                     (
+                         chb.slot_from <= chb.slot_to
+                         and i.muszakpro_shift_start_time >= chb.slot_from
+                         and i.muszakpro_shift_start_time < chb.slot_to
+                     )
+                     or (
+                         chb.slot_from > chb.slot_to
+                         and (
+                             i.muszakpro_shift_start_time >= chb.slot_from
+                             or i.muszakpro_shift_start_time < chb.slot_to
+                         )
+                     )
+                 )
+                    then 0
+                else 1
+            end,
             abs(extract(epoch from (chb.slot_from - i.muszakpro_shift_start_time))),
             chb.last_seen_at desc nulls last
         limit 1
@@ -445,6 +483,7 @@ select
     hub_booking_status,
     hub_booking_movement_type,
     hub_booking_active,
+    hub_booking_contains_muszakpro_start,
     absolute_diff_minutes,
     signed_diff_minutes,
     case
@@ -454,6 +493,8 @@ select
             then 'NINCS_AKTIV_HUB_FOGLALAS'
         when hub_slot_from = muszakpro_shift_start_time
             then 'PONTOS'
+        when hub_booking_contains_muszakpro_start
+            then 'HUB_IDOSAVBAN_RENDBEN'
         else 'ELTERO_IDOPONT'
     end as comparison_status,
     case
@@ -463,6 +504,8 @@ select
             then 'Ehhez a futárhoz ezen a napon/raktáron nincs aktív Hub foglalás.'
         when hub_slot_from = muszakpro_shift_start_time
             then 'A MűszakPro és Hub kezdési időpont egyezik.'
+        when hub_booking_contains_muszakpro_start
+            then 'A MűszakPro kezdés a Hubon rögzített foglalási idősávon belül van.'
         else 'A futár Hubon rögzített foglalása más időpontban van, mint a MűszakPro foglalás.'
     end as comparison_reason
 from hub_booking_match;
