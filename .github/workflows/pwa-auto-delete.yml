@@ -1,0 +1,155 @@
+name: PWA_AUTO_DELETE
+
+on:
+  workflow_dispatch:
+    inputs:
+      work_date:
+        description: "Törlés dátuma YYYY-MM-DD."
+        required: true
+      warehouse:
+        description: "Raktár: BUD1 vagy BUD2."
+        required: true
+      shift_template_id:
+        description: "Courier Hub shiftTemplateId."
+        required: true
+      slot_from:
+        description: "Courier Hub slotFrom, pl. 05:45 vagy 05:45:00."
+        required: true
+      courier_id:
+        description: "Courier Hub futár ID."
+        required: true
+      courier_name:
+        description: "Futár neve csak loghoz."
+        required: false
+        default: ""
+      dry_run:
+        description: "true = csak ellenőrzés, false = éles törlés."
+        required: false
+        default: "false"
+
+concurrency:
+  group: pwa-auto-delete-${{ inputs.work_date }}-${{ inputs.warehouse }}-${{ inputs.slot_from }}-${{ inputs.courier_id }}
+  cancel-in-progress: false
+
+jobs:
+  delete:
+    name: PWA_AUTO_DELETE
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
+      COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      COURIER_HUB_AUTH_CACHE_FILE: /tmp/pwa-auto-delete-auth.json
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/pwa-auto-delete-auth.json --debug-dir results/pwa-auto-delete/auth
+      KIFLI_COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      KIFLI_COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      KIFLI_COURIER_HUB_AUTH_CACHE_FILE: /tmp/pwa-auto-delete-auth.json
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/pwa-auto-delete-auth.json --debug-dir results/pwa-auto-delete/auth
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate secrets
+        shell: bash
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          if [ -z "$COURIER_HUB_COOKIE" ] && { [ -z "$COURIER_HUB_USERNAME" ] || [ -z "$COURIER_HUB_PASSWORD" ]; }; then
+            echo "Missing Courier Hub auth. Add COURIER_HUB_USERNAME and COURIER_HUB_PASSWORD secrets, or COURIER_HUB_COOKIE."
+            exit 1
+          fi
+
+      - name: Resolve warehouse
+        id: warehouse
+        shell: bash
+        run: |
+          WAREHOUSE="${{ inputs.warehouse }}"
+          WAREHOUSE="${WAREHOUSE^^}"
+          if [ "$WAREHOUSE" = "BUD1" ] || [ "$WAREHOUSE" = "1" ]; then
+            echo "code=BUD1" >> "$GITHUB_OUTPUT"
+            echo "id=1" >> "$GITHUB_OUTPUT"
+          elif [ "$WAREHOUSE" = "BUD2" ] || [ "$WAREHOUSE" = "2" ]; then
+            echo "code=BUD2" >> "$GITHUB_OUTPUT"
+            echo "id=2" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unknown warehouse: $WAREHOUSE"
+            exit 1
+          fi
+
+      - name: Refresh Courier Hub token
+        shell: bash
+        run: |
+          python scripts/refresh_courier_hub_auth.py \
+            --cache-file "$COURIER_HUB_AUTH_CACHE_FILE" \
+            --debug-dir results/pwa-auto-delete/auth \
+            --probe-path "/services/courier-hub-service/external/warehouses/${{ steps.warehouse.outputs.id }}/dsps/8/shift-blocks?dateFrom=${{ inputs.work_date }}&dateTo=${{ inputs.work_date }}"
+
+      - name: PWA_AUTO_DELETE delete one shift
+        shell: bash
+        run: |
+          CMD=(
+            python scripts/courier_hub_api_delete_shift.py
+            --date "${{ inputs.work_date }}"
+            --warehouse "${{ steps.warehouse.outputs.code }}"
+            --dsp-id 8
+            --shift-template-id "${{ inputs.shift_template_id }}"
+            --slot-from "${{ inputs.slot_from }}"
+            --courier-id "${{ inputs.courier_id }}"
+            --courier-name "${{ inputs.courier_name }}"
+          )
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          else
+            CMD+=(--live)
+          fi
+          "${CMD[@]}"
+
+      - name: PWA_AUTO_DELETE refresh selected Hub day
+        if: always()
+        shell: bash
+        run: |
+          python scripts/sync_courier_hub_shift_blocks.py \
+            --warehouse-ids "${{ steps.warehouse.outputs.id }}" \
+            --dsp-id 8 \
+            --start-date "${{ inputs.work_date }}" \
+            --end-date "${{ inputs.work_date }}"
+
+          python scripts/refresh_pwa_schedule_capacity_calendar.py \
+            --warehouse-ids "${{ steps.warehouse.outputs.id }}" \
+            --dsp-id 8 \
+            --start-date "${{ inputs.work_date }}" \
+            --lookahead-days 0 \
+            --refresh-source "PWA_AUTO_DELETE"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## PWA_AUTO_DELETE"
+            echo ""
+            echo "- Date: ${{ inputs.work_date }}"
+            echo "- Warehouse: ${{ steps.warehouse.outputs.code }}"
+            echo "- shiftTemplateId: ${{ inputs.shift_template_id }}"
+            echo "- slotFrom: ${{ inputs.slot_from }}"
+            echo "- Courier: ${{ inputs.courier_id }} ${{ inputs.courier_name }}"
+            echo "- Dry run: ${{ inputs.dry_run }}"
+          } >> "$GITHUB_STEP_SUMMARY"

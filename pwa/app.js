@@ -69,7 +69,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v160";
+const APP_VERSION = "v161";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4664,7 +4664,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=160");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=161");
   }
   return navigator.serviceWorker.ready;
 }
@@ -7115,7 +7115,7 @@ function bindSchedulePrepActions(target) {
       if (status) status.textContent = `Törlés indítása: ${name} (#${id})...`;
       button.disabled = true;
       try {
-        await api("/api/coordinator/schedule/hub-shift", {
+        const result = await api("/api/coordinator/schedule/hub-shift", {
           method: "POST",
           body: JSON.stringify({
             action: "delete",
@@ -7127,8 +7127,14 @@ function bindSchedulePrepActions(target) {
             courier_name: name,
           }),
         });
-        if (status) status.textContent = `Törlés elküldve a Hubnak: ${name} (#${id}).`;
-        loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true }).catch(() => {});
+        if (status) {
+          status.textContent = result?.queued
+            ? `Törlési job elindítva: ${name} (#${id}). Állapot lekérése...`
+            : `Törlés elküldve a Hubnak: ${name} (#${id}).`;
+        }
+        if (result?.queued) {
+          pollScheduleHubActionJob(result, { status, button, name, id });
+        }
       } catch (error) {
         button.disabled = false;
         if (status) status.textContent = error.message || "A törlés nem sikerült.";
@@ -7166,7 +7172,7 @@ function bindSchedulePrepActions(target) {
             : `Foglalás elküldve a Hubnak: ${name} (#${id}).`;
         }
         if (result?.queued) {
-          pollScheduleBookingJob(result, { status, button, select, name, id });
+          pollScheduleHubActionJob(result, { status, button, select, name, id });
         }
       } catch (error) {
         button.disabled = false;
@@ -7177,29 +7183,37 @@ function bindSchedulePrepActions(target) {
   });
 }
 
-function scheduleBookingJobStatusText(job, name, id) {
-  const run = job?.run_number ? ` #${job.run_number}` : "";
-  if (!job?.found) return `Foglalási job keresése: ${name} (#${id})...`;
-  if (job.status === "completed") {
-    if (job.conclusion === "success") return `Foglalási job sikeres${run}: ${name} (#${id}). Frissítés...`;
-    return `Foglalási job sikertelen${run}: ${name} (#${id}) - ${job.conclusion || "hiba"}.`;
-  }
-  if (job.status === "in_progress") return `Foglalási job fut${run}: ${name} (#${id})...`;
-  return `Foglalási job várakozik${run}: ${name} (#${id})...`;
+function scheduleHubActionLabel(result) {
+  return result?.action === "delete" ? "Törlési" : "Foglalási";
 }
 
-function pollScheduleBookingJob(result, { status, button, select, name, id, attempt = 0 }) {
+function scheduleHubActionJobStatusText(job, result, name, id) {
+  const run = job?.run_number ? ` #${job.run_number}` : "";
+  const label = scheduleHubActionLabel(result);
+  if (!job?.found) return `${label} job keresése: ${name} (#${id})...`;
+  if (job.status === "completed") {
+    if (job.conclusion === "success") return `${label} job sikeres${run}: ${name} (#${id}). Frissítés...`;
+    return `${label} job sikertelen${run}: ${name} (#${id}) - ${job.conclusion || "hiba"}.`;
+  }
+  if (job.status === "in_progress") return `${label} job fut${run}: ${name} (#${id})...`;
+  return `${label} job várakozik${run}: ${name} (#${id})...`;
+}
+
+function pollScheduleHubActionJob(result, { status, button, select, name, id, attempt = 0 }) {
   const triggeredAt = result?.triggered_at_iso || result?.triggered_at || "";
+  const workflow = result?.workflow || "";
+  const label = scheduleHubActionLabel(result);
   if (!triggeredAt) {
-    if (status) status.textContent = `Foglalási job elindítva: ${name} (#${id}). Pár perc múlva frissíts.`;
+    if (status) status.textContent = `${label} job elindítva: ${name} (#${id}). Pár perc múlva frissíts.`;
     return;
   }
   window.setTimeout(async () => {
     try {
-      const job = await api(`/api/coordinator/schedule/hub-shift-job-status?triggered_at=${encodeURIComponent(triggeredAt)}`, {
+      const query = new URLSearchParams({ triggered_at: triggeredAt, workflow });
+      const job = await api(`/api/coordinator/schedule/hub-shift-job-status?${query.toString()}`, {
         silentLoading: true,
       });
-      if (status) status.textContent = scheduleBookingJobStatusText(job, name, id);
+      if (status) status.textContent = scheduleHubActionJobStatusText(job, result, name, id);
       if (job?.status === "completed") {
         if (job.conclusion === "success") {
           loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true }).catch(() => {});
@@ -7210,12 +7224,12 @@ function pollScheduleBookingJob(result, { status, button, select, name, id, atte
         return;
       }
       if (attempt + 1 >= SCHEDULE_BOOKING_JOB_MAX_POLLS) {
-        if (status) status.textContent = `Foglalási job még fut vagy nem található: ${name} (#${id}). Frissíts később.`;
+        if (status) status.textContent = `${label} job még fut vagy nem található: ${name} (#${id}). Frissíts később.`;
         if (button) button.disabled = false;
         if (select) select.disabled = false;
         return;
       }
-      pollScheduleBookingJob(result, { status, button, select, name, id, attempt: attempt + 1 });
+      pollScheduleHubActionJob(result, { status, button, select, name, id, attempt: attempt + 1 });
     } catch (error) {
       if (attempt + 1 >= 3) {
         if (status) status.textContent = error.message || "A job állapotát nem sikerült lekérni.";
@@ -7223,7 +7237,7 @@ function pollScheduleBookingJob(result, { status, button, select, name, id, atte
         if (select) select.disabled = false;
         return;
       }
-      pollScheduleBookingJob(result, { status, button, select, name, id, attempt: attempt + 1 });
+      pollScheduleHubActionJob(result, { status, button, select, name, id, attempt: attempt + 1 });
     }
   }, SCHEDULE_BOOKING_JOB_POLL_MS);
 }

@@ -733,7 +733,7 @@ def resolve_schedule_shift_template_id(
     return safe_int(candidates[0].get("shift_template_id")), slot_from
 
 
-def dispatch_schedule_hub_booking_job(
+def dispatch_schedule_hub_action_job(
     payload: ScheduleHubShiftActionRequest,
     work_date: date,
     warehouse_id: int,
@@ -745,17 +745,20 @@ def dispatch_schedule_hub_booking_job(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"GitHub Actions modul nem tölthető be: {exc}") from exc
 
+    action = str(payload.action or "").strip().lower()
+    workflow = "pwa-auto-delete.yml" if action == "delete" else "pwa-auto-booking.yml"
+    workflow_name = "PWA_AUTO_DELETE" if action == "delete" else "PWA_AUTO_BOOKING"
     inputs = {
-        "start_date": work_date.isoformat(),
-        "days": "1",
-        "max_courier_days": "1",
-        "courier_ids": str(int(payload.courier_id)),
-        "tolerance_minutes": "30",
-        "min_gap_minutes": "270",
+        "work_date": work_date.isoformat(),
+        "warehouse": str(payload.warehouse or ""),
+        "shift_template_id": str(int(shift_template_id)),
+        "slot_from": slot_from,
+        "courier_id": str(int(payload.courier_id)),
+        "courier_name": str(payload.courier_name or ""),
         "dry_run": "false",
     }
     try:
-        result = dispatch_workflow("hub-job-autobooking.yml", inputs=inputs)
+        result = dispatch_workflow(workflow, inputs=inputs)
     except GitHubActionsError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -763,10 +766,10 @@ def dispatch_schedule_hub_booking_job(
     return {
         "ok": True,
         "queued": True,
-        "action": "book",
-        "workflow": result.get("workflow") or "hub-job-autobooking.yml",
-        "workflow_name": "HUB_JOB_AUTOBOOKING",
-        "workflow_url": f"https://github.com/{config['owner']}/{config['repo']}/actions/workflows/hub-job-autobooking.yml",
+        "action": action,
+        "workflow": result.get("workflow") or workflow,
+        "workflow_name": workflow_name,
+        "workflow_url": f"https://github.com/{config['owner']}/{config['repo']}/actions/workflows/{workflow}",
         "ref": result.get("ref") or config["ref"],
         "triggered_at": result.get("triggered_at"),
         "triggered_at_iso": result.get("triggered_at_iso"),
@@ -798,14 +801,17 @@ def github_datetime(value: Any) -> datetime | None:
         return None
 
 
-def latest_schedule_hub_booking_run(triggered_at: str = "") -> dict[str, Any]:
+def latest_schedule_hub_action_run(triggered_at: str = "", workflow: str = "") -> dict[str, Any]:
     try:
         from resources.github_actions import GitHubActionsError, get_latest_runs  # noqa: WPS433
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"GitHub Actions modul nem tölthető be: {exc}") from exc
 
+    workflow_name = str(workflow or "pwa-auto-booking.yml").strip()
+    if workflow_name not in {"pwa-auto-booking.yml", "pwa-auto-delete.yml"}:
+        workflow_name = "pwa-auto-booking.yml"
     try:
-        runs = get_latest_runs(limit=15, workflow="hub-job-autobooking.yml")
+        runs = get_latest_runs(limit=15, workflow=workflow_name)
     except GitHubActionsError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -837,7 +843,7 @@ def latest_schedule_hub_booking_run(triggered_at: str = "") -> dict[str, Any]:
         "html_url": selected_run.get("html_url") or "",
         "created_at": selected_run.get("created_at") or "",
         "updated_at": selected_run.get("updated_at") or "",
-        "message": selected_run.get("display_title") or selected_run.get("name") or "HUB_JOB_AUTOBOOKING",
+        "message": selected_run.get("display_title") or selected_run.get("name") or workflow_name,
     }
 
 
@@ -857,81 +863,7 @@ def run_schedule_hub_shift_action(payload: ScheduleHubShiftActionRequest, user: 
     if payload.courier_id <= 0:
         raise HTTPException(status_code=422, detail="Hiányzik a futár ID.")
     shift_template_id, slot_from = resolve_schedule_shift_template_id(payload, work_date, warehouse_id)
-
-    if action == "book":
-        return dispatch_schedule_hub_booking_job(payload, work_date, warehouse_id, shift_template_id, slot_from)
-
-    try:
-        from scripts.courier_hub_api_book_shift import (  # noqa: WPS433
-            build_assign_url,
-            hub_request,
-            normalize_time as hub_normalize_time,
-            response_payload as hub_response_payload,
-        )
-        from scripts.courier_hub_api_delete_shift import build_delete_url  # noqa: WPS433
-        from scripts.sync_courier_financial_overview import courier_hub_auth_configured  # noqa: WPS433
-        from scripts.sync_courier_hub_master import DEFAULT_BASE_URL  # noqa: WPS433
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Hub API modul nem tölthető be: {exc}") from exc
-
-    if not courier_hub_auth_configured():
-        raise HTTPException(status_code=503, detail="Hiányzik a Courier Hub auth. COURIER_HUB_COOKIE vagy auth cache szükséges.")
-
-    slot_from = hub_normalize_time(slot_from)
-    if not slot_from:
-        raise HTTPException(status_code=422, detail="Hiányzik a slotFrom.")
-
-    request_body = {
-        "date": work_date.isoformat(),
-        "shiftTemplateId": int(shift_template_id),
-        "slotFrom": slot_from,
-        "courierIds": [int(payload.courier_id)],
-    }
-    dsp_id = COURIER_HUB_DSP_ID
-    base_url = os.getenv("COURIER_HUB_BASE_URL") or DEFAULT_BASE_URL
-    if action == "delete":
-        url = build_delete_url(base_url, warehouse_id, dsp_id, 0)
-        response = hub_request("DELETE", url, json=request_body)
-    else:
-        url = build_assign_url(base_url, warehouse_id, dsp_id)
-        response = hub_request("POST", url, json=request_body)
-    response_json = hub_response_payload(response)
-    if not response.ok:
-        detail = response_json.get("detail") if isinstance(response_json, dict) else ""
-        message = detail or json.dumps(response_json, ensure_ascii=False)[:500]
-        raise HTTPException(status_code=response.status_code, detail=message)
-
-    def refresh_hub_day() -> None:
-        try:
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(PROJECT_ROOT / "scripts" / "sync_courier_hub_shift_blocks.py"),
-                    "--start-date",
-                    work_date.isoformat(),
-                    "--end-date",
-                    work_date.isoformat(),
-                    "--warehouse-ids",
-                    str(warehouse_id),
-                    "--dsp-id",
-                    str(dsp_id),
-                ],
-                cwd=str(PROJECT_ROOT),
-                check=False,
-                timeout=120,
-            )
-        except Exception as exc:
-            print(f"PWA Hub shift day refresh failed: {exc}", flush=True)
-
-    run_pwa_background("PWA Hub shift day refresh", refresh_hub_day)
-
-    return {
-        "ok": True,
-        "action": action,
-        "status": response.status_code,
-        "request": request_body,
-        "response": response_json,
-    }
+    return dispatch_schedule_hub_action_job(payload, work_date, warehouse_id, shift_template_id, slot_from)
 
 
 def warehouse_allowed(value: Any, allowed_warehouse_ids: list[int] | None) -> bool:
@@ -18355,10 +18287,11 @@ def coordinator_schedule_hub_shift(
 @app.get("/api/coordinator/schedule/hub-shift-job-status")
 def coordinator_schedule_hub_shift_job_status(
     triggered_at: str = Query(default=""),
+    workflow: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     require_coordinator(require_user(giriton_pwa_session))
-    return latest_schedule_hub_booking_run(triggered_at)
+    return latest_schedule_hub_action_run(triggered_at, workflow)
 
 
 @app.get("/api/muszakpro/open-shifts")
