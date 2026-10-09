@@ -451,18 +451,23 @@ function showApp() {
   $("#nav-departure-helper").classList.toggle("hidden", !canCoordinate);
   $("#nav-today-workers").classList.toggle("hidden", !canCoordinate);
   $("#nav-coordinator-schedule").classList.toggle("hidden", !canCoordinate);
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-game"]
+    .forEach((selector) => $(selector)?.classList.remove("hidden"));
   $("#nav-registration-admin").classList.toggle("hidden", !state.user.canApproveRegistrations);
   $("#nav-route-details").classList.toggle("hidden", !state.user.canPreviewCouriers);
   $("#nav-settlement-dashboard").classList.toggle("hidden", !state.user.canViewSettlementDashboard);
   $("#nav-vehicle-config").classList.toggle("hidden", !state.user.canManageVehicles);
   const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-vehicle-config", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard"]
-    .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
+  if (coordinatorOnly) {
+    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-vehicle-config", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard"]
+      .forEach((selector) => $(selector)?.classList.add("hidden"));
+  }
   if (hrOnly) {
     ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard"]
       .forEach((selector) => $(selector)?.classList.add("hidden"));
-    ["#nav-profile", "#nav-vehicle", "#nav-vehicle-config"].forEach((selector) => $(selector)?.classList.remove("hidden"));
+    ["#nav-profile", "#nav-vehicle"].forEach((selector) => $(selector)?.classList.remove("hidden"));
+    $("#nav-vehicle-config")?.classList.toggle("hidden", !state.user.canManageVehicles);
   }
   $("#nav-expense")?.classList.add("hidden");
   ["#workflow-preview-wrapper", "#statistics-preview-wrapper"].forEach((selector) => {
@@ -3308,10 +3313,12 @@ function renderShifts() {
 function renderOpenMuszakproShifts() {
   const card = $("#work-offer-card");
   const target = $("#open-muszakpro-list");
+  const button = $("#open-muszakpro-refresh");
   const hasActiveShift = Boolean(activeShift(state.data?.items || []));
   if (card) card.classList.toggle("hidden", hasActiveShift);
   if (hasActiveShift) {
     state.openMuszakproShifts = null;
+    if (button) button.textContent = "Mutasd";
     if (target) {
       target.classList.add("hidden");
       target.innerHTML = "";
@@ -3323,10 +3330,12 @@ function renderOpenMuszakproShifts() {
   if (!payload || payload.date !== state.selectedDate) {
     target.classList.add("hidden");
     target.innerHTML = "";
+    if (button) button.textContent = "Mutasd";
     return;
   }
 
   target.classList.remove("hidden");
+  if (button) button.textContent = "Elrejtés";
   const items = payload.items || [];
   if (!items.length) {
     const message = payload.message || "A kiválasztott napra nincs szabad MűszakPro műszak a raktáradhoz.";
@@ -4416,6 +4425,23 @@ async function loadWorkflow(options = {}) {
       refreshButton.textContent = "Frissítés";
     }
   }
+}
+
+function toggleOpenMuszakproShifts() {
+  const target = $("#open-muszakpro-list");
+  const selectedDate = state.selectedDate || localDate();
+  const isOpen = Boolean(
+    target
+      && !target.classList.contains("hidden")
+      && state.openMuszakproShifts
+      && state.openMuszakproShifts.date === selectedDate
+  );
+  if (isOpen) {
+    state.openMuszakproShifts = null;
+    renderOpenMuszakproShifts();
+    return Promise.resolve();
+  }
+  return loadOpenMuszakproShifts();
 }
 
 function renderSettlementDashboardStatus(status = {}) {
@@ -8333,7 +8359,7 @@ $("#logout").addEventListener("click", async () => {
   showLogin();
 });
 $("#refresh").addEventListener("click", loadShifts);
-$("#open-muszakpro-refresh").addEventListener("click", loadOpenMuszakproShifts);
+$("#open-muszakpro-refresh").addEventListener("click", toggleOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
 $("#nav-statistics").addEventListener("click", () => showSection("statistics"));
