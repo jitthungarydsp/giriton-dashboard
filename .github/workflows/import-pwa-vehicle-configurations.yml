@@ -1,0 +1,70 @@
+name: Import PWA Vehicle Configurations
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "true eseten DB-be ir, false eseten csak dry-run"
+        required: true
+        default: "false"
+      replace_existing:
+        description: "true eseten mar letezo rendszamokra is uj verziosort ir"
+        required: false
+        default: "false"
+      sheet_id:
+        description: "Google Sheet ID"
+        required: false
+        default: "1zcLlf4VzkKAVrODbbpS4-bYjvu9vaZuR2tIWUUqwLzU"
+      gid:
+        description: "Worksheet gid"
+        required: false
+        default: "321601566"
+
+concurrency:
+  group: import-pwa-vehicle-configurations
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate environment
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+
+      - name: Import vehicles
+        shell: bash
+        run: |
+          CMD=(python scripts/import_vehicle_configurations_from_sheet.py \
+            --sheet-id "${{ inputs.sheet_id }}" \
+            --gid "${{ inputs.gid }}")
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            CMD+=(--apply)
+          fi
+          if [ "${{ inputs.replace_existing }}" = "true" ]; then
+            CMD+=(--replace-existing)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
