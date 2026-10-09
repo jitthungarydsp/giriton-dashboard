@@ -348,11 +348,14 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-slot-detail-grid strong { font-size: 13px; }
 .schedule-slot-worker-list { display: grid; gap: 8px; }
 .schedule-slot-worker { display: grid; gap: 7px; padding: 10px; border-radius: 12px; background: #ffffffc7; }
+.schedule-slot-worker-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.schedule-slot-worker-head b { align-self: start; margin-top: 0; padding: 5px 8px; border-radius: 999px; background: #edf4ea; color: var(--green-dark); font-size: 10px; font-weight: 950; text-transform: uppercase; }
 .schedule-slot-card.missing .schedule-slot-worker { background: #ffffff12; }
 .schedule-slot-worker-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 11px; font-weight: 850; }
 .schedule-slot-card.missing .schedule-slot-worker-meta { color: #cbd8cc; }
 .schedule-slot-worker-meta a { color: var(--green-dark); font-weight: 950; text-decoration: none; }
 .schedule-slot-card.missing .schedule-slot-worker-meta a { color: #dff6b5; }
+.schedule-slot-vehicle-panel { display: grid; gap: 8px; padding: 9px; border: 1px solid #d8dfd5; border-radius: 10px; background: #f8faf6; }
 .schedule-slot-actions { display: grid; gap: 6px; justify-items: start; }
 .schedule-slot-actions button,
 .schedule-slot-action-row button { min-height: 34px; padding: 0 11px; border: 1px solid #d9a6a2; border-radius: 10px; background: #fff8f7; color: #a52d28; font-size: 11px; font-weight: 950; }

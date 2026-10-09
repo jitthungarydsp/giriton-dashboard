@@ -26,6 +26,7 @@ const state = {
   vehicleSearchResults: [],
   vehicleConfigurations: [],
   vehicleConfigurationSetup: null,
+  scheduleVehicleConfigurations: [],
   queueStatus: null,
   queueTimer: null,
   salaryAdvanceRequests: [],
@@ -70,7 +71,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v164";
+const APP_VERSION = "v165";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4666,7 +4667,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=164");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=165");
   }
   return navigator.serviceWorker.ready;
 }
@@ -5380,6 +5381,19 @@ async function loadVehicleConfigurations() {
     renderVehicleConfigurations();
   } catch (error) {
     if (target) target.innerHTML = `<div class="notice error">Az autó konfigurációk nem tölthetők be: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadScheduleVehicleConfigurations({ force = false } = {}) {
+  if (!state.user?.canManageVehicles) return;
+  if (!force && state.scheduleVehicleConfigurations?.length) return;
+  try {
+    const payload = await api("/api/vehicles/configurations", { silentLoading: true });
+    state.scheduleVehicleConfigurations = payload.items || [];
+    if (!state.vehicleConfigurations?.length) state.vehicleConfigurations = payload.items || [];
+    state.vehicleConfigurationSetup = payload.setup || state.vehicleConfigurationSetup;
+  } catch (_) {
+    state.scheduleVehicleConfigurations = state.scheduleVehicleConfigurations || [];
   }
 }
 
@@ -6782,17 +6796,101 @@ function scheduleSlotPreparedText(slot = {}) {
   return "Előkészületben";
 }
 
+function vehicleConfigLabel(item = {}) {
+  return [
+    item.licensePlate || "-",
+    [item.brand, item.model].filter(Boolean).join(" "),
+    item.carStatusLabel || "",
+  ].filter(Boolean).join(" · ");
+}
+
+function scheduleVehicleConfigs() {
+  return state.scheduleVehicleConfigurations?.length
+    ? state.scheduleVehicleConfigurations
+    : state.vehicleConfigurations || [];
+}
+
+function scheduleVehicleOptions(slot = {}, selectedVehicle = null) {
+  const warehouse = String(slot.warehouse || "").trim().toUpperCase();
+  const seen = new Set();
+  const items = [];
+  const add = (item) => {
+    const plate = String(item?.licensePlate || "").trim();
+    if (!plate || seen.has(plate)) return;
+    seen.add(plate);
+    items.push(item);
+  };
+  scheduleVehicleConfigs()
+    .filter((item) => item?.active !== false)
+    .filter((item) => !warehouse || String(item.warehouseCode || "").toUpperCase() === warehouse)
+    .filter((item) => ["assignable", "garage_master", "other"].includes(String(item.carStatus || "assignable")))
+    .sort((a, b) => String(a.licensePlate || "").localeCompare(String(b.licensePlate || ""), "hu"))
+    .forEach(add);
+  if (selectedVehicle) add(selectedVehicle);
+  return items;
+}
+
+function scheduleRecommendedVehicle(worker = {}, slot = {}) {
+  const courierId = String(worker.courierId || "").trim();
+  const warehouse = String(slot.warehouse || worker.warehouse || "").trim().toUpperCase();
+  const configs = scheduleVehicleConfigs().filter((item) => item?.active !== false);
+  const dedicated = configs.find((item) =>
+    String(item.dedicatedCourierId || "").trim() === courierId
+    && (!warehouse || String(item.warehouseCode || "").toUpperCase() === warehouse)
+  );
+  if (dedicated) return dedicated;
+  const plate = String(worker.vehicle?.licensePlate || "").trim().toUpperCase();
+  if (plate) {
+    return configs.find((item) => String(item.licensePlate || "").trim().toUpperCase() === plate) || { licensePlate: plate };
+  }
+  return null;
+}
+
+function vehicleConfigAssignmentPayload(item = {}, courierId = "", courierName = "") {
+  return {
+    jitt_car_id: item.jittCarId || "",
+    license_plate: item.licensePlate || "",
+    warehouse_code: item.warehouseCode || "BUD1",
+    brand: item.brand || "",
+    model: item.model || "",
+    ownership_type: item.ownershipType || "own",
+    rental_company: item.rentalCompany || "",
+    toll_vignette_type: item.tollVignetteType || "none",
+    toll_counties: item.tollCounties || [],
+    toll_valid_from: item.tollValidFrom || "",
+    toll_valid_to: item.tollValidTo || "",
+    service_from: item.serviceFrom || "",
+    service_to: item.serviceTo || "",
+    service_location: item.serviceLocation || "",
+    car_status: item.carStatus || "assignable",
+    condition_status: item.conditionStatus || "ok",
+    condition_description: item.conditionDescription || "",
+    minimum_daily_rounds: item.minimumDailyRounds || null,
+    enforce_minimum_daily_rounds: Boolean(item.enforceMinimumDailyRounds),
+    dedicated_courier_id: Number(courierId || 0) || null,
+    dedicated_courier_name: courierName || "",
+    active: item.active !== false,
+  };
+}
+
 function renderScheduleSlotWorker(worker = {}, slot = {}) {
   const phone = String(worker.phoneNumber || "").trim();
   const hasCourierId = Boolean(String(worker.courierId || "").trim());
   const slotHasBookedCapacity = Number(slot.assigned || 0) > 0 && Number(slot.opened || 0) > 0;
   const hubBooked = worker.hubTone === "ok" || String(worker.hubStatus || "").toLowerCase().includes("felvezet") || slotHasBookedCapacity;
+  const recommendedVehicle = scheduleRecommendedVehicle(worker, slot);
+  const vehicleOptions = scheduleVehicleOptions(slot, recommendedVehicle);
+  const workerKey = `${slot.date || ""}|${slot.warehouse || ""}|${slot.start || ""}|${worker.courierId || worker.courierName || ""}`;
   return `
     <div class="schedule-slot-worker">
-      <div>
-        <strong>${escapeHtml(worker.courierName || "Futár")}</strong>
-        <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.shiftName || worker.bookingCode || "Műszak")}</small>
-      </div>
+      <button class="schedule-slot-worker-head" type="button" data-schedule-vehicle-toggle="${escapeHtml(workerKey)}">
+        <span>
+          <strong>${escapeHtml(worker.courierName || "Futár")}</strong>
+          <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.shiftName || worker.bookingCode || "Műszak")}</small>
+          <small>Autó: ${escapeHtml(recommendedVehicle?.licensePlate || worker.vehicle?.licensePlate || "-")}</small>
+        </span>
+        <b>Autó</b>
+      </button>
       <div class="schedule-chip-row">
         ${scheduleStatusChip(`MűszakPro: ${String(worker.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, worker.muszakproTone)}
         ${scheduleStatusChip(`Hub: ${String(worker.hubStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, worker.hubTone)}
@@ -6801,6 +6899,29 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
         <span>MűszakPro: ${escapeHtml(shortDateTime(worker.muszakproBookedAt || "") || "-")}</span>
         <span>Hub: ${escapeHtml(shortDateTime(worker.hubUploadedAt || "") || "-")}</span>
         ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : `<span>Telefon: -</span>`}
+      </div>
+      <div class="schedule-slot-vehicle-panel hidden" data-schedule-vehicle-panel="${escapeHtml(workerKey)}">
+        <div>
+          <strong>Futár autó konfiguráció</strong>
+          <small>Ajánlott autó: ${escapeHtml(recommendedVehicle ? vehicleConfigLabel(recommendedVehicle) : "Nincs beállított ajánlás")}</small>
+        </div>
+        <div class="schedule-slot-action-row">
+          <select data-schedule-vehicle-select ${vehicleOptions.length && hasCourierId ? "" : "disabled"}>
+            ${vehicleOptions.length
+              ? vehicleOptions.map((item) => `<option value="${escapeHtml(item.licensePlate)}" ${item.licensePlate === recommendedVehicle?.licensePlate ? "selected" : ""}>${escapeHtml(vehicleConfigLabel(item))}</option>`).join("")
+              : `<option value="">Nincs felvett autó ehhez a raktárhoz</option>`}
+          </select>
+          <button type="button"
+            data-schedule-vehicle-save
+            data-work-date="${escapeHtml(slot.date || "")}"
+            data-warehouse="${escapeHtml(slot.warehouse || "")}"
+            data-courier-id="${escapeHtml(worker.courierId || "")}"
+            data-courier-name="${escapeHtml(worker.courierName || "Futár")}"
+            ${vehicleOptions.length && hasCourierId ? "" : "disabled"}>
+            Mentés
+          </button>
+        </div>
+        <div class="schedule-slot-action-status" data-schedule-vehicle-status role="status" aria-live="polite"></div>
       </div>
       ${hubBooked ? `
         <div class="schedule-slot-actions">
@@ -7209,6 +7330,48 @@ function bindSchedulePrepActions(target) {
       }
     });
   });
+  target.querySelectorAll("[data-schedule-vehicle-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const panel = button.closest(".schedule-slot-worker")?.querySelector("[data-schedule-vehicle-panel]");
+      if (panel) panel.classList.toggle("hidden");
+    });
+  });
+  target.querySelectorAll("[data-schedule-vehicle-save]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const panel = button.closest(".schedule-slot-vehicle-panel");
+      const select = panel?.querySelector("[data-schedule-vehicle-select]");
+      const status = panel?.querySelector("[data-schedule-vehicle-status]");
+      const plate = String(select?.value || "").trim();
+      const courierId = button.dataset.courierId || "";
+      const courierName = button.dataset.courierName || "Futár";
+      const item = scheduleVehicleConfigs().find((row) => String(row.licensePlate || "") === plate);
+      if (!item || !courierId) return;
+      if (status) {
+        status.classList.add("active");
+        status.classList.remove("error");
+        status.textContent = `${courierName} (#${courierId}) autó beállítása: ${plate}...`;
+      }
+      button.disabled = true;
+      if (select) select.disabled = true;
+      try {
+        await api("/api/vehicles/configurations", {
+          method: "POST",
+          body: JSON.stringify(vehicleConfigAssignmentPayload(item, courierId, courierName)),
+        });
+        await loadScheduleVehicleConfigurations({ force: true });
+        if (status) status.textContent = `${courierName} (#${courierId}) ajánlott autója mentve: ${plate}.`;
+        loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true, preserveScroll: true }).catch(() => {});
+      } catch (error) {
+        if (status) {
+          status.classList.add("active", "error");
+          status.textContent = error.message || "Az autó beállítása nem sikerült.";
+        }
+      } finally {
+        button.disabled = false;
+        if (select) select.disabled = false;
+      }
+    });
+  });
 }
 
 function scheduleHubActionLabel(result) {
@@ -7432,6 +7595,8 @@ async function loadCoordinatorScheduleDay(day, options = {}) {
     const warehouseQuery = warehouse ? `&warehouse=${encodeURIComponent(warehouse)}` : "";
     const fastQuery = fast ? "&fast=true" : "";
     const payload = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}${warehouseQuery}&day=${encodeURIComponent(selectedDay)}${fastQuery}`);
+    if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
+    await loadScheduleVehicleConfigurations();
     if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
     mergeCoordinatorScheduleDay(payload);
     state.coordinatorScheduleDay = selectedDay;
