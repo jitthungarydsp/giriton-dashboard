@@ -276,6 +276,8 @@ select
     end as comparison_reason
 from hub_booking_match;
 
+drop view if exists public.vw_muszakpro_hub_shift_time_mismatch;
+
 create or replace view public.vw_muszakpro_hub_shift_time_mismatch as
 with muszakpro_rows as (
     select
