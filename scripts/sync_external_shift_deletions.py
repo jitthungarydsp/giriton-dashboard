@@ -54,6 +54,7 @@ class SheetDeletionRow:
     work_date: str
     shift_text: str
     email: str
+    courier_id: int | None
     warehouse: str
     sheet_status: str
 
@@ -162,6 +163,21 @@ def normalize_email(value: Any) -> str:
     return re.sub(r"\s+", "", clean_text(value).casefold())
 
 
+def normalize_courier_id(value: Any) -> int | None:
+    text = clean_text(value)
+    if text.endswith(".0"):
+        text = text[:-2]
+    return int(text) if text.isdigit() else None
+
+
+def split_sheet_identity(value: Any) -> tuple[str, int | None]:
+    text = clean_text(value)
+    courier_id = normalize_courier_id(text)
+    if courier_id is not None:
+        return "", courier_id
+    return normalize_email(text), None
+
+
 def normalize_status(value: Any) -> str:
     return normalize_key(value).replace(" ", "_")
 
@@ -236,12 +252,12 @@ def read_sheet_rows(sheet_id: str, worksheet_gid: int) -> list[SheetDeletionRow]
         requested_at_text = clean_text(cells[0] if len(cells) > 0 else "")
         work_date = parse_work_date(cells[1] if len(cells) > 1 else "")
         shift_text = clean_text(cells[2] if len(cells) > 2 else "")
-        email = normalize_email(cells[3] if len(cells) > 3 else "")
+        email, courier_id = split_sheet_identity(cells[3] if len(cells) > 3 else "")
         warehouse = clean_text(cells[4] if len(cells) > 4 else "").upper()
         sheet_status = clean_text(cells[5] if len(cells) > 5 else "")
         if not any([requested_at_text, work_date, shift_text, email, warehouse, sheet_status]):
             continue
-        if not all([work_date, shift_text, email, warehouse]):
+        if not all([work_date, shift_text, warehouse]) or (not email and courier_id is None):
             continue
         rows.append(SheetDeletionRow(
             row_number=row_number,
@@ -249,6 +265,7 @@ def read_sheet_rows(sheet_id: str, worksheet_gid: int) -> list[SheetDeletionRow]
             work_date=work_date,
             shift_text=shift_text,
             email=email,
+            courier_id=courier_id,
             warehouse=warehouse,
             sheet_status=sheet_status,
         ))
@@ -297,7 +314,23 @@ def collect_identity_values(rows: list[dict[str, Any]]) -> tuple[set[int], set[s
 def load_sheet_email_identity(row: SheetDeletionRow, dsp_id: int) -> tuple[set[int], set[str]]:
     courier_ids: set[int] = set()
     jitt_ids: set[str] = set()
+    if row.courier_id is not None:
+        courier_ids.add(row.courier_id)
     if not row.email:
+        if courier_ids:
+            id_filter = ",".join(str(value) for value in sorted(courier_ids))
+            identity_by_id_rows = supabase_get_optional(
+                HUB_IDENTITY_TABLE,
+                [
+                    ("select", "courier_id,jitt_internal_id,email"),
+                    ("dsp_id", f"eq.{int(dsp_id)}"),
+                    ("courier_id", f"in.({id_filter})"),
+                    ("limit", "200"),
+                ],
+            )
+            ids, jitts = collect_identity_values(identity_by_id_rows)
+            courier_ids.update(ids)
+            jitt_ids.update(jitts)
         return courier_ids, jitt_ids
 
     identity_rows = supabase_get_optional(
@@ -427,12 +460,17 @@ def load_same_day_hub_rows(row: SheetDeletionRow, dsp_id: int) -> list[dict[str,
 def candidate_score(row: SheetDeletionRow, candidate: dict[str, Any]) -> int:
     requested_start = shift_start_from_text(row.shift_text)
     candidate_slot = slot_text(candidate.get("slot_from"))
+    candidate_shift_start = shift_start_from_text(candidate.get("shift_text"))
     requested_shift_key = normalize_key(row.shift_text)
     candidate_shift_key = normalize_key(candidate.get("shift_text"))
     score = 0
+    if row.courier_id is not None and int_value(candidate.get("courier_id")) == row.courier_id:
+        score += 80
     if row.email and normalize_email(candidate.get("email")) == row.email:
         score += 25
-    if requested_start and candidate_slot == requested_start:
+    if requested_start and candidate_shift_start == requested_start:
+        score += 120
+    elif requested_start and candidate_slot == requested_start:
         score += 100
     if requested_shift_key and candidate_shift_key == requested_shift_key:
         score += 50
@@ -607,7 +645,7 @@ def main() -> int:
         print(
             "HUB_JOB_AUTODELETE_ROW "
             f"row={row.row_number} date={row.work_date} warehouse={row.warehouse} "
-            f"shift={row.shift_text!r} email={row.email}",
+            f"shift={row.shift_text!r} email={row.email or '-'} courier_id={row.courier_id or '-'}",
             flush=True,
         )
         if args.apply:
