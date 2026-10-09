@@ -27,6 +27,7 @@ const state = {
   vehicleConfigurations: [],
   vehicleConfigurationSetup: null,
   scheduleVehicleConfigurations: [],
+  scheduleOpenVehiclePanels: new Set(),
   queueStatus: null,
   queueTimer: null,
   salaryAdvanceRequests: [],
@@ -71,7 +72,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v165";
+const APP_VERSION = "v166";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4667,7 +4668,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=165");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=166");
   }
   return navigator.serviceWorker.ready;
 }
@@ -6881,6 +6882,7 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
   const recommendedVehicle = scheduleRecommendedVehicle(worker, slot);
   const vehicleOptions = scheduleVehicleOptions(slot, recommendedVehicle);
   const workerKey = `${slot.date || ""}|${slot.warehouse || ""}|${slot.start || ""}|${worker.courierId || worker.courierName || ""}`;
+  const vehiclePanelOpen = state.scheduleOpenVehiclePanels?.has(workerKey);
   return `
     <div class="schedule-slot-worker">
       <button class="schedule-slot-worker-head" type="button" data-schedule-vehicle-toggle="${escapeHtml(workerKey)}">
@@ -6900,7 +6902,7 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
         <span>Hub: ${escapeHtml(shortDateTime(worker.hubUploadedAt || "") || "-")}</span>
         ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : `<span>Telefon: -</span>`}
       </div>
-      <div class="schedule-slot-vehicle-panel hidden" data-schedule-vehicle-panel="${escapeHtml(workerKey)}">
+      <div class="schedule-slot-vehicle-panel ${vehiclePanelOpen ? "" : "hidden"}" data-schedule-vehicle-panel="${escapeHtml(workerKey)}">
         <div>
           <strong>Futár autó konfiguráció</strong>
           <small>Ajánlott autó: ${escapeHtml(recommendedVehicle ? vehicleConfigLabel(recommendedVehicle) : "Nincs beállított ajánlás")}</small>
@@ -7333,7 +7335,15 @@ function bindSchedulePrepActions(target) {
   target.querySelectorAll("[data-schedule-vehicle-toggle]").forEach((button) => {
     button.addEventListener("click", () => {
       const panel = button.closest(".schedule-slot-worker")?.querySelector("[data-schedule-vehicle-panel]");
-      if (panel) panel.classList.toggle("hidden");
+      const key = button.getAttribute("data-schedule-vehicle-toggle") || panel?.getAttribute("data-schedule-vehicle-panel") || "";
+      if (!panel || !key) return;
+      const willOpen = panel.classList.contains("hidden");
+      panel.classList.toggle("hidden", !willOpen);
+      if (willOpen) {
+        state.scheduleOpenVehiclePanels.add(key);
+      } else {
+        state.scheduleOpenVehiclePanels.delete(key);
+      }
     });
   });
   target.querySelectorAll("[data-schedule-vehicle-save]").forEach((button) => {
@@ -7346,6 +7356,8 @@ function bindSchedulePrepActions(target) {
       const courierName = button.dataset.courierName || "Futár";
       const item = scheduleVehicleConfigs().find((row) => String(row.licensePlate || "") === plate);
       if (!item || !courierId) return;
+      const key = panel?.getAttribute("data-schedule-vehicle-panel") || "";
+      if (key) state.scheduleOpenVehiclePanels.add(key);
       if (status) {
         status.classList.add("active");
         status.classList.remove("error");
@@ -8298,6 +8310,7 @@ $("#coordinator-schedule-month")?.addEventListener("change", () => {
   state.coordinatorSchedule = null;
   state.coordinatorScheduleDay = "";
   state.coordinatorScheduleView = "calendar";
+  state.scheduleOpenVehiclePanels.clear();
   loadCoordinatorSchedule();
 });
 $("#coordinator-schedule-warehouse")?.addEventListener("change", (event) => {
@@ -8306,6 +8319,7 @@ $("#coordinator-schedule-warehouse")?.addEventListener("change", (event) => {
   state.coordinatorSchedule = null;
   state.coordinatorScheduleDay = localDate();
   state.coordinatorScheduleView = "calendar";
+  state.scheduleOpenVehiclePanels.clear();
   loadCoordinatorSchedule();
 });
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
