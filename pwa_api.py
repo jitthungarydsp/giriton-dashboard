@@ -51,6 +51,9 @@ except Exception:  # pragma: no cover - optional local fallback
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
+if str(SCRIPTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_ROOT))
 PWA_ROOT = PROJECT_ROOT / "pwa"
 USERS_FILE = PROJECT_ROOT / "data" / "users.json"
 LOCAL_SESSION_SECRET_FILE = PROJECT_ROOT / ".pwa_session_secret"
