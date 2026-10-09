@@ -230,7 +230,7 @@ jobs:
             exit 0
           fi
           RAW_CMD=(python scripts/load_foglalasok_raw.py)
-          BOOKINGS_CMD=(python scripts/load_muszakpro_bookings.py)
+          BOOKINGS_CMD=(python scripts/load_muszakpro_bookings.py --replace-source)
           if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
             RAW_CMD+=(--dry-run)
             BOOKINGS_CMD+=(--dry-run)

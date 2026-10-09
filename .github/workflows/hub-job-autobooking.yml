@@ -174,7 +174,7 @@ jobs:
           }
 
           run_with_retry python scripts/load_foglalasok_raw.py
-          run_with_retry python scripts/load_muszakpro_bookings.py
+          run_with_retry python scripts/load_muszakpro_bookings.py --replace-source
 
       - name: HUB_JOB_AUTOBOOKING sync Courier Hub source tables
         shell: bash
