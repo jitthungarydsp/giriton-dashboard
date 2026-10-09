@@ -11,6 +11,22 @@ on:
         description: "Maximum feldolgozandó TÖRLÉSRE_VAR sor."
         required: false
         default: "100"
+      manual_work_date:
+        description: "Teszt kézi törlés dátuma, pl. 2026-10-09. Ha üres, a sheetből olvas."
+        required: false
+        default: ""
+      manual_shift:
+        description: "Teszt kézi törlés műszakja, pl. BUD1_04:45 vagy 04:45."
+        required: false
+        default: ""
+      manual_identity:
+        description: "Teszt kézi törlés futár ID vagy e-mail, pl. 7644."
+        required: false
+        default: ""
+      manual_warehouse:
+        description: "Teszt kézi törlés raktára, pl. BUD1."
+        required: false
+        default: "BUD1"
   schedule:
     # A HUB_JOB óránként :07-kor indul, ez utána dolgozza fel a sheet törléseket.
     - cron: "37 * * * *"
@@ -81,10 +97,23 @@ jobs:
         run: |
           DRY_RUN="${{ inputs.dry_run }}"
           LIMIT="${{ inputs.limit }}"
+          MANUAL_WORK_DATE="${{ inputs.manual_work_date }}"
+          MANUAL_SHIFT="${{ inputs.manual_shift }}"
+          MANUAL_IDENTITY="${{ inputs.manual_identity }}"
+          MANUAL_WAREHOUSE="${{ inputs.manual_warehouse }}"
           DRY_RUN="${DRY_RUN:-false}"
           LIMIT="${LIMIT:-100}"
+          MANUAL_WAREHOUSE="${MANUAL_WAREHOUSE:-BUD1}"
 
           CMD=(python scripts/sync_external_shift_deletions.py --limit "$LIMIT")
+          if [ -n "$MANUAL_WORK_DATE" ] || [ -n "$MANUAL_SHIFT" ] || [ -n "$MANUAL_IDENTITY" ]; then
+            CMD+=(
+              --manual-work-date "$MANUAL_WORK_DATE"
+              --manual-shift "$MANUAL_SHIFT"
+              --manual-identity "$MANUAL_IDENTITY"
+              --manual-warehouse "$MANUAL_WAREHOUSE"
+            )
+          fi
           if [ "$DRY_RUN" = "true" ]; then
             CMD+=(--dry-run)
           else
@@ -103,4 +132,7 @@ jobs:
             echo "- Pending status: TÖRLÉSRE_VAR"
             echo "- Success writeback: F oszlop = törölve"
             echo "- Dry run: ${{ inputs.dry_run }}"
+            echo "- Manual date: ${{ inputs.manual_work_date }}"
+            echo "- Manual shift: ${{ inputs.manual_shift }}"
+            echo "- Manual identity: ${{ inputs.manual_identity }}"
           } >> "$GITHUB_STEP_SUMMARY"

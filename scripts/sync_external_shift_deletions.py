@@ -272,13 +272,49 @@ def read_sheet_rows(sheet_id: str, worksheet_gid: int) -> list[SheetDeletionRow]
     return rows
 
 
+def build_manual_row(
+    work_date_value: str,
+    shift_text_value: str,
+    identity_value: str,
+    warehouse_value: str,
+) -> SheetDeletionRow:
+    work_date = parse_work_date(work_date_value)
+    shift_text = clean_text(shift_text_value)
+    email, courier_id = split_sheet_identity(identity_value)
+    warehouse = clean_text(warehouse_value).upper()
+    if not all([work_date, shift_text, warehouse]) or (not email and courier_id is None):
+        raise ValueError("Manualis torleshez datum, muszak, futar azonosito/e-mail es raktar is kell.")
+    return SheetDeletionRow(
+        row_number=0,
+        requested_at_text=datetime.now(timezone.utc).isoformat(),
+        work_date=work_date,
+        shift_text=shift_text,
+        email=email,
+        courier_id=courier_id,
+        warehouse=warehouse,
+        sheet_status="TÖRLÉSRE_VAR",
+    )
+
+
+def row_source_key(row: SheetDeletionRow, sheet_id: str, worksheet_gid: int) -> str:
+    if row.row_number <= 0:
+        identity = row.courier_id if row.courier_id is not None else row.email
+        return (
+            "hub_job_autodelete:manual:"
+            f"{row.work_date}:{normalize_key(row.warehouse)}:"
+            f"{normalize_key(row.shift_text)}:{normalize_key(identity)}"
+        )
+    return f"hub_job_autodelete:{sheet_id}:{worksheet_gid}:{row.row_number}"
+
+
 def request_payload(row: SheetDeletionRow, sheet_id: str, worksheet_gid: int) -> dict[str, Any]:
+    manual = row.row_number <= 0
     return {
-        "source_name": "kulso_torles_log_sheet",
+        "source_name": "manual_hub_job_autodelete" if manual else "kulso_torles_log_sheet",
         "source_sheet_id": sheet_id,
         "source_gid": int(worksheet_gid),
-        "source_row": row.row_number,
-        "source_key": f"hub_job_autodelete:{sheet_id}:{worksheet_gid}:{row.row_number}",
+        "source_row": None if manual else row.row_number,
+        "source_key": row_source_key(row, sheet_id, worksheet_gid),
         "requested_at_text": row.requested_at_text,
         "work_date": row.work_date,
         "shift_text": row.shift_text,
@@ -619,16 +655,34 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="DB és Sheet írás engedélyezése.")
     parser.add_argument("--live-delete", action="store_true", help="Valódi Courier Hub API törlés.")
     parser.add_argument("--dry-run", action="store_true", help="Sem DB, sem Hub, sem Sheet írás nem történik.")
+    parser.add_argument("--manual-work-date", default="", help="Opcionális kézi törlés dátuma, pl. 2026-10-09.")
+    parser.add_argument("--manual-shift", default="", help="Opcionális kézi törlés műszakja, pl. BUD1_04:45.")
+    parser.add_argument("--manual-identity", default="", help="Opcionális kézi törlés futár ID vagy e-mail.")
+    parser.add_argument("--manual-warehouse", default="", help="Opcionális kézi törlés raktára, pl. BUD1.")
     args = parser.parse_args()
 
     if args.live_delete and not courier_hub_auth_configured():
         raise RuntimeError("Hianyzik a Courier Hub auth. COURIER_HUB_COOKIE vagy auth cache szukseges.")
 
-    rows = [row for row in read_sheet_rows(args.sheet_id, args.gid) if pending_status(row.sheet_status)]
-    if args.limit > 0:
-        rows = rows[: args.limit]
+    manual_values = [args.manual_work_date, args.manual_shift, args.manual_identity, args.manual_warehouse]
+    manual_mode = any(clean_text(value) for value in manual_values)
+    if manual_mode:
+        if not all(clean_text(value) for value in manual_values):
+            raise ValueError("Manualis torlesnel mind a 4 mezo kotelezo: datum, muszak, futar, raktar.")
+        rows = [
+            build_manual_row(
+                args.manual_work_date,
+                args.manual_shift,
+                args.manual_identity,
+                args.manual_warehouse,
+            )
+        ]
+    else:
+        rows = [row for row in read_sheet_rows(args.sheet_id, args.gid) if pending_status(row.sheet_status)]
+        if args.limit > 0:
+            rows = rows[: args.limit]
 
-    print(f"HUB_JOB_AUTODELETE_PENDING_ROWS={len(rows)}")
+    print(f"HUB_JOB_AUTODELETE_PENDING_ROWS={len(rows)} manual_mode={manual_mode}")
     if args.dry_run:
         args.apply = False
         args.live_delete = False
@@ -641,7 +695,7 @@ def main() -> int:
     error_count = 0
 
     for row in rows:
-        source_key = f"hub_job_autodelete:{args.sheet_id}:{args.gid}:{row.row_number}"
+        source_key = row_source_key(row, args.sheet_id, args.gid)
         print(
             "HUB_JOB_AUTODELETE_ROW "
             f"row={row.row_number} date={row.work_date} warehouse={row.warehouse} "
@@ -658,11 +712,12 @@ def main() -> int:
                 print(f"HUB_JOB_AUTODELETE_NOT_FOUND row={row.row_number} message={match_message}", flush=True)
                 if args.apply:
                     update_request(source_key, "not_found", match_message)
-                    sheet_updates[row.row_number] = {
-                        "job_status": "not_found",
-                        "message": match_message,
-                        "processed_at": datetime.now(timezone.utc).isoformat(),
-                    }
+                    if not manual_mode:
+                        sheet_updates[row.row_number] = {
+                            "job_status": "not_found",
+                            "message": match_message,
+                            "processed_at": datetime.now(timezone.utc).isoformat(),
+                        }
                 continue
 
             ok, payload, message = delete_hub_booking(
@@ -676,11 +731,12 @@ def main() -> int:
                 error_count += 1
                 if args.apply:
                     update_request(source_key, "error", message, booking, payload)
-                    sheet_updates[row.row_number] = {
-                        "job_status": "error",
-                        "message": message,
-                        "processed_at": datetime.now(timezone.utc).isoformat(),
-                    }
+                    if not manual_mode:
+                        sheet_updates[row.row_number] = {
+                            "job_status": "error",
+                            "message": message,
+                            "processed_at": datetime.now(timezone.utc).isoformat(),
+                        }
                 continue
 
             deleted_count += 1
@@ -688,25 +744,28 @@ def main() -> int:
             if args.apply:
                 mark_hub_booking_deleted(booking, payload)
                 update_request(source_key, "deleted", message, booking, payload)
-                done_sheet_rows.append(row.row_number)
+                if not manual_mode:
+                    done_sheet_rows.append(row.row_number)
                 done_source_keys.append(source_key)
-                sheet_updates[row.row_number] = {
-                    "sheet_status": SHEET_DONE_STATUS,
-                    "job_status": "deleted",
-                    "message": message,
-                    "processed_at": datetime.now(timezone.utc).isoformat(),
-                }
+                if not manual_mode:
+                    sheet_updates[row.row_number] = {
+                        "sheet_status": SHEET_DONE_STATUS,
+                        "job_status": "deleted",
+                        "message": message,
+                        "processed_at": datetime.now(timezone.utc).isoformat(),
+                    }
         except Exception as exc:
             error_count += 1
             message = f"{type(exc).__name__}: {str(exc)[:1500]}"
             print(f"HUB_JOB_AUTODELETE_ERROR row={row.row_number} {message}", flush=True)
             if args.apply:
                 update_request(source_key, "error", message)
-                sheet_updates[row.row_number] = {
-                    "job_status": "error",
-                    "message": message,
-                    "processed_at": datetime.now(timezone.utc).isoformat(),
-                }
+                if not manual_mode:
+                    sheet_updates[row.row_number] = {
+                        "job_status": "error",
+                        "message": message,
+                        "processed_at": datetime.now(timezone.utc).isoformat(),
+                    }
 
     if args.apply and sheet_updates:
         write_status_updates_to_sheet(args.sheet_id, args.gid, sheet_updates)
