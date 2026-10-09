@@ -73,7 +73,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v167";
+const APP_VERSION = "v168";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -227,7 +227,7 @@ function currentSectionRefresh() {
       ? loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true })
       : loadCoordinatorSchedule();
   }
-  if (state.section === "vehicle") return loadVehicleSection();
+  if (state.section === "vehicle") return loadVehicleAssignments({ background: true });
   if (state.section === "vehicle-config") return loadVehicleConfigurations();
   if (state.section === "game") return loadGame();
   return Promise.resolve();
@@ -5210,16 +5210,25 @@ function renderVehicleAssignments() {
   updateVehicleAssignmentResults();
 }
 
-async function loadVehicleAssignments() {
+async function loadVehicleAssignments(options = {}) {
+  const background = Boolean(options.background);
   const target = $("#vehicle-assignment-history");
   if (!target) return;
-  target.innerHTML = `<div class="empty-card">Autó-hozzárendelések betöltése...</div>`;
+  if (!background || !(state.vehicleAssignments || []).length) {
+    target.innerHTML = `<div class="empty-card">Autó-hozzárendelések betöltése...</div>`;
+  }
   try {
     const payload = await api(withPreviewCourier("/api/vehicles/assignments?days=60"));
     state.vehicleAssignments = payload.items || [];
-    renderVehicleAssignments();
+    if (background && $("#vehicle-assignment-results")) {
+      updateVehicleAssignmentResults();
+    } else {
+      renderVehicleAssignments();
+    }
   } catch (error) {
-    target.innerHTML = `<div class="notice error">Az autó-hozzárendelések nem tölthetők be: ${escapeHtml(error.message)}</div>`;
+    if (!background || !(state.vehicleAssignments || []).length) {
+      target.innerHTML = `<div class="notice error">Az autó-hozzárendelések nem tölthetők be: ${escapeHtml(error.message)}</div>`;
+    }
   }
 }
 
@@ -8429,6 +8438,7 @@ $("#route-details-month")?.addEventListener("change", () => {
 });
 
 setInterval(() => {
+  if (document.hidden) return;
   withSilentLoading(() => currentSectionRefresh()).catch(() => {});
 }, 5 * 60 * 1000);
 
@@ -8449,7 +8459,7 @@ setInterval(() => {
 
 setInterval(() => {
   if (!state.user || state.section !== "vehicle" || document.hidden) return;
-  withSilentLoading(() => loadVehicleAssignments()).catch(() => {});
+  withSilentLoading(() => loadVehicleAssignments({ background: true })).catch(() => {});
 }, VEHICLE_LIVE_REFRESH_MS);
 
 startQueueTimer();
