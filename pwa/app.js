@@ -69,12 +69,14 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v159";
+const APP_VERSION = "v160";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
 const COORDINATOR_LIVE_REFRESH_MS = 60 * 1000;
 const VEHICLE_LIVE_REFRESH_MS = 60 * 1000;
+const SCHEDULE_BOOKING_JOB_POLL_MS = 10000;
+const SCHEDULE_BOOKING_JOB_MAX_POLLS = 72;
 const LEAFLET_CSS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
 const LEAFLET_JS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
 const PHONEBOOK_CONTACTS = [
@@ -4662,7 +4664,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=159");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=160");
   }
   return navigator.serviceWorker.ready;
 }
@@ -7160,8 +7162,11 @@ function bindSchedulePrepActions(target) {
         });
         if (status) {
           status.textContent = result?.queued
-            ? `Foglalási job elindítva: ${name} (#${id}). Pár perc múlva frissíts.`
+            ? `Foglalási job elindítva: ${name} (#${id}). Állapot lekérése...`
             : `Foglalás elküldve a Hubnak: ${name} (#${id}).`;
+        }
+        if (result?.queued) {
+          pollScheduleBookingJob(result, { status, button, select, name, id });
         }
       } catch (error) {
         button.disabled = false;
@@ -7170,6 +7175,57 @@ function bindSchedulePrepActions(target) {
       }
     });
   });
+}
+
+function scheduleBookingJobStatusText(job, name, id) {
+  const run = job?.run_number ? ` #${job.run_number}` : "";
+  if (!job?.found) return `Foglalási job keresése: ${name} (#${id})...`;
+  if (job.status === "completed") {
+    if (job.conclusion === "success") return `Foglalási job sikeres${run}: ${name} (#${id}). Frissítés...`;
+    return `Foglalási job sikertelen${run}: ${name} (#${id}) - ${job.conclusion || "hiba"}.`;
+  }
+  if (job.status === "in_progress") return `Foglalási job fut${run}: ${name} (#${id})...`;
+  return `Foglalási job várakozik${run}: ${name} (#${id})...`;
+}
+
+function pollScheduleBookingJob(result, { status, button, select, name, id, attempt = 0 }) {
+  const triggeredAt = result?.triggered_at_iso || result?.triggered_at || "";
+  if (!triggeredAt) {
+    if (status) status.textContent = `Foglalási job elindítva: ${name} (#${id}). Pár perc múlva frissíts.`;
+    return;
+  }
+  window.setTimeout(async () => {
+    try {
+      const job = await api(`/api/coordinator/schedule/hub-shift-job-status?triggered_at=${encodeURIComponent(triggeredAt)}`, {
+        silentLoading: true,
+      });
+      if (status) status.textContent = scheduleBookingJobStatusText(job, name, id);
+      if (job?.status === "completed") {
+        if (job.conclusion === "success") {
+          loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true }).catch(() => {});
+          return;
+        }
+        if (button) button.disabled = false;
+        if (select) select.disabled = false;
+        return;
+      }
+      if (attempt + 1 >= SCHEDULE_BOOKING_JOB_MAX_POLLS) {
+        if (status) status.textContent = `Foglalási job még fut vagy nem található: ${name} (#${id}). Frissíts később.`;
+        if (button) button.disabled = false;
+        if (select) select.disabled = false;
+        return;
+      }
+      pollScheduleBookingJob(result, { status, button, select, name, id, attempt: attempt + 1 });
+    } catch (error) {
+      if (attempt + 1 >= 3) {
+        if (status) status.textContent = error.message || "A job állapotát nem sikerült lekérni.";
+        if (button) button.disabled = false;
+        if (select) select.disabled = false;
+        return;
+      }
+      pollScheduleBookingJob(result, { status, button, select, name, id, attempt: attempt + 1 });
+    }
+  }, SCHEDULE_BOOKING_JOB_POLL_MS);
 }
 
 function renderCoordinatorSchedule() {

@@ -143,18 +143,21 @@ def dispatch_workflow(workflow, inputs=None, ref=None):
             f"GitHub Actions indítás sikertelen: HTTP {response.status_code} - {response.text[:500]}"
         )
 
+    triggered_at = datetime.now(BUDAPEST_TZ)
     return {
         "workflow": workflow_name,
         "ref": payload["ref"],
-        "triggered_at": datetime.now(BUDAPEST_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        "triggered_at": triggered_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "triggered_at_iso": triggered_at.isoformat(),
     }
 
 
-def get_latest_runs(limit=8):
+def get_latest_runs(limit=8, workflow=None):
     config = get_config()
+    workflow_name = str(workflow or config["workflow"])
     url = (
         f"https://api.github.com/repos/{config['owner']}/{config['repo']}"
-        f"/actions/workflows/{config['workflow']}/runs"
+        f"/actions/workflows/{workflow_name}/runs"
     )
     response = requests.get(
         url,

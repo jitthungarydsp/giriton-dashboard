@@ -769,6 +769,7 @@ def dispatch_schedule_hub_booking_job(
         "workflow_url": f"https://github.com/{config['owner']}/{config['repo']}/actions/workflows/hub-job-autobooking.yml",
         "ref": result.get("ref") or config["ref"],
         "triggered_at": result.get("triggered_at"),
+        "triggered_at_iso": result.get("triggered_at_iso"),
         "request": {
             "work_date": work_date.isoformat(),
             "warehouse_id": warehouse_id,
@@ -779,6 +780,64 @@ def dispatch_schedule_hub_booking_job(
             "courier_name": payload.courier_name,
             "workflow_inputs": inputs,
         },
+    }
+
+
+def github_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=LOCAL_TIMEZONE)
+        return parsed
+    except ValueError:
+        return None
+
+
+def latest_schedule_hub_booking_run(triggered_at: str = "") -> dict[str, Any]:
+    try:
+        from resources.github_actions import GitHubActionsError, get_latest_runs  # noqa: WPS433
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"GitHub Actions modul nem tölthető be: {exc}") from exc
+
+    try:
+        runs = get_latest_runs(limit=15, workflow="hub-job-autobooking.yml")
+    except GitHubActionsError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    started_after = github_datetime(triggered_at)
+    selected_run = None
+    for run in runs:
+        if str(run.get("event") or "") != "workflow_dispatch":
+            continue
+        created_at = github_datetime(run.get("created_at"))
+        if started_after and created_at and created_at < started_after.astimezone(timezone.utc) - timedelta(minutes=2):
+            continue
+        selected_run = run
+        break
+
+    if selected_run is None:
+        return {
+            "found": False,
+            "status": "queued",
+            "conclusion": "",
+            "message": "GitHub job keresése folyamatban...",
+        }
+
+    return {
+        "found": True,
+        "run_id": selected_run.get("id"),
+        "run_number": selected_run.get("run_number"),
+        "status": selected_run.get("status") or "",
+        "conclusion": selected_run.get("conclusion") or "",
+        "html_url": selected_run.get("html_url") or "",
+        "created_at": selected_run.get("created_at") or "",
+        "updated_at": selected_run.get("updated_at") or "",
+        "message": selected_run.get("display_title") or selected_run.get("name") or "HUB_JOB_AUTOBOOKING",
     }
 
 
@@ -18291,6 +18350,15 @@ def coordinator_schedule_hub_shift(
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
     return run_schedule_hub_shift_action(payload, user)
+
+
+@app.get("/api/coordinator/schedule/hub-shift-job-status")
+def coordinator_schedule_hub_shift_job_status(
+    triggered_at: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_coordinator(require_user(giriton_pwa_session))
+    return latest_schedule_hub_booking_run(triggered_at)
 
 
 @app.get("/api/muszakpro/open-shifts")
