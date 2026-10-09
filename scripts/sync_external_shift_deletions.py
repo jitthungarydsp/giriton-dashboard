@@ -313,7 +313,7 @@ def request_payload(row: SheetDeletionRow, sheet_id: str, worksheet_gid: int) ->
         "source_name": "manual_hub_job_autodelete" if manual else "kulso_torles_log_sheet",
         "source_sheet_id": sheet_id,
         "source_gid": int(worksheet_gid),
-        "source_row": None if manual else row.row_number,
+        "source_row": row.row_number,
         "source_key": row_source_key(row, sheet_id, worksheet_gid),
         "requested_at_text": row.requested_at_text,
         "work_date": row.work_date,
