@@ -25,7 +25,7 @@ import tomllib
 from fastapi import Cookie, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from resources.email_sender import send_login_credentials, send_message, smtp_config, validate_email
 from resources.email_templates_db import send_courier_template_email
@@ -104,6 +104,10 @@ VEHICLE_TOLL_TYPES = {
     "county": "Megyei",
     "national": "Országos",
 }
+VEHICLE_OWNERSHIP_TYPES = {
+    "own": "Saját",
+    "rented": "Bérelt",
+}
 VEHICLE_CONFIGURATION_STATUSES = {
     "service": "Szervízben",
     "garage_master": "Garázsmesternél",
@@ -111,6 +115,11 @@ VEHICLE_CONFIGURATION_STATUSES = {
     "assignable": "Futárhoz kiosztható",
     "retired": "Kivezetve",
     "out_of_order": "Üzemen kívül",
+}
+VEHICLE_CONDITION_STATUSES = {
+    "ok": "Rendben",
+    "attention": "Figyelmet igényel",
+    "faulty": "Hibás",
 }
 
 
@@ -257,19 +266,25 @@ class ScheduleHubShiftActionRequest(BaseModel):
 
 
 class VehicleConfigurationRequest(BaseModel):
-    jitt_car_id: str
+    jitt_car_id: str = ""
     license_plate: str
     warehouse_code: str
+    brand: str = ""
+    model: str = ""
+    ownership_type: str = "own"
+    rental_company: str = ""
     toll_vignette_type: str = "none"
-    toll_counties: list[str] = []
+    toll_counties: list[str] = Field(default_factory=list)
     toll_valid_from: str = ""
     toll_valid_to: str = ""
     service_from: str = ""
     service_to: str = ""
+    service_location: str = ""
     car_status: str = "assignable"
-    condition_label: str = ""
+    condition_status: str = "ok"
     condition_description: str = ""
-    minimum_route_length: int | None = None
+    minimum_daily_rounds: int | None = None
+    enforce_minimum_daily_rounds: bool = False
     dedicated_courier_id: int | None = None
     dedicated_courier_name: str = ""
     active: bool = True
@@ -16594,6 +16609,20 @@ def normalize_vehicle_configuration_status(value: Any) -> str:
     return status
 
 
+def normalize_vehicle_condition_status(value: Any) -> str:
+    status = clean_text(value, limit=40).lower() or "ok"
+    if status not in VEHICLE_CONDITION_STATUSES:
+        raise HTTPException(status_code=422, detail="Ismeretlen autó állapot.")
+    return status
+
+
+def normalize_vehicle_ownership_type(value: Any) -> str:
+    ownership_type = clean_text(value, limit=40).lower() or "own"
+    if ownership_type not in VEHICLE_OWNERSHIP_TYPES:
+        raise HTTPException(status_code=422, detail="Ismeretlen tulajdon típus.")
+    return ownership_type
+
+
 def normalize_vehicle_toll_type(value: Any) -> str:
     toll_type = clean_text(value, limit=40).lower() or "none"
     if toll_type not in VEHICLE_TOLL_TYPES:
@@ -16632,11 +16661,18 @@ def normalize_vehicle_counties(values: Any) -> list[str]:
 def safe_vehicle_configuration(row: dict[str, Any]) -> dict[str, Any]:
     toll_type = str(row.get("toll_vignette_type") or "none")
     car_status = str(row.get("car_status") or "assignable")
+    condition_status = str(row.get("condition_status") or "ok")
+    ownership_type = str(row.get("ownership_type") or "own")
     return {
         "id": row.get("id") or "",
         "jittCarId": row.get("jitt_car_id") or "",
         "licensePlate": row.get("license_plate") or "",
         "warehouseCode": row.get("warehouse_code") or "",
+        "brand": row.get("brand") or "",
+        "model": row.get("model") or "",
+        "ownershipType": ownership_type,
+        "ownershipLabel": VEHICLE_OWNERSHIP_TYPES.get(ownership_type, ownership_type),
+        "rentalCompany": row.get("rental_company") or "",
         "tollVignetteType": toll_type,
         "tollVignetteLabel": VEHICLE_TOLL_TYPES.get(toll_type, toll_type),
         "tollCounties": row.get("toll_counties") or [],
@@ -16644,11 +16680,14 @@ def safe_vehicle_configuration(row: dict[str, Any]) -> dict[str, Any]:
         "tollValidTo": str(row.get("toll_valid_to") or "")[:10],
         "serviceFrom": str(row.get("service_from") or "")[:10],
         "serviceTo": str(row.get("service_to") or "")[:10],
+        "serviceLocation": row.get("service_location") or "",
         "carStatus": car_status,
         "carStatusLabel": VEHICLE_CONFIGURATION_STATUSES.get(car_status, car_status),
-        "conditionLabel": row.get("condition_label") or "",
+        "conditionStatus": condition_status,
+        "conditionLabel": VEHICLE_CONDITION_STATUSES.get(condition_status, condition_status),
         "conditionDescription": row.get("condition_description") or "",
-        "minimumRouteLength": safe_int(row.get("minimum_route_length")),
+        "minimumDailyRounds": safe_int(row.get("minimum_daily_rounds")),
+        "enforceMinimumDailyRounds": safe_bool(row.get("enforce_minimum_daily_rounds")),
         "dedicatedCourierId": safe_int(row.get("dedicated_courier_id")) or "",
         "dedicatedCourierName": row.get("dedicated_courier_name") or "",
         "active": safe_bool(row.get("active")),
@@ -17761,7 +17800,7 @@ def list_vehicle_configurations(
     require_vehicle_history_manager(require_user(giriton_pwa_session))
     rows = supabase_rest(
         "GET",
-        "pwa_vehicle_configurations",
+        "vw_pwa_vehicle_configurations_latest",
         params={
             "select": "*",
             "order": "warehouse_code.asc,license_plate.asc",
@@ -17774,6 +17813,8 @@ def list_vehicle_configurations(
         "setup": {
             "tollTypes": [{"value": key, "label": label} for key, label in VEHICLE_TOLL_TYPES.items()],
             "statuses": [{"value": key, "label": label} for key, label in VEHICLE_CONFIGURATION_STATUSES.items()],
+            "conditions": [{"value": key, "label": label} for key, label in VEHICLE_CONDITION_STATUSES.items()],
+            "ownershipTypes": [{"value": key, "label": label} for key, label in VEHICLE_OWNERSHIP_TYPES.items()],
             "counties": HUNGARIAN_COUNTIES,
             "warehouses": ["BUD1", "BUD2"],
         },
@@ -17787,21 +17828,25 @@ def upsert_vehicle_configuration(
 ):
     user = require_vehicle_history_manager(require_user(giriton_pwa_session))
     jitt_car_id = clean_text(payload.jitt_car_id, limit=80).upper()
-    if len(jitt_car_id) < 2:
-        raise HTTPException(status_code=422, detail="A JITT_CAR_ID legalább 2 karakter legyen.")
+    if not jitt_car_id:
+        jitt_car_id = f"JCAR-{secrets.token_hex(5).upper()}"
     license_plate = normalize_vehicle_license_plate(payload.license_plate)
     warehouse = normalize_warehouse(payload.warehouse_code)
     if warehouse not in {"BUD1", "BUD2"}:
         raise HTTPException(status_code=422, detail="A raktár csak BUD1 vagy BUD2 lehet.")
+    ownership_type = normalize_vehicle_ownership_type(payload.ownership_type)
+    rental_company = clean_text(payload.rental_company, limit=160)
+    if ownership_type != "rented":
+        rental_company = ""
     toll_type = normalize_vehicle_toll_type(payload.toll_vignette_type)
     counties = normalize_vehicle_counties(payload.toll_counties)
     if toll_type == "county" and not counties:
         raise HTTPException(status_code=422, detail="Megyei matrica esetén legalább egy megyét válassz.")
     if toll_type != "county":
         counties = []
-    minimum_route_length = payload.minimum_route_length
-    if minimum_route_length is not None:
-        minimum_route_length = max(0, safe_int(minimum_route_length))
+    minimum_daily_rounds = payload.minimum_daily_rounds
+    if minimum_daily_rounds is not None:
+        minimum_daily_rounds = max(0, safe_int(minimum_daily_rounds))
     dedicated_courier_id = safe_int(payload.dedicated_courier_id)
     dedicated_courier_name = clean_text(payload.dedicated_courier_name, limit=160)
     if dedicated_courier_id and not dedicated_courier_name:
@@ -17817,21 +17862,26 @@ def upsert_vehicle_configuration(
     rows = supabase_rest(
         "POST",
         "pwa_vehicle_configurations",
-        params={"on_conflict": "license_plate"},
         payload={
             "jitt_car_id": jitt_car_id,
             "license_plate": license_plate,
             "warehouse_code": warehouse,
+            "brand": clean_text(payload.brand, limit=120),
+            "model": clean_text(payload.model, limit=120),
+            "ownership_type": ownership_type,
+            "rental_company": rental_company,
             "toll_vignette_type": toll_type,
             "toll_counties": counties,
             "toll_valid_from": normalize_vehicle_configuration_date(payload.toll_valid_from, "matrica érvényesség kezdete"),
             "toll_valid_to": normalize_vehicle_configuration_date(payload.toll_valid_to, "matrica érvényesség vége"),
             "service_from": normalize_vehicle_configuration_date(payload.service_from, "szervíz kezdete"),
             "service_to": normalize_vehicle_configuration_date(payload.service_to, "szervíz vége"),
+            "service_location": clean_text(payload.service_location, limit=160),
             "car_status": normalize_vehicle_configuration_status(payload.car_status),
-            "condition_label": clean_text(payload.condition_label, limit=120),
+            "condition_status": normalize_vehicle_condition_status(payload.condition_status),
             "condition_description": clean_text(payload.condition_description, limit=1200),
-            "minimum_route_length": minimum_route_length,
+            "minimum_daily_rounds": minimum_daily_rounds,
+            "enforce_minimum_daily_rounds": bool(payload.enforce_minimum_daily_rounds),
             "dedicated_courier_id": dedicated_courier_id or None,
             "dedicated_courier_name": dedicated_courier_name,
             "active": bool(payload.active),
@@ -17839,7 +17889,7 @@ def upsert_vehicle_configuration(
             "updated_by": username,
             "updated_at": now,
         },
-        prefer="resolution=merge-duplicates,return=representation",
+        prefer="return=representation",
         timeout=30,
     )
     return {"stored": True, "item": safe_vehicle_configuration((rows or [{}])[0])}

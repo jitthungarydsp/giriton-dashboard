@@ -69,7 +69,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v157";
+const APP_VERSION = "v158";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -83,6 +83,27 @@ const PHONEBOOK_CONTACTS = [
   { label: "FC2 Logisztikai műszakvezető", phone: "+3612069507", note: "Logisztikai vezető" },
   { label: "FC1 Logisztikai műszakvezető", phone: "+3612001147", note: "Logisztikai vezető" },
   { label: "Ügyfélszolgálat", phone: "0612000881", note: "Központi ügyfélszolgálat" },
+];
+const HUNGARIAN_COUNTIES = [
+  "Bács-Kiskun",
+  "Baranya",
+  "Békés",
+  "Borsod-Abaúj-Zemplén",
+  "Csongrád-Csanád",
+  "Fejér",
+  "Győr-Moson-Sopron",
+  "Hajdú-Bihar",
+  "Heves",
+  "Jász-Nagykun-Szolnok",
+  "Komárom-Esztergom",
+  "Nógrád",
+  "Pest",
+  "Somogy",
+  "Szabolcs-Szatmár-Bereg",
+  "Tolna",
+  "Vas",
+  "Veszprém",
+  "Zala",
 ];
 
 function escapeHtml(value) {
@@ -5237,13 +5258,16 @@ function setVehicleConfigMessage(message, isError = false) {
 function renderVehicleConfigSetup() {
   const countiesSelect = $("#vehicle-config-toll-counties");
   if (countiesSelect && !countiesSelect.dataset.loaded) {
-    const counties = state.vehicleConfigurationSetup?.counties || [];
+    const counties = state.vehicleConfigurationSetup?.counties?.length
+      ? state.vehicleConfigurationSetup.counties
+      : HUNGARIAN_COUNTIES;
     countiesSelect.innerHTML = counties
       .map((county) => `<option value="${escapeHtml(county)}">${escapeHtml(county)}</option>`)
       .join("");
     countiesSelect.dataset.loaded = "1";
   }
   renderCourierMasterOptions();
+  toggleVehicleConfigConditionalFields();
 }
 
 function selectedVehicleConfigCounties() {
@@ -5251,25 +5275,49 @@ function selectedVehicleConfigCounties() {
   return Array.from(select?.selectedOptions || []).map((option) => option.value);
 }
 
+function toggleVehicleConfigConditionalFields() {
+  const tollType = $("#vehicle-config-toll-type")?.value || "none";
+  const countiesWrap = $("#vehicle-config-counties-wrap");
+  if (countiesWrap) countiesWrap.classList.toggle("hidden", tollType !== "county");
+  if (tollType !== "county") {
+    Array.from($("#vehicle-config-toll-counties")?.options || []).forEach((option) => {
+      option.selected = false;
+    });
+  }
+  const ownershipType = $("#vehicle-config-ownership")?.value || "own";
+  const rentalWrap = $("#vehicle-config-rental-company-wrap");
+  if (rentalWrap) rentalWrap.classList.toggle("hidden", ownershipType !== "rented");
+  if (ownershipType !== "rented" && $("#vehicle-config-rental-company")) {
+    $("#vehicle-config-rental-company").value = "";
+  }
+}
+
 function fillVehicleConfigForm(item = {}) {
   $("#vehicle-config-jitt-id").value = item.jittCarId || "";
   $("#vehicle-config-license-plate").value = item.licensePlate || "";
+  $("#vehicle-config-brand").value = item.brand || "";
+  $("#vehicle-config-model").value = item.model || "";
+  $("#vehicle-config-ownership").value = item.ownershipType || "own";
+  $("#vehicle-config-rental-company").value = item.rentalCompany || "";
   $("#vehicle-config-warehouse").value = item.warehouseCode || "BUD1";
   $("#vehicle-config-toll-type").value = item.tollVignetteType || "none";
   $("#vehicle-config-toll-from").value = item.tollValidFrom || "";
   $("#vehicle-config-toll-to").value = item.tollValidTo || "";
   $("#vehicle-config-service-from").value = item.serviceFrom || "";
   $("#vehicle-config-service-to").value = item.serviceTo || "";
+  $("#vehicle-config-service-location").value = item.serviceLocation || "";
   $("#vehicle-config-status").value = item.carStatus || "assignable";
-  $("#vehicle-config-condition-label").value = item.conditionLabel || "";
+  $("#vehicle-config-condition-status").value = item.conditionStatus || "ok";
   $("#vehicle-config-condition-description").value = item.conditionDescription || "";
-  $("#vehicle-config-min-route").value = item.minimumRouteLength || "";
+  $("#vehicle-config-min-rounds").value = item.minimumDailyRounds || "";
+  $("#vehicle-config-enforce-min-rounds").checked = Boolean(item.enforceMinimumDailyRounds);
   $("#vehicle-config-dedicated-courier").value = item.dedicatedCourierId || "";
   $("#vehicle-config-active").checked = item.active !== false;
   const counties = new Set(item.tollCounties || []);
   Array.from($("#vehicle-config-toll-counties")?.options || []).forEach((option) => {
     option.selected = counties.has(option.value);
   });
+  toggleVehicleConfigConditionalFields();
   setVehicleConfigMessage(item.licensePlate ? `${item.licensePlate} szerkesztése.` : "");
 }
 
@@ -5292,19 +5340,19 @@ function renderVehicleConfigurations() {
     <article class="vehicle-config-row">
       <div>
         <strong>${escapeHtml(item.licensePlate || "-")}</strong>
-        <small>${escapeHtml(item.jittCarId || "-")} · ${escapeHtml(item.warehouseCode || "-")}</small>
+        <small>${escapeHtml(item.jittCarId || "-")} · ${escapeHtml(item.warehouseCode || "-")} · ${escapeHtml([item.brand, item.model].filter(Boolean).join(" ") || "-")}</small>
       </div>
       <div>
         <span class="settlement-dashboard-status ${vehicleConfigStatusClass(item)}">${escapeHtml(item.carStatusLabel || "-")}</span>
-        <small>${escapeHtml(item.conditionLabel || "Nincs állapot megjegyzés")}</small>
+        <small>${escapeHtml(item.conditionLabel || "-")}${item.conditionDescription ? ` · ${escapeHtml(item.conditionDescription)}` : ""}</small>
       </div>
       <div>
-        <strong>${escapeHtml(item.tollVignetteLabel || "-")}</strong>
+        <strong>${escapeHtml(item.tollVignetteLabel || "-")} · ${escapeHtml(item.ownershipLabel || "-")}</strong>
         <small>${escapeHtml((item.tollCounties || []).join(", ") || [item.tollValidFrom, item.tollValidTo].filter(Boolean).join(" - ") || "-")}</small>
       </div>
       <div>
         <strong>${item.dedicatedCourierId ? escapeHtml(`${item.dedicatedCourierName || "Futár"} · #${item.dedicatedCourierId}`) : "Nincs dedikálás"}</strong>
-        <small>${item.minimumRouteLength ? `Minimum túra: ${escapeHtml(item.minimumRouteLength)} ` : "Nincs minimum túra hossz"}${item.serviceFrom || item.serviceTo ? ` · Szervíz: ${escapeHtml([item.serviceFrom, item.serviceTo].filter(Boolean).join(" - "))}` : ""}</small>
+        <small>${item.enforceMinimumDailyRounds ? `Min. napi kör: ${escapeHtml(item.minimumDailyRounds || 0)} ` : "Minimum kör nincs figyelve"}${item.serviceFrom || item.serviceTo ? ` · Szervíz: ${escapeHtml([item.serviceFrom, item.serviceTo].filter(Boolean).join(" - "))}` : ""}${item.serviceLocation ? ` · ${escapeHtml(item.serviceLocation)}` : ""}</small>
       </div>
       <button class="secondary" type="button" data-vehicle-config-edit="${escapeHtml(item.licensePlate || "")}">Szerkesztés</button>
     </article>
@@ -5319,6 +5367,7 @@ async function loadVehicleConfigurations() {
   }
   if (target) target.innerHTML = `<div class="empty-card">Autó konfigurációk betöltése...</div>`;
   await loadCourierMasterOptions();
+  renderVehicleConfigSetup();
   try {
     const payload = await api("/api/vehicles/configurations");
     state.vehicleConfigurations = payload.items || [];
@@ -5387,6 +5436,9 @@ $("#vehicle-hr-search-form")?.addEventListener("submit", (event) => {
 });
 
 $("#vehicle-config-refresh")?.addEventListener("click", () => loadVehicleConfigurations());
+$("#vehicle-config-toll-type")?.addEventListener("change", toggleVehicleConfigConditionalFields);
+$("#vehicle-config-ownership")?.addEventListener("change", toggleVehicleConfigConditionalFields);
+toggleVehicleConfigConditionalFields();
 
 $("#vehicle-config-list")?.addEventListener("click", (event) => {
   const button = event.target?.closest?.("[data-vehicle-config-edit]");
@@ -5409,16 +5461,22 @@ $("#vehicle-config-form")?.addEventListener("submit", async (event) => {
     jitt_car_id: $("#vehicle-config-jitt-id")?.value || "",
     license_plate: $("#vehicle-config-license-plate")?.value || "",
     warehouse_code: $("#vehicle-config-warehouse")?.value || "BUD1",
+    brand: $("#vehicle-config-brand")?.value || "",
+    model: $("#vehicle-config-model")?.value || "",
+    ownership_type: $("#vehicle-config-ownership")?.value || "own",
+    rental_company: $("#vehicle-config-rental-company")?.value || "",
     toll_vignette_type: $("#vehicle-config-toll-type")?.value || "none",
     toll_counties: selectedVehicleConfigCounties(),
     toll_valid_from: $("#vehicle-config-toll-from")?.value || "",
     toll_valid_to: $("#vehicle-config-toll-to")?.value || "",
     service_from: $("#vehicle-config-service-from")?.value || "",
     service_to: $("#vehicle-config-service-to")?.value || "",
+    service_location: $("#vehicle-config-service-location")?.value || "",
     car_status: $("#vehicle-config-status")?.value || "assignable",
-    condition_label: $("#vehicle-config-condition-label")?.value || "",
+    condition_status: $("#vehicle-config-condition-status")?.value || "ok",
     condition_description: $("#vehicle-config-condition-description")?.value || "",
-    minimum_route_length: $("#vehicle-config-min-route")?.value ? Number($("#vehicle-config-min-route").value) : null,
+    minimum_daily_rounds: $("#vehicle-config-min-rounds")?.value ? Number($("#vehicle-config-min-rounds").value) : null,
+    enforce_minimum_daily_rounds: Boolean($("#vehicle-config-enforce-min-rounds")?.checked),
     dedicated_courier_id: courierSelect?.value ? Number(courierSelect.value) : null,
     dedicated_courier_name: selectedCourier?.dataset?.name || "",
     active: Boolean($("#vehicle-config-active")?.checked),
@@ -5432,6 +5490,7 @@ $("#vehicle-config-form")?.addEventListener("submit", async (event) => {
     Array.from($("#vehicle-config-toll-counties")?.options || []).forEach((option) => {
       option.selected = false;
     });
+    toggleVehicleConfigConditionalFields();
     setVehicleConfigMessage("Autó konfiguráció mentve.");
     await loadVehicleConfigurations();
   } catch (error) {

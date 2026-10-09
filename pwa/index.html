@@ -581,8 +581,17 @@
             </div>
           </div>
           <form id="vehicle-config-form" class="process-form two-column">
-            <label>JITT_CAR_ID<input id="vehicle-config-jitt-id" required autocomplete="off" /></label>
+            <label>JITT_CAR_ID<input id="vehicle-config-jitt-id" autocomplete="off" placeholder="Automatikusan generálódik" readonly /></label>
             <label>Rendszám<input id="vehicle-config-license-plate" required autocomplete="off" /></label>
+            <label>Autó márkája<input id="vehicle-config-brand" autocomplete="off" placeholder="pl. Ford" /></label>
+            <label>Autó típusa<input id="vehicle-config-model" autocomplete="off" placeholder="pl. Transit" /></label>
+            <label>Saját vagy bérelt
+              <select id="vehicle-config-ownership">
+                <option value="own">Saját</option>
+                <option value="rented">Bérelt</option>
+              </select>
+            </label>
+            <label id="vehicle-config-rental-company-wrap">Bérlő cég neve<input id="vehicle-config-rental-company" autocomplete="off" /></label>
             <label>Raktár
               <select id="vehicle-config-warehouse" required>
                 <option value="BUD1">BUD1</option>
@@ -597,13 +606,14 @@
                 <option value="national">Országos</option>
               </select>
             </label>
-            <label class="full-width">Megyei matrica
+            <label id="vehicle-config-counties-wrap" class="full-width hidden">Megyei matrica
               <select id="vehicle-config-toll-counties" multiple size="5"></select>
             </label>
             <label>Matrica érvényesség kezdete<input id="vehicle-config-toll-from" type="date" /></label>
             <label>Matrica érvényesség vége<input id="vehicle-config-toll-to" type="date" /></label>
             <label>Szervíz kezdete<input id="vehicle-config-service-from" type="date" /></label>
             <label>Szervíz vége<input id="vehicle-config-service-to" type="date" /></label>
+            <label>Szervíz helye<input id="vehicle-config-service-location" autocomplete="off" /></label>
             <label>Állapot
               <select id="vehicle-config-status">
                 <option value="assignable">Futárhoz kiosztható</option>
@@ -614,9 +624,16 @@
                 <option value="out_of_order">Üzemen kívül</option>
               </select>
             </label>
-            <label>Autó állapota<input id="vehicle-config-condition-label" autocomplete="off" placeholder="pl. jobb első sárvédő sérült" /></label>
+            <label>Autó állapota
+              <select id="vehicle-config-condition-status">
+                <option value="ok">Rendben</option>
+                <option value="attention">Figyelmet igényel</option>
+                <option value="faulty">Hibás</option>
+              </select>
+            </label>
             <label class="full-width">Állapot leírás<textarea id="vehicle-config-condition-description" rows="3"></textarea></label>
-            <label>Minimum túra hossz<input id="vehicle-config-min-route" type="number" min="0" step="1" /></label>
+            <label>Minimum napi kivitt körök száma<input id="vehicle-config-min-rounds" type="number" min="0" step="1" /></label>
+            <label class="vehicle-config-active"><input id="vehicle-config-enforce-min-rounds" type="checkbox" /> Minimum körök figyelembe vétele</label>
             <label>Egyedi dedikálás
               <select id="vehicle-config-dedicated-courier">
                 <option value="">Nincs dedikált futár</option>
