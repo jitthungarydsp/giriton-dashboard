@@ -5826,6 +5826,7 @@ function departureAlertClass(item = {}) {
 }
 
 function departureMinutesText(value, label) {
+  if (value === null || value === undefined || value === "") return `${label}: -`;
   const minutes = Number(value);
   if (!Number.isFinite(minutes)) return `${label}: -`;
   if (minutes <= 0) return `${label}: most`;
@@ -5847,7 +5848,7 @@ function renderDepartureRouteCard(item) {
       <div class="ops-card-head">
         <div>
           <strong>${escapeHtml(item.courierName || "Futár")}</strong>
-          <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")} · Route ${escapeHtml(item.routeId || "-")}</small>
+          <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")} · ${item.routeId ? `Route ${escapeHtml(item.routeId)}` : "Nincs aktív route"}</small>
         </div>
         <span>${escapeHtml(item.statusLabel || "-")}</span>
       </div>

@@ -2621,9 +2621,9 @@ def attach_route_map_config(card: dict[str, Any]) -> dict[str, Any]:
 
 
 def courier_hub_header_config() -> dict[str, str]:
-    authorization = load_setting("COURIER_HUB_AUTHORIZATION")
-    cookie = load_setting("COURIER_HUB_COOKIE")
-    api_key = load_setting("COURIER_HUB_API_KEY")
+    authorization = load_setting("COURIER_HUB_AUTHORIZATION") or load_setting("KIFLI_COURIER_HUB_AUTHORIZATION")
+    cookie = load_setting("COURIER_HUB_COOKIE") or load_setting("KIFLI_COURIER_HUB_COOKIE")
+    api_key = load_setting("COURIER_HUB_API_KEY") or load_setting("KIFLI_COURIER_HUB_API_KEY")
     cache_file = (
         load_setting("COURIER_HUB_AUTH_CACHE_FILE")
         or load_setting("KIFLI_COURIER_HUB_AUTH_CACHE_FILE")
@@ -2646,6 +2646,7 @@ def courier_hub_header_config() -> dict[str, str]:
     if cookie:
         headers["Cookie"] = cookie
     if api_key:
+        headers["x-api-key"] = api_key
         headers["apikey"] = api_key
     return headers
 
@@ -4112,9 +4113,26 @@ def courier_hub_departure_dashboard_url(warehouse_id: int) -> str:
 
 def read_courier_hub_departure_dashboard(warehouse_id: int) -> dict[str, Any]:
     headers = courier_hub_header_config()
-    if "Authorization" not in headers and "Cookie" not in headers and "apikey" not in headers:
+    try:
+        from scripts.sync_courier_financial_overview import (  # noqa: WPS433
+            AUTH_REFRESH_STATUS_CODES,
+            courier_hub_headers,
+            refresh_courier_hub_headers,
+        )
+        shared_headers = courier_hub_headers()
+        headers.update({key: value for key, value in shared_headers.items() if value})
+    except Exception:
+        AUTH_REFRESH_STATUS_CODES = {401, 403}
+        refresh_courier_hub_headers = None
+
+    if "Authorization" not in headers and "Cookie" not in headers and "apikey" not in headers and "x-api-key" not in headers:
         raise RuntimeError("Courier Hub auth nincs beállítva.")
     response = requests.get(courier_hub_departure_dashboard_url(warehouse_id), headers=headers, timeout=30)
+    if response.status_code in AUTH_REFRESH_STATUS_CODES and refresh_courier_hub_headers:
+        refreshed_headers = refresh_courier_hub_headers()
+        if refreshed_headers:
+            headers.update(refreshed_headers)
+            response = requests.get(courier_hub_departure_dashboard_url(warehouse_id), headers=headers, timeout=30)
     if response.status_code >= 400:
         raise RuntimeError(f"BUD{warehouse_id}: HTTP {response.status_code}: {response.text[:500]}")
     payload = response.json()
@@ -4184,11 +4202,43 @@ def departure_helper_route_payload(row: dict[str, Any], warehouse_id: int) -> di
     }
 
 
+def departure_helper_waiting_courier_payload(row: dict[str, Any], warehouse_id: int) -> dict[str, Any]:
+    return {
+        "courierId": str(row.get("courierId") or row.get("courier_id") or ""),
+        "courierName": str(row.get("courierName") or row.get("name") or "Futár"),
+        "routeId": "",
+        "warehouse": f"BUD{warehouse_id}",
+        "warehouseId": warehouse_id,
+        "licencePlate": "",
+        "platformSectionMark": "",
+        "ordersInRoute": 0,
+        "notScannedOrders": 0,
+        "notScannedBagEans": 0,
+        "missingBags": 0,
+        "minutesToDeparture": None,
+        "minutesToLoading": None,
+        "alertLevel": "",
+        "departedStayingAtWarehouse": False,
+        "warehouseDepartureReal": "",
+        "statusGroup": "waiting",
+        "statusLabel": "Várakozik",
+        "scanReady": True,
+        "temperature": departure_helper_temperature(row),
+        "trolleys": [],
+    }
+
+
 def departure_helper_routes_from_payload(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, dict) and isinstance(payload.get("routes"), list):
         return [item for item in payload.get("routes") if isinstance(item, dict)]
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
+    return []
+
+
+def departure_helper_waiting_couriers_from_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict) and isinstance(payload.get("couriersWithoutRoute"), list):
+        return [item for item in payload.get("couriersWithoutRoute") if isinstance(item, dict)]
     return []
 
 
@@ -4202,6 +4252,11 @@ def read_departure_helper(warehouse_ids: list[int] | None = None) -> dict[str, A
             routes.extend(
                 departure_helper_route_payload(row, warehouse_id)
                 for row in raw_routes
+                if isinstance(row, dict)
+            )
+            routes.extend(
+                departure_helper_waiting_courier_payload(row, warehouse_id)
+                for row in departure_helper_waiting_couriers_from_payload(payload)
                 if isinstance(row, dict)
             )
         except Exception as exc:
