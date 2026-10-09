@@ -208,7 +208,7 @@ def db_vehicle_plate_warehouses() -> dict[str, str]:
     result: dict[str, str] = {}
     sources = [
         ("courier_hub_route_statistics", {"select": "vehicle_plate,warehouse_code", "vehicle_plate": "not.is.null", "limit": "50000"}),
-        ("courier_hub_live_map_courier_latest", {"select": "vehicle_plate,warehouse_code,warehouse_id", "vehicle_plate": "not.is.null", "limit": "10000"}),
+        ("courier_hub_live_map_courier_latest", {"select": "vehicle_plate,warehouse_id", "vehicle_plate": "not.is.null", "limit": "10000"}),
         ("dsp_drivers_live_raw", {"select": "license_plate,warehouse_name", "license_plate": "not.is.null", "limit": "10000"}),
         ("dsp_vehicle_assignments", {"select": "license_plate", "license_plate": "not.is.null", "limit": "50000"}),
     ]
