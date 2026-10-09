@@ -23,6 +23,7 @@ const state = {
   deviceReports: [],
   vehicleReports: [],
   vehicleAssignments: [],
+  vehicleAssignmentQuery: "",
   vehicleSearchResults: [],
   vehicleConfigurations: [],
   vehicleConfigurationSetup: null,
@@ -72,7 +73,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v166";
+const APP_VERSION = "v167";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -5147,16 +5148,66 @@ function vehicleAssignmentRows(items = []) {
   `).join("");
 }
 
+function vehicleAssignmentSearchText(item) {
+  return [
+    item?.licensePlate,
+    item?.driverName,
+    item?.car,
+    item?.date,
+    item?.shiftStart,
+    item?.shiftEnd,
+    item?.shiftType,
+  ].map((value) => String(value || ""))
+    .join(" ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function filteredVehicleAssignments() {
+  const items = state.vehicleAssignments || [];
+  const query = String(state.vehicleAssignmentQuery || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+  if (!query) return items;
+  return items.filter((item) => vehicleAssignmentSearchText(item).includes(query));
+}
+
+function updateVehicleAssignmentResults() {
+  const items = filteredVehicleAssignments();
+  const result = $("#vehicle-assignment-results");
+  const count = $("#vehicle-assignment-count");
+  if (count) {
+    count.textContent = state.vehicleAssignmentQuery
+      ? `${items.length}/${(state.vehicleAssignments || []).length} bejegyzés`
+      : `${(state.vehicleAssignments || []).length} bejegyzés`;
+  }
+  if (result) result.innerHTML = vehicleAssignmentRows(items);
+}
+
 function renderVehicleAssignments() {
   const target = $("#vehicle-assignment-history");
   if (!target) return;
+  const title = state.user?.canManageVehicles ? "Futár-autó lista" : "Saját autóhasználat";
   target.innerHTML = `
     <div class="device-history-head">
-      <strong>Saját autóhasználat</strong>
-      <span>${(state.vehicleAssignments || []).length} bejegyzés</span>
+      <strong>${escapeHtml(title)}</strong>
+      <span id="vehicle-assignment-count">${(state.vehicleAssignments || []).length} bejegyzés</span>
     </div>
-    ${vehicleAssignmentRows(state.vehicleAssignments || [])}
+    <label class="vehicle-assignment-search">
+      <span>Kereső</span>
+      <input id="vehicle-assignment-filter" type="search" placeholder="Rendszám vagy futár neve" value="${escapeHtml(state.vehicleAssignmentQuery || "")}" />
+    </label>
+    <div id="vehicle-assignment-results" class="vehicle-assignment-results"></div>
   `;
+  const filter = $("#vehicle-assignment-filter");
+  filter?.addEventListener("input", (event) => {
+    state.vehicleAssignmentQuery = event.target.value || "";
+    updateVehicleAssignmentResults();
+  });
+  updateVehicleAssignmentResults();
 }
 
 async function loadVehicleAssignments() {

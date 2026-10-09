@@ -781,6 +781,10 @@ textarea { min-height: 96px; resize: vertical; }
 .vehicle-checklist legend { padding: 0 6px; color: var(--green-dark); font-size: 12px; font-weight: 900; }
 .vehicle-checklist label { margin: 0; }
 .vehicle-assignment-list { display: grid; gap: 10px; margin-top: 14px; }
+.vehicle-assignment-search { display: grid; gap: 6px; }
+.vehicle-assignment-search span { color: var(--muted); font-size: 12px; font-weight: 900; }
+.vehicle-assignment-search input { width: 100%; min-height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 14px; background: #f8faf6; color: var(--ink); font: inherit; font-weight: 850; }
+.vehicle-assignment-results { display: grid; gap: 10px; }
 .vehicle-assignment-row { display: grid; grid-template-columns: minmax(82px, .7fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #f8faf6; }
 .vehicle-assignment-row strong { display: block; font-size: 14px; font-weight: 950; overflow-wrap: anywhere; }
 .vehicle-assignment-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.35; }

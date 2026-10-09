@@ -17774,9 +17774,41 @@ def list_vehicle_assignments(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
+    is_manager = can_manage_vehicle_history(user)
     view_user, _preview = workflow_view_user(user, courier)
     today = datetime.now(LOCAL_TIMEZONE).date()
     start = today - timedelta(days=days - 1)
+    if is_manager and not str(courier or "").strip():
+        rows = (
+            read_live_vehicle_assignment_rows(limit=3000, window_hours=24 * days)
+            + read_route_vehicle_assignment_rows(start, today, limit=10000)
+            + read_vehicle_assignment_rows(start, today, limit=10000)
+        )
+        seen: set[tuple[str, str, str, str, str]] = set()
+        items: list[dict[str, Any]] = []
+        for row in sorted(
+            rows,
+            key=lambda item: (
+                str(item.get("work_date") or "")[:10],
+                normalize_time(item.get("shift_start")),
+                str(item.get("fetched_at") or ""),
+            ),
+            reverse=True,
+        ):
+            key = (
+                str(row.get("work_date") or "")[:10],
+                normalize_person_match_text(row.get("driver_name")),
+                normalize_time(row.get("shift_start")),
+                normalize_time(row.get("shift_end")),
+                str(row.get("license_plate") or "").strip().casefold(),
+            )
+            if not key[-1] or key in seen:
+                continue
+            seen.add(key)
+            items.append(safe_vehicle_assignment(row))
+            if len(items) >= 5000:
+                break
+        return {"from": start.isoformat(), "to": today.isoformat(), "items": items}
     if not user_courier_id(view_user):
         return {"from": start.isoformat(), "to": today.isoformat(), "items": []}
     rows = read_vehicle_assignment_rows_for_user(view_user, start, today)
