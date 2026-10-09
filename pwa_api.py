@@ -7,6 +7,8 @@ import json
 import os
 import re
 import secrets
+import subprocess
+import sys
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
@@ -207,6 +209,16 @@ class TodayWorkerAttendanceRequest(BaseModel):
     booking_code: str = ""
     attendance_status: str = "present"
     note: str = ""
+
+
+class ScheduleHubShiftActionRequest(BaseModel):
+    action: str
+    work_date: str
+    warehouse: str
+    shift_template_id: int
+    slot_from: str
+    courier_id: int
+    courier_name: str = ""
 
 
 class DailyGameSubmitRequest(BaseModel):
@@ -609,6 +621,97 @@ def selected_coordinator_warehouse_ids(user: dict[str, Any], warehouse: str = ""
     if role == "admin":
         raise HTTPException(status_code=422, detail="Admin módban előbb válassz raktárat.")
     return allowed_ids
+
+
+def run_schedule_hub_shift_action(payload: ScheduleHubShiftActionRequest, user: dict[str, Any]) -> dict[str, Any]:
+    action = str(payload.action or "").strip().lower()
+    if action not in {"book", "delete"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen művelet.")
+    try:
+        work_date = datetime.strptime(str(payload.work_date or "")[:10], "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Hibás dátum.") from exc
+    warehouse_id = warehouse_id_for_hub(payload.warehouse)
+    if not warehouse_id:
+        raise HTTPException(status_code=422, detail="Hibás raktár.")
+    if warehouse_id not in coordinator_warehouse_ids(user):
+        raise HTTPException(status_code=403, detail="Ehhez a raktárhoz nincs jogosultság.")
+    if payload.shift_template_id <= 0:
+        raise HTTPException(status_code=422, detail="Hiányzik a shiftTemplateId.")
+    if payload.courier_id <= 0:
+        raise HTTPException(status_code=422, detail="Hiányzik a futár ID.")
+
+    try:
+        from scripts.courier_hub_api_book_shift import (  # noqa: WPS433
+            build_assign_url,
+            hub_request,
+            normalize_time as hub_normalize_time,
+            response_payload as hub_response_payload,
+        )
+        from scripts.courier_hub_api_delete_shift import build_delete_url  # noqa: WPS433
+        from scripts.sync_courier_financial_overview import courier_hub_auth_configured  # noqa: WPS433
+        from scripts.sync_courier_hub_master import DEFAULT_BASE_URL  # noqa: WPS433
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Hub API modul nem tölthető be: {exc}") from exc
+
+    if not courier_hub_auth_configured():
+        raise HTTPException(status_code=503, detail="Hiányzik a Courier Hub auth. COURIER_HUB_COOKIE vagy auth cache szükséges.")
+
+    slot_from = hub_normalize_time(payload.slot_from)
+    if not slot_from:
+        raise HTTPException(status_code=422, detail="Hiányzik a slotFrom.")
+
+    request_body = {
+        "date": work_date.isoformat(),
+        "shiftTemplateId": int(payload.shift_template_id),
+        "slotFrom": slot_from,
+        "courierIds": [int(payload.courier_id)],
+    }
+    dsp_id = COURIER_HUB_DSP_ID
+    base_url = os.getenv("COURIER_HUB_BASE_URL") or DEFAULT_BASE_URL
+    if action == "delete":
+        url = build_delete_url(base_url, warehouse_id, dsp_id, 0)
+        response = hub_request("DELETE", url, json=request_body)
+    else:
+        url = build_assign_url(base_url, warehouse_id, dsp_id)
+        response = hub_request("POST", url, json=request_body)
+    response_json = hub_response_payload(response)
+    if not response.ok:
+        detail = response_json.get("detail") if isinstance(response_json, dict) else ""
+        message = detail or json.dumps(response_json, ensure_ascii=False)[:500]
+        raise HTTPException(status_code=response.status_code, detail=message)
+
+    def refresh_hub_day() -> None:
+        try:
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(PROJECT_ROOT / "scripts" / "sync_courier_hub_shift_blocks.py"),
+                    "--start-date",
+                    work_date.isoformat(),
+                    "--end-date",
+                    work_date.isoformat(),
+                    "--warehouse-ids",
+                    str(warehouse_id),
+                    "--dsp-id",
+                    str(dsp_id),
+                ],
+                cwd=str(PROJECT_ROOT),
+                check=False,
+                timeout=120,
+            )
+        except Exception as exc:
+            print(f"PWA Hub shift day refresh failed: {exc}", flush=True)
+
+    run_pwa_background("PWA Hub shift day refresh", refresh_hub_day)
+
+    return {
+        "ok": True,
+        "action": action,
+        "status": response.status_code,
+        "request": request_body,
+        "response": response_json,
+    }
 
 
 def warehouse_allowed(value: Any, allowed_warehouse_ids: list[int] | None) -> bool:
@@ -17701,6 +17804,15 @@ def coordinator_schedule(
     except Exception as exc:
         print("Coordinator schedule failed:", exc)
         return empty_coordinator_schedule_payload(selected_month, exc)
+
+
+@app.post("/api/coordinator/schedule/hub-shift")
+def coordinator_schedule_hub_shift(
+    payload: ScheduleHubShiftActionRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_coordinator(require_user(giriton_pwa_session))
+    return run_schedule_hub_shift_action(payload, user)
 
 
 @app.get("/api/muszakpro/open-shifts")

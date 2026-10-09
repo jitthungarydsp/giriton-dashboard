@@ -6545,8 +6545,9 @@ function scheduleSlotPreparedText(slot = {}) {
   return "Előkészületben";
 }
 
-function renderScheduleSlotWorker(worker = {}) {
+function renderScheduleSlotWorker(worker = {}, slot = {}) {
   const phone = String(worker.phoneNumber || "").trim();
+  const hubBooked = worker.hubTone === "ok" || String(worker.hubStatus || "").toLowerCase().includes("felvezet");
   return `
     <div class="schedule-slot-worker">
       <div>
@@ -6562,6 +6563,21 @@ function renderScheduleSlotWorker(worker = {}) {
         <span>Hub: ${escapeHtml(shortDateTime(worker.hubUploadedAt || "") || "-")}</span>
         ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : `<span>Telefon: -</span>`}
       </div>
+      ${hubBooked ? `
+        <div class="schedule-slot-actions">
+          <button type="button"
+            data-schedule-delete-prep
+            data-work-date="${escapeHtml(slot.date || "")}"
+            data-warehouse="${escapeHtml(slot.warehouse || "")}"
+            data-shift-template-id="${escapeHtml(slot.shiftTemplateId || "")}"
+            data-slot-from="${escapeHtml(slot.start || "")}"
+            data-courier-id="${escapeHtml(worker.courierId || "")}"
+            data-courier-name="${escapeHtml(worker.courierName || "Futár")}">
+            Törlés indítása
+          </button>
+          <small data-schedule-action-status></small>
+        </div>
+      ` : ""}
     </div>
   `;
 }
@@ -6637,7 +6653,71 @@ function renderScheduleSlotRecommendations(slot = {}) {
   `;
 }
 
-function renderScheduleSlotDetails(slot = {}) {
+function scheduleIdentityText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function scheduleBookingCandidates(slot = {}, day = {}) {
+  const used = new Set((slot.workers || []).map((worker) =>
+    String(worker.courierId || "").trim() || scheduleIdentityText(worker.courierName || "")
+  ));
+  const items = [];
+  const add = (worker = {}, source = "") => {
+    const courierId = String(worker.courierId || "").trim();
+    const courierName = String(worker.courierName || "Futár").trim();
+    const identity = courierId || scheduleIdentityText(courierName);
+    if (!identity || used.has(identity)) return;
+    if (items.some((item) => item.identity === identity)) return;
+    items.push({
+      identity,
+      courierId,
+      courierName,
+      source,
+      label: `${courierName}${courierId ? ` · #${courierId}` : ""}${source ? ` · ${source}` : ""}`,
+    });
+  };
+  (slot.recommendations || []).forEach((item) => add(item, "ajánlott"));
+  (day.workers || [])
+    .filter((worker) => !slot.warehouse || worker.warehouse === slot.warehouse)
+    .forEach((worker) => add(worker, "napi lista"));
+  return items.sort((a, b) => a.label.localeCompare(b.label, "hu"));
+}
+
+function renderScheduleSlotBookingPrep(slot = {}, day = {}) {
+  if (scheduleSlotTone(slot) !== "open") return "";
+  const candidates = scheduleBookingCandidates(slot, day);
+  return `
+    <div class="schedule-slot-action-panel">
+      <div>
+        <strong>Foglalás indítása</strong>
+        <small>Éles Hub foglalás; siker után a napi Hub adat frissül.</small>
+      </div>
+      <div class="schedule-slot-action-row">
+        <select data-schedule-booking-courier ${candidates.length ? "" : "disabled"}>
+          ${candidates.length
+            ? candidates.map((item) => `<option value="${escapeHtml(item.identity)}" data-courier-id="${escapeHtml(item.courierId)}" data-courier-name="${escapeHtml(item.courierName)}">${escapeHtml(item.label)}</option>`).join("")
+            : `<option value="">Nincs választható futár ebben a napi listában</option>`}
+        </select>
+        <button type="button"
+          data-schedule-booking-prep
+          data-work-date="${escapeHtml(slot.date || "")}"
+          data-warehouse="${escapeHtml(slot.warehouse || "")}"
+          data-shift-template-id="${escapeHtml(slot.shiftTemplateId || "")}"
+          data-slot-from="${escapeHtml(slot.start || "")}"
+          ${candidates.length ? "" : "disabled"}>
+          Foglalás indítása
+        </button>
+      </div>
+      <small class="schedule-slot-action-status" data-schedule-action-status></small>
+    </div>
+  `;
+}
+
+function renderScheduleSlotDetails(slot = {}, day = {}) {
   const workers = slot.workers || [];
   const muszakproCount = workers.filter((worker) => worker.muszakproTone === "ok").length;
   const hubCount = workers.filter((worker) => worker.hubTone === "ok").length;
@@ -6650,9 +6730,10 @@ function renderScheduleSlotDetails(slot = {}) {
         <div><span>Hub felvezetés</span><strong>${hubCount ? `${formatCount(hubCount)} futár` : escapeHtml(hubFallbackTime || "-")}</strong></div>
       </div>
       ${workers.length
-        ? `<div class="schedule-slot-worker-list">${workers.map(renderScheduleSlotWorker).join("")}</div>`
+        ? `<div class="schedule-slot-worker-list">${workers.map((worker) => renderScheduleSlotWorker(worker, slot)).join("")}</div>`
         : `<div class="empty-card compact">Nincs ehhez az idősávhoz kapcsolt futáradat.</div>`}
       ${renderScheduleSlotRecommendations(slot)}
+      ${renderScheduleSlotBookingPrep(slot, day)}
     </div>
   `;
 }
@@ -6668,7 +6749,7 @@ function scheduleSlotDomKey(slot = {}) {
   ].join("|");
 }
 
-function renderScheduleSlotCard(slot = {}) {
+function renderScheduleSlotCard(slot = {}, day = {}) {
   const tone = scheduleSlotTone(slot);
   const recommendations = slot.recommendations || [];
   return `
@@ -6687,7 +6768,7 @@ function renderScheduleSlotCard(slot = {}) {
           ? `<div class="schedule-slot-rec-badges">${recommendations.map(renderScheduleSlotRecommendationBadge).join("")}</div>`
           : ""}
       </summary>
-      ${renderScheduleSlotDetails(slot)}
+      ${renderScheduleSlotDetails(slot, day)}
     </details>
   `;
 }
@@ -6701,7 +6782,7 @@ function renderScheduleSlots(day = {}) {
         <span>${formatCount(slots.length)} idősáv</span>
       </div>
       ${slots.length
-        ? `<div class="schedule-slot-grid">${slots.map(renderScheduleSlotCard).join("")}</div>`
+        ? `<div class="schedule-slot-grid">${slots.map((slot) => renderScheduleSlotCard(slot, day)).join("")}</div>`
         : `<div class="empty-card">Ehhez a naphoz nincs betöltött részletes slotlista. Futtasd a HUB shift block frissítést erre a napra.</div>`}
     </section>
   `;
@@ -6788,6 +6869,73 @@ function renderCoordinatorScheduleDayDetail(payload, day) {
   `;
 }
 
+function bindSchedulePrepActions(target) {
+  target.querySelectorAll("[data-schedule-delete-prep]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const panel = button.closest(".schedule-slot-worker") || button.closest(".schedule-slot-card");
+      const status = panel?.querySelector("[data-schedule-action-status]") || button.closest(".schedule-slot-card")?.querySelector("[data-schedule-action-status]");
+      const name = button.dataset.courierName || "Futár";
+      const id = button.dataset.courierId || "-";
+      if (!id || id === "-") return;
+      if (status) status.textContent = `Törlés indítása: ${name} (#${id})...`;
+      button.disabled = true;
+      try {
+        await api("/api/coordinator/schedule/hub-shift", {
+          method: "POST",
+          body: JSON.stringify({
+            action: "delete",
+            work_date: button.dataset.workDate || "",
+            warehouse: button.dataset.warehouse || "",
+            shift_template_id: Number(button.dataset.shiftTemplateId || 0),
+            slot_from: button.dataset.slotFrom || "",
+            courier_id: Number(id),
+            courier_name: name,
+          }),
+        });
+        if (status) status.textContent = `Törlés elküldve a Hubnak: ${name} (#${id}).`;
+        loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true }).catch(() => {});
+      } catch (error) {
+        button.disabled = false;
+        if (status) status.textContent = error.message || "A törlés nem sikerült.";
+      }
+    });
+  });
+  target.querySelectorAll("[data-schedule-booking-prep]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const panel = button.closest(".schedule-slot-action-panel");
+      const select = panel?.querySelector("[data-schedule-booking-courier]");
+      const selected = select?.selectedOptions?.[0];
+      const status = panel?.querySelector("[data-schedule-action-status]");
+      const name = selected?.dataset?.courierName || selected?.textContent || "Futár";
+      const id = selected?.dataset?.courierId || "-";
+      if (!id || id === "-") return;
+      if (status) status.textContent = `Foglalás indítása: ${name} (#${id})...`;
+      button.disabled = true;
+      if (select) select.disabled = true;
+      try {
+        await api("/api/coordinator/schedule/hub-shift", {
+          method: "POST",
+          body: JSON.stringify({
+            action: "book",
+            work_date: button.dataset.workDate || "",
+            warehouse: button.dataset.warehouse || "",
+            shift_template_id: Number(button.dataset.shiftTemplateId || 0),
+            slot_from: button.dataset.slotFrom || "",
+            courier_id: Number(id),
+            courier_name: name,
+          }),
+        });
+        if (status) status.textContent = `Foglalás elküldve a Hubnak: ${name} (#${id}).`;
+        loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true }).catch(() => {});
+      } catch (error) {
+        button.disabled = false;
+        if (select) select.disabled = false;
+        if (status) status.textContent = error.message || "A foglalás nem sikerült.";
+      }
+    });
+  });
+}
+
 function renderCoordinatorSchedule() {
   const target = $("#coordinator-schedule-panel");
   if (!target) return;
@@ -6828,6 +6976,7 @@ function renderCoordinatorSchedule() {
         loadCoordinatorScheduleDay(selectedDay);
       });
     });
+    bindSchedulePrepActions(target);
     return;
   }
   target.innerHTML = `

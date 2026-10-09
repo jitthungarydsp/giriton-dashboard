@@ -353,6 +353,18 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-slot-card.missing .schedule-slot-worker-meta { color: #cbd8cc; }
 .schedule-slot-worker-meta a { color: var(--green-dark); font-weight: 950; text-decoration: none; }
 .schedule-slot-card.missing .schedule-slot-worker-meta a { color: #dff6b5; }
+.schedule-slot-actions { display: grid; gap: 6px; justify-items: start; }
+.schedule-slot-actions button,
+.schedule-slot-action-row button { min-height: 34px; padding: 0 11px; border: 1px solid #d9a6a2; border-radius: 10px; background: #fff8f7; color: #a52d28; font-size: 11px; font-weight: 950; }
+.schedule-slot-actions small,
+.schedule-slot-action-status { color: var(--green-dark); font-size: 11px; font-weight: 850; line-height: 1.35; }
+.schedule-slot-action-panel { display: grid; gap: 8px; padding: 10px; border: 1px solid #ead9aa; border-radius: 12px; background: #fffaf0; }
+.schedule-slot-action-panel strong { font-size: 14px; }
+.schedule-slot-action-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.schedule-slot-action-row select { min-width: 0; min-height: 38px; padding: 0 10px; border: 1px solid #d8dfd5; border-radius: 10px; background: #fff; color: var(--ink); font-size: 12px; font-weight: 850; }
+.schedule-slot-action-row button { border-color: var(--green); background: var(--green); color: #fff; }
+.schedule-slot-action-row button:disabled,
+.schedule-slot-action-row select:disabled { opacity: .6; cursor: not-allowed; }
 .schedule-slot-rec-section { display: grid; gap: 8px; }
 .device-history-head.compact { margin-top: 0; }
 .schedule-slot-rec-list { display: grid; gap: 8px; }
@@ -816,6 +828,7 @@ textarea { min-height: 96px; resize: vertical; }
   .schedule-slot-card > summary { grid-template-columns: minmax(0, 1fr); }
   .schedule-slot-card em { justify-self: start; white-space: normal; }
   .schedule-slot-detail-grid { grid-template-columns: 1fr; }
+  .schedule-slot-action-row { grid-template-columns: 1fr; }
   .schedule-recommendation { grid-template-columns: 1fr; }
   .schedule-rec-foot { justify-items: start; text-align: left; }
   .settlement-dashboard-row { grid-template-columns: 1fr; }
