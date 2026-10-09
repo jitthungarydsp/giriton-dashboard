@@ -356,8 +356,9 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-slot-actions { display: grid; gap: 6px; justify-items: start; }
 .schedule-slot-actions button,
 .schedule-slot-action-row button { min-height: 34px; padding: 0 11px; border: 1px solid #d9a6a2; border-radius: 10px; background: #fff8f7; color: #a52d28; font-size: 11px; font-weight: 950; }
-.schedule-slot-actions small,
-.schedule-slot-action-status { color: var(--green-dark); font-size: 11px; font-weight: 850; line-height: 1.35; }
+.schedule-slot-action-status { display: none; width: 100%; padding: 8px 10px; border: 1px solid #b8d8ac; border-radius: 10px; background: #f4fff1; color: var(--green-dark); font-size: 12px; font-weight: 900; line-height: 1.35; }
+.schedule-slot-action-status.active { display: block; }
+.schedule-slot-action-status.error { border-color: #f0b5b0; background: #fff8f7; color: #a52d28; }
 .schedule-slot-action-panel { display: grid; gap: 8px; padding: 10px; border: 1px solid #ead9aa; border-radius: 12px; background: #fffaf0; }
 .schedule-slot-action-panel strong { font-size: 14px; }
 .schedule-slot-action-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }

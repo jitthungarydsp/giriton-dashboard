@@ -69,7 +69,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v161";
+const APP_VERSION = "v162";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4664,7 +4664,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=161");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=162");
   }
   return navigator.serviceWorker.ready;
 }
@@ -6810,7 +6810,7 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
             data-courier-name="${escapeHtml(worker.courierName || "Futár")}">
             Törlés indítása
           </button>
-          <small data-schedule-action-status></small>
+          <div class="schedule-slot-action-status" data-schedule-action-status role="status" aria-live="polite"></div>
         </div>
       ` : ""}
     </div>
@@ -6947,7 +6947,7 @@ function renderScheduleSlotBookingPrep(slot = {}, day = {}) {
           Foglalás indítása
         </button>
       </div>
-      <small class="schedule-slot-action-status" data-schedule-action-status></small>
+      <div class="schedule-slot-action-status" data-schedule-action-status role="status" aria-live="polite"></div>
     </div>
   `;
 }
@@ -7112,7 +7112,10 @@ function bindSchedulePrepActions(target) {
       const name = button.dataset.courierName || "Futár";
       const id = button.dataset.courierId || "-";
       if (!id || id === "-") return;
-      if (status) status.textContent = `Törlés indítása: ${name} (#${id})...`;
+      if (status) {
+        status.classList.add("active");
+        status.textContent = `${name} (#${id}) nevében törlés indítása...`;
+      }
       button.disabled = true;
       try {
         const result = await api("/api/coordinator/schedule/hub-shift", {
@@ -7128,8 +7131,9 @@ function bindSchedulePrepActions(target) {
           }),
         });
         if (status) {
+          status.classList.add("active");
           status.textContent = result?.queued
-            ? `Törlési job elindítva: ${name} (#${id}). Állapot lekérése...`
+            ? `${name} (#${id}) nevében törlési job elindítva. Állapot lekérése...`
             : `Törlés elküldve a Hubnak: ${name} (#${id}).`;
         }
         if (result?.queued) {
@@ -7137,7 +7141,10 @@ function bindSchedulePrepActions(target) {
         }
       } catch (error) {
         button.disabled = false;
-        if (status) status.textContent = error.message || "A törlés nem sikerült.";
+        if (status) {
+          status.classList.add("active", "error");
+          status.textContent = error.message || "A törlés nem sikerült.";
+        }
       }
     });
   });
@@ -7150,7 +7157,10 @@ function bindSchedulePrepActions(target) {
       const name = selected?.dataset?.courierName || selected?.textContent || "Futár";
       const id = selected?.dataset?.courierId || "-";
       if (!id || id === "-") return;
-      if (status) status.textContent = `Foglalás indítása: ${name} (#${id})...`;
+      if (status) {
+        status.classList.add("active");
+        status.textContent = `${name} (#${id}) nevében foglalás indítása...`;
+      }
       button.disabled = true;
       if (select) select.disabled = true;
       try {
@@ -7167,8 +7177,9 @@ function bindSchedulePrepActions(target) {
           }),
         });
         if (status) {
+          status.classList.add("active");
           status.textContent = result?.queued
-            ? `Foglalási job elindítva: ${name} (#${id}). Állapot lekérése...`
+            ? `${name} (#${id}) nevében foglalási job elindítva. Állapot lekérése...`
             : `Foglalás elküldve a Hubnak: ${name} (#${id}).`;
         }
         if (result?.queued) {
@@ -7177,7 +7188,10 @@ function bindSchedulePrepActions(target) {
       } catch (error) {
         button.disabled = false;
         if (select) select.disabled = false;
-        if (status) status.textContent = error.message || "A foglalás nem sikerült.";
+        if (status) {
+          status.classList.add("active", "error");
+          status.textContent = error.message || "A foglalás nem sikerült.";
+        }
       }
     });
   });
@@ -7190,13 +7204,13 @@ function scheduleHubActionLabel(result) {
 function scheduleHubActionJobStatusText(job, result, name, id) {
   const run = job?.run_number ? ` #${job.run_number}` : "";
   const label = scheduleHubActionLabel(result);
-  if (!job?.found) return `${label} job keresése: ${name} (#${id})...`;
+  if (!job?.found) return `${name} (#${id}) nevében ${label.toLowerCase()} job keresése...`;
   if (job.status === "completed") {
-    if (job.conclusion === "success") return `${label} job sikeres${run}: ${name} (#${id}). Frissítés...`;
-    return `${label} job sikertelen${run}: ${name} (#${id}) - ${job.conclusion || "hiba"}.`;
+    if (job.conclusion === "success") return `${name} (#${id}) nevében ${label.toLowerCase()} job sikeres${run}. Frissítés...`;
+    return `${name} (#${id}) nevében ${label.toLowerCase()} job sikertelen${run}: ${job.conclusion || "hiba"}.`;
   }
-  if (job.status === "in_progress") return `${label} job fut${run}: ${name} (#${id})...`;
-  return `${label} job várakozik${run}: ${name} (#${id})...`;
+  if (job.status === "in_progress") return `${name} (#${id}) nevében ${label.toLowerCase()} job fut${run}...`;
+  return `${name} (#${id}) nevében ${label.toLowerCase()} job várakozik${run}...`;
 }
 
 function pollScheduleHubActionJob(result, { status, button, select, name, id, attempt = 0 }) {
@@ -7204,7 +7218,10 @@ function pollScheduleHubActionJob(result, { status, button, select, name, id, at
   const workflow = result?.workflow || "";
   const label = scheduleHubActionLabel(result);
   if (!triggeredAt) {
-    if (status) status.textContent = `${label} job elindítva: ${name} (#${id}). Pár perc múlva frissíts.`;
+    if (status) {
+      status.classList.add("active");
+      status.textContent = `${name} (#${id}) nevében ${label.toLowerCase()} job elindítva. Pár perc múlva frissíts.`;
+    }
     return;
   }
   window.setTimeout(async () => {
@@ -7213,7 +7230,11 @@ function pollScheduleHubActionJob(result, { status, button, select, name, id, at
       const job = await api(`/api/coordinator/schedule/hub-shift-job-status?${query.toString()}`, {
         silentLoading: true,
       });
-      if (status) status.textContent = scheduleHubActionJobStatusText(job, result, name, id);
+      if (status) {
+        status.classList.add("active");
+        status.classList.toggle("error", job?.status === "completed" && job?.conclusion !== "success");
+        status.textContent = scheduleHubActionJobStatusText(job, result, name, id);
+      }
       if (job?.status === "completed") {
         if (job.conclusion === "success") {
           loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true }).catch(() => {});
@@ -7224,7 +7245,10 @@ function pollScheduleHubActionJob(result, { status, button, select, name, id, at
         return;
       }
       if (attempt + 1 >= SCHEDULE_BOOKING_JOB_MAX_POLLS) {
-        if (status) status.textContent = `${label} job még fut vagy nem található: ${name} (#${id}). Frissíts később.`;
+        if (status) {
+          status.classList.add("active");
+          status.textContent = `${name} (#${id}) nevében ${label.toLowerCase()} job még fut vagy nem található. Frissíts később.`;
+        }
         if (button) button.disabled = false;
         if (select) select.disabled = false;
         return;
@@ -7232,7 +7256,10 @@ function pollScheduleHubActionJob(result, { status, button, select, name, id, at
       pollScheduleHubActionJob(result, { status, button, select, name, id, attempt: attempt + 1 });
     } catch (error) {
       if (attempt + 1 >= 3) {
-        if (status) status.textContent = error.message || "A job állapotát nem sikerült lekérni.";
+        if (status) {
+          status.classList.add("active", "error");
+          status.textContent = error.message || "A job állapotát nem sikerült lekérni.";
+        }
         if (button) button.disabled = false;
         if (select) select.disabled = false;
         return;
