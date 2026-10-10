@@ -69,11 +69,11 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
   settlementDashboard: null,
-  settlementDashboardMonth: localMonth(),
+  settlementDashboardMonth: previousLocalMonth(),
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v169";
+const APP_VERSION = "v170";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -304,6 +304,14 @@ function localDate(offset = 0) {
 
 function localMonth() {
   return localDate().slice(0, 7);
+}
+
+function previousLocalMonth() {
+  const value = new Date();
+  value.setMonth(value.getMonth() - 1, 1);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
 }
 
 function monthStartDate(month) {
@@ -4448,6 +4456,19 @@ function renderSettlementDashboardStatus(status = {}) {
   return `<span class="settlement-dashboard-status ${escapeHtml(status.tone || "muted")}">${escapeHtml(status.label || "Ismeretlen")}</span>`;
 }
 
+function renderSettlementStatusTiles(statusCounts = {}) {
+  const entries = Object.entries(statusCounts || {}).filter(([, count]) => Number(count || 0) > 0);
+  if (!entries.length) return "";
+  return `<div class="settlement-dashboard-status-grid">
+    ${entries.map(([label, count]) => `
+      <div>
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(formatCount(count || 0))}</strong>
+      </div>
+    `).join("")}
+  </div>`;
+}
+
 function renderSettlementDashboard() {
   const target = $("#settlement-dashboard-panel");
   if (!target) return;
@@ -4458,14 +4479,32 @@ function renderSettlementDashboard() {
   }
   const rows = payload.rows || [];
   const summary = payload.summary || {};
+  const statusCounts = summary.statusCounts || {};
+  const hasSearch = Boolean(String(state.settlementDashboardQuery || "").trim());
   target.innerHTML = `
+    <section class="settlement-dashboard-hero">
+      <div>
+        <span>Aktív elszámolási hónap</span>
+        <strong>${escapeHtml(formatMonthLabel(payload.month || state.settlementDashboardMonth))}</strong>
+        <small>${escapeHtml(shortDateTime(payload.updatedAt || "")) ? `Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}` : "DB-ből betöltött elszámolási állapot"}</small>
+      </div>
+      <div class="settlement-dashboard-hero-total">
+        <span>Kifizetendő összesen</span>
+        <strong>${escapeHtml(formatHuf(summary.totalPayableHuf || 0))}</strong>
+        <small>${escapeHtml(formatCount(summary.couriers || rows.length || 0))} futár</small>
+      </div>
+    </section>
     ${renderOpsSummary(summary, [
-      ["Futár", summary.couriers || 0, "elszámolással"],
-      ["Összesen", formatHuf(summary.totalPayableHuf || 0), "kifizetendő"],
-      ["Reklamáció", (summary.statusCounts || {})["Reklamáció"] || 0, "nyitott"],
-      ["Kifizetve", (summary.statusCounts || {})["Kifizetve"] || 0, "lezárt"],
+      ["Futár", summary.couriers || rows.length || 0, "elszámolással"],
+      ["Elfogadásra vár", statusCounts["Elszámolás elfogadásra vár"] || 0, "futár oldalon"],
+      ["Reklamáció", statusCounts["Reklamáció"] || 0, "nyitott ügy"],
+      ["Kifizetve", statusCounts["Kifizetve"] || 0, "lezárt"],
     ])}
-    <p class="updated-at">${escapeHtml(payload.month || state.settlementDashboardMonth)} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
+    ${renderSettlementStatusTiles(statusCounts)}
+    <div class="settlement-dashboard-toolbar">
+      <strong>${hasSearch ? "Keresési találatok" : "Futár elszámolások"}</strong>
+      <span>${escapeHtml(formatCount(rows.length))} sor</span>
+    </div>
     <div class="settlement-dashboard-list">
       ${rows.length ? rows.map((row) => `
         <button class="settlement-dashboard-row" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
@@ -4487,7 +4526,7 @@ function renderSettlementDashboard() {
 async function loadSettlementDashboard() {
   const target = $("#settlement-dashboard-panel");
   if (target && !state.settlementDashboard) target.innerHTML = `<div class="empty-card">Elszámolási dashboard betöltése...</div>`;
-  const month = $("#settlement-dashboard-month")?.value || state.settlementDashboardMonth || localMonth();
+  const month = $("#settlement-dashboard-month")?.value || state.settlementDashboardMonth || previousLocalMonth();
   const query = $("#settlement-dashboard-search")?.value || state.settlementDashboardQuery || "";
   state.settlementDashboardMonth = month;
   state.settlementDashboardQuery = query;
@@ -4503,7 +4542,7 @@ async function loadSettlementDashboard() {
 function openSettlementDashboardCourier(courierId) {
   const cleanId = String(courierId || "").trim();
   if (!cleanId) return;
-  state.workflowMonth = state.settlementDashboardMonth || localMonth();
+  state.workflowMonth = state.settlementDashboardMonth || previousLocalMonth();
   state.workflowPreviewCourierId = cleanId;
   if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = cleanId;
   if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = cleanId;
@@ -8415,7 +8454,7 @@ $("#settlement-dashboard-refresh")?.addEventListener("click", () => {
   loadSettlementDashboard();
 });
 $("#settlement-dashboard-month")?.addEventListener("change", (event) => {
-  state.settlementDashboardMonth = event.currentTarget.value || localMonth();
+  state.settlementDashboardMonth = event.currentTarget.value || previousLocalMonth();
   state.settlementDashboard = null;
   loadSettlementDashboard();
 });
