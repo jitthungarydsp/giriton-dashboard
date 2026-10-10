@@ -16427,7 +16427,7 @@ def workflow_dashboard_candidate_rows(month: date) -> dict[str, dict[str, Any]]:
         master_rows = optional_supabase_rows_paged(
             "courier_master",
             params={
-                "select": "courier_id,courier_name,warehouse_name",
+                "select": "courier_id,courier_name,warehouse_name,vat_status,employment_type",
                 "order": "courier_name.asc,courier_id.asc",
             },
             timeout=30,
@@ -16439,6 +16439,8 @@ def workflow_dashboard_candidate_rows(month: date) -> dict[str, dict[str, Any]]:
             if clean_id in candidates:
                 candidates[clean_id]["courierName"] = str(row.get("courier_name") or candidates[clean_id].get("courierName") or "").strip()
                 candidates[clean_id]["warehouse"] = str(row.get("warehouse_name") or "").strip()
+                candidates[clean_id]["vat_status"] = str(row.get("vat_status") or "").strip()
+                candidates[clean_id]["employment_type"] = str(row.get("employment_type") or "").strip()
 
     return candidates
 
@@ -16492,6 +16494,52 @@ def _dashboard_status_from_bulk(
     if settlement_ready:
         return {"label": "Elszámolás", "detail": "Folyamatban", "tone": "active", "sort": 30}
     return {"label": "Elszámolás készül", "detail": "Várakozás", "tone": "muted", "sort": 10}
+
+
+def dashboard_vat_payer_flag(vat_status: Any) -> bool:
+    text = normalize_text(vat_status)
+    if not text:
+        return False
+    non_vat_tokens = ("aam", "alanyi", "mentes", "nem afas", "nem afa", "non vat", "novat", "nincs")
+    if any(token in text for token in non_vat_tokens):
+        return False
+    return any(token in text for token in ("afa", "afas", "vat", "27"))
+
+
+def dashboard_flags_from_profile(profile: dict[str, Any]) -> list[dict[str, str]]:
+    flags: list[dict[str, str]] = []
+    if dashboard_vat_payer_flag(profile.get("vat_status")):
+        flags.append({"label": "ÁFÁS", "tone": "info"})
+    employment_type = normalize_text(profile.get("employment_type"))
+    if "efo" in employment_type.split() or employment_type == "efo":
+        flags.append({"label": "EFO", "tone": "warn"})
+    return flags
+
+
+def dashboard_profiles_by_courier(courier_ids: list[str]) -> dict[str, dict[str, Any]]:
+    clean_ids = [str(item or "").strip() for item in courier_ids if str(item or "").strip()]
+    if not clean_ids:
+        return {}
+    profiles: dict[str, dict[str, Any]] = {}
+    chunk_size = 150
+    for index in range(0, len(clean_ids), chunk_size):
+        chunk = clean_ids[index:index + chunk_size]
+        rows = optional_supabase_rows_paged(
+            "courier_master",
+            params={
+                "select": "courier_id,vat_status,employment_type",
+                "courier_id": f"in.({','.join(chunk)})",
+                "order": "courier_id.asc",
+            },
+            timeout=20,
+            page_size=1000,
+            max_rows=5000,
+        )
+        for row in rows:
+            courier_id = str(row.get("courier_id") or "").strip()
+            if courier_id:
+                profiles[courier_id] = row
+    return profiles
 
 
 def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = "") -> dict[str, Any] | None:
@@ -16570,6 +16618,9 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
             "sources": sources,
             "updatedAt": str(row.get("updated_at") or ""),
         })
+    profiles_by_courier = dashboard_profiles_by_courier([str(row.get("courierId") or "") for row in dashboard_rows])
+    for row in dashboard_rows:
+        row["flags"] = dashboard_flags_from_profile(profiles_by_courier.get(str(row.get("courierId") or ""), {}))
 
     status_counts: dict[str, int] = {}
     for row in dashboard_rows:
@@ -16689,6 +16740,7 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
             "totalPayableHuf": total_huf,
             "sources": sorted(candidate.get("sources") or []),
             "updatedAt": updated_at,
+            "flags": dashboard_flags_from_profile(candidate),
         })
     rows.sort(key=lambda row: (-safe_int((row.get("status") or {}).get("sort")), normalize_person_match_text(row.get("courierName")), str(row.get("courierId") or "")))
     status_counts: dict[str, int] = {}

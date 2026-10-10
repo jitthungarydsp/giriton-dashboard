@@ -71,9 +71,10 @@ const state = {
   settlementDashboard: null,
   settlementDashboardMonth: previousLocalMonth(),
   settlementDashboardQuery: "",
+  settlementDashboardStatusFilter: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v173";
+const APP_VERSION = "v174";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4464,15 +4465,48 @@ function renderSettlementDashboardStatus(status = {}) {
   return `<span class="settlement-dashboard-status ${escapeHtml(status.tone || "muted")}">${escapeHtml(status.label || "Ismeretlen")}</span>`;
 }
 
-function renderSettlementStatusTiles(statusCounts = {}) {
-  const entries = Object.entries(statusCounts || {}).filter(([, count]) => Number(count || 0) > 0);
-  if (!entries.length) return "";
-  return `<div class="settlement-dashboard-status-grid">
-    ${entries.map(([label, count]) => `
-      <div>
-        <span>${escapeHtml(label)}</span>
-        <strong>${escapeHtml(formatCount(count || 0))}</strong>
-      </div>
+function settlementDashboardStatusOptions(statusCounts = {}) {
+  const preferred = [
+    "Elszámolás készül",
+    "Elszámolás",
+    "Elszámolás elfogadásra vár",
+    "TIG elfogadásra vár",
+    "Számlafeltöltésre vár",
+    "Számla ellenőrzésre vár",
+    "Reklamáció",
+    "Kifizetve",
+  ];
+  const extras = Object.keys(statusCounts || {}).filter((label) => !preferred.includes(label)).sort();
+  return [...preferred, ...extras];
+}
+
+function renderSettlementStatusFilters(statusCounts = {}) {
+  const active = String(state.settlementDashboardStatusFilter || "");
+  const options = settlementDashboardStatusOptions(statusCounts);
+  return `<div class="settlement-dashboard-filter-panel">
+    <div class="settlement-dashboard-filter-title">
+      <strong>Áttekintés</strong>
+      <small>${active ? `Aktív szűrés: ${escapeHtml(active)}` : "Nincs felső státuszszűrés: minden futár megjelenik."}</small>
+    </div>
+    <div class="settlement-dashboard-filter-grid">
+      ${options.map((label) => {
+        const count = Number(statusCounts?.[label] || 0);
+        const isActive = active === label;
+        return `<button class="settlement-dashboard-filter ${isActive ? "active" : ""}" type="button" data-settlement-status-filter="${escapeHtml(label)}">
+          <span class="filter-dot"></span>
+          <strong>${escapeHtml(label)}</strong>
+          <small>${escapeHtml(formatCount(count))} db</small>
+        </button>`;
+      }).join("")}
+    </div>
+  </div>`;
+}
+
+function renderSettlementDashboardFlags(flags = []) {
+  if (!flags.length) return "";
+  return `<div class="settlement-dashboard-flags">
+    ${flags.map((flag) => `
+      <span class="settlement-dashboard-flag ${escapeHtml(flag.tone || "")}">${escapeHtml(flag.label || "")}</span>
     `).join("")}
   </div>`;
 }
@@ -4488,6 +4522,10 @@ function renderSettlementDashboard() {
   const rows = payload.rows || [];
   const summary = payload.summary || {};
   const statusCounts = summary.statusCounts || {};
+  const activeStatusFilter = String(state.settlementDashboardStatusFilter || "");
+  const displayRows = activeStatusFilter
+    ? rows.filter((row) => String(row.status?.label || "") === activeStatusFilter)
+    : rows;
   const hasSearch = Boolean(String(state.settlementDashboardQuery || "").trim());
   target.innerHTML = `
     <section class="settlement-dashboard-hero">
@@ -4507,18 +4545,21 @@ function renderSettlementDashboard() {
       ["Elfogadásra vár", statusCounts["Elszámolás elfogadásra vár"] || 0, "futár oldalon"],
       ["Reklamáció", statusCounts["Reklamáció"] || 0, "nyitott ügy"],
       ["Kifizetve", statusCounts["Kifizetve"] || 0, "lezárt"],
+      ["TIG-re vár", statusCounts["TIG elfogadásra vár"] || 0, "futár teendő"],
+      ["Számlára vár", (statusCounts["Számlafeltöltésre vár"] || 0) + (statusCounts["Számla ellenőrzésre vár"] || 0), "következő lépés"],
     ])}
-    ${renderSettlementStatusTiles(statusCounts)}
+    ${renderSettlementStatusFilters(statusCounts)}
     <div class="settlement-dashboard-toolbar">
       <strong>${hasSearch ? "Keresési találatok" : "Futár elszámolások"}</strong>
-      <span>${escapeHtml(formatCount(rows.length))} sor</span>
+      <span>${escapeHtml(formatCount(displayRows.length))} sor</span>
     </div>
     <div class="settlement-dashboard-list">
-      ${rows.length ? rows.map((row) => `
+      ${displayRows.length ? displayRows.map((row) => `
         <button class="settlement-dashboard-row" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
           <div>
             <strong>${escapeHtml(row.courierName || "Futár")}</strong>
             <small>#${escapeHtml(row.courierId || "-")}${row.warehouse ? ` · ${escapeHtml(row.warehouse)}` : ""}</small>
+            ${renderSettlementDashboardFlags(row.flags || [])}
           </div>
           <div>
             ${renderSettlementDashboardStatus(row.status || {})}
@@ -4526,7 +4567,7 @@ function renderSettlementDashboard() {
           </div>
           <strong>${escapeHtml(formatHuf(row.totalPayableHuf || 0))}</strong>
         </button>
-      `).join("") : `<div class="empty-card">Nincs futár a kiválasztott hónapban.</div>`}
+      `).join("") : `<div class="empty-card">${activeStatusFilter ? "Nincs futár ebben a státuszban." : "Nincs futár a kiválasztott hónapban."}</div>`}
     </div>
   `;
 }
@@ -8464,6 +8505,7 @@ $("#settlement-dashboard-refresh")?.addEventListener("click", () => {
 $("#settlement-dashboard-month")?.addEventListener("change", (event) => {
   state.settlementDashboardMonth = event.currentTarget.value || previousLocalMonth();
   state.settlementDashboard = null;
+  state.settlementDashboardStatusFilter = "";
   loadSettlementDashboard();
 });
 $("#settlement-dashboard-search")?.addEventListener("input", (event) => {
@@ -8475,6 +8517,13 @@ $("#settlement-dashboard-search")?.addEventListener("input", (event) => {
   }, 350);
 });
 $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
+  const filter = event.target.closest("[data-settlement-status-filter]");
+  if (filter) {
+    const label = filter.dataset.settlementStatusFilter || "";
+    state.settlementDashboardStatusFilter = state.settlementDashboardStatusFilter === label ? "" : label;
+    renderSettlementDashboard();
+    return;
+  }
   const row = event.target.closest("[data-courier-id]");
   if (!row) return;
   openSettlementDashboardCourier(row.dataset.courierId || "");
