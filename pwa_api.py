@@ -30,6 +30,11 @@ from pydantic import BaseModel, Field
 from resources.email_sender import send_login_credentials, send_message, smtp_config, validate_email
 from resources.email_templates_db import send_courier_template_email
 from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
+from resources.settlement_excel_import import (
+    get_import_preview as get_excel_import_preview,
+    get_supabase_client as get_settlement_supabase_client,
+    save_excel_to_supabase as save_settlement_excel_to_supabase,
+)
 from resources.pwa_users_db import (
     authenticate_pwa_db_user,
     change_pwa_user_password,
@@ -490,6 +495,69 @@ def require_settlement_dashboard_admin(user: dict[str, Any]) -> dict[str, Any]:
     if not can_view_settlement_dashboard(user):
         raise HTTPException(status_code=403, detail="Ehhez admin jogosultság szükséges.")
     return user
+
+
+def settlement_supabase_client() -> Any:
+    return get_settlement_supabase_client(
+        load_setting("SUPABASE_URL"),
+        load_setting("SUPABASE_SERVICE_ROLE_KEY"),
+    )
+
+
+def clean_excel_preview_value(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if value != value:
+            return ""
+    except Exception:
+        pass
+    return str(value).strip()
+
+
+def excel_preview_column_keys(row: dict[str, Any]) -> list[str]:
+    def column_number(key: str) -> int:
+        try:
+            return int(key.split("_", 1)[1])
+        except Exception:
+            return 0
+
+    return sorted(
+        [key for key in row.keys() if re.fullmatch(r"column_\d+", str(key))],
+        key=column_number,
+    )
+
+
+def build_excel_import_header_summary(preview_df: Any) -> list[dict[str, Any]]:
+    if preview_df is None or getattr(preview_df, "empty", True):
+        return []
+    records = preview_df.to_dict("records")
+    sheets: dict[str, list[dict[str, Any]]] = {}
+    for row in records:
+        sheet_name = clean_excel_preview_value(row.get("sheet_name")) or "Munkalap"
+        sheets.setdefault(sheet_name, []).append(row)
+
+    summaries: list[dict[str, Any]] = []
+    for sheet_name, rows in sheets.items():
+        best_row: dict[str, Any] | None = None
+        best_values: list[str] = []
+        for row in rows[:30]:
+            values = [
+                clean_excel_preview_value(row.get(key))
+                for key in excel_preview_column_keys(row)
+            ]
+            non_empty_values = [value for value in values if value]
+            if len(non_empty_values) > len(best_values):
+                best_row = row
+                best_values = non_empty_values
+        summaries.append({
+            "sheetName": sheet_name,
+            "sourceRowNo": best_row.get("source_row_no") if best_row else None,
+            "columnCount": len(best_values),
+            "headers": best_values[:80],
+            "previewRows": len(rows),
+        })
+    return summaries
 
 
 def is_unrestricted_legacy_settlement_month(month: date) -> bool:
@@ -19538,6 +19606,52 @@ def admin_settlement_dashboard(
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
     return build_admin_settlement_dashboard(month_value, q)
+
+
+@app.post("/api/admin/settlement-imports/excel")
+async def admin_settlement_excel_import(
+    month: str = Form(...),
+    excel_file: UploadFile = File(...),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(month)
+    filename = str(excel_file.filename or "").strip()
+    if not filename:
+        raise HTTPException(status_code=422, detail="Válassz ki egy Excel fájlt.")
+    if not filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
+        raise HTTPException(status_code=422, detail="Csak Excel fájl tölthető fel.")
+
+    content = await excel_file.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="A feltöltött fájl üres.")
+
+    uploaded_file = io.BytesIO(content)
+    uploaded_file.name = filename
+    try:
+        supabase = settlement_supabase_client()
+        import_result = save_settlement_excel_to_supabase(uploaded_file, supabase)
+        preview_df = get_excel_import_preview(
+            supabase,
+            import_result.get("session_id"),
+            limit=500,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Excel import hiba: {exc}") from exc
+
+    return {
+        "ok": True,
+        "month": month_value.strftime("%Y-%m"),
+        "sessionId": import_result.get("session_id"),
+        "sourceFileName": import_result.get("source_file_name") or filename,
+        "insertedRows": int(import_result.get("inserted_rows") or 0),
+        "sheetCount": int(import_result.get("sheet_count") or 0),
+        "sheetNames": import_result.get("sheet_names") or [],
+        "sheetRowCounts": import_result.get("sheet_row_counts") or {},
+        "headers": build_excel_import_header_summary(preview_df),
+    }
 
 
 @app.post("/api/workflow/{action}/accept")

@@ -73,8 +73,12 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardStatusFilter: "",
   settlementDashboardSearchTimer: null,
+  settlementImportStep: 1,
+  settlementImportMonth: previousLocalMonth(),
+  settlementImportResult: null,
+  settlementImportUploading: false,
 };
-const APP_VERSION = "v175";
+const APP_VERSION = "v176";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -222,6 +226,10 @@ function currentSectionRefresh() {
   if (state.section === "departure-helper") return loadDepartureHelper();
   if (state.section === "today-workers") return loadTodayWorkers();
   if (state.section === "settlement-dashboard") return loadSettlementDashboard();
+  if (state.section === "settlement-import-config") {
+    renderSettlementImportConfig();
+    return Promise.resolve();
+  }
   if (state.section === "coordinator-schedule") {
     if (state.coordinatorScheduleActionActive) return Promise.resolve();
     return state.coordinatorScheduleView === "day"
@@ -465,15 +473,16 @@ function showApp() {
   $("#nav-registration-admin").classList.toggle("hidden", !state.user.canApproveRegistrations);
   $("#nav-route-details").classList.toggle("hidden", !state.user.canPreviewCouriers);
   $("#nav-settlement-dashboard").classList.toggle("hidden", !state.user.canViewSettlementDashboard);
+  $("#nav-settlement-import-config").classList.toggle("hidden", !state.user.canViewSettlementDashboard);
   $("#nav-vehicle-config").classList.toggle("hidden", !state.user.canManageVehicles);
   const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
   if (coordinatorOnly) {
-    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-vehicle-config", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard"]
+    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-vehicle-config", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard", "#nav-settlement-import-config"]
       .forEach((selector) => $(selector)?.classList.add("hidden"));
   }
   if (hrOnly) {
-    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard"]
+    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard", "#nav-settlement-import-config"]
       .forEach((selector) => $(selector)?.classList.add("hidden"));
     ["#nav-profile", "#nav-vehicle"].forEach((selector) => $(selector)?.classList.remove("hidden"));
     $("#nav-vehicle-config")?.classList.toggle("hidden", !state.user.canManageVehicles);
@@ -516,6 +525,7 @@ function showSection(section) {
   $("#coordinator-schedule-content").classList.toggle("hidden", section !== "coordinator-schedule");
   $("#registration-admin-content").classList.toggle("hidden", section !== "registration-admin");
   $("#settlement-dashboard-content").classList.toggle("hidden", section !== "settlement-dashboard");
+  $("#settlement-import-config-content").classList.toggle("hidden", section !== "settlement-import-config");
 
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
@@ -539,9 +549,11 @@ function showSection(section) {
   $("#nav-coordinator-schedule").classList.toggle("active", section === "coordinator-schedule");
   $("#nav-registration-admin").classList.toggle("active", section === "registration-admin");
   $("#nav-settlement-dashboard").classList.toggle("active", section === "settlement-dashboard");
+  $("#nav-settlement-import-config").classList.toggle("active", section === "settlement-import-config");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
   if (section === "settlement-dashboard") loadSettlementDashboard();
+  if (section === "settlement-import-config") renderSettlementImportConfig();
   if (section === "statistics" && !state.statistics) loadStatistics();
   if (section === "route-details") {
     loadCourierMasterOptions().then(() => {
@@ -4588,6 +4600,137 @@ async function loadSettlementDashboard() {
   }
 }
 
+function renderSettlementImportSteps() {
+  const steps = [
+    [1, "Hónap", "Elszámolási hónap kiválasztása"],
+    [2, "Excel", "Fájl feltöltése"],
+    [3, "Validálás", "Fejlécek ellenőrzése"],
+  ];
+  return `<div class="settlement-import-stepper">
+    ${steps.map(([index, title, detail]) => {
+      const tone = state.settlementImportStep === index ? "active" : state.settlementImportStep > index ? "done" : "";
+      return `<div class="settlement-import-step ${tone}">
+        <span>${index}</span>
+        <strong>${escapeHtml(title)}</strong>
+        <small>${escapeHtml(detail)}</small>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+function renderSettlementImportHeaders(headers = []) {
+  if (!headers.length) {
+    return `<div class="empty-card">A preview nem talált megjeleníthető fejléceket.</div>`;
+  }
+  return `<div class="settlement-import-header-list">
+    ${headers.map((sheet) => `
+      <article class="settlement-import-header-card">
+        <div class="settlement-import-header-title">
+          <div>
+            <span>Munkalap</span>
+            <strong>${escapeHtml(sheet.sheetName || "Munkalap")}</strong>
+          </div>
+          <small>${escapeHtml(formatCount(sheet.columnCount || 0))} fejléc · ${escapeHtml(formatCount(sheet.previewRows || 0))} preview sor</small>
+        </div>
+        <div class="settlement-import-header-tags">
+          ${(sheet.headers || []).length
+            ? sheet.headers.map((header) => `<span>${escapeHtml(header)}</span>`).join("")
+            : `<em>Nincs felismerhető fejléc</em>`}
+        </div>
+      </article>
+    `).join("")}
+  </div>`;
+}
+
+function renderSettlementImportConfig() {
+  const target = $("#settlement-import-config-panel");
+  if (!target) return;
+  const step = state.settlementImportStep || 1;
+  const result = state.settlementImportResult;
+  const canFinish = Boolean(result?.ok);
+  target.innerHTML = `
+    ${renderSettlementImportSteps()}
+    <div class="settlement-import-panel">
+      ${step === 1 ? `
+        <div class="settlement-import-copy">
+          <p class="eyebrow">1. lépés</p>
+          <h3>Válaszd ki az elszámolási hónapot</h3>
+          <p class="muted">Ez a hónap lesz a feltöltés címkéje. A fájl tartalmát még csak nyersen töltjük be, nem számolunk belőle.</p>
+        </div>
+        <label>Elszámolási hónap
+          <input id="settlement-import-month" type="month" value="${escapeHtml(state.settlementImportMonth || previousLocalMonth())}" />
+        </label>
+        <div class="settlement-import-actions">
+          <button class="primary" type="button" data-settlement-import-action="next">Tovább</button>
+        </div>
+      ` : ""}
+      ${step === 2 ? `
+        <div class="settlement-import-copy">
+          <p class="eyebrow">2. lépés</p>
+          <h3>Excel fájl feltöltése</h3>
+          <p class="muted">Ugyanaz a nyers betöltés indul el, mint a devtest importnál: munkalapok, sorok és oszlopok bekerülnek a raw import táblába.</p>
+        </div>
+        <label>Excel fájl
+          <input id="settlement-import-file" type="file" accept=".xlsx,.xls,.xlsm" />
+        </label>
+        <div class="settlement-import-actions">
+          <button class="secondary" type="button" data-settlement-import-action="back">Vissza</button>
+          <button class="primary" type="button" data-settlement-import-action="upload" ${state.settlementImportUploading ? "disabled" : ""}>
+            ${state.settlementImportUploading ? "Feltöltés..." : "Excel feltöltése"}
+          </button>
+        </div>
+      ` : ""}
+      ${step === 3 ? `
+        <div class="settlement-import-copy">
+          <p class="eyebrow">3. lépés</p>
+          <h3>Validálás és fejlécek</h3>
+          <p class="muted">Itt már látszik, hogy a raw import sikerült-e, hány sort töltöttünk be, és milyen fejlécekből lehet majd konfigurációt építeni.</p>
+        </div>
+        ${result?.ok ? `
+          <div class="settlement-import-result-grid">
+            <div><span>Hónap</span><strong>${escapeHtml(formatMonthLabel(result.month))}</strong></div>
+            <div><span>Fájl</span><strong>${escapeHtml(result.sourceFileName || "-")}</strong></div>
+            <div><span>Munkalap</span><strong>${escapeHtml(formatCount(result.sheetCount || 0))}</strong></div>
+            <div><span>Betöltött sor</span><strong>${escapeHtml(formatCount(result.insertedRows || 0))}</strong></div>
+          </div>
+          ${renderSettlementImportHeaders(result.headers || [])}
+        ` : `<div class="empty-card">Nincs még validált feltöltés.</div>`}
+        <div class="settlement-import-actions">
+          <button class="secondary" type="button" data-settlement-import-action="back">Vissza</button>
+          <button class="primary" type="button" data-settlement-import-action="finish" ${canFinish ? "" : "disabled"}>Befejezés</button>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+async function submitSettlementImport() {
+  const fileInput = $("#settlement-import-file");
+  const file = fileInput?.files?.[0];
+  if (!file) {
+    window.alert("Válassz ki egy Excel fájlt.");
+    return;
+  }
+  state.settlementImportUploading = true;
+  renderSettlementImportConfig();
+  const formData = new FormData();
+  formData.set("month", state.settlementImportMonth || previousLocalMonth());
+  formData.set("excel_file", file);
+  try {
+    state.settlementImportResult = await api("/api/admin/settlement-imports/excel", {
+      method: "POST",
+      body: formData,
+      loadingMessage: "Excel feltöltése...",
+    });
+    state.settlementImportStep = 3;
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    state.settlementImportUploading = false;
+    renderSettlementImportConfig();
+  }
+}
+
 function openSettlementDashboardCourier(courierId) {
   const cleanId = String(courierId || "").trim();
   if (!cleanId) return;
@@ -8443,6 +8586,10 @@ $("#logout").addEventListener("click", async () => {
   state.game = null;
   state.gameStartedAt = null;
   state.openMuszakproShifts = null;
+  state.settlementImportStep = 1;
+  state.settlementImportMonth = previousLocalMonth();
+  state.settlementImportResult = null;
+  state.settlementImportUploading = false;
   renderQueueStatus();
   showLogin();
 });
@@ -8463,6 +8610,7 @@ $("#nav-vehicle-config")?.addEventListener("click", () => showSection("vehicle-c
 $("#nav-tours").addEventListener("click", () => showSection("tours"));
 $("#nav-route-details").addEventListener("click", () => showSection("route-details"));
 $("#nav-settlement-dashboard")?.addEventListener("click", () => showSection("settlement-dashboard"));
+$("#nav-settlement-import-config")?.addEventListener("click", () => showSection("settlement-import-config"));
 $("#nav-game").addEventListener("click", () => showSection("game"));
 $("#game-refresh")?.addEventListener("click", loadGame);
 $("#nav-coordinator-live").addEventListener("click", () => showSection("coordinator-live"));
@@ -8515,6 +8663,39 @@ $("#settlement-dashboard-search")?.addEventListener("input", (event) => {
     state.settlementDashboard = null;
     loadSettlementDashboard();
   }, 350);
+});
+$("#settlement-import-config-panel")?.addEventListener("change", (event) => {
+  const monthInput = event.target.closest("#settlement-import-month");
+  if (monthInput) {
+    state.settlementImportMonth = monthInput.value || previousLocalMonth();
+    state.settlementImportResult = null;
+  }
+});
+$("#settlement-import-config-panel")?.addEventListener("click", (event) => {
+  const actionButton = event.target.closest("[data-settlement-import-action]");
+  if (!actionButton) return;
+  const action = actionButton.dataset.settlementImportAction;
+  if (action === "next") {
+    const monthValue = $("#settlement-import-month")?.value || state.settlementImportMonth || previousLocalMonth();
+    state.settlementImportMonth = monthValue;
+    state.settlementImportStep = 2;
+    renderSettlementImportConfig();
+    return;
+  }
+  if (action === "back") {
+    state.settlementImportStep = Math.max(1, (state.settlementImportStep || 1) - 1);
+    renderSettlementImportConfig();
+    return;
+  }
+  if (action === "upload") {
+    submitSettlementImport();
+    return;
+  }
+  if (action === "finish") {
+    state.settlementImportStep = 1;
+    state.settlementImportResult = null;
+    renderSettlementImportConfig();
+  }
 });
 $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
   const filter = event.target.closest("[data-settlement-status-filter]");

@@ -432,6 +432,32 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-dashboard-flags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 .settlement-dashboard-flag { display: inline-flex; width: fit-content; padding: 4px 8px; border: 1px solid #c9dff9; border-radius: 999px; background: #eff6ff; color: #26619c; font-size: 10px; font-weight: 950; line-height: 1; }
 .settlement-dashboard-flag.warn { border-color: #ffd891; background: #fff7df; color: #8b5d00; }
+.settlement-import-stepper { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
+.settlement-import-step { min-width: 0; display: grid; grid-template-columns: 32px 1fr; gap: 3px 10px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: #f8fbf5; }
+.settlement-import-step span { grid-row: 1 / 3; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 11px; background: #edf1eb; color: var(--muted); font-weight: 950; }
+.settlement-import-step strong { overflow-wrap: anywhere; font-size: 13px; }
+.settlement-import-step small { color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.25; }
+.settlement-import-step.active { border-color: #9ccc96; background: #eff8ed; box-shadow: inset 0 0 0 1px #9ccc962e; }
+.settlement-import-step.active span, .settlement-import-step.done span { background: var(--green-dark); color: #fff; }
+.settlement-import-step.done { border-color: #c7dcc3; }
+.settlement-import-panel { display: grid; gap: 14px; }
+.settlement-import-copy { display: grid; gap: 5px; }
+.settlement-import-copy h3 { margin: 0; font-size: 22px; letter-spacing: 0; }
+.settlement-import-copy p { margin: 0; }
+.settlement-import-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.settlement-import-actions button { min-width: 150px; }
+.settlement-import-result-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(138px, 1fr)); gap: 8px; }
+.settlement-import-result-grid div { min-height: 84px; padding: 13px; border: 1px solid var(--line); border-radius: 16px; background: #f8fbf5; }
+.settlement-import-result-grid span, .settlement-import-header-title span { display: block; color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.settlement-import-result-grid strong { display: block; margin-top: 8px; font-size: 18px; overflow-wrap: anywhere; }
+.settlement-import-header-list { display: grid; gap: 10px; }
+.settlement-import-header-card { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fbfcfa; }
+.settlement-import-header-title { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.settlement-import-header-title strong { display: block; margin-top: 4px; font-size: 17px; overflow-wrap: anywhere; }
+.settlement-import-header-title small { color: var(--muted); font-size: 11px; font-weight: 800; text-align: right; }
+.settlement-import-header-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.settlement-import-header-tags span { max-width: 100%; padding: 7px 9px; border: 1px solid #cfe2ca; border-radius: 999px; background: #eff8ed; color: var(--green-dark); font-size: 12px; font-weight: 850; overflow-wrap: anywhere; }
+.settlement-import-header-tags em { color: var(--muted); font-size: 13px; }
 .schedule-recommendations { display: grid; gap: 10px; }
 .schedule-recommendation-list { display: grid; gap: 8px; }
 .schedule-recommendation { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, .9fr); gap: 10px; align-items: center; padding: 12px; border: 1px solid #cfe2c8; border-radius: 14px; background: #f7fcf4; }
@@ -878,6 +904,10 @@ textarea { min-height: 96px; resize: vertical; }
   .settlement-dashboard-hero strong { font-size: 24px; }
   .settlement-dashboard-row { grid-template-columns: 1fr; }
   .settlement-dashboard-row > strong { text-align: left; }
+  .settlement-import-stepper { grid-template-columns: 1fr; }
+  .settlement-import-actions { display: grid; }
+  .settlement-import-header-title { display: grid; }
+  .settlement-import-header-title small { text-align: left; }
   .tig-row { grid-template-columns: minmax(0, 1fr) 1fr; }
   .tig-party-grid { grid-template-columns: 1fr; }
   .tig-row.head { display: none; }
