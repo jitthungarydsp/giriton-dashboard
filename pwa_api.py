@@ -592,6 +592,170 @@ def settlement_processing_summary(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def publish_settlement_import_to_pwa(
+    supabase: Any,
+    month: date,
+    session_id: str,
+    updated_by: str,
+) -> dict[str, Any]:
+    month_start = month.replace(day=1)
+    payload = {
+        "period_start": month_start.isoformat(),
+        "calculation_mode": "Excel",
+        "warehouse_label": "Összes",
+        "session_id": str(session_id or ""),
+        "visibility_mode": "original",
+        "source_note": "PWA varázslóval feltöltött Excel elszámolás publikálva.",
+        "updated_by": str(updated_by or "admin"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    response = (
+        supabase
+        .table("mobile_settlement_period_config")
+        .upsert(payload, on_conflict="period_start")
+        .execute()
+    )
+    rows = response.data or []
+    return dict(rows[0]) if rows else payload
+
+
+def settlement_import_route_type(value: Any) -> str:
+    text = normalize_text(value)
+    if "express" in text:
+        return "express"
+    if "regional" in text or "regio" in text or "régio" in text:
+        return "regional"
+    return "normal"
+
+
+def settlement_import_warehouse_from_row(row: dict[str, Any]) -> str:
+    data = row.get("normalized_data") or {}
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            data = {}
+    warehouse = text_from_nested(data, "Warehouse", "warehouse", "Location", "location", "Raktár", "raktar")
+    if not warehouse:
+        warehouse = row.get("source_sheet") or ""
+    clean = normalize_warehouse(warehouse)
+    if clean in {"BUD1", "BUD2"}:
+        return clean
+    upper = str(warehouse or "").upper()
+    if "BUD2" in upper:
+        return "BUD2"
+    return "BUD1" if "BUD1" in upper else "Ismeretlen"
+
+
+def settlement_import_route_type_from_row(row: dict[str, Any]) -> str:
+    data = row.get("normalized_data") or {}
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            data = {}
+    return settlement_import_route_type(
+        text_from_nested(data, "Route Type", "route_type", "routeType", "Túratípus", "Turatipus")
+    )
+
+
+def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str, Any]:
+    summary_rows = (
+        supabase
+        .table("courier_settlement_summary")
+        .select(
+            "session_id,courier_id,driver_name,route_count,order_count,"
+            "company_base_rate_huf,courier_base_rate_huf,tip_huf,route_bonus_total_huf,payable_huf,calculated_at"
+        )
+        .eq("session_id", session_id)
+        .order("payable_huf", desc=True)
+        .limit(1000)
+        .execute()
+        .data
+        or []
+    )
+
+    route_counts: dict[str, dict[str, int]] = {
+        "BUD1": {"normal": 0, "express": 0, "regional": 0, "total": 0},
+        "BUD2": {"normal": 0, "express": 0, "regional": 0, "total": 0},
+        "Ismeretlen": {"normal": 0, "express": 0, "regional": 0, "total": 0},
+    }
+    offset = 0
+    page_size = 1000
+    while True:
+        page = (
+            supabase
+            .table("jit_row")
+            .select("normalized_data,source_sheet,is_route_primary")
+            .eq("session_id", session_id)
+            .eq("is_route_primary", True)
+            .range(offset, offset + page_size - 1)
+            .execute()
+            .data
+            or []
+        )
+        if not page:
+            break
+        for row in page:
+            warehouse = settlement_import_warehouse_from_row(row)
+            route_type = settlement_import_route_type_from_row(row)
+            bucket = route_counts.setdefault(warehouse, {"normal": 0, "express": 0, "regional": 0, "total": 0})
+            bucket[route_type] = bucket.get(route_type, 0) + 1
+            bucket["total"] = bucket.get("total", 0) + 1
+        if len(page) < page_size:
+            break
+        offset += page_size
+
+    sample_row = next((row for row in summary_rows if money_int(row.get("payable_huf"))), summary_rows[0] if summary_rows else {})
+    sample_amounts = {
+        "payable": money_int(sample_row.get("payable_huf")),
+        "base": money_int(sample_row.get("courier_base_rate_huf")),
+        "tip": money_int(sample_row.get("tip_huf")),
+        "bonus": money_int(sample_row.get("route_bonus_total_huf")),
+        "cash": 0,
+    }
+    sample_courier = {
+        "id": str(sample_row.get("courier_id") or ""),
+        "name": str(sample_row.get("driver_name") or ""),
+        "document_month": "",
+        "document_reference": "",
+    }
+    tig_preview = build_tig_breakdown(sample_courier, sample_amounts) if sample_row else {}
+    return {
+        "couriersTotal": len({
+            str(row.get("courier_id") or row.get("driver_name") or "").strip()
+            for row in summary_rows
+            if str(row.get("courier_id") or row.get("driver_name") or "").strip()
+        }),
+        "summaryRows": len(summary_rows),
+        "payableTotalHuf": sum(money_int(row.get("payable_huf")) for row in summary_rows),
+        "routeCounts": route_counts,
+        "sampleCourier": {
+            "courierId": sample_courier.get("id") or "-",
+            "courierName": sample_courier.get("name") or "Futár",
+            "routeCount": safe_int(sample_row.get("route_count")) if sample_row else 0,
+            "orderCount": safe_int(sample_row.get("order_count")) if sample_row else 0,
+            "baseHuf": money_int(sample_row.get("courier_base_rate_huf")) if sample_row else 0,
+            "tipHuf": money_int(sample_row.get("tip_huf")) if sample_row else 0,
+            "bonusHuf": money_int(sample_row.get("route_bonus_total_huf")) if sample_row else 0,
+            "payableHuf": money_int(sample_row.get("payable_huf")) if sample_row else 0,
+        } if sample_row else {},
+        "tigPreview": {
+            "finalTotalHuf": money_int(tig_preview.get("finalTotalHuf")) if tig_preview else 0,
+            "taxLabel": str(tig_preview.get("taxLabel") or "") if tig_preview else "",
+            "rows": [
+                {
+                    "label": str(row.get("label") or ""),
+                    "netHuf": money_int(row.get("netHuf")),
+                    "vatHuf": money_int(row.get("vatHuf")),
+                    "grossHuf": money_int(row.get("grossHuf")),
+                }
+                for row in (tig_preview.get("rows") or [])[:10]
+            ] if tig_preview else [],
+        },
+    }
+
+
 def is_unrestricted_legacy_settlement_month(month: date) -> bool:
     return month.replace(day=1) == date(2026, 6, 1)
 
@@ -19646,7 +19810,7 @@ async def admin_settlement_excel_import(
     excel_file: UploadFile = File(...),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
-    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     month_value = parse_month(month)
     filename = str(excel_file.filename or "").strip()
     if not filename:
@@ -19683,6 +19847,7 @@ async def admin_settlement_excel_import(
                 + (" | ".join(error_messages) if error_messages else "Nincs részletes hibaüzenet.")
             )
         recalculate_excel_base_rates(supabase, str(import_result.get("session_id") or ""))
+        validation = settlement_import_quality_checks(supabase, str(import_result.get("session_id") or ""))
     except HTTPException:
         raise
     except Exception as exc:
@@ -19699,7 +19864,78 @@ async def admin_settlement_excel_import(
         "sheetRowCounts": import_result.get("sheet_row_counts") or {},
         "headers": build_excel_import_header_summary(preview_df),
         "processing": settlement_processing_summary(processing_result),
+        "validation": validation,
     }
+
+
+@app.post("/api/admin/settlement-imports/{session_id}/publish")
+def admin_publish_settlement_import(
+    session_id: str,
+    payload: WorkflowActionRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(payload.month)
+    clean_session_id = str(session_id or "").strip()
+    if not clean_session_id:
+        raise HTTPException(status_code=422, detail="Hiányzik a session ID.")
+    try:
+        supabase = settlement_supabase_client()
+        validation = settlement_import_quality_checks(supabase, clean_session_id)
+        if not validation.get("summaryRows"):
+            raise HTTPException(status_code=409, detail="Nincs feldolgozott elszámolási összesítés ehhez a sessionhöz.")
+        published_config = publish_settlement_import_to_pwa(
+            supabase,
+            month_value,
+            clean_session_id,
+            str(user.get("username") or "admin"),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"PWA publikálási hiba: {exc}") from exc
+    return {
+        "ok": True,
+        "month": month_value.strftime("%Y-%m"),
+        "publishedConfig": {
+            "periodStart": str(published_config.get("period_start") or month_value.replace(day=1).isoformat()),
+            "calculationMode": str(published_config.get("calculation_mode") or "Excel"),
+            "warehouseLabel": str(published_config.get("warehouse_label") or "Összes"),
+            "sessionId": str(published_config.get("session_id") or clean_session_id),
+            "visibilityMode": normalize_mobile_visibility_mode(published_config.get("visibility_mode")),
+            "updatedAt": str(published_config.get("updated_at") or ""),
+        },
+    }
+
+
+@app.delete("/api/admin/settlement-imports/{session_id}")
+def admin_delete_settlement_import(
+    session_id: str,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    clean_session_id = str(session_id or "").strip()
+    if not clean_session_id:
+        raise HTTPException(status_code=422, detail="Hiányzik a session ID.")
+    try:
+        supabase = settlement_supabase_client()
+        for table_name in (
+            "mobile_settlement_period_config",
+            "courier_settlement_summary",
+            "validation_error",
+            "sheet_processing_result",
+            "jit_row",
+            "penalty_row",
+            "atm_balance_row",
+            "bonus_route_row",
+            "performance_indicator_row",
+            "processing_run",
+            "excel_import",
+        ):
+            supabase.table(table_name).delete().eq("session_id", clean_session_id).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Import törlési hiba: {exc}") from exc
+    return {"ok": True, "sessionId": clean_session_id}
 
 
 @app.post("/api/workflow/{action}/accept")

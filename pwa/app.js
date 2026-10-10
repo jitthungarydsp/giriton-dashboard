@@ -78,7 +78,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v177";
+const APP_VERSION = "v179";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4668,6 +4668,73 @@ function renderSettlementImportProcessing(processing = {}) {
   </div>`;
 }
 
+function renderSettlementImportPublishedConfig(config = {}) {
+  if (!config.sessionId) return "";
+  return `<div class="settlement-import-published">
+    <span>PWA forrás beállítva</span>
+    <strong>${escapeHtml(formatMonthLabel(String(config.periodStart || "").slice(0, 7)))} · ${escapeHtml(config.calculationMode || "Excel")}</strong>
+    <small>Session: ${escapeHtml(config.sessionId)} · Raktár: ${escapeHtml(config.warehouseLabel || "Összes")}</small>
+  </div>`;
+}
+
+function renderSettlementImportValidation(validation = {}) {
+  if (!validation || !Object.keys(validation).length) return "";
+  const routeCounts = validation.routeCounts || {};
+  const routeLabels = [
+    ["normal", "Normál"],
+    ["express", "Express"],
+    ["regional", "Régiós"],
+  ];
+  const warehouses = ["BUD1", "BUD2"];
+  const sample = validation.sampleCourier || {};
+  const tig = validation.tigPreview || {};
+  return `<div class="settlement-import-validation">
+    <div class="settlement-import-result-grid">
+      <div><span>Futár összesen</span><strong>${escapeHtml(formatCount(validation.couriersTotal || 0))}</strong></div>
+      <div><span>Összesítő sor</span><strong>${escapeHtml(formatCount(validation.summaryRows || 0))}</strong></div>
+      <div><span>Kifizetendő összesen</span><strong>${escapeHtml(formatHuf(validation.payableTotalHuf || 0))}</strong></div>
+    </div>
+    <div class="settlement-import-route-checks">
+      ${warehouses.map((warehouse) => {
+        const counts = routeCounts[warehouse] || {};
+        return `<article>
+          <span>${escapeHtml(warehouse)}</span>
+          <strong>${escapeHtml(formatCount(counts.total || 0))} túra</strong>
+          <div>
+            ${routeLabels.map(([key, label]) => `<small>${escapeHtml(label)}: <b>${escapeHtml(formatCount(counts[key] || 0))}</b></small>`).join("")}
+          </div>
+        </article>`;
+      }).join("")}
+    </div>
+    ${sample.courierName ? `
+      <div class="settlement-import-sample-grid">
+        <article class="settlement-import-sample-card">
+          <span>Első futár elszámolás minta</span>
+          <strong>${escapeHtml(sample.courierName)} · #${escapeHtml(sample.courierId || "-")}</strong>
+          <div class="settlement-import-sample-lines">
+            <small>Túra: <b>${escapeHtml(formatCount(sample.routeCount || 0))}</b></small>
+            <small>Rendelés: <b>${escapeHtml(formatCount(sample.orderCount || 0))}</b></small>
+            <small>Alapdíj: <b>${escapeHtml(formatHuf(sample.baseHuf || 0))}</b></small>
+            <small>Borravaló: <b>${escapeHtml(formatHuf(sample.tipHuf || 0))}</b></small>
+            <small>Bónusz: <b>${escapeHtml(formatHuf(sample.bonusHuf || 0))}</b></small>
+            <small>Fizetendő: <b>${escapeHtml(formatHuf(sample.payableHuf || 0))}</b></small>
+          </div>
+        </article>
+        <article class="settlement-import-tig-card">
+          <span>TIG előnézet</span>
+          <strong>${escapeHtml(formatHuf(tig.finalTotalHuf || 0))}</strong>
+          <small>${escapeHtml(tig.taxLabel || "TIG bontás")}</small>
+          <div class="settlement-import-tig-lines">
+            ${(tig.rows || []).length ? (tig.rows || []).map((row) => `
+              <small>${escapeHtml(row.label || "Tétel")} <b>${escapeHtml(formatHuf(row.grossHuf || 0))}</b></small>
+            `).join("") : `<small>Nincs TIG sor az előnézethez.</small>`}
+          </div>
+        </article>
+      </div>
+    ` : ""}
+  </div>`;
+}
+
 function renderSettlementImportConfig() {
   const target = $("#settlement-import-config-panel");
   if (!target) return;
@@ -4720,11 +4787,16 @@ function renderSettlementImportConfig() {
             <div><span>Betöltött sor</span><strong>${escapeHtml(formatCount(result.insertedRows || 0))}</strong></div>
           </div>
           ${renderSettlementImportProcessing(result.processing || {})}
+          ${renderSettlementImportValidation(result.validation || {})}
+          ${renderSettlementImportPublishedConfig(result.publishedConfig || {})}
           ${renderSettlementImportHeaders(result.headers || [])}
         ` : `<div class="empty-card">Nincs még validált feltöltés.</div>`}
         <div class="settlement-import-actions">
           <button class="secondary" type="button" data-settlement-import-action="back">Vissza</button>
-          <button class="primary" type="button" data-settlement-import-action="finish" ${canFinish ? "" : "disabled"}>Befejezés</button>
+          ${result?.publishedConfig?.sessionId
+            ? `<button class="primary" type="button" data-settlement-import-action="finish">Befejezés</button>`
+            : `<button class="secondary danger" type="button" data-settlement-import-action="delete" ${canFinish ? "" : "disabled"}>Import törlése</button>
+              <button class="primary" type="button" data-settlement-import-action="publish" ${canFinish ? "" : "disabled"}>Betöltés PWA-ra</button>`}
         </div>
       ` : ""}
     </div>
@@ -4755,6 +4827,44 @@ async function submitSettlementImport() {
   } finally {
     state.settlementImportUploading = false;
     renderSettlementImportConfig();
+  }
+}
+
+async function publishSettlementImport() {
+  const sessionId = state.settlementImportResult?.sessionId;
+  if (!sessionId) return;
+  try {
+    const payload = await api(`/api/admin/settlement-imports/${encodeURIComponent(sessionId)}/publish`, {
+      method: "POST",
+      body: JSON.stringify({ month: state.settlementImportMonth || previousLocalMonth(), process: "" }),
+      loadingMessage: "PWA forrás beállítása...",
+    });
+    state.settlementImportResult = {
+      ...(state.settlementImportResult || {}),
+      publishedConfig: payload.publishedConfig,
+    };
+    state.settlementDashboard = null;
+    renderSettlementImportConfig();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function deleteSettlementImport() {
+  const sessionId = state.settlementImportResult?.sessionId;
+  if (!sessionId) return;
+  if (!window.confirm("Biztosan törlöd ezt az import sessiont?")) return;
+  try {
+    await api(`/api/admin/settlement-imports/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+      loadingMessage: "Import törlése...",
+    });
+    state.settlementImportResult = null;
+    state.settlementImportStep = 1;
+    state.settlementDashboard = null;
+    renderSettlementImportConfig();
+  } catch (error) {
+    window.alert(error.message);
   }
 }
 
@@ -8716,6 +8826,14 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
   }
   if (action === "upload") {
     submitSettlementImport();
+    return;
+  }
+  if (action === "publish") {
+    publishSettlementImport();
+    return;
+  }
+  if (action === "delete") {
+    deleteSettlementImport();
     return;
   }
   if (action === "finish") {

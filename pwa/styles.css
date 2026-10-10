@@ -464,6 +464,21 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-import-processing-list span { max-width: 100%; padding: 7px 9px; border-radius: 999px; background: #fff; color: var(--green-dark); font-size: 12px; font-weight: 850; overflow-wrap: anywhere; }
 .settlement-import-processing-errors { display: grid; gap: 5px; }
 .settlement-import-processing-errors small { color: var(--danger); font-size: 12px; font-weight: 750; line-height: 1.35; }
+.settlement-import-published { display: grid; gap: 5px; padding: 14px; border: 1px solid #8ccf83; border-radius: 18px; background: linear-gradient(135deg, #1f7a38, #155a2a); color: #fff; }
+.settlement-import-published span { color: #dff4d4; font-size: 11px; font-weight: 950; text-transform: uppercase; }
+.settlement-import-published strong { font-size: 18px; overflow-wrap: anywhere; }
+.settlement-import-published small { color: #eaf8e4; font-size: 12px; font-weight: 800; line-height: 1.35; overflow-wrap: anywhere; }
+.settlement-import-actions .danger { border-color: #e2aaa5; color: var(--danger); }
+.settlement-import-validation { display: grid; gap: 10px; }
+.settlement-import-route-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.settlement-import-route-checks article, .settlement-import-sample-card, .settlement-import-tig-card { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fbfcfa; }
+.settlement-import-route-checks span, .settlement-import-sample-card span, .settlement-import-tig-card span { color: var(--green-dark); font-size: 11px; font-weight: 950; text-transform: uppercase; }
+.settlement-import-route-checks strong, .settlement-import-sample-card strong, .settlement-import-tig-card strong { font-size: 18px; overflow-wrap: anywhere; }
+.settlement-import-route-checks article div, .settlement-import-sample-lines, .settlement-import-tig-lines { display: grid; gap: 5px; }
+.settlement-import-route-checks small, .settlement-import-sample-card small, .settlement-import-tig-card small { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; font-weight: 800; line-height: 1.35; }
+.settlement-import-route-checks b, .settlement-import-sample-card b, .settlement-import-tig-card b { color: var(--ink); white-space: nowrap; }
+.settlement-import-sample-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.settlement-import-tig-card { border-color: #b8d5b4; background: linear-gradient(145deg, #fff, #eef8ed); }
 .schedule-recommendations { display: grid; gap: 10px; }
 .schedule-recommendation-list { display: grid; gap: 8px; }
 .schedule-recommendation { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, .9fr); gap: 10px; align-items: center; padding: 12px; border: 1px solid #cfe2c8; border-radius: 14px; background: #f7fcf4; }
@@ -914,6 +929,7 @@ textarea { min-height: 96px; resize: vertical; }
   .settlement-import-actions { display: grid; }
   .settlement-import-header-title { display: grid; }
   .settlement-import-header-title small { text-align: left; }
+  .settlement-import-route-checks, .settlement-import-sample-grid { grid-template-columns: 1fr; }
   .tig-row { grid-template-columns: minmax(0, 1fr) 1fr; }
   .tig-party-grid { grid-template-columns: 1fr; }
   .tig-row.head { display: none; }
