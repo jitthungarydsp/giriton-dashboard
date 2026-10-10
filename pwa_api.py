@@ -811,7 +811,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
             supabase
             .table("jit_row")
             .select(
-                "normalized_data,source_sheet,source_row_no,route_unique_id,route_type,is_route_primary,courier_base_rate_huf,"
+                "normalized_data,source_sheet,source_row_no,route_unique_id,is_route_primary,courier_base_rate_huf,"
                 "courier_delay_bonus_huf,courier_compliance_bonus_huf,courier_other_bonus_huf"
             )
             .eq("session_id", session_id)
