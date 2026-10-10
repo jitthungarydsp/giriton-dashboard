@@ -16795,20 +16795,33 @@ def render_courier_detail_page() -> None:
                     {"Tétel": "JITT malus", "Összeg": -manual_malus_total, "Megjegyzés": manual_malus_notes},
                 ])
             if detail_label == "ATM hatás":
-                return pd.DataFrame([
+                atm_rows = [
                     {
                         "Tétel": "Importált ATM hatás",
                         "Összeg": -imported_atm_total,
                         "Forrás": "Excel balance / ATM import",
+                        "Érvényesség": f"{period_start:%Y-%m-%d} - {period_end:%Y-%m-%d}",
+                        "Megjegyzés": str(row.get("Importált ATM megjegyzés") or "").strip(),
                         "Session": str(imported_balance_session_id or "-"),
                     },
-                    {
-                        "Tétel": "Manuális ATM levonás",
-                        "Összeg": -manual_atm_total,
-                        "Forrás": "settlement.courier_settlement_adjustment",
-                        "Session": str(session_id or "-"),
-                    },
-                ])
+                ]
+                if isinstance(adjustments, pd.DataFrame) and not adjustments.empty:
+                    atm_adjustments = adjustments.loc[
+                        adjustments["adjustment_type"].fillna("").astype(str).str.strip().str.lower().eq("atm_deduction")
+                    ].copy()
+                    for _, adjustment_row in atm_adjustments.iterrows():
+                        valid_from_text = str(adjustment_row.get("valid_from") or adjustment_row.get("effective_date") or "-")[:10]
+                        valid_to_value = adjustment_row.get("valid_to")
+                        valid_to_text = str(valid_to_value)[:10] if pd.notna(valid_to_value) and str(valid_to_value).strip() else "folyamatos"
+                        atm_rows.append({
+                            "Tétel": "Manuális ATM levonás",
+                            "Összeg": -abs(parse_huf_value(adjustment_row.get("amount_huf"))),
+                            "Forrás": "settlement.courier_settlement_adjustment",
+                            "Érvényesség": f"{valid_from_text} - {valid_to_text}",
+                            "Megjegyzés": str(adjustment_row.get("note") or "").strip(),
+                            "Session": str(session_id or "-"),
+                        })
+                return pd.DataFrame(atm_rows)
             if detail_label == "Fizetés előleg":
                 return pd.DataFrame([{"Tétel": "Aktuális havi fizetés előleg", "Összeg": -salary_advance_total}])
             if detail_label == "Céltartalék 10%":
