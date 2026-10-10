@@ -74,7 +74,7 @@ const state = {
   settlementDashboardStatusFilter: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v174";
+const APP_VERSION = "v175";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;

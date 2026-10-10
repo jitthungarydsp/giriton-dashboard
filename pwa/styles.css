@@ -575,7 +575,7 @@ textarea { min-height: 96px; resize: vertical; }
 .financial-card-title span { color: var(--muted); font-size: 12px; font-weight: 850; text-transform: uppercase; }
 .financial-card-title small { color: var(--ink); font-size: 11px; font-weight: 800; line-height: 1.35; overflow-wrap: anywhere; text-transform: none; }
 .financial-card summary strong { font-size: 19px; overflow-wrap: anywhere; text-align: right; }
-.financial-card.total { border-color: #bad9b7; background: #eff8ed; }
+.financial-card.total { display: none; }
 .financial-card.income summary strong { color: var(--green-dark); }
 .financial-card.deduction summary strong { color: var(--danger); }
 .financial-detail-list { display: grid; gap: 1px; padding: 0 12px 12px; }

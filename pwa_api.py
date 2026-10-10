@@ -15908,8 +15908,10 @@ def build_workflow(
     process_settlement_ready = kp_invoice_process or process_invoice_flow_ready
     settlement_ready = process_settlement_ready or bool(document_groups["settlement"]) or bool(financial_breakdown.get("available"))
     settlement_done = workflow_done(states, "settlement") or process_settlement_ready
+    admin_amount_view = preview_read_only or (can_view_financial_amounts(user) if can_view_amounts is None else bool(can_view_amounts))
     tig_may_be_visible = (
         kp_invoice_process
+        or admin_amount_view
         or tig_open_by_admin
         or settlement_done
         or bool(document_groups["tig"])
