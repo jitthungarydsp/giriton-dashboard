@@ -621,9 +621,10 @@ def publish_settlement_import_to_pwa(
 
 def settlement_import_route_type(value: Any) -> str:
     text = normalize_text(value)
-    if "express" in text:
+    compact = normalized_field_key(text)
+    if "express" in text or "expressz" in text or compact.startswith("exp") or compact in {"xpress", "expr"}:
         return "express"
-    if "regional" in text or "region" in text or "regio" in text or "régio" in text:
+    if "regional" in text or "region" in text or "regio" in text or "régio" in text or compact.startswith("reg"):
         return "regional"
     return "normal"
 
@@ -660,11 +661,45 @@ def settlement_import_warehouse_from_row(row: dict[str, Any]) -> str:
 
 
 def settlement_import_route_type_from_row(row: dict[str, Any]) -> str:
+    return settlement_import_route_type(settlement_import_route_type_raw_from_row(row))
+
+
+def settlement_import_route_type_raw_from_row(row: dict[str, Any]) -> str:
     data = settlement_import_normalized_data(row)
-    return settlement_import_route_type(
-        row.get("route_type")
-        or text_from_nested(data, "Route Type", "route_type", "routeType", "Túratípus", "Turatipus")
+    direct = str(row.get("route_type") or "").strip()
+    if direct:
+        return direct
+    route_type = text_from_nested(
+        data,
+        "Route Type",
+        "route_type",
+        "routeType",
+        "Route type",
+        "Route-type",
+        "Túratípus",
+        "Turatipus",
+        "Túra típus",
+        "Tura tipus",
+        "Routen type",
+        "Routen Type",
+        "Route Layer",
+        "routeLayer",
+        "Assignment Mode",
+        "assignmentMode",
     )
+    if route_type:
+        return route_type
+    for key, value in data.items():
+        clean_key = normalized_field_key(key)
+        if (
+            ("route" in clean_key and ("type" in clean_key or "layer" in clean_key or "mode" in clean_key))
+            or "turatipus" in clean_key
+            or "routentype" in clean_key
+        ):
+            text = str(value or "").strip()
+            if text:
+                return text
+    return ""
 
 
 def settlement_import_route_identifier(row: dict[str, Any]) -> str:
@@ -803,6 +838,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         "BUD2": {"normal": 0, "express": 0, "regional": 0, "total": 0},
         "Ismeretlen": {"normal": 0, "express": 0, "regional": 0, "total": 0},
     }
+    route_type_samples: dict[str, dict[str, int]] = {"BUD1": {}, "BUD2": {}, "Ismeretlen": {}}
     route_count_keys: set[tuple[str, str, str]] = set()
     offset = 0
     page_size = 1000
@@ -824,7 +860,11 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
             break
         for row in page:
             warehouse = settlement_import_warehouse_from_row(row)
+            raw_route_type = settlement_import_route_type_raw_from_row(row)
             route_type = settlement_import_route_type_from_row(row)
+            sample_bucket = route_type_samples.setdefault(warehouse, {})
+            sample_key = str(raw_route_type or "-").strip()[:40] or "-"
+            sample_bucket[sample_key] = sample_bucket.get(sample_key, 0) + 1
             route_key = (warehouse, route_type, settlement_import_route_identifier(row))
             if route_key not in route_count_keys:
                 route_count_keys.add(route_key)
@@ -879,6 +919,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         "summaryRows": len(summary_rows),
         "payableTotalHuf": sum(money_int(row.get("payable_huf")) for row in summary_rows),
         "routeCounts": route_counts,
+        "routeTypeSamples": route_type_samples,
         "sampleCourier": {
             "courierId": sample_courier.get("id") or "-",
             "courierName": sample_courier.get("name") or "Futár",

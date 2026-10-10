@@ -78,7 +78,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v182";
+const APP_VERSION = "v183";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4680,6 +4680,7 @@ function renderSettlementImportPublishedConfig(config = {}) {
 function renderSettlementImportValidation(validation = {}) {
   if (!validation || !Object.keys(validation).length) return "";
   const routeCounts = validation.routeCounts || {};
+  const routeTypeSamples = validation.routeTypeSamples || {};
   const routeLabels = [
     ["normal", "Normál"],
     ["express", "Express"],
@@ -4699,11 +4700,17 @@ function renderSettlementImportValidation(validation = {}) {
     <div class="settlement-import-route-checks">
       ${warehouses.map((warehouse) => {
         const counts = routeCounts[warehouse] || {};
+        const samples = routeTypeSamples[warehouse] || {};
         return `<article>
           <span>${escapeHtml(warehouse)}</span>
           <strong>${escapeHtml(formatCount(counts.total || 0))} túra</strong>
           <div>
             ${routeLabels.map(([key, label]) => `<small>${escapeHtml(label)}: <b>${escapeHtml(formatCount(counts[key] || 0))}</b></small>`).join("")}
+            ${Object.keys(samples).length ? `
+              <em class="settlement-import-route-samples">
+                ${Object.entries(samples).slice(0, 6).map(([label, count]) => `${escapeHtml(label)}: ${escapeHtml(formatCount(count || 0))}`).join(" · ")}
+              </em>
+            ` : ""}
           </div>
         </article>`;
       }).join("")}
