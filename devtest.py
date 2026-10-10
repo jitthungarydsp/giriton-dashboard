@@ -12436,51 +12436,11 @@ def render_bulk_status_email_panel(filtered: pd.DataFrame, active_status: str, p
 
     st.markdown("#### Tömeges e-mail kiküldése")
     with st.expander(f"{active_status} státuszú futárok értesítése", expanded=False):
-        actor = str(st.session_state.get("user", {}).get("username") or "unknown")
-        try:
-            template_rows = read_email_templates(active_only=True)
-        except Exception:
-            template_rows = []
-        template_by_key = {
-            str(item.get("template_key") or ""): item
-            for item in template_rows
-            if str(item.get("template_key") or "").strip()
-        }
-        selected_template = template_by_key.get(template_key) or {}
-        template_name = str(selected_template.get("template_name") or template_key)
-
-        recipients: list[dict[str, object]] = []
-        missing_email: list[str] = []
-        for _, courier_row in filtered.iterrows():
-            courier_id = str(courier_row.get("Courier ID") or courier_row.get("courier_id") or "").strip()
-            courier_name = str(
-                courier_row.get("Futár")
-                or courier_row.get("courier_name")
-                or courier_row.get("name")
-                or ""
-            ).strip()
-            if not courier_id:
-                continue
-            profile = load_courier_profile(courier_id)
-            recipient_email = str(profile.get("email") or profile.get("billing_email") or "").strip()
-            if not recipient_email:
-                missing_email.append(f"{courier_name or 'Ismeretlen'} ({courier_id})")
-                continue
-            recipients.append({
-                "courier_id": courier_id,
-                "courier_name": courier_name,
-                "recipient_email": recipient_email,
-                "amount_huf": format_huf(parse_huf_value(courier_row.get("Kifizetendő"))),
-            })
-
         info_cols = st.columns(3)
         info_cols[0].metric("Szűrt futárok", len(filtered))
-        info_cols[1].metric("Küldhető", len(recipients))
-        info_cols[2].metric("Hiányzó e-mail", len(missing_email))
-        st.caption(f"Használt sablon: {template_name}")
-        if missing_email:
-            with st.popover("Hiányzó e-mail címek"):
-                st.write("\n".join(missing_email[:300]))
+        info_cols[1].metric("Címzettek", "küldéskor")
+        info_cols[2].metric("Sablon", template_key)
+        st.caption("A címzettlista és a hiányzó e-mail címek ellenőrzése csak küldéskor fut le, hogy a főképernyő gyors maradjon.")
 
         confirm = st.checkbox(
             "Megerősítem, hogy az aktív státuszszűrésben lévő futároknak kiküldjük az e-mailt.",
@@ -12490,9 +12450,51 @@ def render_bulk_status_email_panel(filtered: pd.DataFrame, active_status: str, p
             f"Tömeges e-mail küldése - {active_status}",
             type="primary",
             use_container_width=True,
-            disabled=not recipients or not confirm,
+            disabled=filtered.empty or not confirm,
             key=f"bulk_status_email_send_{active_status}",
         ):
+            actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+            try:
+                template_rows = read_email_templates(active_only=True)
+            except Exception:
+                template_rows = []
+            template_by_key = {
+                str(item.get("template_key") or ""): item
+                for item in template_rows
+                if str(item.get("template_key") or "").strip()
+            }
+            selected_template = template_by_key.get(template_key) or {}
+            template_name = str(selected_template.get("template_name") or template_key)
+            profile_lookup = load_courier_profile_lookup()
+            recipients: list[dict[str, object]] = []
+            missing_email: list[str] = []
+            for _, courier_row in filtered.iterrows():
+                courier_id = str(courier_row.get("Courier ID") or courier_row.get("courier_id") or "").strip()
+                courier_name = str(
+                    courier_row.get("Futár")
+                    or courier_row.get("courier_name")
+                    or courier_row.get("name")
+                    or ""
+                ).strip()
+                if not courier_id:
+                    continue
+                profile = profile_lookup.get(_courier_id_key(courier_id), {})
+                recipient_email = str(profile.get("email") or profile.get("billing_email") or "").strip()
+                if not recipient_email:
+                    missing_email.append(f"{courier_name or 'Ismeretlen'} ({courier_id})")
+                    continue
+                recipients.append({
+                    "courier_id": courier_id,
+                    "courier_name": courier_name,
+                    "recipient_email": recipient_email,
+                    "amount_huf": format_huf(parse_huf_value(courier_row.get("Kifizetendő"))),
+                })
+            if missing_email:
+                with st.expander(f"Hiányzó e-mail címek ({len(missing_email)} db)", expanded=True):
+                    st.write("\n".join(missing_email[:300]))
+            if not recipients:
+                st.warning("Nincs küldhető címzett az aktív szűrésben.")
+                return
             sent_count = 0
             failed_rows: list[str] = []
             for recipient in recipients:
@@ -12513,7 +12515,7 @@ def render_bulk_status_email_panel(filtered: pd.DataFrame, active_status: str, p
                 else:
                     sent_count += 1
             if sent_count:
-                st.success(f"Tömeges e-mail kiküldve: {sent_count} db.")
+                st.success(f"Tömeges e-mail kiküldve: {sent_count} db. Sablon: {template_name}")
             if failed_rows:
                 with st.expander(f"Sikertelen küldések ({len(failed_rows)} db)", expanded=True):
                     st.write("\n".join(failed_rows[:300]))
