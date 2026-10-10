@@ -4000,7 +4000,7 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
     return `<div class="notice">${escapeHtml(breakdown.message || "A havi pénzügyi bontás még nincs kész.")}</div>`;
   }
   const cards = breakdown.cards || [];
-  const displayCards = cards.filter((card) => card.key !== "deductions");
+  const displayCards = cards.filter((card) => !["payable", "deductions"].includes(card.key));
   const viewedUser = state.workflow?.viewingAs || {};
   const previewNotice = readOnly
     ? `<div class="notice">Előnézet: ${escapeHtml(viewedUser.username || "futár")} (${escapeHtml(viewedUser.courierId || "")}). Ebben a módban csak nézni lehet az adatokat.</div>`
@@ -4014,7 +4014,7 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
     </section>
     <div class="financial-card-grid">
       ${displayCards.map((card) => `
-        <details class="financial-card ${escapeHtml(card.tone || "")} financial-card-${escapeHtml(card.key || "item")}" ${["payable", "bonus_malus"].includes(card.key) ? "open" : ""}>
+        <details class="financial-card ${escapeHtml(card.tone || "")} financial-card-${escapeHtml(card.key || "item")}" ${["base", "tip", "compliance_bonus", "bonus_malus", "atm_effect"].includes(card.key) ? "open" : ""}>
           <summary>
             <div class="financial-card-title">
               <span>${escapeHtml(card.label)}</span>
