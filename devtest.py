@@ -17246,6 +17246,12 @@ def render_courier_detail_page() -> None:
             "note": "Megjegyzés",
         })
         st.markdown("#### Mobilon látható értékek")
+        auto_snapshot_result = save_current_finance_snapshot("devtest.render_courier_detail_page.auto")
+        if auto_snapshot_result.get("saved"):
+            clear_devtest_finance_snapshot_cache()
+            st.caption(f"PWA snapshot automatikusan frissítve. Verzió: {auto_snapshot_result.get('version')}")
+        elif auto_snapshot_result.get("reason"):
+            st.caption(f"PWA snapshot automatikus frissítése nem futott le: {auto_snapshot_result.get('reason')}")
         if st.button(
             "Pénzügyi snapshot frissítése",
             use_container_width=True,
