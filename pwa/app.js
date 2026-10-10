@@ -73,7 +73,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v170";
+const APP_VERSION = "v171";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4411,13 +4411,14 @@ async function loadWorkflow(options = {}) {
   }
   try {
     await ensureWorkflowMonths();
-    const processPayload = await api(`/api/workflow/processes?${workflowProcessQuery()}`);
-    state.workflowProcesses = processPayload.processes || [{ id: "", label: "Havi folyamat" }];
+    state.workflow = await api(`/api/workflow?${workflowQuery()}`);
+    state.workflowProcesses = state.workflow.processes || [{ id: "", label: "Havi folyamat" }];
     if (!state.workflowProcesses.some((process) => process.id === state.workflowProcess)) {
       state.workflowProcess = "";
+      state.workflow = await api(`/api/workflow?${workflowQuery()}`);
+      state.workflowProcesses = state.workflow.processes || [{ id: "", label: "Havi folyamat" }];
     }
     renderWorkflowProcessPicker();
-    state.workflow = await api(`/api/workflow?${workflowQuery()}`);
     renderWorkflow();
     showWorkflowMessage("");
   } catch (error) {

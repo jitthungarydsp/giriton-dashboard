@@ -15744,6 +15744,23 @@ def build_workflow(
     kp_invoice_process = is_kp_invoice_process(process_id)
     documents, status_rows, complaints = read_workflow_rows(user, month)
     states = status_map(status_rows, process_id)
+    process_ids: set[str] = {""}
+    for row in status_rows:
+        process_ids.add(process_id_from_action_key(str(row.get("action_key") or "")))
+    for row in complaints:
+        process_ids.add(process_id_from_action_key(str(row.get("document_type") or "")))
+    for row in documents:
+        note = str(row.get("note") or "")
+        match = re.search(r"Folyamat azonosító:\s*([a-z0-9_-]+)", note, flags=re.IGNORECASE)
+        if match:
+            process_ids.add(normalize_process_id(match.group(1)))
+    processes = [
+        {
+            "id": current_process_id,
+            "label": workflow_process_label(current_process_id),
+        }
+        for current_process_id in sorted(process_ids, key=lambda value: (value != "", value))
+    ]
     mobile_config = read_mobile_settlement_period_config(month) if not process_id else {}
     visibility_mode = normalize_mobile_visibility_mode(mobile_config.get("visibility_mode"))
     tig_hidden_by_admin = not process_id and visibility_mode == "settlement_only"
@@ -16017,6 +16034,7 @@ def build_workflow(
         "month": month.strftime("%Y-%m"),
         "process": process_id,
         "processLabel": workflow_process_label(process_id),
+        "processes": processes,
         "processType": "kp_invoice" if kp_invoice_process else ("custom" if process_id else "monthly"),
         "viewerReadOnly": preview_read_only,
         "viewingAs": public_user(user) if preview_read_only else None,
