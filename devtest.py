@@ -14848,7 +14848,9 @@ def render_table(df: pd.DataFrame) -> None:
                 st.session_state["selected_courier_id"] = str(row["Courier ID"])
                 courier_id_value = str(row["Courier ID"])
                 target_menu = (
-                    "Reklamációk"
+                    "Profil"
+                    if bool(st.session_state.get("current_filtered_data_fast"))
+                    else "Reklamációk"
                     if active_status_filter == "Bejelentések"
                     else "Fizetés előleg"
                     if active_status_filter in {"Új fizetés előleg", "Kifizetésre vár (Fizetés előleg)", "Kifizetve (Fizetés előleg)"}
@@ -22312,13 +22314,11 @@ def show_new_settlement_page() -> None:
         str(import_session_id or ""),
     ])
     cached_detail_data = st.session_state.get("current_filtered_data")
-    cached_detail_is_fast = bool(st.session_state.get("current_filtered_data_fast"))
     if (
         st.session_state.get("selected_courier_id")
         and isinstance(cached_detail_data, pd.DataFrame)
         and not cached_detail_data.empty
         and st.session_state.get("current_filtered_context") == current_data_context
-        and not cached_detail_is_fast
     ):
         render_courier_detail_page()
         return
