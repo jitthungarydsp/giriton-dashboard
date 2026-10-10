@@ -16412,6 +16412,33 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
     )
     if not rows:
         return None
+    config = read_mobile_settlement_period_config(month_start)
+    session_id = str(config.get("session_id") or "").strip()
+    summary_rows: list[dict[str, Any]] = []
+    if session_id:
+        summary_rows = optional_supabase_rows_paged(
+            "courier_settlement_summary",
+            schema="settlement",
+            params={
+                "select": "courier_id,payable_huf,session_id",
+                "session_id": f"eq.{session_id}",
+                "order": "courier_id.asc",
+            },
+            timeout=20,
+            page_size=1000,
+            max_rows=50000,
+        )
+
+    fast_count = len({str(row.get("courier_id") or "").strip() for row in rows if str(row.get("courier_id") or "").strip()})
+    summary_count = len({str(row.get("courier_id") or "").strip() for row in summary_rows if str(row.get("courier_id") or "").strip()})
+    fast_total = sum(money_int(row.get("payable_huf")) for row in rows)
+    summary_total = sum(money_int(row.get("payable_huf")) for row in summary_rows)
+    if (summary_count and fast_count < summary_count) or (summary_total and fast_total == 0):
+        print(
+            "Admin settlement fast view skipped: incomplete or zero payable data; "
+            "falling back to bulk dashboard builder."
+        )
+        return None
 
     clean_query = normalize_text(query)
     dashboard_rows: list[dict[str, Any]] = []

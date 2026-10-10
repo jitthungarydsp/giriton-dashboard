@@ -71,38 +71,8 @@ snapshot_candidates as (
         'snapshot'::text as source
     from latest_snapshots
 ),
-workflow_candidates as (
-    select distinct
-        document_month::date as period_start,
-        courier_id::text,
-        null::text as courier_name,
-        'document'::text as source
-    from public.peopleforce_documents
-    where document_month is not null
-      and nullif(courier_id::text, '') is not null
-    union
-    select distinct
-        document_month::date as period_start,
-        courier_id::text,
-        null::text as courier_name,
-        'status'::text as source
-    from public.peopleforce_card_statuses
-    where document_month is not null
-      and nullif(courier_id::text, '') is not null
-    union
-    select distinct
-        document_month::date as period_start,
-        courier_id::text,
-        null::text as courier_name,
-        'complaint'::text as source
-    from public.peopleforce_complaints
-    where document_month is not null
-      and nullif(courier_id::text, '') is not null
-),
 all_candidates as (
     select period_start, courier_id, courier_name, source from snapshot_candidates
-    union all
-    select period_start, courier_id, courier_name, source from workflow_candidates
     union all
     select period_start, courier_id, courier_name, 'summary'::text as source from summary_rows
 ),
@@ -166,13 +136,11 @@ complaints as (
     select
         courier_id::text,
         document_month::date as period_start,
-        count(*) filter (
+        (count(*) filter (
             where lower(coalesce(status, '')) not in ('resolved', 'closed', 'deleted')
-              and coalesce(admin_response, '') = ''
-              and responded_at is null
               and coalesce(document_type, '') !~* '^process:[a-z0-9_-]+:'
-        )::integer as open_complaints,
-        max(coalesce(updated_at, created_at)) as last_complaint_at
+        ))::integer as open_complaints,
+        max(created_at) as last_complaint_at
     from public.peopleforce_complaints
     where document_month is not null
     group by courier_id::text, document_month::date

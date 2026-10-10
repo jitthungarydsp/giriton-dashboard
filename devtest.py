@@ -9667,19 +9667,33 @@ def build_fast_settlement_overview_data(
     """
 
     rows = load_fast_admin_settlement_dashboard_rows(period_start)
-    used_dashboard_view = bool(rows)
-    if not rows:
-        if not session_id:
-            return pd.DataFrame()
+    summary_rows: list[dict[str, object]] = []
+    if session_id:
         try:
-            rows = (
+            summary_rows = (
                 get_db().schema("settlement").table("courier_settlement_summary")
                 .select("*")
                 .eq("session_id", session_id)
                 .execute().data or []
             )
         except BaseException:
+            summary_rows = []
+    fast_count = len({_courier_id_key(row.get("courier_id")) for row in rows if _courier_id_key(row.get("courier_id"))})
+    summary_count = len({_courier_id_key(row.get("courier_id")) for row in summary_rows if _courier_id_key(row.get("courier_id"))})
+    fast_total = sum(parse_huf_value(row.get("payable_huf")) for row in rows)
+    summary_total = sum(parse_huf_value(row.get("payable_huf")) for row in summary_rows)
+    used_dashboard_view = (
+        bool(rows)
+        and bool(fast_total)
+        and (not summary_count or fast_count >= summary_count)
+        and (not summary_total or fast_total != 0)
+    )
+    if not rows:
+        if not summary_rows:
             return pd.DataFrame()
+        rows = summary_rows
+    elif not used_dashboard_view:
+        rows = summary_rows
     if not rows:
         return pd.DataFrame()
 
