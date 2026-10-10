@@ -73,7 +73,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v171";
+const APP_VERSION = "v172";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4014,7 +4014,7 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
     </section>
     <div class="financial-card-grid">
       ${displayCards.map((card) => `
-        <details class="financial-card ${escapeHtml(card.tone || "")}" ${["payable", "bonus_malus"].includes(card.key) ? "open" : ""}>
+        <details class="financial-card ${escapeHtml(card.tone || "")} financial-card-${escapeHtml(card.key || "item")}" ${["payable", "bonus_malus"].includes(card.key) ? "open" : ""}>
           <summary>
             <div class="financial-card-title">
               <span>${escapeHtml(card.label)}</span>

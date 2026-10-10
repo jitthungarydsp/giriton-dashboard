@@ -9008,7 +9008,13 @@ def mobile_override_amount(overrides: dict[str, dict[str, Any]], key: str) -> in
     return money_int((overrides.get(key) or {}).get("amount_value"))
 
 
-def read_latest_courier_finance_snapshot(courier_id: str, month: date, *, include_sources: bool = True) -> dict[str, Any]:
+def read_latest_courier_finance_snapshot(
+    courier_id: str,
+    month: date,
+    *,
+    include_sources: bool = True,
+    source_keys: set[str] | None = None,
+) -> dict[str, Any]:
     clean_courier_id = str(courier_id or "").strip()
     if not clean_courier_id:
         return {}
@@ -9041,16 +9047,21 @@ def read_latest_courier_finance_snapshot(courier_id: str, month: date, *, includ
         },
         timeout=30,
     )
+    source_params = {
+        "select": "source_key,source_table,payload,row_count",
+        "snapshot_id": f"eq.{snapshot_id}",
+        "order": "source_key.asc",
+        "limit": "100",
+    }
+    if source_keys:
+        clean_source_keys = [str(key).strip() for key in source_keys if str(key).strip()]
+        if clean_source_keys:
+            source_params["source_key"] = f"in.({','.join(clean_source_keys)})"
     snapshot["sources"] = (
         optional_supabase_rows(
             "courier_finance_snapshot_source",
             schema="settlement",
-            params={
-                "select": "source_key,source_table,payload,row_count",
-                "snapshot_id": f"eq.{snapshot_id}",
-                "order": "source_key.asc",
-                "limit": "100",
-            },
+            params=source_params,
             timeout=30,
         )
         if include_sources else []
@@ -10868,7 +10879,12 @@ def build_financial_breakdown(
 ) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     allow_unpublished = allow_unpublished or is_unrestricted_legacy_settlement_month(month)
-    snapshot = read_latest_courier_finance_snapshot(courier_id, month, include_sources=not snapshot_only)
+    snapshot = read_latest_courier_finance_snapshot(
+        courier_id,
+        month,
+        include_sources=True,
+        source_keys={"card_drilldowns"} if snapshot_only else None,
+    )
     snapshot_breakdown = (
         build_financial_breakdown_from_snapshot(
             user,
