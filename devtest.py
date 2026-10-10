@@ -15343,6 +15343,7 @@ def render_courier_detail_page() -> None:
         else load_latest_excel_jit_session_id(period_start)
     )
     imported_balance_session_id = balance_component_session_id(active_calculation_mode, period_start, session_id)
+    row = enrich_mobile_row_with_imported_balance_components(row, imported_balance_session_id)
     period_label = (
         f"{period_start:%Y. %m. %d.} - {period_end:%Y. %m. %d.}"
         if period_start and period_end
