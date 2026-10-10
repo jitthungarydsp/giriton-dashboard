@@ -35,6 +35,8 @@ from resources.settlement_excel_import import (
     get_supabase_client as get_settlement_supabase_client,
     save_excel_to_supabase as save_settlement_excel_to_supabase,
 )
+from resources.settlement_parameters import recalculate_excel_base_rates
+from resources.settlement_processor import process_settlement_session, report_as_dict
 from resources.pwa_users_db import (
     authenticate_pwa_db_user,
     change_pwa_user_password,
@@ -558,6 +560,36 @@ def build_excel_import_header_summary(preview_df: Any) -> list[dict[str, Any]]:
             "previewRows": len(rows),
         })
     return summaries
+
+
+def settlement_processing_summary(report: dict[str, Any]) -> dict[str, Any]:
+    sheets = report.get("sheets") or []
+    errors = report.get("errors") or []
+    return {
+        "status": report.get("status") or "",
+        "acceptedRows": int(report.get("accepted_rows") or 0),
+        "rejectedRows": int(report.get("rejected_rows") or 0),
+        "sheetCount": len(sheets),
+        "errorCount": len(errors),
+        "sheets": [
+            {
+                "sheetName": sheet.get("sheet_name") or "",
+                "targetTable": sheet.get("target_table") or "",
+                "status": sheet.get("status") or "",
+                "acceptedRows": int(sheet.get("accepted_rows") or 0),
+                "rejectedRows": int(sheet.get("rejected_rows") or 0),
+            }
+            for sheet in sheets[:20]
+        ],
+        "errors": [
+            {
+                "code": error.get("error_code") or "",
+                "severity": error.get("severity") or "",
+                "message": error.get("message") or "",
+            }
+            for error in errors[:20]
+        ],
+    }
 
 
 def is_unrestricted_legacy_settlement_month(month: date) -> bool:
@@ -19636,6 +19668,21 @@ async def admin_settlement_excel_import(
             import_result.get("session_id"),
             limit=500,
         )
+        processing_report = process_settlement_session(
+            supabase,
+            str(import_result.get("session_id") or ""),
+        )
+        processing_result = report_as_dict(processing_report)
+        if processing_result.get("status") == "failed":
+            error_messages = [
+                f"{error.get('error_code', 'HIBA')}: {error.get('message', 'Ismeretlen feldolgozási hiba')}"
+                for error in processing_result.get("errors", [])
+            ]
+            raise RuntimeError(
+                "A normalizált feldolgozás sikertelen. "
+                + (" | ".join(error_messages) if error_messages else "Nincs részletes hibaüzenet.")
+            )
+        recalculate_excel_base_rates(supabase, str(import_result.get("session_id") or ""))
     except HTTPException:
         raise
     except Exception as exc:
@@ -19651,6 +19698,7 @@ async def admin_settlement_excel_import(
         "sheetNames": import_result.get("sheet_names") or [],
         "sheetRowCounts": import_result.get("sheet_row_counts") or {},
         "headers": build_excel_import_header_summary(preview_df),
+        "processing": settlement_processing_summary(processing_result),
     }
 
 

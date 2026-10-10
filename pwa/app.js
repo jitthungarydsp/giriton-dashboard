@@ -78,7 +78,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v176";
+const APP_VERSION = "v177";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4642,6 +4642,32 @@ function renderSettlementImportHeaders(headers = []) {
   </div>`;
 }
 
+function renderSettlementImportProcessing(processing = {}) {
+  if (!processing.status) return "";
+  const ok = ["completed", "completed_with_warnings"].includes(String(processing.status || ""));
+  return `<div class="settlement-import-processing ${ok ? "ok" : "warn"}">
+    <div class="settlement-import-header-title">
+      <div>
+        <span>Feldolgozás</span>
+        <strong>${escapeHtml(processing.status || "-")}</strong>
+      </div>
+      <small>${escapeHtml(formatCount(processing.acceptedRows || 0))} elfogadott · ${escapeHtml(formatCount(processing.rejectedRows || 0))} elutasított</small>
+    </div>
+    ${(processing.sheets || []).length ? `
+      <div class="settlement-import-processing-list">
+        ${(processing.sheets || []).map((sheet) => `
+          <span>${escapeHtml(sheet.sheetName || "Munkalap")} → ${escapeHtml(sheet.targetTable || "-")} · ${escapeHtml(formatCount(sheet.acceptedRows || 0))} sor</span>
+        `).join("")}
+      </div>
+    ` : ""}
+    ${(processing.errors || []).length ? `
+      <div class="settlement-import-processing-errors">
+        ${(processing.errors || []).map((error) => `<small>${escapeHtml(error.code || "HIBA")}: ${escapeHtml(error.message || "")}</small>`).join("")}
+      </div>
+    ` : ""}
+  </div>`;
+}
+
 function renderSettlementImportConfig() {
   const target = $("#settlement-import-config-panel");
   if (!target) return;
@@ -4693,6 +4719,7 @@ function renderSettlementImportConfig() {
             <div><span>Munkalap</span><strong>${escapeHtml(formatCount(result.sheetCount || 0))}</strong></div>
             <div><span>Betöltött sor</span><strong>${escapeHtml(formatCount(result.insertedRows || 0))}</strong></div>
           </div>
+          ${renderSettlementImportProcessing(result.processing || {})}
           ${renderSettlementImportHeaders(result.headers || [])}
         ` : `<div class="empty-card">Nincs még validált feltöltés.</div>`}
         <div class="settlement-import-actions">

@@ -458,6 +458,12 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-import-header-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .settlement-import-header-tags span { max-width: 100%; padding: 7px 9px; border: 1px solid #cfe2ca; border-radius: 999px; background: #eff8ed; color: var(--green-dark); font-size: 12px; font-weight: 850; overflow-wrap: anywhere; }
 .settlement-import-header-tags em { color: var(--muted); font-size: 13px; }
+.settlement-import-processing { display: grid; gap: 10px; padding: 14px; border: 1px solid #cfe2ca; border-radius: 18px; background: #eff8ed; }
+.settlement-import-processing.warn { border-color: #ead9aa; background: #fffaf0; }
+.settlement-import-processing-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.settlement-import-processing-list span { max-width: 100%; padding: 7px 9px; border-radius: 999px; background: #fff; color: var(--green-dark); font-size: 12px; font-weight: 850; overflow-wrap: anywhere; }
+.settlement-import-processing-errors { display: grid; gap: 5px; }
+.settlement-import-processing-errors small { color: var(--danger); font-size: 12px; font-weight: 750; line-height: 1.35; }
 .schedule-recommendations { display: grid; gap: 10px; }
 .schedule-recommendation-list { display: grid; gap: 8px; }
 .schedule-recommendation { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, .9fr); gap: 10px; align-items: center; padding: 12px; border: 1px solid #cfe2c8; border-radius: 14px; background: #f7fcf4; }
