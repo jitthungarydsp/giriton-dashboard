@@ -3639,7 +3639,7 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     tip = parse_huf_value(row.get("Borravaló"))
     imported_bonus = parse_huf_value(row.get("Importált bónusz"))
     imported_malus = abs(parse_huf_value(row.get("Importált málusz")))
-    imported_atm = parse_huf_value(row.get("Importált ATM levonás"))
+    imported_atm = abs(parse_huf_value(row.get("Importált ATM levonás")))
     address_bonus_kifli = parse_huf_value(row.get("Cím bónusz (Kifli)"))
     deduction = parse_huf_value(row.get("Levonás"))
     payable = parse_huf_value(row.get("Kifizetendő"))
@@ -11105,7 +11105,7 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
             "Importált ATM levonás",
             ("walletdeductions", "balance", "egyenleg", "atm", "cash", "amount", "osszeg"),
             ("wallet", "deduction", "balance", "egyenleg", "atm", "cash", "amount", "osszeg"),
-            False,
+            True,
         ),
     }
     records: list[dict[str, object]] = []
@@ -15609,7 +15609,7 @@ def render_courier_detail_page() -> None:
     display_base_total = base_total
     imported_bonus_total = imported_bonus_with_route_bonus(other_route_bonus_total)
     imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
-    imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás")
+    imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
     if is_api_mode:
         imported_bonus_total = 0.0
         imported_malus_total = 0.0
@@ -16082,7 +16082,7 @@ def render_courier_detail_page() -> None:
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
         imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
         imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
-        imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás")
+        imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
         if is_api_mode:
             imported_bonus_total = 0.0
             imported_malus_total = 0.0
@@ -16119,7 +16119,7 @@ def render_courier_detail_page() -> None:
             route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
             imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
-            imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás")
+            imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
             if is_api_mode:
                 imported_bonus_total = 0.0
                 imported_malus_total = 0.0
@@ -16136,7 +16136,7 @@ def render_courier_detail_page() -> None:
             route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
             imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
-            imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás")
+            imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
             if is_api_mode:
                 imported_bonus_total = 0.0
                 imported_malus_total = 0.0

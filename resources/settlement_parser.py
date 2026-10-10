@@ -163,6 +163,9 @@ def detect_sheet_type_from_name(
     exact_types = {
         "atm": "atm_balance",
         "atm balance": "atm_balance",
+        "wallet deduction": "atm_balance",
+        "wallet deductions": "atm_balance",
+        "wallet deducation": "atm_balance",
         "bonus routes": "bonus",
         "penalties": "penalties",
         "kesedelmi mutato": "performance_indicator",
