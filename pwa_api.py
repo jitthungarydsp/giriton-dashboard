@@ -9008,7 +9008,7 @@ def mobile_override_amount(overrides: dict[str, dict[str, Any]], key: str) -> in
     return money_int((overrides.get(key) or {}).get("amount_value"))
 
 
-def read_latest_courier_finance_snapshot(courier_id: str, month: date) -> dict[str, Any]:
+def read_latest_courier_finance_snapshot(courier_id: str, month: date, *, include_sources: bool = True) -> dict[str, Any]:
     clean_courier_id = str(courier_id or "").strip()
     if not clean_courier_id:
         return {}
@@ -9041,16 +9041,19 @@ def read_latest_courier_finance_snapshot(courier_id: str, month: date) -> dict[s
         },
         timeout=30,
     )
-    snapshot["sources"] = optional_supabase_rows(
-        "courier_finance_snapshot_source",
-        schema="settlement",
-        params={
-            "select": "source_key,source_table,payload,row_count",
-            "snapshot_id": f"eq.{snapshot_id}",
-            "order": "source_key.asc",
-            "limit": "100",
-        },
-        timeout=30,
+    snapshot["sources"] = (
+        optional_supabase_rows(
+            "courier_finance_snapshot_source",
+            schema="settlement",
+            params={
+                "select": "source_key,source_table,payload,row_count",
+                "snapshot_id": f"eq.{snapshot_id}",
+                "order": "source_key.asc",
+                "limit": "100",
+            },
+            timeout=30,
+        )
+        if include_sources else []
     )
     return snapshot
 
@@ -9211,12 +9214,14 @@ def build_financial_breakdown_from_snapshot(
     user: dict[str, Any],
     month: date,
     snapshot: dict[str, Any],
+    *,
+    include_quality_notes: bool = True,
 ) -> dict[str, Any] | None:
     courier_id, _courier_name = courier_identity(user)
     finance_items = snapshot_item_map(snapshot, "finance")
     if not finance_items:
         return None
-    quality_notes = financial_quality_card_notes(courier_id, month)
+    quality_notes = financial_quality_card_notes(courier_id, month) if include_quality_notes else {}
 
     def amount(key: str) -> int:
         return money_int((finance_items.get(key) or {}).get("amount_value"))
@@ -10708,7 +10713,13 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
     return breakdown
 
 
-def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_breakdown: dict[str, Any]) -> dict[str, Any]:
+def build_workflow_tig_breakdown(
+    user: dict[str, Any],
+    month: date,
+    financial_breakdown: dict[str, Any],
+    *,
+    snapshot_only: bool = False,
+) -> dict[str, Any]:
     courier_id, courier_name = courier_identity(user)
     if not financial_breakdown.get("available"):
         return {
@@ -10720,6 +10731,13 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
     snapshot_tig = build_tig_breakdown_from_snapshot(user, month, financial_breakdown)
     if snapshot_tig:
         return snapshot_tig
+    if snapshot_only:
+        return {
+            "available": False,
+            "month": month.strftime("%Y-%m"),
+            "message": "Ehhez a hónaphoz még nincs mentett TIG snapshot.",
+            "rows": [],
+        }
     profile_rows = optional_supabase_rows(
         "courier_master",
         params={"select": "*", "courier_id": f"eq.{courier_id}", "limit": "1"},
@@ -10772,9 +10790,14 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
     return apply_tig_overrides(tig, read_mobile_breakdown_overrides(courier_id, month))
 
 
-def build_kp_invoice_tig_breakdown(user: dict[str, Any], month: date) -> dict[str, Any]:
-    financial_breakdown = build_financial_breakdown(user, month, allow_unpublished=True)
-    monthly_tig = build_workflow_tig_breakdown(user, month, financial_breakdown)
+def build_kp_invoice_tig_breakdown(
+    user: dict[str, Any],
+    month: date,
+    *,
+    snapshot_only: bool = False,
+) -> dict[str, Any]:
+    financial_breakdown = build_financial_breakdown(user, month, allow_unpublished=True, snapshot_only=snapshot_only)
+    monthly_tig = build_workflow_tig_breakdown(user, month, financial_breakdown, snapshot_only=snapshot_only)
     cash_amount = money_int(monthly_tig.get("cashGrossHuf")) or workflow_cash_amount_from_financial_breakdown(financial_breakdown)
     if cash_amount < 1000:
         return {
@@ -10836,14 +10859,39 @@ def hidden_financial_breakdown(month: date) -> dict[str, Any]:
     }
 
 
-def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpublished: bool = False) -> dict[str, Any]:
+def build_financial_breakdown(
+    user: dict[str, Any],
+    month: date,
+    *,
+    allow_unpublished: bool = False,
+    snapshot_only: bool = False,
+) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     allow_unpublished = allow_unpublished or is_unrestricted_legacy_settlement_month(month)
-    quality_notes = financial_quality_card_notes(courier_id, month)
-    snapshot = read_latest_courier_finance_snapshot(courier_id, month)
-    snapshot_breakdown = build_financial_breakdown_from_snapshot(user, month, snapshot) if snapshot else None
+    snapshot = read_latest_courier_finance_snapshot(courier_id, month, include_sources=not snapshot_only)
+    snapshot_breakdown = (
+        build_financial_breakdown_from_snapshot(
+            user,
+            month,
+            snapshot,
+            include_quality_notes=not snapshot_only,
+        )
+        if snapshot else None
+    )
     if snapshot_breakdown:
         return snapshot_breakdown
+    if snapshot_only:
+        return {
+            "available": False,
+            "snapshotOnly": True,
+            "month": month.strftime("%Y-%m"),
+            "totalPayableHuf": 0,
+            "cards": [],
+            "complaintOptions": [],
+            "source": "settlement.courier_finance_snapshot",
+            "message": "Ehhez a hónaphoz még nincs mentett elszámolási snapshot.",
+        }
+    quality_notes = financial_quality_card_notes(courier_id, month)
     row = read_courier_settlement_summary_row(courier_id, month, allow_unpublished=allow_unpublished)
     overrides = read_mobile_breakdown_overrides(courier_id, month)
     overrides = enrich_mobile_overrides_from_financial_sources(user, month, row or {}, overrides)
@@ -15788,6 +15836,7 @@ def build_workflow(
         user,
         month,
         allow_unpublished=allow_unpublished or legacy_unrestricted_month,
+        snapshot_only=True,
     ) if not process_id else {
         "available": False,
         "month": month.strftime("%Y-%m"),
@@ -15800,9 +15849,9 @@ def build_workflow(
     if not process_id and not amount_access:
         financial_breakdown = hidden_financial_breakdown(month)
     if kp_invoice_process and not tig_hidden_by_admin:
-        tig_breakdown = build_kp_invoice_tig_breakdown(user, month)
+        tig_breakdown = build_kp_invoice_tig_breakdown(user, month, snapshot_only=True)
     elif not process_id and not tig_hidden_by_admin:
-        tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown)
+        tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown, snapshot_only=True)
     else:
         tig_breakdown = {
             "available": False,
