@@ -9629,6 +9629,31 @@ def build_settlement_overview_data(
 
 
 @st.cache_data(show_spinner=False, ttl=120)
+def load_fast_admin_settlement_dashboard_rows(period_start: date) -> list[dict[str, object]]:
+    try:
+        return (
+            get_db().schema("settlement").table("vw_admin_settlement_dashboard_fast")
+            .select("*")
+            .eq("period_start", period_start.replace(day=1).isoformat())
+            .order("dashboard_status_sort", desc=True)
+            .order("courier_name")
+            .execute().data or []
+        )
+    except BaseException:
+        return []
+
+
+def _streamlit_status_from_dashboard_label(label: object) -> str:
+    text = str(label or "").strip()
+    return {
+        "Reklamáció": "Bejelentések",
+        "Számla ellenőrzésre vár": "Számlaellenőrzésre vár",
+        "Elszámolás": "Elszámolásra vár",
+        "Elszámolás készül": "Elszámolásra vár",
+    }.get(text, text or "Elszámolásra vár")
+
+
+@st.cache_data(show_spinner=False, ttl=120)
 def build_fast_settlement_overview_data(
     session_id: str | None,
     period_start: date,
@@ -9641,17 +9666,20 @@ def build_fast_settlement_overview_data(
     admin recalculations. This lighter view keeps the landing dashboard quick.
     """
 
-    if not session_id:
-        return pd.DataFrame()
-    try:
-        rows = (
-            get_db().schema("settlement").table("courier_settlement_summary")
-            .select("*")
-            .eq("session_id", session_id)
-            .execute().data or []
-        )
-    except BaseException:
-        return pd.DataFrame()
+    rows = load_fast_admin_settlement_dashboard_rows(period_start)
+    used_dashboard_view = bool(rows)
+    if not rows:
+        if not session_id:
+            return pd.DataFrame()
+        try:
+            rows = (
+                get_db().schema("settlement").table("courier_settlement_summary")
+                .select("*")
+                .eq("session_id", session_id)
+                .execute().data or []
+            )
+        except BaseException:
+            return pd.DataFrame()
     if not rows:
         return pd.DataFrame()
 
@@ -9677,13 +9705,18 @@ def build_fast_settlement_overview_data(
             or master_row.get("Futár")
             or f"Futár {courier_id}"
         ).strip()
-        warehouse = str(master_row.get("Raktár") or "BUD1").strip() or "BUD1"
+        warehouse = str(row.get("warehouse") or master_row.get("Raktár") or "BUD1").strip() or "BUD1"
         if warehouse_label and warehouse_label != "Összes" and warehouse != warehouse_label:
             continue
         payable = parse_huf_value(row.get("payable_total_huf")) or parse_huf_value(row.get("payable_huf"))
         contractor_total = (
             parse_huf_value(row.get("company_base_rate_huf"))
             + parse_huf_value(row.get("route_bonus_total_huf"))
+        )
+        status_label = (
+            _streamlit_status_from_dashboard_label(row.get("dashboard_status_label"))
+            if used_dashboard_view
+            else "Elszámolásra vár"
         )
         output_rows.append({
             "Courier ID": courier_id,
@@ -9703,14 +9736,17 @@ def build_fast_settlement_overview_data(
             "Kifizetendő": payable,
             "Előző havi összeg": 0.0,
             "KPI": 0.0,
-            "Státusz": "Elszámolásra vár",
+            "Státusz": status_label,
         })
 
     data = pd.DataFrame(output_rows)
     if data.empty:
         return data
-    data = apply_peopleforce_workflow_status(data, period_start)
-    data = apply_monthly_closure_status(data, period_start, period_end)
+    if not used_dashboard_view:
+        data = apply_peopleforce_workflow_status(data, period_start)
+        data = apply_monthly_closure_status(data, period_start, period_end)
+    elif "Kifizetve" not in data.columns:
+        data["Kifizetve"] = data["Státusz"].astype(str).str.casefold().eq("kifizetve")
     data = apply_salary_advance_request_status(data, period_start, period_end)
     data = apply_expense_request_status(data, period_start)
     data = apply_effective_payment_total_column(data, period_start)
@@ -9724,6 +9760,9 @@ def clear_settlement_overview_data_cache() -> None:
     fast_clear = getattr(build_fast_settlement_overview_data, "clear", None)
     if fast_clear:
         fast_clear()
+    fast_view_clear = getattr(load_fast_admin_settlement_dashboard_rows, "clear", None)
+    if fast_view_clear:
+        fast_view_clear()
 
 
 def payable_bonus_total(data: pd.DataFrame) -> pd.Series:

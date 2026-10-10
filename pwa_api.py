@@ -16391,9 +16391,80 @@ def _dashboard_status_from_bulk(
     return {"label": "Elszámolás készül", "detail": "Várakozás", "tone": "muted", "sort": 10}
 
 
+def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = "") -> dict[str, Any] | None:
+    month_start = month.replace(day=1)
+    month_key = month_start.isoformat()
+    rows = optional_supabase_rows_paged(
+        "vw_admin_settlement_dashboard_fast",
+        schema="settlement",
+        params={
+            "select": (
+                "period_start,courier_id,courier_name,warehouse,sources,payable_huf,"
+                "dashboard_status_label,dashboard_status_detail,dashboard_status_tone,"
+                "dashboard_status_sort,updated_at"
+            ),
+            "period_start": f"eq.{month_key}",
+            "order": "dashboard_status_sort.desc,courier_name.asc,courier_id.asc",
+        },
+        timeout=20,
+        page_size=1000,
+        max_rows=50000,
+    )
+    if not rows:
+        return None
+
+    clean_query = normalize_text(query)
+    dashboard_rows: list[dict[str, Any]] = []
+    for row in rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        courier_name = str(row.get("courier_name") or f"Futár {courier_id}").strip()
+        warehouse = str(row.get("warehouse") or "").strip()
+        if clean_query and clean_query not in normalize_text(f"{courier_id} {courier_name} {warehouse}"):
+            continue
+        raw_sources = row.get("sources") or []
+        if isinstance(raw_sources, str):
+            sources = [item.strip().strip('"') for item in raw_sources.strip("{}").split(",") if item.strip()]
+        else:
+            sources = list(raw_sources)
+        dashboard_rows.append({
+            "courierId": courier_id,
+            "courierName": courier_name,
+            "warehouse": warehouse,
+            "status": {
+                "label": str(row.get("dashboard_status_label") or "Elszámolás készül"),
+                "detail": str(row.get("dashboard_status_detail") or "Várakozás"),
+                "tone": str(row.get("dashboard_status_tone") or "muted"),
+                "sort": safe_int(row.get("dashboard_status_sort")),
+            },
+            "totalPayableHuf": money_int(row.get("payable_huf")),
+            "sources": sources,
+            "updatedAt": str(row.get("updated_at") or ""),
+        })
+
+    status_counts: dict[str, int] = {}
+    for row in dashboard_rows:
+        label = str((row.get("status") or {}).get("label") or "Ismeretlen")
+        status_counts[label] = status_counts.get(label, 0) + 1
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "rows": dashboard_rows,
+        "summary": {
+            "couriers": len(dashboard_rows),
+            "totalPayableHuf": sum(money_int(row.get("totalPayableHuf")) for row in dashboard_rows),
+            "statusCounts": status_counts,
+        },
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "source": "settlement.vw_admin_settlement_dashboard_fast",
+    }
+
+
 def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, Any]:
     month_start = month.replace(day=1)
     month_key = month_start.isoformat()
+    fast_dashboard = build_admin_settlement_dashboard_from_fast_view(month_start, query)
+    if fast_dashboard is not None:
+        return fast_dashboard
+
     candidates = workflow_dashboard_candidate_rows(month_start)
     config = read_mobile_settlement_period_config(month_start)
     session_id = str(config.get("session_id") or "").strip()
