@@ -78,7 +78,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v181";
+const APP_VERSION = "v182";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4818,6 +4818,7 @@ function renderSettlementImportConfig() {
           ${result?.publishedConfig?.sessionId
             ? `<button class="primary" type="button" data-settlement-import-action="finish">Befejezés</button>`
             : `<button class="secondary danger" type="button" data-settlement-import-action="delete" ${canFinish ? "" : "disabled"}>Import törlése</button>
+              <button class="secondary" type="button" data-settlement-import-action="refresh-validation" ${canFinish ? "" : "disabled"}>Validáció frissítése</button>
               <button class="primary" type="button" data-settlement-import-action="publish" ${canFinish ? "" : "disabled"}>Betöltés PWA-ra</button>`}
         </div>
       ` : ""}
@@ -4866,6 +4867,23 @@ async function publishSettlementImport() {
       publishedConfig: payload.publishedConfig,
     };
     state.settlementDashboard = null;
+    renderSettlementImportConfig();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function refreshSettlementImportValidation() {
+  const sessionId = state.settlementImportResult?.sessionId;
+  if (!sessionId) return;
+  try {
+    const payload = await api(`/api/admin/settlement-imports/${encodeURIComponent(sessionId)}/validation`, {
+      loadingMessage: "Validáció frissítése...",
+    });
+    state.settlementImportResult = {
+      ...(state.settlementImportResult || {}),
+      validation: payload.validation || {},
+    };
     renderSettlementImportConfig();
   } catch (error) {
     window.alert(error.message);
@@ -8852,6 +8870,10 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
   }
   if (action === "publish") {
     publishSettlementImport();
+    return;
+  }
+  if (action === "refresh-validation") {
+    refreshSettlementImportValidation();
     return;
   }
   if (action === "delete") {

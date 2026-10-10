@@ -20063,6 +20063,28 @@ def admin_publish_settlement_import(
     }
 
 
+@app.get("/api/admin/settlement-imports/{session_id}/validation")
+def admin_refresh_settlement_import_validation(
+    session_id: str,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    clean_session_id = str(session_id or "").strip()
+    if not clean_session_id:
+        raise HTTPException(status_code=422, detail="Hiányzik a session ID.")
+    try:
+        supabase = settlement_supabase_client()
+        recalculate_excel_base_rates(supabase, clean_session_id)
+        validation = settlement_import_quality_checks(supabase, clean_session_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Validáció frissítési hiba: {exc}") from exc
+    return {
+        "ok": True,
+        "sessionId": clean_session_id,
+        "validation": validation,
+    }
+
+
 @app.delete("/api/admin/settlement-imports/{session_id}")
 def admin_delete_settlement_import(
     session_id: str,
