@@ -639,10 +639,17 @@ def settlement_import_normalized_data(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def settlement_import_warehouse_from_row(row: dict[str, Any]) -> str:
+    source_sheet = str(row.get("source_sheet") or "")
+    source_upper = source_sheet.upper()
+    if "BUD2" in source_upper:
+        return "BUD2"
+    if "BUD1" in source_upper:
+        return "BUD1"
+
     data = settlement_import_normalized_data(row)
     warehouse = text_from_nested(data, "Warehouse", "warehouse", "Location", "location", "Raktár", "raktar")
     if not warehouse:
-        warehouse = row.get("source_sheet") or ""
+        warehouse = source_sheet
     clean = normalize_warehouse(warehouse)
     if clean in {"BUD1", "BUD2"}:
         return clean
@@ -655,8 +662,27 @@ def settlement_import_warehouse_from_row(row: dict[str, Any]) -> str:
 def settlement_import_route_type_from_row(row: dict[str, Any]) -> str:
     data = settlement_import_normalized_data(row)
     return settlement_import_route_type(
-        text_from_nested(data, "Route Type", "route_type", "routeType", "Túratípus", "Turatipus")
+        row.get("route_type")
+        or text_from_nested(data, "Route Type", "route_type", "routeType", "Túratípus", "Turatipus")
     )
+
+
+def settlement_import_route_identifier(row: dict[str, Any]) -> str:
+    data = settlement_import_normalized_data(row)
+    route_id = str(row.get("route_unique_id") or "").strip()
+    if not route_id:
+        route_id = text_from_nested(
+            data,
+            "Route Unique ID",
+            "route_unique_id",
+            "route id",
+            "Route ID",
+            "Túra ID",
+            "Tura ID",
+        ).strip()
+    if route_id:
+        return route_id
+    return f"{row.get('source_sheet') or ''}:{row.get('source_row_no') or ''}"
 
 
 def settlement_import_courier_identity_from_jit_row(row: dict[str, Any]) -> tuple[str, str]:
@@ -721,7 +747,13 @@ def settlement_import_rate_breakdown_items(grouped: dict[str, dict[int, int]]) -
             "count": count,
             "totalHuf": total,
             "rates": [
-                {"amountHuf": amount, "count": item_count, "totalHuf": amount * item_count}
+                {
+                    "amountHuf": amount,
+                    "unitAmountHuf": amount,
+                    "routeCount": item_count,
+                    "count": item_count,
+                    "totalHuf": amount * item_count,
+                }
                 for amount, item_count in sorted(rates.items())
             ],
         })
@@ -771,6 +803,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         "BUD2": {"normal": 0, "express": 0, "regional": 0, "total": 0},
         "Ismeretlen": {"normal": 0, "express": 0, "regional": 0, "total": 0},
     }
+    route_count_keys: set[tuple[str, str, str]] = set()
     offset = 0
     page_size = 1000
     while True:
@@ -778,11 +811,10 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
             supabase
             .table("jit_row")
             .select(
-                "normalized_data,source_sheet,is_route_primary,courier_base_rate_huf,"
+                "normalized_data,source_sheet,source_row_no,route_unique_id,route_type,is_route_primary,courier_base_rate_huf,"
                 "courier_delay_bonus_huf,courier_compliance_bonus_huf,courier_other_bonus_huf"
             )
             .eq("session_id", session_id)
-            .eq("is_route_primary", True)
             .range(offset, offset + page_size - 1)
             .execute()
             .data
@@ -793,15 +825,18 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         for row in page:
             warehouse = settlement_import_warehouse_from_row(row)
             route_type = settlement_import_route_type_from_row(row)
-            bucket = route_counts.setdefault(warehouse, {"normal": 0, "express": 0, "regional": 0, "total": 0})
-            bucket[route_type] = bucket.get(route_type, 0) + 1
-            bucket["total"] = bucket.get("total", 0) + 1
+            route_key = (warehouse, route_type, settlement_import_route_identifier(row))
+            if route_key not in route_count_keys:
+                route_count_keys.add(route_key)
+                bucket = route_counts.setdefault(warehouse, {"normal": 0, "express": 0, "regional": 0, "total": 0})
+                bucket[route_type] = bucket.get(route_type, 0) + 1
+                bucket["total"] = bucket.get("total", 0) + 1
             row_courier_id, row_courier_name = settlement_import_courier_identity_from_jit_row(row)
             is_sample_row = (
                 bool(sample_courier_id and row_courier_id == sample_courier_id)
                 or bool(sample_courier_name and normalize_text(row_courier_name) == normalize_text(sample_courier_name))
             )
-            if is_sample_row:
+            if is_sample_row and row.get("is_route_primary"):
                 base_rate = money_int(row.get("courier_base_rate_huf"))
                 rates = sample_base_rates.setdefault(route_type, {})
                 rates[base_rate] = rates.get(base_rate, 0) + 1

@@ -78,7 +78,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v180";
+const APP_VERSION = "v181";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4725,7 +4725,7 @@ function renderSettlementImportValidation(validation = {}) {
                     <b>${escapeHtml(formatCount(item.count || 0))} db · ${escapeHtml(formatHuf(item.totalHuf || 0))}</b>
                   </small>
                   ${(item.rates || []).map((rate) => `
-                    <small class="muted">${escapeHtml(formatCount(rate.count || 0))} × ${escapeHtml(formatHuf(rate.amountHuf || 0))} = ${escapeHtml(formatHuf(rate.totalHuf || 0))}</small>
+                    <small class="muted">Futár díj ${escapeHtml(formatHuf(rate.unitAmountHuf ?? rate.amountHuf ?? 0))} × ${escapeHtml(formatCount(rate.routeCount ?? rate.count ?? 0))} túra = ${escapeHtml(formatHuf(rate.totalHuf || 0))}</small>
                   `).join("")}
                 `).join("")}
               </div>
