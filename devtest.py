@@ -9628,10 +9628,102 @@ def build_settlement_overview_data(
     return data
 
 
+@st.cache_data(show_spinner=False, ttl=120)
+def build_fast_settlement_overview_data(
+    session_id: str | None,
+    period_start: date,
+    period_end: date,
+    warehouse_label: str | None,
+) -> pd.DataFrame:
+    """Fast dashboard list from persisted monthly settlement rows.
+
+    The full settlement pipeline is still used for courier detail pages and
+    admin recalculations. This lighter view keeps the landing dashboard quick.
+    """
+
+    if not session_id:
+        return pd.DataFrame()
+    try:
+        rows = (
+            get_db().schema("settlement").table("courier_settlement_summary")
+            .select("*")
+            .eq("session_id", session_id)
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    if not rows:
+        return pd.DataFrame()
+
+    master = load_courier_master("Excel")
+    master_by_id: dict[str, dict[str, object]] = {}
+    if not master.empty and "Courier ID" in master.columns:
+        master_lookup = master.copy()
+        master_lookup["_courier_id_lookup"] = master_lookup["Courier ID"].map(_courier_id_key)
+        master_by_id = {
+            str(item.get("_courier_id_lookup") or ""): item
+            for item in master_lookup.to_dict("records")
+            if str(item.get("_courier_id_lookup") or "")
+        }
+
+    output_rows: list[dict[str, object]] = []
+    for row in rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        courier_key = _courier_id_key(courier_id)
+        master_row = master_by_id.get(courier_key, {})
+        courier_name = str(
+            row.get("courier_name")
+            or row.get("driver_name")
+            or master_row.get("Futár")
+            or f"Futár {courier_id}"
+        ).strip()
+        warehouse = str(master_row.get("Raktár") or "BUD1").strip() or "BUD1"
+        if warehouse_label and warehouse_label != "Összes" and warehouse != warehouse_label:
+            continue
+        payable = parse_huf_value(row.get("payable_total_huf")) or parse_huf_value(row.get("payable_huf"))
+        contractor_total = (
+            parse_huf_value(row.get("company_base_rate_huf"))
+            + parse_huf_value(row.get("route_bonus_total_huf"))
+        )
+        output_rows.append({
+            "Courier ID": courier_id,
+            "Futár": courier_name,
+            "Branch": str(master_row.get("Branch") or "JIT"),
+            "Számítás módja": "Excel",
+            "Raktár": warehouse,
+            "Vállalkozás": str(master_row.get("Vállalkozás") or ""),
+            "Munkakezdés": str(master_row.get("Munkakezdés") or ""),
+            "FA státusz": str(master_row.get("FA státusz") or ""),
+            "Jogviszony": str(master_row.get("Jogviszony") or ""),
+            "Nettó bevétel": parse_huf_value(row.get("courier_base_rate_huf")),
+            "Bónusz": parse_huf_value(row.get("route_bonus_total_huf")),
+            "Borravaló": parse_huf_value(row.get("tip_huf")),
+            "Alvállalkozói összeg": contractor_total or payable,
+            "Levonás": 0.0,
+            "Kifizetendő": payable,
+            "Előző havi összeg": 0.0,
+            "KPI": 0.0,
+            "Státusz": "Elszámolásra vár",
+        })
+
+    data = pd.DataFrame(output_rows)
+    if data.empty:
+        return data
+    data = apply_peopleforce_workflow_status(data, period_start)
+    data = apply_monthly_closure_status(data, period_start, period_end)
+    data = apply_salary_advance_request_status(data, period_start, period_end)
+    data = apply_expense_request_status(data, period_start)
+    data = apply_effective_payment_total_column(data, period_start)
+    return data
+
+
 def clear_settlement_overview_data_cache() -> None:
     clear = getattr(build_settlement_overview_data, "clear", None)
     if clear:
         clear()
+    fast_clear = getattr(build_fast_settlement_overview_data, "clear", None)
+    if fast_clear:
+        fast_clear()
 
 
 def payable_bonus_total(data: pd.DataFrame) -> pd.Series:
@@ -22220,37 +22312,77 @@ def show_new_settlement_page() -> None:
         str(import_session_id or ""),
     ])
     cached_detail_data = st.session_state.get("current_filtered_data")
+    cached_detail_is_fast = bool(st.session_state.get("current_filtered_data_fast"))
     if (
         st.session_state.get("selected_courier_id")
         and isinstance(cached_detail_data, pd.DataFrame)
         and not cached_detail_data.empty
         and st.session_state.get("current_filtered_context") == current_data_context
+        and not cached_detail_is_fast
     ):
         render_courier_detail_page()
         return
-    loading_panel = st.empty()
-    with loading_panel.container(border=True):
-        st.markdown("#### Elszámolási adatok betöltése")
-        st.caption("A futárok, státuszok és mentett pénzügyi adatok összerakása folyamatban van.")
-        st.progress(35)
-    data = build_settlement_overview_data(
-        selected_calculation_mode,
-        import_session_id,
-        balance_period_start,
-        balance_period_end,
-        selected_warehouse_label,
-        settlement_loyalty_cache_token(
-            import_session_id,
-            balance_period_start,
-            selected_calculation_mode,
-        ),
-    )
     route_audit_enabled = (
         str(selected_calculation_mode or "").strip().casefold() == "excel"
         and st.session_state.get("settlement_show_route_audit_for") == f"{import_session_id or ''}:{balance_period_start.isoformat()}"
     )
     delay_audit_enabled = st.session_state.get("settlement_show_delay_audit_for") == balance_period_start.isoformat()
-    attendance_audit_enabled = st.session_state.get("settlement_show_attendance_audit_for") == balance_period_start.isoformat()
+    attendance_audit_enabled = st.session_state.get("settlement_show_attendance_for") == balance_period_start.isoformat()
+    if not attendance_audit_enabled:
+        attendance_audit_enabled = st.session_state.get("settlement_show_attendance_audit_for") == balance_period_start.isoformat()
+    use_fast_overview = (
+        not st.session_state.get("selected_courier_id")
+        and str(selected_calculation_mode or "").strip().casefold() == "excel"
+        and bool(import_session_id)
+        and not route_audit_enabled
+        and not delay_audit_enabled
+        and not attendance_audit_enabled
+    )
+    loading_panel = st.empty()
+    with loading_panel.container(border=True):
+        st.markdown("#### Elszámolási adatok betöltése")
+        st.caption(
+            "Gyors dashboard lista betöltése DB snapshotból."
+            if use_fast_overview
+            else "A futárok, státuszok és mentett pénzügyi adatok összerakása folyamatban van."
+        )
+        st.progress(35)
+    if use_fast_overview:
+        data = build_fast_settlement_overview_data(
+            import_session_id,
+            balance_period_start,
+            balance_period_end,
+            selected_warehouse_label,
+        )
+        data_is_fast_overview = not data.empty
+    else:
+        data = build_settlement_overview_data(
+            selected_calculation_mode,
+            import_session_id,
+            balance_period_start,
+            balance_period_end,
+            selected_warehouse_label,
+            settlement_loyalty_cache_token(
+                import_session_id,
+                balance_period_start,
+                selected_calculation_mode,
+            ),
+        )
+        data_is_fast_overview = False
+    if use_fast_overview and data.empty:
+        data = build_settlement_overview_data(
+            selected_calculation_mode,
+            import_session_id,
+            balance_period_start,
+            balance_period_end,
+            selected_warehouse_label,
+            settlement_loyalty_cache_token(
+                import_session_id,
+                balance_period_start,
+                selected_calculation_mode,
+            ),
+        )
+        data_is_fast_overview = False
     if route_audit_enabled:
         data = apply_excel_route_coverage_audit(data, import_session_id)
     if delay_audit_enabled:
@@ -22765,6 +22897,7 @@ def show_new_settlement_page() -> None:
     ])
     st.session_state["current_filtered_data"]=filtered.copy()
     st.session_state["current_filtered_context"] = filtered_context
+    st.session_state["current_filtered_data_fast"] = bool(data_is_fast_overview)
 
     if st.session_state.get("selected_courier_id"):
         render_courier_detail_page()

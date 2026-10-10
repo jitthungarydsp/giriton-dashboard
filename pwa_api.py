@@ -16340,32 +16340,146 @@ def workflow_dashboard_candidate_rows(month: date) -> dict[str, dict[str, Any]]:
     return candidates
 
 
+def _workflow_month_rows(table: str, month_key: str, select: str, *, timeout: int = 30) -> list[dict[str, Any]]:
+    return optional_supabase_rows_paged(
+        table,
+        params={
+            "select": select,
+            "document_month": f"eq.{month_key}",
+            "order": "courier_id.asc",
+        },
+        timeout=timeout,
+        page_size=1000,
+        max_rows=50000,
+    )
+
+
+def _dashboard_status_from_bulk(
+    *,
+    has_summary: bool,
+    has_settlement_document: bool,
+    has_tig_document: bool,
+    states: dict[str, dict],
+    open_complaints: int,
+) -> dict[str, Any]:
+    settlement_ready = has_summary or has_settlement_document
+    settlement_done = workflow_done(states, "settlement")
+    tig_ready = has_tig_document or settlement_done
+    tig_done = workflow_done(states, "tig")
+    invoice_submit_done = workflow_done(states, "invoice_submit")
+    invoice_check_done = workflow_done(states, "invoice_check")
+
+    if open_complaints:
+        return {
+            "label": "Reklamáció",
+            "detail": f"{open_complaints} nyitott reklamáció",
+            "tone": "attention",
+            "sort": 20,
+        }
+    if workflow_done(states, "invoice_payment"):
+        return {"label": "Kifizetve", "detail": "Folyamat lezárva", "tone": "done", "sort": 90}
+    if workflow_open(states, "invoice_check") or (invoice_submit_done and not invoice_check_done):
+        return {"label": "Számla ellenőrzésre vár", "detail": "Számla beérkezett", "tone": "warning", "sort": 70}
+    if workflow_open(states, "invoice_submit") or (tig_done and not invoice_submit_done):
+        return {"label": "Számlafeltöltésre vár", "detail": "Futár teendő", "tone": "waiting", "sort": 60}
+    if tig_ready and not tig_done:
+        return {"label": "TIG elfogadásra vár", "detail": "Futár teendő", "tone": "waiting", "sort": 50}
+    if settlement_ready and not settlement_done:
+        return {"label": "Elszámolás elfogadásra vár", "detail": "Futár teendő", "tone": "waiting", "sort": 40}
+    if settlement_ready:
+        return {"label": "Elszámolás", "detail": "Folyamatban", "tone": "active", "sort": 30}
+    return {"label": "Elszámolás készül", "detail": "Várakozás", "tone": "muted", "sort": 10}
+
+
 def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, Any]:
     month_start = month.replace(day=1)
+    month_key = month_start.isoformat()
     candidates = workflow_dashboard_candidate_rows(month_start)
+    config = read_mobile_settlement_period_config(month_start)
+    session_id = str(config.get("session_id") or "").strip()
+
+    summary_by_courier: dict[str, dict[str, Any]] = {}
+    if session_id:
+        summary_rows = optional_supabase_rows_paged(
+            "courier_settlement_summary",
+            schema="settlement",
+            params={
+                "select": "courier_id,courier_name,driver_name,payable_huf,calculated_at,session_id",
+                "session_id": f"eq.{session_id}",
+                "order": "courier_name.asc,courier_id.asc",
+            },
+            timeout=45,
+            page_size=1000,
+            max_rows=50000,
+        )
+        for summary_row in summary_rows:
+            courier_id = str(summary_row.get("courier_id") or "").strip()
+            if courier_id:
+                summary_by_courier[courier_id] = summary_row
+
+    documents_by_courier: dict[str, set[str]] = {}
+    for document in _workflow_month_rows(
+        "peopleforce_documents",
+        month_key,
+        "courier_id,document_type,document_month,uploaded_at,note",
+        timeout=45,
+    ):
+        courier_id = str(document.get("courier_id") or "").strip()
+        if not courier_id:
+            continue
+        documents_by_courier.setdefault(courier_id, set()).add(base_action_key(str(document.get("document_type") or "")))
+
+    statuses_by_courier: dict[str, dict[str, dict[str, Any]]] = {}
+    for status_row in _workflow_month_rows(
+        "peopleforce_card_statuses",
+        month_key,
+        "courier_id,action_key,status,status_note,updated_by,updated_at",
+        timeout=45,
+    ):
+        courier_id = str(status_row.get("courier_id") or "").strip()
+        if not courier_id or process_id_from_action_key(str(status_row.get("action_key") or "")):
+            continue
+        action_key = base_action_key(str(status_row.get("action_key") or ""))
+        if action_key and action_key not in statuses_by_courier.setdefault(courier_id, {}):
+            statuses_by_courier[courier_id][action_key] = status_row
+
+    open_complaints_by_courier: dict[str, int] = {}
+    for complaint in _workflow_month_rows(
+        "peopleforce_complaints",
+        month_key,
+        "courier_id,document_type,status,created_at,admin_response,responded_at",
+        timeout=45,
+    ):
+        courier_id = str(complaint.get("courier_id") or "").strip()
+        if not courier_id or process_id_from_action_key(str(complaint.get("document_type") or "")):
+            continue
+        complaint_status = str(complaint.get("status") or "").strip().lower()
+        has_admin_answer = bool(str(complaint.get("admin_response") or "").strip() or str(complaint.get("responded_at") or "").strip())
+        if complaint_status not in {"resolved", "closed", "deleted"} and not has_admin_answer:
+            open_complaints_by_courier[courier_id] = open_complaints_by_courier.get(courier_id, 0) + 1
+
+    for courier_id, summary_row in summary_by_courier.items():
+        candidate = candidates.setdefault(courier_id, {"courierId": courier_id, "courierName": "", "sources": set()})
+        candidate["courierName"] = str(summary_row.get("courier_name") or summary_row.get("driver_name") or candidate.get("courierName") or "").strip()
+        candidate.setdefault("sources", set()).add("summary")
+
     rows: list[dict[str, Any]] = []
     clean_query = normalize_text(query)
     for courier_id, candidate in candidates.items():
         courier_name = str(candidate.get("courierName") or f"Futár {courier_id}").strip()
         if clean_query and clean_query not in normalize_text(f"{courier_id} {courier_name} {candidate.get('warehouse') or ''}"):
             continue
-        view_user = {"courierId": courier_id, "username": courier_name, "role": "user"}
-        try:
-            workflow = build_workflow(
-                view_user,
-                month_start,
-                "",
-                preview_read_only=True,
-                allow_unpublished=True,
-                can_view_amounts=True,
-            )
-            status = workflow_dashboard_status(workflow)
-            total_huf = money_int((workflow.get("financialBreakdown") or {}).get("totalPayableHuf"))
-            updated_at = str(workflow.get("updatedAt") or "")
-        except Exception as exc:
-            status = {"label": "Nem olvasható", "detail": str(exc), "tone": "attention", "sort": 0}
-            total_huf = 0
-            updated_at = ""
+        summary_row = summary_by_courier.get(courier_id) or {}
+        document_types = documents_by_courier.get(courier_id, set())
+        status = _dashboard_status_from_bulk(
+            has_summary=bool(summary_row),
+            has_settlement_document=("settlement" in document_types),
+            has_tig_document=("tig" in document_types),
+            states=statuses_by_courier.get(courier_id, {}),
+            open_complaints=open_complaints_by_courier.get(courier_id, 0),
+        )
+        total_huf = money_from(summary_row, "payable_total_huf", "payable_huf")
+        updated_at = str(summary_row.get("calculated_at") or "")
         rows.append({
             "courierId": courier_id,
             "courierName": courier_name,
