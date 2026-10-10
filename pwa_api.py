@@ -9036,17 +9036,12 @@ def read_latest_courier_finance_snapshot(
     snapshot_id = str(snapshot.get("id") or "")
     if not snapshot_id:
         return {}
-    snapshot["items"] = optional_supabase_rows(
-        "courier_finance_snapshot_item",
-        schema="settlement",
-        params={
-            "select": "section,item_key,item_label,amount_value,amount_kind,note,display_order",
-            "snapshot_id": f"eq.{snapshot_id}",
-            "order": "section.asc,display_order.asc",
-            "limit": "500",
-        },
-        timeout=30,
-    )
+    item_params = {
+        "select": "section,item_key,item_label,amount_value,amount_kind,note,display_order",
+        "snapshot_id": f"eq.{snapshot_id}",
+        "order": "section.asc,display_order.asc",
+        "limit": "500",
+    }
     source_params = {
         "select": "source_key,source_table,payload,row_count",
         "snapshot_id": f"eq.{snapshot_id}",
@@ -9057,15 +9052,26 @@ def read_latest_courier_finance_snapshot(
         clean_source_keys = [str(key).strip() for key in source_keys if str(key).strip()]
         if clean_source_keys:
             source_params["source_key"] = f"in.({','.join(clean_source_keys)})"
-    snapshot["sources"] = (
-        optional_supabase_rows(
-            "courier_finance_snapshot_source",
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        items_future = executor.submit(
+            optional_supabase_rows,
+            "courier_finance_snapshot_item",
             schema="settlement",
-            params=source_params,
+            params=item_params,
             timeout=30,
         )
-        if include_sources else []
-    )
+        sources_future = (
+            executor.submit(
+                optional_supabase_rows,
+                "courier_finance_snapshot_source",
+                schema="settlement",
+                params=source_params,
+                timeout=30,
+            )
+            if include_sources else None
+        )
+        snapshot["items"] = items_future.result()
+        snapshot["sources"] = sources_future.result() if sources_future else []
     return snapshot
 
 
@@ -15219,41 +15225,48 @@ def update_registration_request_status(request_id: int, status: str, note: str =
 def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], list[dict], list[dict]]:
     courier_id, _courier_name = courier_identity(user)
     month_value = month.isoformat()
-    documents = supabase_rest(
-        "GET",
-        "peopleforce_documents",
-        params={
-            "select": "id,document_type,document_month,title,file_name,mime_type,file_size,note,uploaded_by,uploaded_at",
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        documents_future = executor.submit(
+            supabase_rest,
+            "GET",
+            "peopleforce_documents",
+            params={
+                "select": "id,document_type,document_month,title,file_name,mime_type,file_size,note,uploaded_by,uploaded_at",
+                "courier_id": f"eq.{courier_id}",
+                "document_month": f"eq.{month_value}",
+                "order": "uploaded_at.desc",
+                "limit": "200",
+            },
+        )
+        statuses_future = executor.submit(
+            supabase_rest,
+            "GET",
+            "peopleforce_card_statuses",
+            params={
+                "select": "action_key,status,status_note,updated_by,updated_at",
+                "courier_id": f"eq.{courier_id}",
+                "document_month": f"eq.{month_value}",
+                "order": "updated_at.desc",
+                "limit": "100",
+            },
+        )
+        complaint_params = {
+            "select": "id,document_type,message,status,created_at",
             "courier_id": f"eq.{courier_id}",
             "document_month": f"eq.{month_value}",
-            "order": "uploaded_at.desc",
-            "limit": "200",
-        },
-    )
-    statuses = supabase_rest(
-        "GET",
-        "peopleforce_card_statuses",
-        params={
-            "select": "action_key,status,status_note,updated_by,updated_at",
-            "courier_id": f"eq.{courier_id}",
-            "document_month": f"eq.{month_value}",
-            "order": "updated_at.desc",
+            "status": "neq.deleted",
+            "order": "created_at.desc",
             "limit": "100",
-        },
-    )
-    complaint_params = {
-        "select": "id,document_type,message,status,created_at",
-        "courier_id": f"eq.{courier_id}",
-        "document_month": f"eq.{month_value}",
-        "status": "neq.deleted",
-        "order": "created_at.desc",
-        "limit": "100",
-    }
-    complaints = supabase_rest(
-        "GET",
-        "peopleforce_complaints",
-        params=complaint_params,
-    )
+        }
+        complaints_future = executor.submit(
+            supabase_rest,
+            "GET",
+            "peopleforce_complaints",
+            params=complaint_params,
+        )
+        documents = documents_future.result()
+        statuses = statuses_future.result()
+        complaints = complaints_future.result()
     return documents, statuses, complaints
 
 
@@ -15864,17 +15877,6 @@ def build_workflow(
     }
     if not process_id and not amount_access:
         financial_breakdown = hidden_financial_breakdown(month)
-    if kp_invoice_process and not tig_hidden_by_admin:
-        tig_breakdown = build_kp_invoice_tig_breakdown(user, month, snapshot_only=True)
-    elif not process_id and not tig_hidden_by_admin:
-        tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown, snapshot_only=True)
-    else:
-        tig_breakdown = {
-            "available": False,
-            "month": month.strftime("%Y-%m"),
-            "message": "Admin beállítás szerint a TIG most nem látható." if tig_hidden_by_admin else "Egyedi folyamatnál nincs havi TIG bontás.",
-            "rows": [],
-        }
     documents = [row for row in documents if document_belongs_to_process(row, process_id)]
     complaints = [
         row for row in complaints
@@ -15906,7 +15908,25 @@ def build_workflow(
     process_settlement_ready = kp_invoice_process or process_invoice_flow_ready
     settlement_ready = process_settlement_ready or bool(document_groups["settlement"]) or bool(financial_breakdown.get("available"))
     settlement_done = workflow_done(states, "settlement") or process_settlement_ready
-    efo_invoice_skip = not process_id and courier_has_efo_assignment(user, month)
+    tig_may_be_visible = (
+        kp_invoice_process
+        or tig_open_by_admin
+        or settlement_done
+        or bool(document_groups["tig"])
+        or workflow_action_visible(states, "tig")
+    )
+    if kp_invoice_process and not tig_hidden_by_admin:
+        tig_breakdown = build_kp_invoice_tig_breakdown(user, month, snapshot_only=True)
+    elif not process_id and not tig_hidden_by_admin and tig_may_be_visible:
+        tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown, snapshot_only=True)
+    else:
+        tig_breakdown = {
+            "available": False,
+            "month": month.strftime("%Y-%m"),
+            "message": "Admin beállítás szerint a TIG most nem látható." if tig_hidden_by_admin else "A TIG az elszámolás elfogadása után töltődik be.",
+            "rows": [],
+        }
+    efo_invoice_skip = not process_id and settlement_done and courier_has_efo_assignment(user, month)
     manual_invoice_skip = not process_id and manual_invoice_skip_enabled(states)
     invoice_skip = manual_invoice_skip or efo_invoice_skip
     if invoice_skip:

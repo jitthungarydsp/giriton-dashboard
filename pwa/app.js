@@ -73,7 +73,7 @@ const state = {
   settlementDashboardQuery: "",
   settlementDashboardSearchTimer: null,
 };
-const APP_VERSION = "v172";
+const APP_VERSION = "v173";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4000,7 +4000,14 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
     return `<div class="notice">${escapeHtml(breakdown.message || "A havi pénzügyi bontás még nincs kész.")}</div>`;
   }
   const cards = breakdown.cards || [];
-  const displayCards = cards.filter((card) => !["payable", "deductions"].includes(card.key));
+  const displayCards = cards.filter((card) => {
+    const key = String(card.key || "");
+    const tone = String(card.tone || "");
+    const label = String(card.label || "").trim().toLowerCase();
+    return !["payable", "deductions"].includes(key)
+      && tone !== "total"
+      && label !== "teljes összeg";
+  });
   const viewedUser = state.workflow?.viewingAs || {};
   const previewNotice = readOnly
     ? `<div class="notice">Előnézet: ${escapeHtml(viewedUser.username || "futár")} (${escapeHtml(viewedUser.courierId || "")}). Ebben a módban csak nézni lehet az adatokat.</div>`
