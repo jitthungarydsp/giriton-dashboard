@@ -78,7 +78,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v179";
+const APP_VERSION = "v180";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4688,6 +4688,8 @@ function renderSettlementImportValidation(validation = {}) {
   const warehouses = ["BUD1", "BUD2"];
   const sample = validation.sampleCourier || {};
   const tig = validation.tigPreview || {};
+  const baseRateBreakdown = sample.baseRateBreakdown || [];
+  const bonusBreakdown = sample.bonusBreakdown || [];
   return `<div class="settlement-import-validation">
     <div class="settlement-import-result-grid">
       <div><span>Futár összesen</span><strong>${escapeHtml(formatCount(validation.couriersTotal || 0))}</strong></div>
@@ -4715,8 +4717,28 @@ function renderSettlementImportValidation(validation = {}) {
             <small>Túra: <b>${escapeHtml(formatCount(sample.routeCount || 0))}</b></small>
             <small>Rendelés: <b>${escapeHtml(formatCount(sample.orderCount || 0))}</b></small>
             <small>Alapdíj: <b>${escapeHtml(formatHuf(sample.baseHuf || 0))}</b></small>
+            ${baseRateBreakdown.length ? `
+              <div class="settlement-import-detail-list">
+                ${baseRateBreakdown.map((item) => `
+                  <small>
+                    ${escapeHtml(item.label || "Túra")}:
+                    <b>${escapeHtml(formatCount(item.count || 0))} db · ${escapeHtml(formatHuf(item.totalHuf || 0))}</b>
+                  </small>
+                  ${(item.rates || []).map((rate) => `
+                    <small class="muted">${escapeHtml(formatCount(rate.count || 0))} × ${escapeHtml(formatHuf(rate.amountHuf || 0))} = ${escapeHtml(formatHuf(rate.totalHuf || 0))}</small>
+                  `).join("")}
+                `).join("")}
+              </div>
+            ` : ""}
             <small>Borravaló: <b>${escapeHtml(formatHuf(sample.tipHuf || 0))}</b></small>
             <small>Bónusz: <b>${escapeHtml(formatHuf(sample.bonusHuf || 0))}</b></small>
+            ${bonusBreakdown.length ? `
+              <div class="settlement-import-detail-list">
+                ${bonusBreakdown.map((item) => `
+                  <small>${escapeHtml(item.label || "Bónusz")}: <b>${escapeHtml(formatHuf(item.amountHuf || 0))}</b></small>
+                `).join("")}
+              </div>
+            ` : ""}
             <small>Fizetendő: <b>${escapeHtml(formatHuf(sample.payableHuf || 0))}</b></small>
           </div>
         </article>

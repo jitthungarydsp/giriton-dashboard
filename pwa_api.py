@@ -623,18 +623,23 @@ def settlement_import_route_type(value: Any) -> str:
     text = normalize_text(value)
     if "express" in text:
         return "express"
-    if "regional" in text or "regio" in text or "régio" in text:
+    if "regional" in text or "region" in text or "regio" in text or "régio" in text:
         return "regional"
     return "normal"
 
 
-def settlement_import_warehouse_from_row(row: dict[str, Any]) -> str:
+def settlement_import_normalized_data(row: dict[str, Any]) -> dict[str, Any]:
     data = row.get("normalized_data") or {}
     if isinstance(data, str):
         try:
             data = json.loads(data)
         except json.JSONDecodeError:
             data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def settlement_import_warehouse_from_row(row: dict[str, Any]) -> str:
+    data = settlement_import_normalized_data(row)
     warehouse = text_from_nested(data, "Warehouse", "warehouse", "Location", "location", "Raktár", "raktar")
     if not warehouse:
         warehouse = row.get("source_sheet") or ""
@@ -648,15 +653,96 @@ def settlement_import_warehouse_from_row(row: dict[str, Any]) -> str:
 
 
 def settlement_import_route_type_from_row(row: dict[str, Any]) -> str:
-    data = row.get("normalized_data") or {}
-    if isinstance(data, str):
-        try:
-            data = json.loads(data)
-        except json.JSONDecodeError:
-            data = {}
+    data = settlement_import_normalized_data(row)
     return settlement_import_route_type(
         text_from_nested(data, "Route Type", "route_type", "routeType", "Túratípus", "Turatipus")
     )
+
+
+def settlement_import_courier_identity_from_jit_row(row: dict[str, Any]) -> tuple[str, str]:
+    data = settlement_import_normalized_data(row)
+    courier_id = text_from_nested(
+        data,
+        "Courier ID",
+        "courier_id",
+        "Courier Id",
+        "Driver ID",
+        "driver_id",
+        "DSP ID",
+        "dsp_id",
+        "Futár ID",
+        "futar_id",
+    ).strip()
+    driver_name = text_from_nested(data, "Driver", "driver", "Driver Name", "driver_name", "Futár", "futar").strip()
+    return courier_id.removesuffix(".0"), driver_name
+
+
+def settlement_import_courier_profile(courier_id: str, courier_name: str = "") -> dict[str, Any]:
+    clean_id = str(courier_id or "").strip().removesuffix(".0")
+    if clean_id:
+        rows = optional_supabase_rows(
+            "courier_master",
+            params={"select": "*", "courier_id": f"eq.{clean_id}", "limit": "1"},
+            timeout=20,
+        )
+        if rows:
+            return dict(rows[0])
+    clean_name = str(courier_name or "").strip()
+    if clean_name:
+        rows = optional_supabase_rows(
+            "courier_master",
+            params={"select": "*", "courier_name": f"ilike.{clean_name}", "limit": "1"},
+            timeout=20,
+        )
+        if rows:
+            return dict(rows[0])
+    return {}
+
+
+def settlement_import_route_label(route_type: str) -> str:
+    return {
+        "normal": "Normál",
+        "express": "Express",
+        "regional": "Régiós",
+    }.get(route_type, "Egyéb")
+
+
+def settlement_import_rate_breakdown_items(grouped: dict[str, dict[int, int]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for route_type in ("normal", "express", "regional"):
+        rates = grouped.get(route_type) or {}
+        count = sum(rates.values())
+        total = sum(amount * item_count for amount, item_count in rates.items())
+        if not count and not total:
+            continue
+        items.append({
+            "routeType": route_type,
+            "label": settlement_import_route_label(route_type),
+            "count": count,
+            "totalHuf": total,
+            "rates": [
+                {"amountHuf": amount, "count": item_count, "totalHuf": amount * item_count}
+                for amount, item_count in sorted(rates.items())
+            ],
+        })
+    return items
+
+
+def settlement_import_bonus_breakdown_items(totals: dict[str, int], summary_bonus: int) -> list[dict[str, Any]]:
+    rows = [
+        ("delay", "Késedelmi bónusz"),
+        ("compliance", "Túramegfelelés"),
+        ("other", "Egyéb / cím bónusz"),
+    ]
+    items = [
+        {"key": key, "label": label, "amountHuf": int(totals.get(key, 0))}
+        for key, label in rows
+        if int(totals.get(key, 0))
+    ]
+    route_total = sum(int(totals.get(key, 0)) for key, _label in rows)
+    if summary_bonus and summary_bonus != route_total:
+        items.append({"key": "summary_total", "label": "Bónusz összesen", "amountHuf": int(summary_bonus)})
+    return items
 
 
 def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str, Any]:
@@ -674,6 +760,11 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         .data
         or []
     )
+    sample_row = next((row for row in summary_rows if money_int(row.get("payable_huf"))), summary_rows[0] if summary_rows else {})
+    sample_courier_id = str(sample_row.get("courier_id") or "").strip().removesuffix(".0") if sample_row else ""
+    sample_courier_name = str(sample_row.get("driver_name") or "").strip() if sample_row else ""
+    sample_base_rates: dict[str, dict[int, int]] = {"normal": {}, "express": {}, "regional": {}}
+    sample_bonus_totals = {"delay": 0, "compliance": 0, "other": 0}
 
     route_counts: dict[str, dict[str, int]] = {
         "BUD1": {"normal": 0, "express": 0, "regional": 0, "total": 0},
@@ -686,7 +777,10 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         page = (
             supabase
             .table("jit_row")
-            .select("normalized_data,source_sheet,is_route_primary")
+            .select(
+                "normalized_data,source_sheet,is_route_primary,courier_base_rate_huf,"
+                "courier_delay_bonus_huf,courier_compliance_bonus_huf,courier_other_bonus_huf"
+            )
             .eq("session_id", session_id)
             .eq("is_route_primary", True)
             .range(offset, offset + page_size - 1)
@@ -702,11 +796,22 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
             bucket = route_counts.setdefault(warehouse, {"normal": 0, "express": 0, "regional": 0, "total": 0})
             bucket[route_type] = bucket.get(route_type, 0) + 1
             bucket["total"] = bucket.get("total", 0) + 1
+            row_courier_id, row_courier_name = settlement_import_courier_identity_from_jit_row(row)
+            is_sample_row = (
+                bool(sample_courier_id and row_courier_id == sample_courier_id)
+                or bool(sample_courier_name and normalize_text(row_courier_name) == normalize_text(sample_courier_name))
+            )
+            if is_sample_row:
+                base_rate = money_int(row.get("courier_base_rate_huf"))
+                rates = sample_base_rates.setdefault(route_type, {})
+                rates[base_rate] = rates.get(base_rate, 0) + 1
+                sample_bonus_totals["delay"] += money_int(row.get("courier_delay_bonus_huf"))
+                sample_bonus_totals["compliance"] += money_int(row.get("courier_compliance_bonus_huf"))
+                sample_bonus_totals["other"] += money_int(row.get("courier_other_bonus_huf"))
         if len(page) < page_size:
             break
         offset += page_size
 
-    sample_row = next((row for row in summary_rows if money_int(row.get("payable_huf"))), summary_rows[0] if summary_rows else {})
     sample_amounts = {
         "payable": money_int(sample_row.get("payable_huf")),
         "base": money_int(sample_row.get("courier_base_rate_huf")),
@@ -714,9 +819,18 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         "bonus": money_int(sample_row.get("route_bonus_total_huf")),
         "cash": 0,
     }
+    sample_profile = settlement_import_courier_profile(sample_courier_id, sample_courier_name) if sample_row else {}
     sample_courier = {
-        "id": str(sample_row.get("courier_id") or ""),
-        "name": str(sample_row.get("driver_name") or ""),
+        "id": sample_courier_id,
+        "name": sample_courier_name,
+        "company_name": sample_profile.get("company_name") or sample_courier_name,
+        "address": sample_profile.get("company_address") or sample_profile.get("address") or "",
+        "tax_number": sample_profile.get("tax_number") or sample_profile.get("tax_id") or "",
+        "tig_type": sample_profile.get("tig_type") or sample_profile.get("tig_mode") or sample_profile.get("invoice_type") or sample_profile.get("invoice_vat_type") or sample_profile.get("vat_status") or "",
+        "vat_status": sample_profile.get("vat_status") or "",
+        "employment_type": sample_profile.get("employment_type") or "",
+        "employment_status": sample_profile.get("employment_status") or "",
+        "efo_status": sample_profile.get("efo_status") or "",
         "document_month": "",
         "document_reference": "",
     }
@@ -739,6 +853,12 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
             "tipHuf": money_int(sample_row.get("tip_huf")) if sample_row else 0,
             "bonusHuf": money_int(sample_row.get("route_bonus_total_huf")) if sample_row else 0,
             "payableHuf": money_int(sample_row.get("payable_huf")) if sample_row else 0,
+            "vatStatus": str(sample_profile.get("vat_status") or "") if sample_profile else "",
+            "baseRateBreakdown": settlement_import_rate_breakdown_items(sample_base_rates),
+            "bonusBreakdown": settlement_import_bonus_breakdown_items(
+                sample_bonus_totals,
+                money_int(sample_row.get("route_bonus_total_huf")) if sample_row else 0,
+            ),
         } if sample_row else {},
         "tigPreview": {
             "finalTotalHuf": money_int(tig_preview.get("finalTotalHuf")) if tig_preview else 0,

@@ -477,6 +477,9 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-import-route-checks article div, .settlement-import-sample-lines, .settlement-import-tig-lines { display: grid; gap: 5px; }
 .settlement-import-route-checks small, .settlement-import-sample-card small, .settlement-import-tig-card small { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; font-weight: 800; line-height: 1.35; }
 .settlement-import-route-checks b, .settlement-import-sample-card b, .settlement-import-tig-card b { color: var(--ink); white-space: nowrap; }
+.settlement-import-detail-list { display: grid; gap: 4px; margin: 2px 0 6px; padding: 8px; border-radius: 12px; background: #eff8ed; }
+.settlement-import-detail-list small { font-size: 11px; }
+.settlement-import-detail-list small.muted { justify-content: flex-start; padding-left: 8px; color: #6c7a72; }
 .settlement-import-sample-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .settlement-import-tig-card { border-color: #b8d5b4; background: linear-gradient(145deg, #fff, #eef8ed); }
 .schedule-recommendations { display: grid; gap: 10px; }
