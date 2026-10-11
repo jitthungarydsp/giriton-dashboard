@@ -2006,7 +2006,7 @@ def _courier_id_key(value: object) -> str:
         numeric = float(text.replace(" ", "").replace(",", "."))
         return str(int(numeric)) if numeric.is_integer() else str(numeric)
     except ValueError:
-        return text
+        return _courier_id_from_text(text) or text
 
 
 def _normalized_field_key(value: object) -> str:
@@ -2041,6 +2041,12 @@ def _clean_imported_courier_name(value: object) -> str:
     return re.sub(r"\s+", " ", text).strip(" -#")
 
 
+def _split_imported_courier_identity(value: object) -> tuple[str, str]:
+    text = str(value or "").strip()
+    courier_id = _courier_id_from_text(text)
+    return courier_id, _clean_imported_courier_name(text) if courier_id else text
+
+
 def _imported_courier_identity(normalized_payload: dict[str, object]) -> tuple[str, str]:
     raw_id = next(
         (value for key, value in normalized_payload.items() if key in IMPORTED_COURIER_ID_KEYS),
@@ -2069,9 +2075,10 @@ def _imported_courier_identity(normalized_payload: dict[str, object]) -> tuple[s
             ),
             "",
         )
+    embedded_id, clean_name = _split_imported_courier_identity(raw_name)
     return (
-        _courier_id_from_text(raw_id) or _courier_id_key(raw_id),
-        _courier_match_key(_clean_imported_courier_name(raw_name) or raw_name),
+        _courier_id_from_text(raw_id) or _courier_id_key(raw_id) or embedded_id,
+        _courier_match_key(clean_name or raw_name),
     )
 
 
@@ -21939,7 +21946,7 @@ def read_jit_rows_for_summary_rebuild(session_id: str, page_size: int = 1000) ->
     rows: list[dict[str, object]] = []
     offset = 0
     columns = (
-        "session_id,normalized_data,route_date,is_route_primary,"
+        "session_id,courier_id,driver_name,normalized_data,route_date,is_route_primary,"
         "company_base_rate_huf,courier_base_rate_huf,courier_tip_huf,"
         "courier_delay_bonus_huf,courier_compliance_bonus_huf,"
         "courier_other_bonus_huf,courier_bonus_total_huf"
@@ -21962,6 +21969,56 @@ def read_jit_rows_for_summary_rebuild(session_id: str, page_size: int = 1000) ->
     return rows
 
 
+def normalize_excel_jit_courier_identity(session_id: str) -> int:
+    clean_session_id = str(session_id or "").strip()
+    if not clean_session_id:
+        return 0
+    updated = 0
+    offset = 0
+    page_size = 1000
+    client = get_db().schema("settlement")
+    while True:
+        response = (
+            client
+            .table("jit_row")
+            .select("id,courier_id,driver_name,normalized_data")
+            .eq("session_id", clean_session_id)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        rows = response.data or []
+        if not rows:
+            break
+        for row in rows:
+            row_id = row.get("id")
+            if not row_id:
+                continue
+            normalized_data = row.get("normalized_data") or {}
+            if not isinstance(normalized_data, dict):
+                normalized_data = {}
+            current_id = _courier_id_key(row.get("courier_id"))
+            current_name = str(row.get("driver_name") or "").strip()
+            raw_name = (
+                current_name
+                or str(normalized_data.get("Driver") or normalized_data.get("driver_name") or normalized_data.get("Futár") or "").strip()
+            )
+            raw_id = str(normalized_data.get("Courier ID") or normalized_data.get("courier_id") or "").strip()
+            embedded_id, clean_name = _split_imported_courier_identity(raw_name)
+            courier_id = _courier_id_key(raw_id) or current_id or embedded_id
+            payload: dict[str, object] = {}
+            if courier_id and courier_id != current_id:
+                payload["courier_id"] = courier_id
+            if clean_name and clean_name != current_name:
+                payload["driver_name"] = clean_name
+            if payload:
+                client.table("jit_row").update(payload).eq("id", row_id).execute()
+                updated += 1
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return updated
+
+
 def rebuild_courier_settlement_summary_from_jit(session_id: str) -> int:
     rows = read_jit_rows_for_summary_rebuild(session_id)
     summaries: dict[str, dict[str, object]] = {}
@@ -21971,18 +22028,22 @@ def rebuild_courier_settlement_summary_from_jit(session_id: str) -> int:
         if not isinstance(normalized_data, dict):
             normalized_data = {}
 
-        driver_name = str(
-            normalized_data.get("Driver")
+        raw_driver_name = str(
+            row.get("driver_name")
+            or normalized_data.get("Driver")
             or normalized_data.get("driver_name")
             or "Ismeretlen futár"
         ).strip() or "Ismeretlen futár"
-        courier_id = str(
-            normalized_data.get("Courier ID")
-            or normalized_data.get("courier_id")
-            or ""
-        ).strip()
+        embedded_id, clean_driver_name = _split_imported_courier_identity(raw_driver_name)
+        driver_name = clean_driver_name or raw_driver_name
+        courier_id = (
+            _courier_id_key(row.get("courier_id"))
+            or _courier_id_key(normalized_data.get("Courier ID") or normalized_data.get("courier_id"))
+            or embedded_id
+        )
+        summary_key = courier_id or _courier_match_key(driver_name) or driver_name
         summary = summaries.setdefault(
-            driver_name,
+            summary_key,
             {
                 "session_id": session_id,
                 "courier_id": courier_id,
@@ -22048,6 +22109,7 @@ def rebuild_courier_settlement_summary_from_jit(session_id: str) -> int:
 
 def recalculate_excel_base_rates_safely(session_id: str) -> dict[str, object]:
     try:
+        normalize_excel_jit_courier_identity(session_id)
         recalculate_excel_base_rates(get_db(), session_id)
         return {"fallback_used": False, "summary_rows": None}
     except BaseException as exc:
@@ -22117,6 +22179,8 @@ def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, 
         load_courier_settlement_summary.clear()
         build_excel_settlement_number_audit.clear()
         parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
+        normalized_identity_count = normalize_excel_jit_courier_identity(excel_import_session_id)
+        st.session_state["settlement_identity_normalized_rows"] = normalized_identity_count
         recalc_result = recalculate_excel_base_rates_safely(excel_import_session_id)
         st.session_state["settlement_recalculate_result"] = recalc_result
         master_sync = sync_excel_session_to_courier_master(
@@ -22218,6 +22282,8 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 load_courier_settlement_summary.clear()
                 build_excel_settlement_number_audit.clear()
                 parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
+                normalized_identity_count = normalize_excel_jit_courier_identity(result["session_id"])
+                st.session_state["settlement_identity_normalized_rows"] = normalized_identity_count
                 recalc_result = recalculate_excel_base_rates_safely(result["session_id"])
                 st.session_state["settlement_recalculate_result"] = recalc_result
                 master_sync = sync_excel_session_to_courier_master(

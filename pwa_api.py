@@ -763,7 +763,63 @@ def settlement_import_courier_identity_from_jit_row(row: dict[str, Any]) -> tupl
         "futar_id",
     ).strip()
     driver_name = text_from_nested(data, "Driver", "driver", "Driver Name", "driver_name", "Futár", "futar").strip()
+    embedded_id, clean_driver_name = settlement_import_identity_from_combined_name(driver_name)
+    if embedded_id:
+        courier_id = courier_id or embedded_id
+        driver_name = clean_driver_name
     return courier_id.removesuffix(".0"), driver_name
+
+
+def settlement_import_identity_from_combined_name(value: Any) -> tuple[str, str]:
+    text = str(value or "").strip()
+    match = re.search(r"(?<!\d)(\d{4,6})(?!\d)", text)
+    if not match:
+        return "", text
+    clean_name = re.sub(r"#?\s*\b\d{4,6}\b", " ", text).strip()
+    return match.group(1), re.sub(r"\s+", " ", clean_name)
+
+
+def normalize_settlement_import_jit_identity(supabase: Any, session_id: str) -> int:
+    clean_session_id = str(session_id or "").strip()
+    if not clean_session_id:
+        return 0
+    updated = 0
+    offset = 0
+    page_size = 1000
+    while True:
+        rows = (
+            supabase
+            .table("jit_row")
+            .select("id,source_sheet,source_row_no,courier_id,driver_name,normalized_data")
+            .eq("session_id", clean_session_id)
+            .range(offset, offset + page_size - 1)
+            .execute()
+            .data
+            or []
+        )
+        if not rows:
+            break
+        for row in rows:
+            row_id = row.get("id")
+            if not row_id:
+                continue
+            current_id = str(row.get("courier_id") or "").strip().removesuffix(".0")
+            current_name = str(row.get("driver_name") or "").strip()
+            parsed_id, parsed_name = settlement_import_courier_identity_from_jit_row(row)
+            if not parsed_id and current_name:
+                parsed_id, parsed_name = settlement_import_identity_from_combined_name(current_name)
+            payload: dict[str, Any] = {}
+            if parsed_id and parsed_id != current_id:
+                payload["courier_id"] = parsed_id
+            if parsed_name and parsed_name != current_name:
+                payload["driver_name"] = parsed_name
+            if payload:
+                supabase.table("jit_row").update(payload).eq("id", row_id).execute()
+                updated += 1
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return updated
 
 
 def settlement_import_courier_profile(courier_id: str, courier_name: str = "") -> dict[str, Any]:
@@ -20672,6 +20728,7 @@ async def admin_settlement_excel_import(
                 "A normalizált feldolgozás sikertelen. "
                 + (" | ".join(error_messages) if error_messages else "Nincs részletes hibaüzenet.")
             )
+        normalize_settlement_import_jit_identity(supabase, str(import_result.get("session_id") or ""))
         recalculate_excel_base_rates(supabase, str(import_result.get("session_id") or ""))
         validation = settlement_import_quality_checks(supabase, str(import_result.get("session_id") or ""))
     except HTTPException:
@@ -20745,6 +20802,7 @@ def admin_refresh_settlement_import_validation(
         raise HTTPException(status_code=422, detail="Hiányzik a session ID.")
     try:
         supabase = settlement_supabase_client()
+        normalize_settlement_import_jit_identity(supabase, clean_session_id)
         recalculate_excel_base_rates(supabase, clean_session_id)
         validation = settlement_import_quality_checks(supabase, clean_session_id)
     except Exception as exc:
