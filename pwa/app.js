@@ -78,7 +78,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v183";
+const APP_VERSION = "v184";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4141,27 +4141,23 @@ function renderTigBreakdown() {
   `;
   const buyer = tig.buyer || {};
   const seller = tig.seller || {};
-  const buyerBlock = buyer.name ? `
+  const renderPartyBlock = (party, fallbackLabel) => party.name ? `
     <section class="tig-buyer-card">
-      <span>${escapeHtml(buyer.label || "Vevő")}</span>
-      <strong>${escapeHtml(buyer.name || "")}</strong>
-      <small>${escapeHtml(buyer.postalCity || "")}</small>
-      <small>${escapeHtml(buyer.address || "")}</small>
-      <small>Adószám: ${escapeHtml(buyer.taxNumber || "")}</small>
-      ${buyer.periodLabel ? `<small>Teljesítési időszak: ${escapeHtml(buyer.periodLabel)}</small>` : ""}
-      ${buyer.performanceDate ? `<small>Teljesítés: ${escapeHtml(buyer.performanceDate)}</small>` : ""}
-      ${buyer.paymentDueDate ? `<small>Fizetési határidő: ${escapeHtml(buyer.paymentDueDate)}</small>` : ""}
-      ${buyer.note ? `<small>Megjegyzés: ${escapeHtml(buyer.note)}</small>` : ""}
+      <span>${escapeHtml(party.label || fallbackLabel)}</span>
+      <strong>${escapeHtml(party.name || "")}</strong>
+      ${party.postalCity ? `<small>${escapeHtml(party.postalCity || "")}</small>` : ""}
+      ${party.address ? `<small>${escapeHtml(party.address || "")}</small>` : ""}
+      ${party.taxNumber ? `<small>Adószám: ${escapeHtml(party.taxNumber || "")}</small>` : ""}
+      ${party.periodLabel ? `<small>Teljesítési időszak: ${escapeHtml(party.periodLabel)}</small>` : ""}
+      ${party.performanceDate ? `<small>Teljesítés: ${escapeHtml(party.performanceDate)}</small>` : ""}
+      ${party.paymentDueDate ? `<small>Fizetési határidő: ${escapeHtml(party.paymentDueDate)}</small>` : ""}
+      ${party.note ? `<small>Megjegyzés: ${escapeHtml(party.note)}</small>` : ""}
     </section>
   ` : "";
-  const sellerBlock = seller.name ? `
-    <section class="tig-buyer-card">
-      <span>${escapeHtml(seller.label || "Eladó")}</span>
-      <strong>${escapeHtml(seller.name || "")}</strong>
-      ${seller.address ? `<small>${escapeHtml(seller.address || "")}</small>` : ""}
-      ${seller.taxNumber ? `<small>Adószám: ${escapeHtml(seller.taxNumber || "")}</small>` : ""}
-    </section>
-  ` : "";
+  const buyerBlock = renderPartyBlock(buyer, "Vevő");
+  const sellerBlock = renderPartyBlock(seller, "Eladó");
+  const cashBuyerBlock = renderPartyBlock({ ...buyer, label: "Vevő - KP számla" }, "Vevő - KP számla");
+  const cashSellerBlock = renderPartyBlock({ ...seller, label: "Eladó - KP számla" }, "Eladó - KP számla");
   return `
     <div class="tig-toolbar">
       <a class="download-link tig-download-link" href="${escapeHtml(tigDownloadUrl)}">TIG letöltése PDF-ben</a>
@@ -4173,7 +4169,17 @@ function renderTigBreakdown() {
     </section>
     <div class="tig-party-grid">${buyerBlock}${sellerBlock}</div>
     ${transferRows.length ? renderTigRows(transferRows) : ""}
-    ${cashRows.length ? `<section class="tig-buyer-card"><span>KP külön számla</span><strong>Készpénzes teljesítés</strong><small>A KP külön számlás tétel: aznapi teljesítés, aznapi kifizetés, TAM.</small></section>${renderTigRows(cashRows)}` : ""}
+    ${cashRows.length ? `
+      <section class="tig-cash-invoice">
+        <div class="tig-cash-heading">
+          <span>Külön KP számla szükséges</span>
+          <strong>Készpénzes teljesítés</strong>
+          <small>A KP tételt külön számlán kell kiállítani. Aznapi teljesítés, aznapi kifizetés, TAM.</small>
+        </div>
+        <div class="tig-party-grid">${cashBuyerBlock}${cashSellerBlock}</div>
+        ${renderTigRows(cashRows)}
+      </section>
+    ` : ""}
   `;
 }
 

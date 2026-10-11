@@ -669,6 +669,12 @@ textarea { min-height: 96px; resize: vertical; }
 .tig-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.25; }
 .tig-row.deduction { background: #fff0ef; color: var(--danger); }
 .tig-row.deduction small { color: #9d5956; }
+.tig-cash-invoice { display: grid; gap: 12px; margin-top: 18px; padding: 14px; border: 2px solid #2b6f3a; border-radius: 18px; background: #eef8ed; box-shadow: 0 10px 28px #17231c12; }
+.tig-cash-invoice .tig-party-grid, .tig-cash-invoice .tig-table { margin-top: 0; }
+.tig-cash-heading { display: grid; gap: 4px; padding: 12px; border-radius: 14px; background: #163326; color: #fff; }
+.tig-cash-heading span { color: #d7f96c; font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.tig-cash-heading strong { font-size: 18px; line-height: 1.2; }
+.tig-cash-heading small { color: #e6f1e7; font-size: 12px; font-weight: 800; line-height: 1.35; }
 .process-form { margin-top: 18px; }
 .process-form.two-column { grid-template-columns: 1fr; }
 .full-width { grid-column: 1 / -1; }

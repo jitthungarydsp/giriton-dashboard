@@ -730,12 +730,49 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
     if cash_breakdown_rows:
         story.append(_table(
             [[
-                rich("<b>KP KÜLÖN SZÁMLA</b><br/><b>Készpénzes teljesítés</b><br/>A KP külön számlás tétel: aznapi teljesítés, aznapi kifizetés, TAM.", "tig_body"),
+                rich("<b>KÜLÖN KP SZÁMLA SZÜKSÉGES</b><br/><b>Készpénzes teljesítés</b><br/>A KP tételt külön számlán kell kiállítani. Aznapi teljesítés, aznapi kifizetés, TAM.", "tig_body"),
             ]],
             [162 * mm],
             [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eef8ed")),
+                ("BOX", (0, 0), (-1, -1), 1.0, colors.HexColor("#2b6f3a")),
+                ("TOPPADDING", (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                ("LEFTPADDING", (0, 0), (-1, -1), 9),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+            ],
+        ))
+        story.append(Spacer(1, 5 * mm))
+        story.append(_table(
+            [
+                [
+                    rich(
+                        "<b>VEVŐ - KP SZÁMLA</b><br/>"
+                        "Just in Time Transport Hungary Kft.<br/>"
+                        "1201 Budapest<br/>"
+                        "Atléta utca 44.<br/>"
+                        "Adószám: 32649460-2-43<br/>"
+                        f"<b>Teljesítési időszak:</b> {escape(str(document_meta['periodLabel']))}<br/>"
+                        f"<b>Teljesítés:</b> {escape(str(document_meta['performanceDate']))}<br/>"
+                        f"<b>Fizetési határidő:</b> {escape(str(document_meta['paymentDueDate']))}<br/>"
+                        f"<b>Megjegyzés:</b> {escape(str(document_meta['note']))}",
+                        "tig_body",
+                    ),
+                    rich(
+                        "<b>ELADÓ - KP SZÁMLA</b><br/>"
+                        f"{escape(seller_name)}<br/>"
+                        f"{escape(seller_address)}<br/><br/>"
+                        f"<b>Adószám:</b> {escape(seller_tax)}",
+                        "tig_body",
+                    ),
+                ],
+            ],
+            [81 * mm, 81 * mm],
+            [
                 ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f9faf8")),
                 ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#c9ddcd")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c9ddcd")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("TOPPADDING", (0, 0), (-1, -1), 9),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
                 ("LEFTPADDING", (0, 0), (-1, -1), 9),
