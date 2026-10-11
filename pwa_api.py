@@ -883,7 +883,6 @@ def settlement_import_route_label(route_type: str) -> str:
 
 def settlement_import_rate_breakdown_items(grouped: dict[str, dict[int, int]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    preview_items: list[dict[str, Any]] = []
     for route_type in ("normal", "express", "regional"):
         rates = grouped.get(route_type) or {}
         count = sum(rates.values())
@@ -984,6 +983,7 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
         }
 
     items: list[dict[str, Any]] = []
+    preview_items: list[dict[str, Any]] = []
     ok_count = 0
     route_mismatch_count = 0
     tip_mismatch_count = 0
