@@ -84,7 +84,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v194";
+const APP_VERSION = "v195";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4787,17 +4787,37 @@ function settlementDashboardDetailTabs() {
 function settlementDashboardBreakdownPreview(workflow = {}) {
   const breakdown = workflow.financialBreakdown || {};
   if (!breakdown.available) return `<div class="empty-card">${escapeHtml(breakdown.message || "Nincs elszámolási bontás.")}</div>`;
+  const cardOrder = [
+    "base",
+    "tip",
+    "delay_bonus",
+    "compliance_bonus",
+    "address_bonus_kifli",
+    "loyalty_bonus",
+    "customer_rating",
+    "kiflis_bonus_malus",
+    "bonus_malus",
+    "corrections",
+    "atm_effect",
+    "salary_advance",
+    "insurance",
+    "performance",
+  ];
   const cards = (breakdown.cards || []).filter((card) => {
     const key = String(card.key || "");
     const label = String(card.label || "").trim().toLowerCase();
     return !["payable", "deductions"].includes(key) && label !== "teljes összeg";
+  }).sort((left, right) => {
+    const leftIndex = cardOrder.indexOf(String(left.key || ""));
+    const rightIndex = cardOrder.indexOf(String(right.key || ""));
+    return (leftIndex === -1 ? 999 : leftIndex) - (rightIndex === -1 ? 999 : rightIndex);
   });
   return `<div class="settlement-dashboard-mini-breakdown">
     <div class="settlement-dashboard-mini-total">
       <span>Kifizetendő</span>
       <strong>${escapeHtml(formatHuf(breakdown.totalPayableHuf || 0))}</strong>
     </div>
-    ${cards.slice(0, 10).map((card) => `
+    ${cards.map((card) => `
       <details class="settlement-dashboard-mini-card">
         <summary><span>${escapeHtml(card.label || "")}</span><strong>${formatFinancialValue(card)}</strong></summary>
         ${financialDetailRows(card.items || [])}
