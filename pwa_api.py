@@ -10228,7 +10228,8 @@ def build_financial_breakdown_from_mobile_rows(
     if not jitt_items:
         jitt_items = detail_items((), ["manual_bonus", "manual_malus"])
     jitt_items.extend(admin_detail_items("bonus_malus"))
-    correction_items = detail_items(("correction_periodic_",), [])
+    correction_component_items = detail_items(("correction_periodic_",), ["correction_income", "correction_deduction"])
+    correction_items = correction_component_items or detail_items(("correction_periodic_",), ["correction"])
     correction_items.extend(admin_detail_items("corrections"))
     correction_total = sum(money_int(current.get("amountHuf")) for current in correction_items)
     tip_items = money_items(["tip"])
@@ -20188,6 +20189,8 @@ def admin_restore_settlement_finance_snapshot(
     updated_by = str(user.get("username") or user.get("courierId") or "admin")
     rows: list[dict[str, Any]] = []
     for item in snapshot.get("items") or []:
+        if str(item.get("section") or "") != "finance":
+            continue
         item_key = str(item.get("item_key") or "").strip()
         if not item_key or item_key in {"tig_cash_deduction", "cash_deduction"}:
             continue

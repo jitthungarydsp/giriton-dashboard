@@ -3471,6 +3471,8 @@ def restore_mobile_breakdown_from_finance_snapshot(
     version = int(parse_huf_value(snapshot.get("version")))
     rows: list[dict[str, object]] = []
     for item in snapshot.get("items") or []:
+        if str(item.get("section") or "") != "finance":
+            continue
         item_key = str(item.get("item_key") or "").strip()
         if not item_key or item_key in {"tig_cash_deduction", "cash_deduction"}:
             continue
@@ -17180,8 +17182,6 @@ def render_courier_detail_page() -> None:
                 ):
                     continue
                 item_key = str(override_row.get("item_key") or "")
-                if item_key in mobile_default_rows.index:
-                    continue
                 mobile_default_rows.loc[item_key, ["item_label", "amount_value", "amount_kind", "note"]] = [
                     override_row.get("item_label"),
                     override_row.get("amount_value"),
