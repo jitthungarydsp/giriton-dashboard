@@ -5089,6 +5089,7 @@ function renderSettlementImportValidation(validation = {}) {
   const bonusBreakdown = sample.bonusBreakdown || [];
   const reconciliation = validation.courierReconciliation || {};
   const reconciliationItems = reconciliation.items || [];
+  const reconciliationPreviewItems = reconciliation.previewItems || [];
   return `<div class="settlement-import-validation">
     <div class="settlement-import-result-grid">
       <div><span>Futár összesen</span><strong>${escapeHtml(formatCount(validation.couriersTotal || 0))}</strong></div>
@@ -5108,20 +5109,22 @@ function renderSettlementImportValidation(validation = {}) {
         <small>Borravaló eltérés: <b>${escapeHtml(formatCount(reconciliation.tipMismatchCount || 0))}</b></small>
         <small>Hiányzó összesítő: <b>${escapeHtml(formatCount(reconciliation.missingSummaryCount || 0))}</b></small>
       </div>
-      ${reconciliationItems.length ? `
+      ${reconciliationPreviewItems.length ? `
         <div class="settlement-import-reconciliation-list">
-          ${reconciliationItems.slice(0, 12).map((item) => {
+          ${reconciliationPreviewItems.slice(0, 18).map((item) => {
             const excel = item.excel || {};
             const calculated = item.calculated || {};
-            return `<div>
+            const ok = item.status === "ok";
+            return `<div class="${ok ? "ok" : "warn"}">
               <strong>${escapeHtml(item.courierName || "Ismeretlen futár")} ${item.courierId ? `#${escapeHtml(item.courierId)}` : ""}</strong>
-              <small>${escapeHtml((item.issues || []).join(", ") || "Eltérés")}</small>
+              <small>${escapeHtml((item.issues || []).join(", ") || "Rendben")}</small>
               <small>Excel: ${escapeHtml(formatCount(excel.total || 0))} túra (${escapeHtml(formatCount(excel.normal || 0))} normal, ${escapeHtml(formatCount(excel.express || 0))} express, ${escapeHtml(formatCount(excel.regional || 0))} régiós), ${escapeHtml(formatHuf(excel.tipHuf || 0))} borravaló</small>
               <small>DB: ${escapeHtml(formatCount(calculated.routeCount || 0))} túra, ${escapeHtml(formatHuf(calculated.tipHuf || 0))} borravaló</small>
             </div>`;
           }).join("")}
         </div>
       ` : ""}
+      ${reconciliationItems.length > reconciliationPreviewItems.length ? `<small class="settlement-import-reconciliation-note">További eltérések: ${escapeHtml(formatCount(reconciliationItems.length - reconciliationPreviewItems.length))}</small>` : ""}
     </article>
     <div class="settlement-import-route-checks">
       ${warehouses.map((warehouse) => {

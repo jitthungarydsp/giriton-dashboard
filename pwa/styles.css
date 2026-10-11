@@ -501,8 +501,11 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-import-reconciliation-stats b { color: var(--ink); white-space: nowrap; }
 .settlement-import-reconciliation-list { display: grid; gap: 6px; max-height: 260px; overflow: auto; }
 .settlement-import-reconciliation-list div { display: grid; gap: 3px; padding: 10px; border: 1px solid #ead9aa; border-radius: 12px; background: #fff; }
+.settlement-import-reconciliation-list div.ok { border-color: #cfe2ca; background: #fbfcfa; }
+.settlement-import-reconciliation-list div.warn { border-color: #ead9aa; background: #fff; }
 .settlement-import-reconciliation-list strong { font-size: 13px; overflow-wrap: anywhere; }
 .settlement-import-reconciliation-list small { color: var(--muted); font-size: 11px; font-weight: 800; line-height: 1.35; overflow-wrap: anywhere; }
+.settlement-import-reconciliation-note { color: var(--muted); font-size: 12px; font-weight: 850; }
 .settlement-import-route-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .settlement-import-route-checks article, .settlement-import-sample-card, .settlement-import-tig-card { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fbfcfa; }
 .settlement-import-route-checks span, .settlement-import-sample-card span, .settlement-import-tig-card span { color: var(--green-dark); font-size: 11px; font-weight: 950; text-transform: uppercase; }

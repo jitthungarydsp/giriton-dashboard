@@ -648,12 +648,30 @@ def publish_settlement_import_to_pwa(
 
 
 def settlement_import_route_type(value: Any) -> str:
+    detected = settlement_import_detect_route_type(value)
+    return detected or "normal"
+
+
+def settlement_import_detect_route_type(value: Any) -> str:
     text = normalize_text(value)
     compact = normalized_field_key(text)
     if "express" in text or "expressz" in text or compact.startswith("exp") or compact in {"xpress", "expr"}:
         return "express"
     if "regional" in text or "region" in text or "regio" in text or "régio" in text or compact.startswith("reg"):
         return "regional"
+    if compact in {"normal", "norm", "norma", "standard", "city", "varosi"} or "normal" in text or "normál" in text:
+        return "normal"
+    return ""
+
+
+def settlement_import_route_type_display_value(value: Any) -> str:
+    detected = settlement_import_detect_route_type(value)
+    if detected:
+        return {
+            "normal": "NORMAL",
+            "express": "EXPRESS",
+            "regional": "REGION",
+        }[detected]
     return "normal"
 
 
@@ -727,6 +745,14 @@ def settlement_import_route_type_raw_from_row(row: dict[str, Any]) -> str:
             text = str(value or "").strip()
             if text:
                 return text
+    for value in data.values():
+        detected = settlement_import_detect_route_type(value)
+        if detected in {"express", "regional"}:
+            return settlement_import_route_type_display_value(value)
+    for value in data.values():
+        detected = settlement_import_detect_route_type(value)
+        if detected == "normal":
+            return settlement_import_route_type_display_value(value)
     return ""
 
 
@@ -857,6 +883,7 @@ def settlement_import_route_label(route_type: str) -> str:
 
 def settlement_import_rate_breakdown_items(grouped: dict[str, dict[int, int]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+    preview_items: list[dict[str, Any]] = []
     for route_type in ("normal", "express", "regional"):
         rates = grouped.get(route_type) or {}
         count = sum(rates.values())
@@ -984,10 +1011,18 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
                 status = "error"
                 tip_mismatch_count += 1
                 issues.append("Borravaló eltérés")
+        source = calculated or excel or {}
+        preview_items.append({
+            "status": status,
+            "issues": issues,
+            "courierId": source.get("courierId") or "",
+            "courierName": source.get("courierName") or "Ismeretlen futár",
+            "excel": excel or {"normal": 0, "express": 0, "regional": 0, "total": 0, "tipHuf": 0},
+            "calculated": calculated or {"routeCount": 0, "tipHuf": 0},
+        })
         if status == "ok":
             ok_count += 1
             continue
-        source = calculated or excel or {}
         items.append({
             "status": status,
             "issues": issues,
@@ -1006,6 +1041,10 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
         "missingSummaryCount": missing_summary_count,
         "missingExcelCount": missing_excel_count,
         "items": items[:80],
+        "previewItems": sorted(
+            preview_items,
+            key=lambda item: (0 if item.get("status") != "ok" else 1, str(item.get("courierName") or "")),
+        )[:30],
     }
 
 
