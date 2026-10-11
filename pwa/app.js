@@ -82,7 +82,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v187";
+const APP_VERSION = "v192";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4195,7 +4195,14 @@ async function saveFinancialCardOverride(cardKey) {
       loadingMessage: "Kártya mentése...",
     });
     state.financialEditCardKey = "";
-    await loadWorkflow({ background: true });
+    if (payload.workflow) {
+      state.workflow = payload.workflow;
+      state.workflowProcesses = state.workflow.processes || state.workflowProcesses;
+      renderWorkflowProcessPicker();
+      renderWorkflow();
+    } else {
+      await loadWorkflow({ background: true });
+    }
     showWorkflowMessage(`Kártya mentve: ${escapeHtml(formatHuf(payload.totalHuf || 0))}.`);
   } catch (error) {
     showWorkflowMessage(error.message, true);
@@ -5398,7 +5405,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=166");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register(`/sw.js?${APP_VERSION}`);
   }
   return navigator.serviceWorker.ready;
 }
@@ -8667,6 +8674,9 @@ $("#workflow-process").addEventListener("change", (event) => {
 
 function updatePreviewCourier(value) {
   state.workflowPreviewCourierId = String(value || "").trim();
+  if (state.workflowPreviewCourierId) {
+    state.workflowMonth = previousLocalMonth();
+  }
   if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = state.workflowPreviewCourierId;
   if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = state.workflowPreviewCourierId;
   if (adminPreviewCourierInput) adminPreviewCourierInput.value = state.workflowPreviewCourierId;

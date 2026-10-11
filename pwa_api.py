@@ -11420,9 +11420,9 @@ def build_financial_breakdown(
     )
     overrides = read_mobile_breakdown_overrides(courier_id, month)
     has_manual_overrides = any(is_manual_mobile_override(row) for row in overrides.values())
-    if snapshot_breakdown and (snapshot_only or not has_manual_overrides):
+    if snapshot_breakdown and (not has_manual_overrides):
         return snapshot_breakdown
-    if snapshot_only:
+    if snapshot_only and not has_manual_overrides:
         return {
             "available": False,
             "snapshotOnly": True,
@@ -19905,10 +19905,12 @@ def workflow_months(
     privileged_viewer = can_view_financial_amounts(user)
     configs = list_mobile_settlement_period_configs()
     month_by_key: dict[str, dict[str, Any]] = {}
+    configured_month_keys: set[str] = set()
     for config in configs:
         month_key = str(config.get("period_start") or "")[:7]
         if not month_key:
             continue
+        configured_month_keys.add(month_key)
         month_by_key[month_key] = {
             "month": str(config.get("period_start") or "")[:7],
             "calculationMode": str(config.get("calculation_mode") or ""),
@@ -19932,21 +19934,30 @@ def workflow_months(
         )
 
     if preview or privileged_viewer:
-        current_month = datetime.now(LOCAL_TIMEZONE).date().replace(day=1).strftime("%Y-%m")
-        month_by_key.setdefault(
-            current_month,
-            {
-                "month": current_month,
-                "calculationMode": "",
-                "warehouseLabel": "",
-                "sessionId": "",
-                "visibilityMode": "admin",
-                "updatedAt": "",
-            },
-        )
+        rolling_month = datetime.now(LOCAL_TIMEZONE).date().replace(day=1)
+        for _index in range(0, 7):
+            month_key = rolling_month.strftime("%Y-%m")
+            month_by_key.setdefault(
+                month_key,
+                {
+                    "month": month_key,
+                    "calculationMode": "",
+                    "warehouseLabel": "",
+                    "sessionId": "",
+                    "visibilityMode": "admin",
+                    "updatedAt": "",
+                },
+            )
+            rolling_month = (rolling_month - timedelta(days=1)).replace(day=1)
 
     months = [month_by_key[key] for key in sorted(month_by_key.keys(), reverse=True)]
-    default_month = months[0]["month"] if months else ""
+    if configured_month_keys:
+        default_month = sorted(configured_month_keys, reverse=True)[0]
+    elif preview or privileged_viewer:
+        previous_month = (datetime.now(LOCAL_TIMEZONE).date().replace(day=1) - timedelta(days=1)).replace(day=1)
+        default_month = previous_month.strftime("%Y-%m")
+    else:
+        default_month = months[0]["month"] if months else ""
     return {
         "defaultMonth": default_month,
         "months": months,
@@ -20147,6 +20158,10 @@ def admin_save_settlement_card_overrides(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Kártya mentési hiba: {exc}") from exc
 
+    view_user = {
+        "courierId": courier_id,
+        "username": read_courier_display_name(courier_id) or courier_id,
+    }
     return {
         "ok": True,
         "month": month_value.strftime("%Y-%m"),
@@ -20154,6 +20169,14 @@ def admin_save_settlement_card_overrides(
         "cardKey": card_key,
         "savedRows": len(rows),
         "totalHuf": total,
+        "workflow": build_workflow(
+            view_user,
+            month_value,
+            "",
+            preview_read_only=True,
+            allow_unpublished=True,
+            can_view_amounts=True,
+        ),
     }
 
 
