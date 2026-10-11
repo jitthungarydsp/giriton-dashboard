@@ -21809,6 +21809,5 @@ def pwa(path: str):
             ".svg": "image/svg+xml",
             ".webmanifest": "application/manifest+json",
         }
-        headers = no_store_headers if requested.name in {"sw.js", "index.html"} else {"Cache-Control": "public, max-age=300"}
-        return FileResponse(requested, media_type=media_types.get(requested.suffix), headers=headers)
+        return FileResponse(requested, media_type=media_types.get(requested.suffix), headers=no_store_headers)
     return FileResponse(PWA_ROOT / "index.html", headers=no_store_headers)
