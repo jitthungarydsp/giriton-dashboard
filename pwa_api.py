@@ -17116,6 +17116,123 @@ def dashboard_flags_from_profile(profile: dict[str, Any]) -> list[dict[str, str]
     return flags
 
 
+def merge_dashboard_flags(*flag_groups: list[dict[str, str]]) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for flags in flag_groups:
+        for flag in flags or []:
+            label = str(flag.get("label") or "").strip()
+            if not label:
+                continue
+            key = normalize_text(label)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append({"label": label, "tone": str(flag.get("tone") or "").strip()})
+    return merged
+
+
+def dashboard_monthly_flags_by_courier(month: date, courier_ids: list[str]) -> dict[str, list[dict[str, str]]]:
+    clean_ids = [str(item or "").strip() for item in courier_ids if str(item or "").strip()]
+    if not clean_ids:
+        return {}
+    month_start = month.replace(day=1)
+    month_key = month_start.isoformat()
+    flags_by_courier: dict[str, list[dict[str, str]]] = {courier_id: [] for courier_id in clean_ids}
+
+    snapshot_rows = optional_supabase_rows_paged(
+        "courier_finance_snapshot",
+        schema="settlement",
+        params={
+            "select": "id,courier_id,version",
+            "period_start": f"eq.{month_key}",
+            "courier_id": f"in.({','.join(clean_ids)})",
+            "order": "courier_id.asc,version.desc",
+        },
+        timeout=30,
+        page_size=1000,
+        max_rows=50000,
+    )
+    latest_snapshot_by_courier: dict[str, str] = {}
+    snapshot_to_courier: dict[str, str] = {}
+    for snapshot in snapshot_rows:
+        courier_id = str(snapshot.get("courier_id") or "").strip()
+        snapshot_id = str(snapshot.get("id") or "").strip()
+        if courier_id and snapshot_id and courier_id not in latest_snapshot_by_courier:
+            latest_snapshot_by_courier[courier_id] = snapshot_id
+            snapshot_to_courier[snapshot_id] = courier_id
+
+    relevant_item_keys = ["insurance_fee", "salary_advance", "loyalty_bonus"]
+    snapshot_ids = list(snapshot_to_courier.keys())
+    for index in range(0, len(snapshot_ids), 150):
+        chunk = snapshot_ids[index:index + 150]
+        if not chunk:
+            continue
+        item_rows = optional_supabase_rows_paged(
+            "courier_finance_snapshot_item",
+            schema="settlement",
+            params={
+                "select": "snapshot_id,item_key,amount_value",
+                "snapshot_id": f"in.({','.join(chunk)})",
+                "item_key": f"in.({','.join(relevant_item_keys)})",
+                "order": "snapshot_id.asc,item_key.asc",
+            },
+            timeout=30,
+            page_size=1000,
+            max_rows=50000,
+        )
+        amounts_by_courier: dict[str, dict[str, int]] = {}
+        for item in item_rows:
+            courier_id = snapshot_to_courier.get(str(item.get("snapshot_id") or "").strip())
+            item_key = str(item.get("item_key") or "").strip()
+            if courier_id and item_key:
+                amounts_by_courier.setdefault(courier_id, {})[item_key] = money_int(item.get("amount_value"))
+        for courier_id, amounts in amounts_by_courier.items():
+            insurance_fee = abs(money_int(amounts.get("insurance_fee")))
+            salary_advance = abs(money_int(amounts.get("salary_advance")))
+            loyalty_bonus = money_int(amounts.get("loyalty_bonus"))
+            if insurance_fee > 0:
+                flags_by_courier.setdefault(courier_id, []).append({"label": "Biztosítás", "tone": ""})
+            if salary_advance > 0:
+                flags_by_courier.setdefault(courier_id, []).append({"label": f"Előleg {format_huf(salary_advance)}", "tone": "warn"})
+            if loyalty_bonus > 0:
+                flags_by_courier.setdefault(courier_id, []).append({"label": f"Lojalitás {format_huf(loyalty_bonus)}", "tone": "info"})
+
+    previous_month_key = (month_start - timedelta(days=1)).replace(day=1).isoformat()
+    attention_rows = optional_supabase_rows_paged(
+        "peopleforce_card_statuses",
+        params={
+            "select": "courier_id,action_key,status,status_note,updated_at,document_month",
+            "document_month": f"in.({previous_month_key},{month_key})",
+            "action_key": "eq.settlement_attention",
+            "order": "document_month.desc,updated_at.desc",
+        },
+        timeout=30,
+        page_size=1000,
+        max_rows=50000,
+    )
+    current_attention_by_courier: dict[str, str] = {}
+    previous_attention_by_courier: dict[str, str] = {}
+    clean_id_set = set(clean_ids)
+    for row in attention_rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        if courier_id not in clean_id_set:
+            continue
+        status = str(row.get("status") or "").strip().lower()
+        document_month = str(row.get("document_month") or "")[:10]
+        if document_month == month_key and courier_id not in current_attention_by_courier:
+            current_attention_by_courier[courier_id] = status
+        elif document_month == previous_month_key and courier_id not in previous_attention_by_courier:
+            previous_attention_by_courier[courier_id] = status
+    for courier_id in clean_ids:
+        current_status = current_attention_by_courier.get(courier_id)
+        previous_status = previous_attention_by_courier.get(courier_id)
+        if current_status == "done" or (current_status is None and previous_status == "done"):
+            flags_by_courier.setdefault(courier_id, []).append({"label": "Kiemelt figyelés", "tone": "warn"})
+
+    return {courier_id: merge_dashboard_flags(flags) for courier_id, flags in flags_by_courier.items()}
+
+
 def dashboard_profiles_by_courier(courier_ids: list[str]) -> dict[str, dict[str, Any]]:
     clean_ids = [str(item or "").strip() for item in courier_ids if str(item or "").strip()]
     if not clean_ids:
@@ -17218,9 +17335,15 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
             "sources": sources,
             "updatedAt": str(row.get("updated_at") or ""),
         })
-    profiles_by_courier = dashboard_profiles_by_courier([str(row.get("courierId") or "") for row in dashboard_rows])
+    dashboard_courier_ids = [str(row.get("courierId") or "") for row in dashboard_rows]
+    profiles_by_courier = dashboard_profiles_by_courier(dashboard_courier_ids)
+    monthly_flags_by_courier = dashboard_monthly_flags_by_courier(month_start, dashboard_courier_ids)
     for row in dashboard_rows:
-        row["flags"] = dashboard_flags_from_profile(profiles_by_courier.get(str(row.get("courierId") or ""), {}))
+        courier_id = str(row.get("courierId") or "")
+        row["flags"] = merge_dashboard_flags(
+            dashboard_flags_from_profile(profiles_by_courier.get(courier_id, {})),
+            monthly_flags_by_courier.get(courier_id, []),
+        )
 
     status_counts: dict[str, int] = {}
     for row in dashboard_rows:
@@ -17315,6 +17438,7 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
         candidate["courierName"] = str(summary_row.get("courier_name") or summary_row.get("driver_name") or candidate.get("courierName") or "").strip()
         candidate.setdefault("sources", set()).add("summary")
 
+    monthly_flags_by_courier = dashboard_monthly_flags_by_courier(month_start, list(candidates.keys()))
     rows: list[dict[str, Any]] = []
     clean_query = normalize_text(query)
     for courier_id, candidate in candidates.items():
@@ -17340,7 +17464,10 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
             "totalPayableHuf": total_huf,
             "sources": sorted(candidate.get("sources") or []),
             "updatedAt": updated_at,
-            "flags": dashboard_flags_from_profile(candidate),
+            "flags": merge_dashboard_flags(
+                dashboard_flags_from_profile(candidate),
+                monthly_flags_by_courier.get(courier_id, []),
+            ),
         })
     rows.sort(key=lambda row: (-safe_int((row.get("status") or {}).get("sort")), normalize_person_match_text(row.get("courierName")), str(row.get("courierId") or "")))
     status_counts: dict[str, int] = {}

@@ -5987,6 +5987,10 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
     except Exception:
         statuses = pd.DataFrame()
     try:
+        previous_attention_statuses = read_peopleforce_card_statuses_for_month((month_start - timedelta(days=1)).replace(day=1))
+    except Exception:
+        previous_attention_statuses = pd.DataFrame()
+    try:
         complaints = read_peopleforce_complaints_for_month(month_start)
     except Exception:
         complaints = pd.DataFrame()
@@ -6003,16 +6007,39 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
 
     status_by_courier: dict[str, dict[str, str]] = {}
     attention_notes_by_courier: dict[str, str] = {}
+    attention_statuses = statuses
+    if not previous_attention_statuses.empty:
+        attention_statuses = pd.concat([statuses, previous_attention_statuses], ignore_index=True)
+    if not attention_statuses.empty:
+        current_attention_status_by_courier: dict[str, str] = {}
+        previous_attention_status_by_courier: dict[str, str] = {}
+        previous_attention_note_by_courier: dict[str, str] = {}
+        for item in attention_statuses.sort_values(
+            ["document_month", "updated_at"],
+            ascending=[False, False],
+            na_position="last",
+        ).to_dict("records"):
+            courier_key = _courier_id_key(item.get("courier_id"))
+            action_key = str(item.get("action_key") or "").strip()
+            if not courier_key or action_key != SETTLEMENT_ATTENTION_ACTION_KEY:
+                continue
+            status = str(item.get("status") or "").strip().casefold()
+            status_month = str(item.get("document_month") or "")[:10]
+            note = str(item.get("status_note") or "").strip()
+            if status_month == month_start.isoformat() and courier_key not in current_attention_status_by_courier:
+                current_attention_status_by_courier[courier_key] = status
+                if status == "done":
+                    attention_notes_by_courier.setdefault(courier_key, note)
+            elif status_month != month_start.isoformat() and courier_key not in previous_attention_status_by_courier:
+                previous_attention_status_by_courier[courier_key] = status
+                previous_attention_note_by_courier.setdefault(courier_key, note)
+        for courier_key, previous_status in previous_attention_status_by_courier.items():
+            if courier_key not in current_attention_status_by_courier and previous_status == "done":
+                attention_notes_by_courier.setdefault(courier_key, previous_attention_note_by_courier.get(courier_key, ""))
     if not statuses.empty:
         for item in statuses.sort_values("updated_at", ascending=False, na_position="last").to_dict("records"):
             courier_key = _courier_id_key(item.get("courier_id"))
             action_key = str(item.get("action_key") or "").strip()
-            if (
-                courier_key
-                and action_key == SETTLEMENT_ATTENTION_ACTION_KEY
-                and str(item.get("status") or "").strip().casefold() == "done"
-            ):
-                attention_notes_by_courier.setdefault(courier_key, str(item.get("status_note") or "").strip())
             if process_id_from_action_key(action_key):
                 continue
             if courier_key and action_key:
