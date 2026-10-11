@@ -896,6 +896,116 @@ def settlement_import_bonus_breakdown_items(totals: dict[str, int], summary_bonu
     return items
 
 
+def settlement_import_courier_validation_key(courier_id: Any, courier_name: Any) -> str:
+    clean_id = str(courier_id or "").strip().removesuffix(".0")
+    if clean_id:
+        return f"id:{clean_id}"
+    return f"name:{normalize_text(courier_name)}"
+
+
+def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]], jit_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    excel_by_courier: dict[str, dict[str, Any]] = {}
+    seen_routes: set[tuple[str, str]] = set()
+    for row in jit_rows:
+        row_courier_id = str(row.get("courier_id") or "").strip().removesuffix(".0")
+        row_courier_name = str(row.get("driver_name") or "").strip()
+        parsed_id, parsed_name = settlement_import_courier_identity_from_jit_row(row)
+        courier_id = row_courier_id or parsed_id
+        courier_name = row_courier_name or parsed_name
+        key = settlement_import_courier_validation_key(courier_id, courier_name)
+        if not key or key == "name:":
+            continue
+        aggregate = excel_by_courier.setdefault(key, {
+            "courierId": str(courier_id or "").strip(),
+            "courierName": str(courier_name or "").strip() or "Ismeretlen futár",
+            "normal": 0,
+            "express": 0,
+            "regional": 0,
+            "total": 0,
+            "tipHuf": 0,
+        })
+        if courier_id and not aggregate.get("courierId"):
+            aggregate["courierId"] = str(courier_id)
+        if courier_name and aggregate.get("courierName") == "Ismeretlen futár":
+            aggregate["courierName"] = str(courier_name)
+        if not row.get("is_route_primary"):
+            continue
+        route_key = (key, settlement_import_route_identifier(row))
+        if route_key in seen_routes:
+            continue
+        seen_routes.add(route_key)
+        route_type = settlement_import_route_type_from_row(row)
+        if route_type not in {"normal", "express", "regional"}:
+            route_type = "normal"
+        aggregate[route_type] = int(aggregate.get(route_type) or 0) + 1
+        aggregate["total"] = int(aggregate.get("total") or 0) + 1
+        aggregate["tipHuf"] = money_int(aggregate.get("tipHuf")) + money_int(row.get("courier_tip_huf"))
+
+    summary_by_courier: dict[str, dict[str, Any]] = {}
+    for row in summary_rows:
+        key = settlement_import_courier_validation_key(row.get("courier_id"), row.get("driver_name"))
+        if not key or key == "name:":
+            continue
+        summary_by_courier[key] = {
+            "courierId": str(row.get("courier_id") or "").strip().removesuffix(".0"),
+            "courierName": str(row.get("driver_name") or "").strip() or "Ismeretlen futár",
+            "routeCount": safe_int(row.get("route_count")),
+            "tipHuf": money_int(row.get("tip_huf")),
+        }
+
+    items: list[dict[str, Any]] = []
+    ok_count = 0
+    route_mismatch_count = 0
+    tip_mismatch_count = 0
+    missing_summary_count = 0
+    missing_excel_count = 0
+    for key in sorted(set(excel_by_courier) | set(summary_by_courier)):
+        excel = excel_by_courier.get(key)
+        calculated = summary_by_courier.get(key)
+        status = "ok"
+        issues: list[str] = []
+        if not calculated:
+            status = "error"
+            missing_summary_count += 1
+            issues.append("Nincs DB összesítő sor")
+        if not excel:
+            status = "error"
+            missing_excel_count += 1
+            issues.append("Nincs Excel/JIT sor")
+        if excel and calculated:
+            if safe_int(excel.get("total")) != safe_int(calculated.get("routeCount")):
+                status = "error"
+                route_mismatch_count += 1
+                issues.append("Túraszám eltérés")
+            if money_int(excel.get("tipHuf")) != money_int(calculated.get("tipHuf")):
+                status = "error"
+                tip_mismatch_count += 1
+                issues.append("Borravaló eltérés")
+        if status == "ok":
+            ok_count += 1
+            continue
+        source = calculated or excel or {}
+        items.append({
+            "status": status,
+            "issues": issues,
+            "courierId": source.get("courierId") or "",
+            "courierName": source.get("courierName") or "Ismeretlen futár",
+            "excel": excel or {"normal": 0, "express": 0, "regional": 0, "total": 0, "tipHuf": 0},
+            "calculated": calculated or {"routeCount": 0, "tipHuf": 0},
+        })
+
+    return {
+        "total": len(set(excel_by_courier) | set(summary_by_courier)),
+        "ok": ok_count,
+        "mismatchCount": len(items),
+        "routeMismatchCount": route_mismatch_count,
+        "tipMismatchCount": tip_mismatch_count,
+        "missingSummaryCount": missing_summary_count,
+        "missingExcelCount": missing_excel_count,
+        "items": items[:80],
+    }
+
+
 def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str, Any]:
     summary_rows = (
         supabase
@@ -924,6 +1034,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
     }
     route_type_samples: dict[str, dict[str, int]] = {"BUD1": {}, "BUD2": {}, "Ismeretlen": {}}
     route_count_keys: set[tuple[str, str, str]] = set()
+    reconciliation_rows: list[dict[str, Any]] = []
     offset = 0
     page_size = 1000
     while True:
@@ -931,7 +1042,8 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
             supabase
             .table("jit_row")
             .select(
-                "normalized_data,source_sheet,source_row_no,route_unique_id,is_route_primary,courier_base_rate_huf,"
+                "normalized_data,source_sheet,source_row_no,route_unique_id,is_route_primary,courier_id,driver_name,"
+                "courier_base_rate_huf,courier_tip_huf,"
                 "courier_delay_bonus_huf,courier_compliance_bonus_huf,courier_other_bonus_huf"
             )
             .eq("session_id", session_id)
@@ -942,6 +1054,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         )
         if not page:
             break
+        reconciliation_rows.extend(page)
         for row in page:
             warehouse = settlement_import_warehouse_from_row(row)
             raw_route_type = settlement_import_route_type_raw_from_row(row)
@@ -1002,6 +1115,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         }),
         "summaryRows": len(summary_rows),
         "payableTotalHuf": sum(money_int(row.get("payable_huf")) for row in summary_rows),
+        "courierReconciliation": settlement_import_courier_reconciliation(summary_rows, reconciliation_rows),
         "routeCounts": route_counts,
         "routeTypeSamples": route_type_samples,
         "sampleCourier": {
@@ -20767,6 +20881,15 @@ def admin_publish_settlement_import(
         validation = settlement_import_quality_checks(supabase, clean_session_id)
         if not validation.get("summaryRows"):
             raise HTTPException(status_code=409, detail="Nincs feldolgozott elszámolási összesítés ehhez a sessionhöz.")
+        reconciliation = validation.get("courierReconciliation") or {}
+        if int(reconciliation.get("mismatchCount") or 0):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Az Excel és a DB összesítő nem egyezik minden futárnál. "
+                    "Frissítsd a validációt, nézd meg az eltéréseket, és csak hibamentes importot tölts be PWA-ra."
+                ),
+            )
         published_config = publish_settlement_import_to_pwa(
             supabase,
             month_value,

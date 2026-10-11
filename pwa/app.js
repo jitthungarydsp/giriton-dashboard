@@ -5087,12 +5087,42 @@ function renderSettlementImportValidation(validation = {}) {
   const tig = validation.tigPreview || {};
   const baseRateBreakdown = sample.baseRateBreakdown || [];
   const bonusBreakdown = sample.bonusBreakdown || [];
+  const reconciliation = validation.courierReconciliation || {};
+  const reconciliationItems = reconciliation.items || [];
   return `<div class="settlement-import-validation">
     <div class="settlement-import-result-grid">
       <div><span>Futár összesen</span><strong>${escapeHtml(formatCount(validation.couriersTotal || 0))}</strong></div>
       <div><span>Összesítő sor</span><strong>${escapeHtml(formatCount(validation.summaryRows || 0))}</strong></div>
       <div><span>Kifizetendő összesen</span><strong>${escapeHtml(formatHuf(validation.payableTotalHuf || 0))}</strong></div>
     </div>
+    <article class="settlement-import-reconciliation ${reconciliation.mismatchCount ? "warn" : "ok"}">
+      <div class="settlement-import-header-title">
+        <div>
+          <span>Futár validáció</span>
+          <strong>${reconciliation.mismatchCount ? "Eltérés van az Excel és DB összesítő között" : "Excel és DB összesítő egyezik"}</strong>
+        </div>
+        <small>${escapeHtml(formatCount(reconciliation.ok || 0))} / ${escapeHtml(formatCount(reconciliation.total || 0))} futár rendben</small>
+      </div>
+      <div class="settlement-import-reconciliation-stats">
+        <small>Túraszám eltérés: <b>${escapeHtml(formatCount(reconciliation.routeMismatchCount || 0))}</b></small>
+        <small>Borravaló eltérés: <b>${escapeHtml(formatCount(reconciliation.tipMismatchCount || 0))}</b></small>
+        <small>Hiányzó összesítő: <b>${escapeHtml(formatCount(reconciliation.missingSummaryCount || 0))}</b></small>
+      </div>
+      ${reconciliationItems.length ? `
+        <div class="settlement-import-reconciliation-list">
+          ${reconciliationItems.slice(0, 12).map((item) => {
+            const excel = item.excel || {};
+            const calculated = item.calculated || {};
+            return `<div>
+              <strong>${escapeHtml(item.courierName || "Ismeretlen futár")} ${item.courierId ? `#${escapeHtml(item.courierId)}` : ""}</strong>
+              <small>${escapeHtml((item.issues || []).join(", ") || "Eltérés")}</small>
+              <small>Excel: ${escapeHtml(formatCount(excel.total || 0))} túra (${escapeHtml(formatCount(excel.normal || 0))} normal, ${escapeHtml(formatCount(excel.express || 0))} express, ${escapeHtml(formatCount(excel.regional || 0))} régiós), ${escapeHtml(formatHuf(excel.tipHuf || 0))} borravaló</small>
+              <small>DB: ${escapeHtml(formatCount(calculated.routeCount || 0))} túra, ${escapeHtml(formatHuf(calculated.tipHuf || 0))} borravaló</small>
+            </div>`;
+          }).join("")}
+        </div>
+      ` : ""}
+    </article>
     <div class="settlement-import-route-checks">
       ${warehouses.map((warehouse) => {
         const counts = routeCounts[warehouse] || {};
@@ -5166,6 +5196,8 @@ function renderSettlementImportConfig() {
   const step = state.settlementImportStep || 1;
   const result = state.settlementImportResult;
   const canFinish = Boolean(result?.ok);
+  const importMismatchCount = Number(result?.validation?.courierReconciliation?.mismatchCount || 0);
+  const canPublish = canFinish && importMismatchCount === 0;
   target.innerHTML = `
     ${renderSettlementImportSteps()}
     <div class="settlement-import-panel">
@@ -5222,7 +5254,7 @@ function renderSettlementImportConfig() {
             ? `<button class="primary" type="button" data-settlement-import-action="finish">Befejezés</button>`
             : `<button class="secondary danger" type="button" data-settlement-import-action="delete" ${canFinish ? "" : "disabled"}>Import törlése</button>
               <button class="secondary" type="button" data-settlement-import-action="refresh-validation" ${canFinish ? "" : "disabled"}>Validáció frissítése</button>
-              <button class="primary" type="button" data-settlement-import-action="publish" ${canFinish ? "" : "disabled"}>Betöltés PWA-ra</button>`}
+              <button class="primary" type="button" data-settlement-import-action="publish" ${canPublish ? "" : "disabled"}>Betöltés PWA-ra</button>`}
         </div>
       ` : ""}
     </div>

@@ -494,6 +494,15 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-import-published small { color: #eaf8e4; font-size: 12px; font-weight: 800; line-height: 1.35; overflow-wrap: anywhere; }
 .settlement-import-actions .danger { border-color: #e2aaa5; color: var(--danger); }
 .settlement-import-validation { display: grid; gap: 10px; }
+.settlement-import-reconciliation { display: grid; gap: 10px; padding: 14px; border: 1px solid #cfe2ca; border-radius: 18px; background: #eff8ed; }
+.settlement-import-reconciliation.warn { border-color: #ead9aa; background: #fffaf0; }
+.settlement-import-reconciliation-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.settlement-import-reconciliation-stats small { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 12px; background: #fff; color: var(--muted); font-size: 12px; font-weight: 850; }
+.settlement-import-reconciliation-stats b { color: var(--ink); white-space: nowrap; }
+.settlement-import-reconciliation-list { display: grid; gap: 6px; max-height: 260px; overflow: auto; }
+.settlement-import-reconciliation-list div { display: grid; gap: 3px; padding: 10px; border: 1px solid #ead9aa; border-radius: 12px; background: #fff; }
+.settlement-import-reconciliation-list strong { font-size: 13px; overflow-wrap: anywhere; }
+.settlement-import-reconciliation-list small { color: var(--muted); font-size: 11px; font-weight: 800; line-height: 1.35; overflow-wrap: anywhere; }
 .settlement-import-route-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .settlement-import-route-checks article, .settlement-import-sample-card, .settlement-import-tig-card { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fbfcfa; }
 .settlement-import-route-checks span, .settlement-import-sample-card span, .settlement-import-tig-card span { color: var(--green-dark); font-size: 11px; font-weight: 950; text-transform: uppercase; }
@@ -995,7 +1004,7 @@ textarea { min-height: 96px; resize: vertical; }
   .settlement-import-actions { display: grid; }
   .settlement-import-header-title { display: grid; }
   .settlement-import-header-title small { text-align: left; }
-  .settlement-import-route-checks, .settlement-import-sample-grid { grid-template-columns: 1fr; }
+  .settlement-import-route-checks, .settlement-import-sample-grid, .settlement-import-reconciliation-stats { grid-template-columns: 1fr; }
   .tig-row { grid-template-columns: minmax(0, 1fr) 1fr; }
   .tig-party-grid { grid-template-columns: 1fr; }
   .tig-row.head { display: none; }

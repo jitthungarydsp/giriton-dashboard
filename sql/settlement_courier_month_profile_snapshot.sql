@@ -28,7 +28,11 @@ create table if not exists settlement.courier_monthly_workload_summary (
     advance_booked_shift_count integer not null default 0,
     giriton_shift_count integer not null default 0,
     completed_route_count integer not null default 0,
+    normal_route_count integer not null default 0,
+    express_route_count integer not null default 0,
+    regional_route_count integer not null default 0,
     order_count numeric not null default 0,
+    tip_huf numeric not null default 0,
     muszakpro_source text,
     route_source text,
     updated_at timestamptz not null default now(),
@@ -50,7 +54,11 @@ alter table settlement.courier_monthly_workload_summary
     add column if not exists advance_booked_shift_count integer not null default 0,
     add column if not exists giriton_shift_count integer not null default 0,
     add column if not exists completed_route_count integer not null default 0,
+    add column if not exists normal_route_count integer not null default 0,
+    add column if not exists express_route_count integer not null default 0,
+    add column if not exists regional_route_count integer not null default 0,
     add column if not exists order_count numeric not null default 0,
+    add column if not exists tip_huf numeric not null default 0,
     add column if not exists muszakpro_source text,
     add column if not exists route_source text;
 
@@ -76,7 +84,11 @@ select
     coalesce(workload.advance_booked_shift_count, 0) as advance_booked_shift_count,
     coalesce(workload.giriton_shift_count, 0) as giriton_shift_count,
     coalesce(workload.completed_route_count, summary.route_count, 0) as completed_route_count,
+    coalesce(workload.normal_route_count, summary.route_count, 0) as normal_route_count,
+    coalesce(workload.express_route_count, 0) as express_route_count,
+    coalesce(workload.regional_route_count, 0) as regional_route_count,
     coalesce(workload.order_count, summary.order_count, 0) as workload_order_count,
+    coalesce(workload.tip_huf, summary.tip_huf, 0) as workload_tip_huf,
     coalesce(summary.company_base_rate_huf, 0) + coalesce(quality.company_quality_bonus_total_huf, 0) as contractor_total_huf
 from settlement.courier_settlement_summary summary
 left join public.dsp_courier_quality_monthly quality

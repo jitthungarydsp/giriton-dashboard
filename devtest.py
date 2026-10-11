@@ -2547,17 +2547,18 @@ def _performance_rule_label(value: object) -> str:
 
 def _performance_key_from_label(value: object, kind: str) -> str:
     text = str(value or "").strip().casefold()
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     if kind == "day":
         if "kiemelt" in text or "highlight" in text:
             return "highlighted"
         if "norm" in text:
             return "normal"
         return "any"
-    if "express" in text:
+    if "express" in ascii_text:
         return "express"
-    if "region" in text:
+    if "region" in ascii_text or "regio" in ascii_text:
         return "regional"
-    if "norm" in text or "city" in text:
+    if "norm" in ascii_text or "city" in ascii_text:
         return "normal"
     return "any"
 
@@ -5252,7 +5253,11 @@ def save_monthly_workload_summary(
     advance_booked_shift_count: int,
     giriton_shift_count: int,
     completed_route_count: int,
+    normal_route_count: int,
+    express_route_count: int,
+    regional_route_count: int,
     order_count: int,
+    tip_huf: float,
     muszakpro_source: str,
     route_source: str,
 ) -> None:
@@ -5267,7 +5272,11 @@ def save_monthly_workload_summary(
                 "advance_booked_shift_count": max(int(advance_booked_shift_count or 0), 0),
                 "giriton_shift_count": max(int(giriton_shift_count or 0), 0),
                 "completed_route_count": max(int(completed_route_count or 0), 0),
+                "normal_route_count": max(int(normal_route_count or 0), 0),
+                "express_route_count": max(int(express_route_count or 0), 0),
+                "regional_route_count": max(int(regional_route_count or 0), 0),
                 "order_count": max(int(order_count or 0), 0),
+                "tip_huf": float(tip_huf or 0),
                 "muszakpro_source": str(muszakpro_source or ""),
                 "route_source": str(route_source or ""),
                 "updated_by": str(st.session_state.get("user", {}).get("username") or "unknown"),
@@ -15822,18 +15831,48 @@ def render_courier_detail_page() -> None:
         normal_route_total = int(route_day_type.str.contains("norm", na=False).sum())
         express_highlighted_total = int((route_type.str.contains("express", na=False) & route_day_type.str.contains("kiemelt", na=False)).sum())
         express_normal_total = int((route_type.str.contains("express", na=False) & route_day_type.str.contains("norm", na=False)).sum())
+        route_type_keys = route_detail.get("Túratípus", pd.Series(dtype=str)).map(lambda value: _performance_key_from_label(value, "route"))
+        normal_type_route_total = int((route_type_keys == "normal").sum())
+        express_type_route_total = int((route_type_keys == "express").sum())
+        regional_type_route_total = int((route_type_keys == "regional").sum())
+        unknown_type_route_total = int((route_type_keys == "any").sum())
+        normal_type_route_total += max(route_total - normal_type_route_total - express_type_route_total - regional_type_route_total - unknown_type_route_total, 0)
+        if route_total and unknown_type_route_total and normal_type_route_total + express_type_route_total + regional_type_route_total < route_total:
+            normal_type_route_total += route_total - normal_type_route_total - express_type_route_total - regional_type_route_total
     else:
         highlighted_route_total = int(parse_huf_value(summary_row.get("highlighted_routes")))
         normal_route_total = int(parse_huf_value(summary_row.get("normal_routes")))
         express_highlighted_total = int(parse_huf_value(summary_row.get("express_highlighted_routes")))
         express_normal_total = int(parse_huf_value(summary_row.get("express_normal_routes")))
+        normal_type_route_total = int(parse_huf_value(summary_row.get("normal_route_count") or summary_row.get("normal_routes")))
+        express_type_route_total = int(
+            parse_huf_value(summary_row.get("express_route_count"))
+            or parse_huf_value(summary_row.get("express_routes"))
+            or (parse_huf_value(summary_row.get("express_normal_routes")) + parse_huf_value(summary_row.get("express_highlighted_routes")))
+        )
+        regional_type_route_total = int(parse_huf_value(summary_row.get("regional_route_count") or summary_row.get("regional_routes") or summary_row.get("region_routes")))
     if summary_available:
         highlighted_route_total = max(highlighted_route_total, int(parse_huf_value(summary_row.get("highlighted_routes"))))
         normal_route_total = max(normal_route_total, int(parse_huf_value(summary_row.get("normal_routes"))))
         express_highlighted_total = max(express_highlighted_total, int(parse_huf_value(summary_row.get("express_highlighted_routes"))))
         express_normal_total = max(express_normal_total, int(parse_huf_value(summary_row.get("express_normal_routes"))))
+        normal_type_route_total = max(normal_type_route_total, int(parse_huf_value(summary_row.get("normal_route_count") or summary_row.get("normal_routes"))))
+        express_type_route_total = max(
+            express_type_route_total,
+            int(
+                parse_huf_value(summary_row.get("express_route_count"))
+                or parse_huf_value(summary_row.get("express_routes"))
+                or (parse_huf_value(summary_row.get("express_normal_routes")) + parse_huf_value(summary_row.get("express_highlighted_routes")))
+            ),
+        )
+        regional_type_route_total = max(
+            regional_type_route_total,
+            int(parse_huf_value(summary_row.get("regional_route_count") or summary_row.get("regional_routes") or summary_row.get("region_routes"))),
+        )
     if route_total > 0 and highlighted_route_total + normal_route_total == 0:
         normal_route_total = route_total
+    if route_total > 0 and normal_type_route_total + express_type_route_total + regional_type_route_total == 0:
+        normal_type_route_total = route_total
     data_source_label = "DB összesítő" if summary_available else "Főoldali adat"
     insurance_label = "Aktív" if reserve_status.get("insurance_active") else "Nincs"
     vat_status_label = str(profile.get("vat_status") or "Nincs megadva")
@@ -16438,7 +16477,11 @@ def render_courier_detail_page() -> None:
             advance_booked_shift_count=advance_booked_shift_count,
             giriton_shift_count=giriton_shift_count,
             completed_route_count=route_total,
+            normal_route_count=normal_type_route_total,
+            express_route_count=express_type_route_total,
+            regional_route_count=regional_type_route_total,
             order_count=order_total,
+            tip_huf=tip_total,
             muszakpro_source=str(booking_summary.get("source") or ""),
             route_source="courier_settlement_summary" if summary_available else "route_detail",
         )
