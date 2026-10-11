@@ -82,7 +82,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v185";
+const APP_VERSION = "v186";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4274,6 +4274,7 @@ function renderTigBreakdown() {
   const rows = (tig.rows || []).filter((row) => row.key !== "cash_deduction" && row.key !== "tig_cash_deduction");
   const transferRows = rows.filter((row) => row.key !== "cash_service");
   const cashRows = rows.filter((row) => row.key === "cash_service");
+  const cashTotalHuf = cashRows.reduce((sum, row) => sum + Number(row.grossHuf || 0), 0);
   const tigRowNote = (row) => [
     row.note || "",
     row.performanceDate ? `Teljesítés: ${row.performanceDate}` : "",
@@ -4326,7 +4327,8 @@ function renderTigBreakdown() {
       <section class="tig-cash-invoice">
         <div class="tig-cash-heading">
           <span>Külön KP számla szükséges</span>
-          <strong>Készpénzes teljesítés</strong>
+          <strong>${tigValue(cashTotalHuf)}</strong>
+          <em>Készpénzes teljesítés</em>
           <small>A KP tételt külön számlán kell kiállítani. Aznapi teljesítés, aznapi kifizetés, TAM.</small>
         </div>
         <div class="tig-party-grid">${cashBuyerBlock}${cashSellerBlock}</div>

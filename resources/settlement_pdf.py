@@ -728,9 +728,16 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
     story.append(Spacer(1, 5 * mm))
 
     if cash_breakdown_rows:
+        cash_total = sum(_int_money(row.get("grossHuf")) for row in cash_breakdown_rows)
         story.append(_table(
             [[
-                rich("<b>KÜLÖN KP SZÁMLA SZÜKSÉGES</b><br/><b>Készpénzes teljesítés</b><br/>A KP tételt külön számlán kell kiállítani. Aznapi teljesítés, aznapi kifizetés, TAM.", "tig_body"),
+                rich(
+                    f"<b>KÜLÖN KP SZÁMLA SZÜKSÉGES</b><br/>"
+                    f"<font size='18'><b>{escape(_money(cash_total))}</b></font><br/>"
+                    "<b>Készpénzes teljesítés</b><br/>"
+                    "A KP tételt külön számlán kell kiállítani. Aznapi teljesítés, aznapi kifizetés, TAM.",
+                    "tig_body",
+                ),
             ]],
             [162 * mm],
             [
