@@ -9983,6 +9983,7 @@ def build_financial_breakdown_from_mobile_rows(
         "jitt_bonus_",
         "jitt_malus_",
         "correction_periodic_",
+        "admin_",
     )
     has_financial_detail_rows = any(key in overrides for key in financial_detail_keys) or any(
         key.startswith(financial_detail_prefixes) for key in overrides
@@ -10055,6 +10056,9 @@ def build_financial_breakdown_from_mobile_rows(
             result.append(current)
         return result
 
+    def admin_detail_items(card_key: str) -> list[dict[str, Any]]:
+        return detail_items((f"admin_{card_key}_",), [])
+
     def normalize_base_detail_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         label_map = {
             "sima normal": "Normál city",
@@ -10074,11 +10078,15 @@ def build_financial_breakdown_from_mobile_rows(
         return normalized_items
 
     base_items = normalize_base_detail_items(detail_items(("base_detail_",), []))
+    base_items.extend(admin_detail_items("base"))
     if not base_items:
         base_items = money_items(["base"])
     delay_items = money_items(["delay_bonus"])
+    delay_items.extend(admin_detail_items("delay_bonus"))
     compliance_items = money_items(["compliance_bonus"])
+    compliance_items.extend(admin_detail_items("compliance_bonus"))
     customer_rating_items = detail_items(("customer_rating_",), ["customer_rating"])
+    customer_rating_items.extend(admin_detail_items("customer_rating"))
     income_items = money_items([
         "base",
         "tip",
@@ -10121,6 +10129,7 @@ def build_financial_breakdown_from_mobile_rows(
         exclude_keys={"kiflis_bonus_malus", "kiflis_bonus_total", "kiflis_malus_total"},
     )
     kiflis_items = kiflis_detail_items or detail_items((), ["kiflis_bonus_total", "kiflis_malus_total", "monthly_bonus", "monthly_malus"])
+    kiflis_items.extend(admin_detail_items("kiflis_bonus_malus"))
     jitt_detail_items = detail_items(("jitt_bonus_", "jitt_malus_"), [])
     jitt_items = list(jitt_detail_items)
     for current in jitt_items:
@@ -10140,9 +10149,12 @@ def build_financial_breakdown_from_mobile_rows(
             jitt_items.append(fallback_item)
     if not jitt_items:
         jitt_items = detail_items((), ["manual_bonus", "manual_malus"])
+    jitt_items.extend(admin_detail_items("bonus_malus"))
     correction_items = detail_items(("correction_periodic_",), [])
+    correction_items.extend(admin_detail_items("corrections"))
     correction_total = sum(money_int(current.get("amountHuf")) for current in correction_items)
     tip_items = money_items(["tip"])
+    tip_items.extend(admin_detail_items("tip"))
     tip_total = override_amount_or("tip", sum(money_int(current.get("amountHuf")) for current in tip_items))
     performance_items = [
         current for current in (
@@ -10163,9 +10175,21 @@ def build_financial_breakdown_from_mobile_rows(
     delay_total = override_amount_or("delay_bonus", sum(money_int(current.get("amountHuf")) for current in delay_items))
     compliance_total = override_amount_or("compliance_bonus", sum(money_int(current.get("amountHuf")) for current in compliance_items))
     address_bonus_kifli_total = mobile_override_amount(overrides, "address_bonus_kifli")
+    address_bonus_kifli_items = money_items(["address_bonus_kifli"])
+    address_bonus_kifli_items.extend(admin_detail_items("address_bonus_kifli"))
+    if "address_bonus_kifli" not in overrides:
+        address_bonus_kifli_total = sum(money_int(current.get("amountHuf")) for current in address_bonus_kifli_items)
     customer_rating_total = override_amount_or("customer_rating", sum(money_int(current.get("amountHuf")) for current in customer_rating_items))
     loyalty_total = mobile_override_amount(overrides, "loyalty_bonus")
+    loyalty_items = money_items(["loyalty_bonus"])
+    loyalty_items.extend(admin_detail_items("loyalty_bonus"))
+    if "loyalty_bonus" not in overrides:
+        loyalty_total = sum(money_int(current.get("amountHuf")) for current in loyalty_items)
     atm_total = mobile_override_amount(overrides, "atm_effect")
+    atm_items = money_items(["atm_effect"])
+    atm_items.extend(admin_detail_items("atm_effect"))
+    if "atm_effect" not in overrides:
+        atm_total = sum(money_int(current.get("amountHuf")) for current in atm_items)
     salary_advance_total = mobile_override_amount(overrides, "salary_advance")
     other_deduction_total = mobile_override_amount(overrides, "other_deduction")
 
@@ -10212,13 +10236,13 @@ def build_financial_breakdown_from_mobile_rows(
         {"key": "tip", "label": "Borraval\u00f3", "amountHuf": tip_total, "tone": "income", "items": tip_items},
         {"key": "delay_bonus", "label": "K\u00e9sedelmi d\u00edj", "amountHuf": delay_total, "tone": "income", "items": delay_items},
         {"key": "compliance_bonus", "label": "T\u00faramegfelel\u00e9s", "amountHuf": compliance_total, "tone": "income", "items": compliance_items},
-        {"key": "address_bonus_kifli", "label": "C\u00edm b\u00f3nusz (Kifli)", "amountHuf": address_bonus_kifli_total, "tone": "income", "items": money_items(["address_bonus_kifli"])},
+        {"key": "address_bonus_kifli", "label": "C\u00edm b\u00f3nusz (Kifli)", "amountHuf": address_bonus_kifli_total, "tone": "income", "items": address_bonus_kifli_items},
         {"key": "deductions", "label": "Levon\u00e1sok \u00f6sszesen", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
-        {"key": "loyalty_bonus", "label": "Lojalit\u00e1si b\u00f3nusz", "amountHuf": loyalty_total, "tone": "income", "items": money_items(["loyalty_bonus"])},
+        {"key": "loyalty_bonus", "label": "Lojalit\u00e1si b\u00f3nusz", "amountHuf": loyalty_total, "tone": "income", "items": loyalty_items},
         {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": customer_rating_total, "tone": "income", "items": customer_rating_items},
         {"key": "kiflis_bonus_malus", "label": "Kiflis levon\u00e1sok / b\u00f3nuszok", "amountHuf": kiflis_total, "tone": "info", "items": kiflis_items},
         {"key": "bonus_malus", "label": "JITT b\u00f3nusz / malus", "amountHuf": jitt_total, "tone": "info", "items": jitt_items},
-        {"key": "atm_effect", "label": "ATM levon\u00e1s", "amountHuf": atm_total, "tone": "deduction", "items": money_items(["atm_effect"])},
+        {"key": "atm_effect", "label": "ATM levon\u00e1s", "amountHuf": atm_total, "tone": "deduction", "items": atm_items},
         {"key": "insurance", "label": "Biztos\u00edt\u00e1s", "amountHuf": insurance_total, "tone": "deduction", "items": insurance_items},
         {"key": "corrections", "label": "Korrekci\u00f3k", "amountHuf": correction_total, "tone": "info", "items": correction_items},
         {"key": "performance", "label": "Teljes\u00edtm\u00e9ny", "amountHuf": mobile_override_amount(overrides, "performance"), "amountKind": "count", "tone": "info", "items": performance_items},
@@ -11394,7 +11418,9 @@ def build_financial_breakdown(
         )
         if snapshot else None
     )
-    if snapshot_breakdown:
+    overrides = read_mobile_breakdown_overrides(courier_id, month)
+    has_manual_overrides = any(is_manual_mobile_override(row) for row in overrides.values())
+    if snapshot_breakdown and (snapshot_only or not has_manual_overrides):
         return snapshot_breakdown
     if snapshot_only:
         return {
@@ -11409,7 +11435,6 @@ def build_financial_breakdown(
         }
     quality_notes = financial_quality_card_notes(courier_id, month)
     row = read_courier_settlement_summary_row(courier_id, month, allow_unpublished=allow_unpublished)
-    overrides = read_mobile_breakdown_overrides(courier_id, month)
     overrides = enrich_mobile_overrides_from_financial_sources(user, month, row or {}, overrides)
     mobile_breakdown = build_financial_breakdown_from_mobile_rows(user, month, row or {}, overrides)
     if mobile_breakdown:

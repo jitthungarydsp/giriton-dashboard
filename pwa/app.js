@@ -82,7 +82,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v186";
+const APP_VERSION = "v187";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
