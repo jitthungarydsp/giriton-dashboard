@@ -72,13 +72,17 @@ const state = {
   settlementDashboardMonth: previousLocalMonth(),
   settlementDashboardQuery: "",
   settlementDashboardStatusFilter: "",
+  settlementDashboardExpandedCourierId: "",
+  settlementDashboardExpandedTab: "settlement",
+  settlementDashboardDetail: null,
   settlementDashboardSearchTimer: null,
+  financialEditCardKey: "",
   settlementImportStep: 1,
   settlementImportMonth: previousLocalMonth(),
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v184";
+const APP_VERSION = "v185";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -3780,6 +3784,28 @@ function documentList(documents) {
     </div>`).join("")}</div>`;
 }
 
+function documentPreviewList(documents, courierId = "") {
+  if (!documents.length) return documentList(documents);
+  return `<div class="document-preview-list">
+    ${documents.map((document) => {
+      const baseUrl = document.downloadUrl || "#";
+      const url = courierId
+        ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}courier=${encodeURIComponent(courierId)}`
+        : withPreviewCourier(baseUrl);
+      const mime = String(document.mime_type || document.mimeType || "").toLowerCase();
+      const fileName = String(document.file_name || document.fileName || "");
+      const canPreview = mime.includes("pdf") || /\.(pdf)$/i.test(fileName) || mime.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(fileName);
+      return `<article class="document-preview-card">
+        <div class="document-row">
+          <div><strong>${escapeHtml(document.title || fileName)}</strong><small>${escapeHtml(fileName)} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt</small></div>
+          <a class="download-link" href="${escapeHtml(url)}">Letöltés</a>
+        </div>
+        ${canPreview ? `<iframe title="${escapeHtml(document.title || fileName)}" src="${escapeHtml(url)}"></iframe>` : `<div class="empty-card">Ehhez a fájltípushoz nincs beágyazott előnézet.</div>`}
+      </article>`;
+    }).join("")}
+  </div>`;
+}
+
 function documentArchiveQuery() {
   const params = new URLSearchParams();
   if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
@@ -3965,8 +3991,9 @@ function formatFinancialValue(item) {
 }
 
 function financialDetailRows(items = []) {
-  if (!items.length) return `<div class="empty-card">Nincs bontott adat ehhez a kártyához.</div>`;
-  return `<div class="financial-detail-list">${items.map((item) => `
+  const visibleItems = (items || []).filter((item) => !item.hidden);
+  if (!visibleItems.length) return `<div class="empty-card">Nincs bontott adat ehhez a kártyához.</div>`;
+  return `<div class="financial-detail-list">${visibleItems.map((item) => `
     <div class="financial-detail-row">
       <div class="financial-detail-text">
         <strong>${escapeHtml(item.label)}</strong>
@@ -3975,6 +4002,62 @@ function financialDetailRows(items = []) {
       <span>${formatFinancialValue(item)}</span>
     </div>
   `).join("")}</div>`;
+}
+
+function canEditFinancialCards() {
+  return Boolean(state.user?.canViewSettlementDashboard && state.workflowPreviewCourierId && state.workflow?.financialBreakdown?.available);
+}
+
+function financialCardItemsForEdit(card = {}) {
+  const items = (card.items || []).filter((item) => !item.hidden);
+  if (items.length) return items;
+  return [{
+    key: `${card.key || "card"}_total`,
+    label: card.label || "Összesen",
+    amountHuf: Number(card.amountHuf || 0),
+    amountKind: card.amountKind || "huf",
+    note: card.note || "",
+  }];
+}
+
+function renderFinancialCardActions(card, editing) {
+  if (!canEditFinancialCards()) return "";
+  if (card?.amountKind === "count") return "";
+  return `<div class="financial-card-actions">
+    ${editing
+      ? `<button class="icon-button financial-save" type="button" title="Mentés" data-financial-save-card="${escapeHtml(card.key || "")}">✓</button>`
+      : `<button class="icon-button financial-edit" type="button" title="Kártya szerkesztése" data-financial-edit-card="${escapeHtml(card.key || "")}">✎</button>`}
+  </div>`;
+}
+
+function financialEditableRows(card = {}) {
+  const items = financialCardItemsForEdit(card);
+  return `<div class="financial-editor" data-financial-card-editor="${escapeHtml(card.key || "")}">
+    <div class="financial-editor-head">
+      <strong>Szerkeszthető tételek</strong>
+      <button class="secondary" type="button" data-financial-add-item="${escapeHtml(card.key || "")}">+ Tétel</button>
+    </div>
+    <div class="financial-editor-rows">
+      ${items.map((item, index) => `
+        <div class="financial-editor-row" data-financial-edit-row>
+          <input data-field="key" type="hidden" value="${escapeHtml(item.key || "")}" />
+          <label>Tétel
+            <input data-field="label" value="${escapeHtml(item.label || "")}" />
+          </label>
+          <label>Összeg
+            <input data-field="amountHuf" type="number" step="1" value="${Number(item.amountHuf || 0)}" />
+          </label>
+          <label>Megjegyzés
+            <input data-field="note" value="${escapeHtml(item.note || "")}" />
+          </label>
+          <input data-field="amountKind" type="hidden" value="${escapeHtml(item.amountKind || "huf")}" />
+          <input data-field="deleted" type="hidden" value="false" />
+          <button class="icon-button danger" type="button" title="Tétel törlése" data-financial-delete-row="${index}">×</button>
+        </div>
+      `).join("")}
+    </div>
+    <div class="financial-editor-note">A mentés a PWA és a devtest.py által is használt havi override táblába kerül.</div>
+  </div>`;
 }
 
 function financialComplaintOptions(options = []) {
@@ -4033,18 +4116,25 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
       <small>${escapeHtml(breakdown.month || state.workflowMonth)}</small>
     </section>
     <div class="financial-card-grid">
-      ${displayCards.map((card) => `
-        <details class="financial-card ${escapeHtml(card.tone || "")} financial-card-${escapeHtml(card.key || "item")}" ${["base", "tip", "compliance_bonus", "bonus_malus", "atm_effect"].includes(card.key) ? "open" : ""}>
+      ${displayCards.map((card) => {
+        const editing = state.financialEditCardKey === String(card.key || "");
+        return `
+        <details class="financial-card ${editing ? "editing" : ""} ${escapeHtml(card.tone || "")} financial-card-${escapeHtml(card.key || "item")}" ${editing || ["base", "tip", "compliance_bonus", "bonus_malus", "atm_effect"].includes(card.key) ? "open" : ""}>
           <summary>
             <div class="financial-card-title">
               <span>${escapeHtml(card.label)}</span>
               ${card.note ? `<small>${escapeHtml(card.note)}</small>` : ""}
+              ${card.overrideNote ? `<small>${escapeHtml(card.overrideNote)}</small>` : ""}
             </div>
-            <strong>${formatFinancialValue(card)}</strong>
+            <div class="financial-card-summary-side">
+              <strong>${formatFinancialValue(card)}</strong>
+              ${renderFinancialCardActions(card, editing)}
+            </div>
           </summary>
-          ${financialDetailRows(card.items || [])}
+          ${editing ? financialEditableRows(card) : financialDetailRows(card.items || [])}
         </details>
-      `).join("")}
+      `;
+      }).join("")}
     </div>
     <div class="accept-row">
       ${accepted
@@ -4073,6 +4163,69 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
           </form>`}
     </div>
   `;
+}
+
+function financialEditorPayload(cardKey) {
+  const editor = document.querySelector(`[data-financial-card-editor="${CSS.escape(cardKey)}"]`);
+  if (!editor) return [];
+  return [...editor.querySelectorAll("[data-financial-edit-row]")].map((row) => ({
+    key: row.querySelector('[data-field="key"]')?.value || "",
+    label: row.querySelector('[data-field="label"]')?.value || "",
+    amountHuf: Number(row.querySelector('[data-field="amountHuf"]')?.value || 0),
+    amountKind: row.querySelector('[data-field="amountKind"]')?.value || "huf",
+    note: row.querySelector('[data-field="note"]')?.value || "",
+    deleted: row.querySelector('[data-field="deleted"]')?.value === "true",
+  })).filter((item) => item.label.trim());
+}
+
+async function saveFinancialCardOverride(cardKey) {
+  const breakdown = state.workflow?.financialBreakdown || {};
+  const card = (breakdown.cards || []).find((item) => String(item.key || "") === String(cardKey || ""));
+  if (!card || !canEditFinancialCards()) return;
+  try {
+    const payload = await api("/api/admin/settlement-card-overrides", {
+      method: "POST",
+      body: JSON.stringify({
+        month: breakdown.month || state.workflowMonth,
+        courierId: state.workflowPreviewCourierId,
+        cardKey: card.key || cardKey,
+        cardLabel: card.label || "",
+        items: financialEditorPayload(String(card.key || cardKey)),
+      }),
+      loadingMessage: "Kártya mentése...",
+    });
+    state.financialEditCardKey = "";
+    await loadWorkflow({ background: true });
+    showWorkflowMessage(`Kártya mentve: ${escapeHtml(formatHuf(payload.totalHuf || 0))}.`);
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
+
+function addFinancialEditorRow(cardKey) {
+  const editor = document.querySelector(`[data-financial-card-editor="${CSS.escape(cardKey)}"] .financial-editor-rows`);
+  if (!editor) return;
+  const key = `draft_${Date.now()}`;
+  const row = document.createElement("div");
+  row.className = "financial-editor-row";
+  row.dataset.financialEditRow = "";
+  row.innerHTML = `
+    <input data-field="key" type="hidden" value="${escapeHtml(key)}" />
+    <label>Tétel
+      <input data-field="label" value="" placeholder="Új tétel neve" />
+    </label>
+    <label>Összeg
+      <input data-field="amountHuf" type="number" step="1" value="0" />
+    </label>
+    <label>Megjegyzés
+      <input data-field="note" value="Admin által hozzáadva" />
+    </label>
+    <input data-field="amountKind" type="hidden" value="huf" />
+    <input data-field="deleted" type="hidden" value="false" />
+    <button class="icon-button danger" type="button" title="Tétel törlése" data-financial-delete-row>×</button>
+  `;
+  editor.appendChild(row);
+  row.querySelector('[data-field="label"]')?.focus();
 }
 
 function renderLegacySettlementDocumentPanel(documents, complaints, accepted, locked, blocksAcceptance, readOnly) {
@@ -4529,6 +4682,112 @@ function renderSettlementDashboardFlags(flags = []) {
   </div>`;
 }
 
+function settlementDashboardDetailTabs() {
+  const tabs = [
+    ["settlement", "Elszámolás"],
+    ["complaints", "Reklamáció"],
+    ["payment", "Kifizetés"],
+    ["documents", "Dokumentumok"],
+  ];
+  return `<div class="settlement-dashboard-tabs">
+    ${tabs.map(([key, label]) => `<button class="${state.settlementDashboardExpandedTab === key ? "active" : ""}" type="button" data-settlement-dashboard-tab="${key}">${label}</button>`).join("")}
+  </div>`;
+}
+
+function settlementDashboardBreakdownPreview(workflow = {}) {
+  const breakdown = workflow.financialBreakdown || {};
+  if (!breakdown.available) return `<div class="empty-card">${escapeHtml(breakdown.message || "Nincs elszámolási bontás.")}</div>`;
+  const cards = (breakdown.cards || []).filter((card) => {
+    const key = String(card.key || "");
+    const label = String(card.label || "").trim().toLowerCase();
+    return !["payable", "deductions"].includes(key) && label !== "teljes összeg";
+  });
+  return `<div class="settlement-dashboard-mini-breakdown">
+    <div class="settlement-dashboard-mini-total">
+      <span>Kifizetendő</span>
+      <strong>${escapeHtml(formatHuf(breakdown.totalPayableHuf || 0))}</strong>
+    </div>
+    ${cards.slice(0, 10).map((card) => `
+      <details class="settlement-dashboard-mini-card">
+        <summary><span>${escapeHtml(card.label || "")}</span><strong>${formatFinancialValue(card)}</strong></summary>
+        ${financialDetailRows(card.items || [])}
+      </details>
+    `).join("")}
+    <button class="secondary" type="button" data-settlement-dashboard-open-preview>Teljes admin előnézet megnyitása</button>
+  </div>`;
+}
+
+function settlementDashboardComplaintManager(complaints = []) {
+  if (!complaints.length) return `<div class="empty-card">Nincs reklamáció ehhez a futárhoz.</div>`;
+  return `<div class="settlement-dashboard-complaints">
+    ${complaints.map((complaint) => `
+      <article class="settlement-dashboard-complaint" data-dashboard-complaint-id="${escapeHtml(complaint.id || "")}">
+        <div>
+          <strong>${escapeHtml(complaint.message || "Reklamáció")}</strong>
+          <small>${escapeHtml(complaint.document_type || complaint.documentType || "")} · ${escapeHtml(complaint.status || "new")} · ${complaint.created_at ? escapeHtml(new Date(complaint.created_at).toLocaleString("hu-HU")) : ""}</small>
+        </div>
+        <label>Státusz
+          <select data-complaint-field="status">
+            ${["new", "open", "in_progress", "resolved", "closed"].map((status) => `<option value="${status}" ${String(complaint.status || "") === status ? "selected" : ""}>${status}</option>`).join("")}
+          </select>
+        </label>
+        <label>Admin válasz
+          <textarea data-complaint-field="response" placeholder="Mit válaszolunk a futárnak?">${escapeHtml(complaint.admin_response || "")}</textarea>
+        </label>
+        <button class="primary" type="button" data-save-dashboard-complaint="${escapeHtml(complaint.id || "")}">Válasz mentése</button>
+      </article>
+    `).join("")}
+  </div>`;
+}
+
+function renderSettlementDashboardExpanded(row) {
+  const detail = state.settlementDashboardDetail || {};
+  const workflow = detail.workflow || {};
+  const currentTab = state.settlementDashboardExpandedTab || "settlement";
+  const documents = [
+    ...(workflow.documents?.settlement || []),
+    ...(workflow.documents?.tig || []),
+    ...(workflow.documents?.invoice || []),
+  ];
+  const complaints = [
+    ...(workflow.complaints?.settlement || []),
+    ...(workflow.complaints?.tig || []),
+    ...(workflow.complaints?.invoice_submit || []),
+    ...(workflow.complaints?.invoice_check || []),
+  ];
+  return `<article class="settlement-dashboard-expanded" data-expanded-courier-id="${escapeHtml(row.courierId || "")}">
+    <div class="settlement-dashboard-expanded-head">
+      <div>
+        <strong>${escapeHtml(row.courierName || "Futár")}</strong>
+        <small>#${escapeHtml(row.courierId || "-")} · ${escapeHtml(formatMonthLabel(state.settlementDashboardMonth))}</small>
+      </div>
+      ${renderSettlementDashboardStatus(row.status || {})}
+    </div>
+    ${settlementDashboardDetailTabs()}
+    ${detail.loading ? `<div class="empty-card">Futár részletek betöltése...</div>` : ""}
+    ${detail.error ? `<div class="notice error">${escapeHtml(detail.error)}</div>` : ""}
+    ${!detail.loading && !detail.error && currentTab === "settlement" ? settlementDashboardBreakdownPreview(workflow) : ""}
+    ${!detail.loading && !detail.error && currentTab === "complaints" ? `
+      <div class="settlement-dashboard-tab-panel">
+        <strong>Reklamációk</strong>
+        ${settlementDashboardComplaintManager(complaints)}
+      </div>
+    ` : ""}
+    ${!detail.loading && !detail.error && currentTab === "payment" ? `
+      <div class="settlement-dashboard-tab-panel">
+        <strong>Kifizetés</strong>
+        <div class="empty-card">A kifizetés itt egyelőre csak menüpontként jelenik meg.</div>
+      </div>
+    ` : ""}
+    ${!detail.loading && !detail.error && currentTab === "documents" ? `
+      <div class="settlement-dashboard-tab-panel">
+        <strong>Dokumentumok</strong>
+        ${documentPreviewList(documents, row.courierId || "")}
+      </div>
+    ` : ""}
+  </article>`;
+}
+
 function renderSettlementDashboard() {
   const target = $("#settlement-dashboard-panel");
   if (!target) return;
@@ -4573,7 +4832,7 @@ function renderSettlementDashboard() {
     </div>
     <div class="settlement-dashboard-list">
       ${displayRows.length ? displayRows.map((row) => `
-        <button class="settlement-dashboard-row" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
+        <button class="settlement-dashboard-row ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? "active" : ""}" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
           <div>
             <strong>${escapeHtml(row.courierName || "Futár")}</strong>
             <small>#${escapeHtml(row.courierId || "-")}${row.warehouse ? ` · ${escapeHtml(row.warehouse)}` : ""}</small>
@@ -4585,9 +4844,30 @@ function renderSettlementDashboard() {
           </div>
           <strong>${escapeHtml(formatHuf(row.totalPayableHuf || 0))}</strong>
         </button>
+        ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? renderSettlementDashboardExpanded(row) : ""}
       `).join("") : `<div class="empty-card">${activeStatusFilter ? "Nincs futár ebben a státuszban." : "Nincs futár a kiválasztott hónapban."}</div>`}
     </div>
   `;
+}
+
+async function loadSettlementDashboardCourierDetail(courierId) {
+  const cleanId = String(courierId || "").trim();
+  if (!cleanId) return;
+  state.settlementDashboardExpandedCourierId = cleanId;
+  state.settlementDashboardDetail = { courierId: cleanId, loading: true, workflow: null, error: "" };
+  renderSettlementDashboard();
+  try {
+    const params = new URLSearchParams({
+      month: state.settlementDashboardMonth || previousLocalMonth(),
+      courier: cleanId,
+      _: String(Date.now()),
+    });
+    const workflow = await api(`/api/workflow?${params}`, { silentLoading: true });
+    state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow, error: "" };
+  } catch (error) {
+    state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow: null, error: error.message };
+  }
+  renderSettlementDashboard();
 }
 
 async function loadSettlementDashboard() {
@@ -8907,9 +9187,95 @@ $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
     renderSettlementDashboard();
     return;
   }
+  const tab = event.target.closest("[data-settlement-dashboard-tab]");
+  if (tab) {
+    state.settlementDashboardExpandedTab = tab.dataset.settlementDashboardTab || "settlement";
+    renderSettlementDashboard();
+    return;
+  }
+  const openPreview = event.target.closest("[data-settlement-dashboard-open-preview]");
+  if (openPreview) {
+    openSettlementDashboardCourier(state.settlementDashboardExpandedCourierId || "");
+    return;
+  }
+  const saveComplaint = event.target.closest("[data-save-dashboard-complaint]");
+  if (saveComplaint) {
+    const complaintId = saveComplaint.dataset.saveDashboardComplaint || "";
+    const box = saveComplaint.closest("[data-dashboard-complaint-id]");
+    const status = box?.querySelector('[data-complaint-field="status"]')?.value || "resolved";
+    const response = box?.querySelector('[data-complaint-field="response"]')?.value || "";
+    saveComplaint.disabled = true;
+    api(`/api/admin/workflow/complaints/${encodeURIComponent(complaintId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, response }),
+      loadingMessage: "Reklamáció mentése...",
+    }).then((payload) => {
+      state.settlementDashboardDetail = {
+        courierId: state.settlementDashboardExpandedCourierId,
+        loading: false,
+        workflow: payload.workflow,
+        error: "",
+      };
+      renderSettlementDashboard();
+    }).catch((error) => {
+      window.alert(error.message);
+      saveComplaint.disabled = false;
+    });
+    return;
+  }
   const row = event.target.closest("[data-courier-id]");
   if (!row) return;
-  openSettlementDashboardCourier(row.dataset.courierId || "");
+  const courierId = row.dataset.courierId || "";
+  if (state.settlementDashboardExpandedCourierId === courierId) {
+    state.settlementDashboardExpandedCourierId = "";
+    state.settlementDashboardDetail = null;
+    renderSettlementDashboard();
+    return;
+  }
+  state.settlementDashboardExpandedTab = "settlement";
+  loadSettlementDashboardCourierDetail(courierId);
+});
+
+document.addEventListener("click", (event) => {
+  const editButton = event.target.closest("[data-financial-edit-card]");
+  if (editButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    state.financialEditCardKey = editButton.dataset.financialEditCard || "";
+    renderWorkflow();
+    return;
+  }
+  const saveButton = event.target.closest("[data-financial-save-card]");
+  if (saveButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    saveFinancialCardOverride(saveButton.dataset.financialSaveCard || "");
+    return;
+  }
+  const addButton = event.target.closest("[data-financial-add-item]");
+  if (addButton) {
+    event.preventDefault();
+    addFinancialEditorRow(addButton.dataset.financialAddItem || "");
+    return;
+  }
+  const deleteButton = event.target.closest("[data-financial-delete-row]");
+  if (deleteButton) {
+    event.preventDefault();
+    const row = deleteButton.closest("[data-financial-edit-row]");
+    if (!row) return;
+    const key = row.querySelector('[data-field="key"]')?.value || "";
+    if (key.startsWith("admin_") || key.startsWith("draft_") || key.startsWith("new_")) {
+      row.remove();
+      return;
+    }
+    const deleted = row.querySelector('[data-field="deleted"]');
+    const amount = row.querySelector('[data-field="amountHuf"]');
+    const note = row.querySelector('[data-field="note"]');
+    if (deleted) deleted.value = "true";
+    if (amount) amount.value = "0";
+    if (note && !note.value) note.value = "Admin által törölve";
+    row.classList.add("deleted");
+  }
 });
 $("#route-details-load")?.addEventListener("click", loadRouteDetails);
 $("#route-stats-load")?.addEventListener("click", loadRouteStatistics);

@@ -170,6 +170,28 @@ class AdminWorkflowActionRequest(BaseModel):
     note: str = ""
 
 
+class SettlementCardOverrideItem(BaseModel):
+    key: str = ""
+    label: str
+    amountHuf: int = 0
+    amountKind: str = "huf"
+    note: str = ""
+    deleted: bool = False
+
+
+class SettlementCardOverrideRequest(BaseModel):
+    month: str
+    courierId: str
+    cardKey: str
+    cardLabel: str = ""
+    items: list[SettlementCardOverrideItem] = Field(default_factory=list)
+
+
+class AdminComplaintUpdateRequest(BaseModel):
+    status: str = "resolved"
+    response: str = ""
+
+
 def admin_invoice_upload_months() -> set[date]:
     current = datetime.now(LOCAL_TIMEZONE).date().replace(day=1)
     previous_month_end = current - timedelta(days=1)
@@ -10697,6 +10719,8 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
             item["amountKind"] = str(override.get("amount_kind") or item.get("amountKind") or "huf")
             item["label"] = str(override.get("item_label") or item.get("label") or "")
             item["note"] = str(override.get("note") or "Admin által módosítva")
+            if item["amountHuf"] == 0 and "torolve" in normalize_text(item["note"]):
+                item["hidden"] = True
     performance = next((card for card in cards if card.get("key") == "performance"), None)
     if performance:
         items = performance.get("items") or []
@@ -10754,6 +10778,16 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
     if correction_detail_keys:
         for item_key in correction_detail_keys:
             ensure_override_item("corrections", item_key, "Korrekcio", allow_snapshot=True)
+    for card in cards:
+        card_key = str(card.get("key") or "")
+        if not card_key:
+            continue
+        admin_prefix = f"admin_{card_key}_"
+        for item_key in sorted(key for key in overrides if str(key).startswith(admin_prefix)):
+            override = overrides.get(item_key)
+            if not override or not is_manual_override(override):
+                continue
+            ensure_override_item(card_key, item_key, str(override.get("item_label") or "Admin tétel"))
     deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
     kiflis_bonus_malus_card = next((card for card in cards if card.get("key") == "kiflis_bonus_malus"), None)
     bonus_malus_card = next((card for card in cards if card.get("key") == "bonus_malus"), None)
@@ -19998,6 +20032,163 @@ def admin_settlement_dashboard(
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
     return build_admin_settlement_dashboard(month_value, q)
+
+
+@app.post("/api/admin/settlement-card-overrides")
+def admin_save_settlement_card_overrides(
+    payload: SettlementCardOverrideRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(payload.month)
+    courier_id = str(payload.courierId or "").strip()
+    card_key = re.sub(r"[^A-Za-z0-9_]+", "_", str(payload.cardKey or "").strip()).strip("_")
+    card_label = str(payload.cardLabel or card_key or "Kártya").strip()
+    if not courier_id:
+        raise HTTPException(status_code=422, detail="Hiányzik a futár azonosító.")
+    if not card_key:
+        raise HTTPException(status_code=422, detail="Hiányzik a kártya kulcsa.")
+
+    admin_prefix = f"admin_{card_key}_"
+    rows: list[dict[str, Any]] = []
+    total = 0
+    now_value = datetime.now(timezone.utc).isoformat()
+    updated_by = str(user.get("username") or user.get("courierId") or "admin")
+    for index, item in enumerate(payload.items, start=1):
+        clean_label = str(item.label or "").strip()
+        clean_kind = str(item.amountKind or "huf").strip() or "huf"
+        if clean_kind not in {"huf", "count"}:
+            clean_kind = "huf"
+        amount = money_int(item.amountHuf)
+        raw_key = str(item.key or "").strip()
+        clean_key = raw_key if raw_key else f"{admin_prefix}{index}"
+        if clean_key.startswith("new_") or clean_key.startswith("draft_"):
+            clean_key = f"{admin_prefix}{index}_{normalized_field_key(clean_label) or 'tetel'}"
+        if clean_key.startswith("admin_") and not clean_key.startswith(admin_prefix):
+            clean_key = f"{admin_prefix}{index}_{normalized_field_key(clean_label) or 'tetel'}"
+        if not clean_label:
+            continue
+        deleted = bool(item.deleted)
+        note = str(item.note or "").strip()
+        if deleted:
+            amount = 0
+            note = note or "Admin által törölve"
+        else:
+            total += amount if clean_kind == "huf" else 0
+            note = note or "Admin által módosítva"
+        rows.append({
+            "period_start": month_value.isoformat(),
+            "courier_id": courier_id,
+            "item_key": clean_key,
+            "item_label": clean_label,
+            "amount_value": amount,
+            "amount_kind": clean_kind,
+            "note": note,
+            "updated_by": updated_by,
+            "updated_at": now_value,
+        })
+
+    rows.append({
+        "period_start": month_value.isoformat(),
+        "courier_id": courier_id,
+        "item_key": card_key,
+        "item_label": card_label,
+        "amount_value": total,
+        "amount_kind": "huf",
+        "note": "Admin által módosított kártyaösszeg",
+        "updated_by": updated_by,
+        "updated_at": now_value,
+    })
+    rows_by_key = {str(row.get("item_key") or ""): row for row in rows if str(row.get("item_key") or "")}
+    rows = list(rows_by_key.values())
+
+    try:
+        supabase = settlement_supabase_client().schema("settlement")
+        (
+            supabase
+            .table("mobile_settlement_breakdown_overrides")
+            .delete()
+            .eq("period_start", month_value.isoformat())
+            .eq("courier_id", courier_id)
+            .like("item_key", f"{admin_prefix}%")
+            .execute()
+        )
+        (
+            supabase
+            .table("mobile_settlement_breakdown_overrides")
+            .upsert(rows, on_conflict="period_start,courier_id,item_key")
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Kártya mentési hiba: {exc}") from exc
+
+    return {
+        "ok": True,
+        "month": month_value.strftime("%Y-%m"),
+        "courierId": courier_id,
+        "cardKey": card_key,
+        "savedRows": len(rows),
+        "totalHuf": total,
+    }
+
+
+@app.patch("/api/admin/workflow/complaints/{complaint_id}")
+def admin_update_workflow_complaint(
+    complaint_id: str,
+    payload: AdminComplaintUpdateRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    clean_status = str(payload.status or "resolved").strip().lower()
+    if clean_status not in {"new", "open", "in_progress", "resolved", "closed"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen reklamáció státusz.")
+    rows = supabase_rest(
+        "GET",
+        "peopleforce_complaints",
+        params={
+            "select": "id,courier_id,courier_name,document_type,document_month,status",
+            "id": f"eq.{complaint_id}",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="A reklamáció nem található.")
+    row = rows[0]
+    courier_id = str(row.get("courier_id") or "").strip()
+    document_type = str(row.get("document_type") or "")
+    try:
+        month_value = date.fromisoformat(str(row.get("document_month") or "")[:10])
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="A reklamáció hónapja nem értelmezhető.") from exc
+    update_payload = {
+        "status": clean_status,
+        "admin_response": str(payload.response or "").strip(),
+        "responded_by": str(user.get("username") or "admin"),
+        "responded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    supabase_rest(
+        "PATCH",
+        "peopleforce_complaints",
+        params={"id": f"eq.{complaint_id}"},
+        payload=update_payload,
+        prefer="return=minimal",
+    )
+    view_user = {
+        "courierId": courier_id,
+        "username": str(row.get("courier_name") or courier_id),
+    }
+    return {
+        "ok": True,
+        "complaintId": complaint_id,
+        "workflow": build_workflow(
+            view_user,
+            month_value,
+            process_id_from_action_key(document_type),
+            preview_read_only=True,
+            allow_unpublished=True,
+            can_view_amounts=True,
+        ),
+    }
 
 
 @app.post("/api/admin/settlement-imports/excel")
