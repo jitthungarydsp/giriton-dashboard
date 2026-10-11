@@ -932,6 +932,48 @@ def settlement_import_courier_validation_key(courier_id: Any, courier_name: Any)
     return f"name:{normalize_text(courier_name)}"
 
 
+def settlement_import_merge_courier_reconciliation_keys(
+    excel_by_courier: dict[str, dict[str, Any]],
+    summary_by_courier: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    summary_key_by_name = {
+        normalize_text(row.get("courierName")): key
+        for key, row in summary_by_courier.items()
+        if key.startswith("id:") and normalize_text(row.get("courierName"))
+    }
+    excel_key_by_name = {
+        normalize_text(row.get("courierName")): key
+        for key, row in excel_by_courier.items()
+        if key.startswith("id:") and normalize_text(row.get("courierName"))
+    }
+
+    for key in list(excel_by_courier.keys()):
+        if not key.startswith("name:"):
+            continue
+        excel = excel_by_courier.get(key) or {}
+        target_key = summary_key_by_name.get(normalize_text(excel.get("courierName")))
+        if not target_key or target_key == key:
+            continue
+        target = excel_by_courier.pop(key)
+        summary = summary_by_courier.get(target_key) or {}
+        target["courierId"] = target.get("courierId") or summary.get("courierId") or ""
+        excel_by_courier[target_key] = target
+
+    for key in list(summary_by_courier.keys()):
+        if not key.startswith("name:"):
+            continue
+        summary = summary_by_courier.get(key) or {}
+        target_key = excel_key_by_name.get(normalize_text(summary.get("courierName")))
+        if not target_key or target_key == key:
+            continue
+        target = summary_by_courier.pop(key)
+        excel = excel_by_courier.get(target_key) or {}
+        target["courierId"] = target.get("courierId") or excel.get("courierId") or ""
+        summary_by_courier[target_key] = target
+
+    return excel_by_courier, summary_by_courier
+
+
 def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]], jit_rows: list[dict[str, Any]]) -> dict[str, Any]:
     excel_by_courier: dict[str, dict[str, Any]] = {}
     seen_routes: set[tuple[str, str]] = set()
@@ -981,6 +1023,10 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
             "routeCount": safe_int(row.get("route_count")),
             "tipHuf": money_int(row.get("tip_huf")),
         }
+    excel_by_courier, summary_by_courier = settlement_import_merge_courier_reconciliation_keys(
+        excel_by_courier,
+        summary_by_courier,
+    )
 
     items: list[dict[str, Any]] = []
     preview_items: list[dict[str, Any]] = []
