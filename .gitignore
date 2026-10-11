@@ -37,3 +37,4 @@ uidl_trace*/
 
 # Local auth cache files can contain live cookies or bearer tokens
 results/*auth*.json
+venv/Lib/site-packages/websockets/speedups.cp311-win_amd64.pyd
