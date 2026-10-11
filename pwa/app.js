@@ -84,7 +84,7 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v195";
+const APP_VERSION = "v196";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4972,7 +4972,7 @@ async function loadSettlementDashboardCourierDetail(courierId) {
       courier: cleanId,
       _: String(Date.now()),
     });
-    const workflow = await api(`/api/workflow?${params}`, { silentLoading: true });
+    const workflow = await api(`/api/admin/settlement-dashboard/detail?${params}`, { silentLoading: true });
     state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow, error: "" };
   } catch (error) {
     state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow: null, error: error.message };

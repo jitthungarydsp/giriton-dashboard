@@ -20149,6 +20149,86 @@ def admin_settlement_dashboard(
     return build_admin_settlement_dashboard(month_value, q)
 
 
+@app.get("/api/admin/settlement-dashboard/detail")
+def admin_settlement_dashboard_detail(
+    month: str = Query(default=""),
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
+    courier_id = str(courier or "").strip()
+    if not courier_id:
+        raise HTTPException(status_code=422, detail="Hiányzik a futár azonosító.")
+    view_user = {
+        "courierId": courier_id,
+        "username": read_courier_display_name(courier_id) or courier_id,
+    }
+    documents, _status_rows, complaints = read_workflow_rows(view_user, month_value)
+    documents = [row for row in documents if document_belongs_to_process(row, "")]
+    complaints = [
+        row for row in complaints
+        if process_id_from_action_key(str(row.get("document_type") or "")) == ""
+    ]
+    document_groups = {
+        document_type: [
+            {
+                **row,
+                "downloadUrl": f"/api/documents/{quote(str(row.get('id') or ''))}",
+            }
+            for row in documents
+            if base_action_key(str(row.get("document_type") or "")) == document_type
+        ]
+        for document_type in WORKFLOW_DOCUMENT_TYPES
+    }
+    complaint_actions = ("settlement", "tig", "invoice_check", "invoice_submit")
+    complaints_by_action = {
+        action: [row for row in complaints if base_action_key(str(row.get("document_type") or "")) == action]
+        for action in complaint_actions
+    }
+    financial_breakdown = build_financial_breakdown(
+        view_user,
+        month_value,
+        allow_unpublished=True,
+        snapshot_only=True,
+    )
+    if not financial_breakdown.get("available"):
+        financial_breakdown = build_financial_breakdown(
+            view_user,
+            month_value,
+            allow_unpublished=True,
+            snapshot_only=False,
+        )
+    return {
+        "month": month_value.strftime("%Y-%m"),
+        "process": "",
+        "processLabel": workflow_process_label(""),
+        "processes": [{"id": "", "label": workflow_process_label("")}],
+        "processType": "monthly",
+        "viewerReadOnly": True,
+        "viewingAs": public_user(view_user),
+        "steps": [],
+        "states": {},
+        "documents": document_groups,
+        "financialBreakdown": financial_breakdown,
+        "tigBreakdown": {
+            "available": False,
+            "month": month_value.strftime("%Y-%m"),
+            "message": "A dashboard gyorsnézetben a TIG nem töltődik be.",
+            "rows": [],
+        },
+        "invoiceRequirements": {},
+        "complaints": complaints_by_action,
+        "complaintResponses": {},
+        "ignoreComplaintsForBilling": False,
+        "invoiceValidationOverride": False,
+        "efoInvoiceSkip": False,
+        "manualInvoiceSkip": False,
+        "visibilityMode": "admin",
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @app.get("/api/admin/settlement-finance-snapshots")
 def admin_settlement_finance_snapshots(
     month: str = Query(default=""),
