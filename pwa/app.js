@@ -77,12 +77,14 @@ const state = {
   settlementDashboardDetail: null,
   settlementDashboardSearchTimer: null,
   financialEditCardKey: "",
+  financialSnapshots: [],
+  financialSnapshotsLoadedFor: "",
   settlementImportStep: 1,
   settlementImportMonth: previousLocalMonth(),
   settlementImportResult: null,
   settlementImportUploading: false,
 };
-const APP_VERSION = "v192";
+const APP_VERSION = "v193";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -629,6 +631,13 @@ function formatMonthLabel(month) {
     year: "numeric",
     month: "long",
   });
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString("hu-HU");
 }
 
 function adminInvoiceUploadMonths() {
@@ -4087,6 +4096,30 @@ function financialHighlightPanel(card, emptyText) {
   </div>`;
 }
 
+function renderFinancialSnapshotRestore() {
+  if (!canEditFinancialCards()) return "";
+  const breakdown = state.workflow?.financialBreakdown || {};
+  const month = breakdown.month || state.workflowMonth || "";
+  const courierId = state.workflowPreviewCourierId || "";
+  const key = `${month}|${courierId}`;
+  const snapshots = state.financialSnapshotsLoadedFor === key ? state.financialSnapshots : [];
+  return `<section class="financial-restore-panel">
+    <div>
+      <strong>Visszaállítás pénzügyi snapshotból</strong>
+      <small>Ha rossz admin érték került be, itt egy korábbi mentett verzió tölthető vissza.</small>
+    </div>
+    <div class="financial-restore-actions">
+      <button class="secondary" type="button" data-financial-load-snapshots="true">Snapshotok betöltése</button>
+      <select id="financial-snapshot-select" ${snapshots.length ? "" : "disabled"}>
+        ${snapshots.length
+          ? snapshots.map((item) => `<option value="${escapeHtml(item.id)}">v${Number(item.version || 0)} · ${formatHuf(item.payableHuf || 0)} · ${escapeHtml(formatDateTime(item.createdAt || ""))}</option>`).join("")
+          : `<option value="">Nincs betöltött snapshot</option>`}
+      </select>
+      <button class="danger secondary" type="button" data-financial-restore-snapshot="true" ${snapshots.length ? "" : "disabled"}>Visszaállítás</button>
+    </div>
+  </section>`;
+}
+
 function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
   const breakdown = state.workflow?.financialBreakdown || {};
   const complaints = state.workflow?.complaints?.settlement || [];
@@ -4115,6 +4148,7 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
       <strong>${formatHuf(breakdown.totalPayableHuf)}</strong>
       <small>${escapeHtml(breakdown.month || state.workflowMonth)}</small>
     </section>
+    ${renderFinancialSnapshotRestore()}
     <div class="financial-card-grid">
       ${displayCards.map((card) => {
         const editing = state.financialEditCardKey === String(card.key || "");
@@ -4204,6 +4238,53 @@ async function saveFinancialCardOverride(cardKey) {
       await loadWorkflow({ background: true });
     }
     showWorkflowMessage(`Kártya mentve: ${escapeHtml(formatHuf(payload.totalHuf || 0))}.`);
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
+
+async function loadFinancialSnapshotsForRestore() {
+  const breakdown = state.workflow?.financialBreakdown || {};
+  const month = breakdown.month || state.workflowMonth;
+  const courierId = state.workflowPreviewCourierId || "";
+  if (!month || !courierId) return;
+  try {
+    const query = new URLSearchParams({ month, courierId });
+    const payload = await api(`/api/admin/settlement-finance-snapshots?${query.toString()}`, {
+      loadingMessage: "Snapshotok betöltése...",
+    });
+    state.financialSnapshots = payload.snapshots || [];
+    state.financialSnapshotsLoadedFor = `${month}|${courierId}`;
+    renderWorkflow();
+    showWorkflowMessage(state.financialSnapshots.length ? "Snapshot lista betöltve." : "Nincs elérhető pénzügyi snapshot ehhez a futárhoz.");
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
+
+async function restoreFinancialSnapshot() {
+  const breakdown = state.workflow?.financialBreakdown || {};
+  const month = breakdown.month || state.workflowMonth;
+  const courierId = state.workflowPreviewCourierId || "";
+  const select = $("#financial-snapshot-select");
+  const snapshotId = select?.value || "";
+  if (!month || !courierId || !snapshotId) return;
+  try {
+    const payload = await api("/api/admin/settlement-finance-snapshots/restore", {
+      method: "POST",
+      body: JSON.stringify({ month, courierId, snapshotId }),
+      loadingMessage: "Snapshot visszaállítása...",
+    });
+    state.financialEditCardKey = "";
+    if (payload.workflow) {
+      state.workflow = payload.workflow;
+      state.workflowProcesses = state.workflow.processes || state.workflowProcesses;
+      renderWorkflowProcessPicker();
+      renderWorkflow();
+    } else {
+      await loadWorkflow({ background: true });
+    }
+    showWorkflowMessage(`Pénzügyi snapshot visszaállítva: v${Number(payload.snapshotVersion || 0)} (${Number(payload.restoredRows || 0)} sor).`);
   } catch (error) {
     showWorkflowMessage(error.message, true);
   }
@@ -9262,6 +9343,16 @@ document.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
     saveFinancialCardOverride(saveButton.dataset.financialSaveCard || "");
+    return;
+  }
+  if (event.target.closest("[data-financial-load-snapshots]")) {
+    event.preventDefault();
+    loadFinancialSnapshotsForRestore();
+    return;
+  }
+  if (event.target.closest("[data-financial-restore-snapshot]")) {
+    event.preventDefault();
+    restoreFinancialSnapshot();
     return;
   }
   const addButton = event.target.closest("[data-financial-add-item]");

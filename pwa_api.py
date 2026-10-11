@@ -187,6 +187,12 @@ class SettlementCardOverrideRequest(BaseModel):
     items: list[SettlementCardOverrideItem] = Field(default_factory=list)
 
 
+class SettlementSnapshotRestoreRequest(BaseModel):
+    month: str
+    courierId: str
+    snapshotId: str
+
+
 class AdminComplaintUpdateRequest(BaseModel):
     status: str = "resolved"
     response: str = ""
@@ -9555,6 +9561,78 @@ def read_latest_courier_finance_snapshot(
         snapshot["items"] = items_future.result()
         snapshot["sources"] = sources_future.result() if sources_future else []
     return snapshot
+
+
+def read_courier_finance_snapshot_by_id(courier_id: str, month: date, snapshot_id: str) -> dict[str, Any]:
+    clean_courier_id = str(courier_id or "").strip()
+    clean_snapshot_id = str(snapshot_id or "").strip()
+    if not clean_courier_id or not clean_snapshot_id:
+        return {}
+    snapshots = optional_supabase_rows(
+        "courier_finance_snapshot",
+        schema="settlement",
+        params={
+            "select": "*",
+            "id": f"eq.{clean_snapshot_id}",
+            "period_start": f"eq.{month.replace(day=1).isoformat()}",
+            "courier_id": f"eq.{clean_courier_id}",
+            "limit": "1",
+        },
+        timeout=30,
+    )
+    if not snapshots:
+        return {}
+    snapshot = dict(snapshots[0])
+    items = optional_supabase_rows(
+        "courier_finance_snapshot_item",
+        schema="settlement",
+        params={
+            "select": "section,item_key,item_label,amount_value,amount_kind,note,display_order",
+            "snapshot_id": f"eq.{clean_snapshot_id}",
+            "order": "section.asc,display_order.asc",
+            "limit": "700",
+        },
+        timeout=30,
+    )
+    snapshot["items"] = items
+    snapshot["sources"] = []
+    return snapshot
+
+
+def list_courier_finance_snapshots(courier_id: str, month: date) -> list[dict[str, Any]]:
+    clean_courier_id = str(courier_id or "").strip()
+    if not clean_courier_id:
+        return []
+    snapshots = optional_supabase_rows(
+        "courier_finance_snapshot",
+        schema="settlement",
+        params={
+            "select": "id,version,created_at,calculation_mode,warehouse_label,session_id,metadata,created_by,changed_from_previous",
+            "period_start": f"eq.{month.replace(day=1).isoformat()}",
+            "courier_id": f"eq.{clean_courier_id}",
+            "order": "version.desc",
+            "limit": "30",
+        },
+        timeout=30,
+    )
+    result: list[dict[str, Any]] = []
+    for row in snapshots:
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        result.append({
+            "id": str(row.get("id") or ""),
+            "version": money_int(row.get("version")),
+            "createdAt": str(row.get("created_at") or ""),
+            "calculationMode": str(row.get("calculation_mode") or ""),
+            "warehouseLabel": str(row.get("warehouse_label") or ""),
+            "sessionId": str(row.get("session_id") or ""),
+            "createdBy": str(row.get("created_by") or ""),
+            "changedFromPrevious": bool(row.get("changed_from_previous")),
+            "payableHuf": money_int(metadata.get("payable_total")),
+            "incomeHuf": money_int(metadata.get("income_total")),
+            "deductionHuf": money_int(metadata.get("deduction_total")),
+            "correctionHuf": money_int(metadata.get("correction_total")),
+        })
+    return result
 
 
 def snapshot_items_by_section(snapshot: dict[str, Any], section: str) -> list[dict[str, Any]]:
@@ -20068,6 +20146,109 @@ def admin_settlement_dashboard(
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
     return build_admin_settlement_dashboard(month_value, q)
+
+
+@app.get("/api/admin/settlement-finance-snapshots")
+def admin_settlement_finance_snapshots(
+    month: str = Query(default=""),
+    courierId: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(month)
+    courier_id = str(courierId or "").strip()
+    if not courier_id:
+        raise HTTPException(status_code=422, detail="Hiányzik a futár azonosító.")
+    return {
+        "month": month_value.strftime("%Y-%m"),
+        "courierId": courier_id,
+        "snapshots": list_courier_finance_snapshots(courier_id, month_value),
+    }
+
+
+@app.post("/api/admin/settlement-finance-snapshots/restore")
+def admin_restore_settlement_finance_snapshot(
+    payload: SettlementSnapshotRestoreRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(payload.month)
+    courier_id = str(payload.courierId or "").strip()
+    snapshot_id = str(payload.snapshotId or "").strip()
+    if not courier_id:
+        raise HTTPException(status_code=422, detail="Hiányzik a futár azonosító.")
+    if not snapshot_id:
+        raise HTTPException(status_code=422, detail="Hiányzik a snapshot azonosító.")
+    snapshot = read_courier_finance_snapshot_by_id(courier_id, month_value, snapshot_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="A kiválasztott pénzügyi snapshot nem található.")
+
+    version = money_int(snapshot.get("version"))
+    now_value = datetime.now(timezone.utc).isoformat()
+    updated_by = str(user.get("username") or user.get("courierId") or "admin")
+    rows: list[dict[str, Any]] = []
+    for item in snapshot.get("items") or []:
+        item_key = str(item.get("item_key") or "").strip()
+        if not item_key or item_key in {"tig_cash_deduction", "cash_deduction"}:
+            continue
+        amount_kind = str(item.get("amount_kind") or "huf").strip() or "huf"
+        if amount_kind not in {"huf", "count"}:
+            amount_kind = "huf"
+        rows.append({
+            "period_start": month_value.isoformat(),
+            "courier_id": courier_id,
+            "item_key": item_key,
+            "item_label": str(item.get("item_label") or item_key),
+            "amount_value": money_int(item.get("amount_value")),
+            "amount_kind": amount_kind,
+            "note": f"Admin visszaállítás v{version}",
+            "updated_by": updated_by,
+            "updated_at": now_value,
+        })
+    rows_by_key = {str(row.get("item_key") or ""): row for row in rows if str(row.get("item_key") or "")}
+    rows = list(rows_by_key.values())
+    if not rows:
+        raise HTTPException(status_code=422, detail="A kiválasztott snapshot nem tartalmaz visszaállítható pénzügyi sort.")
+
+    try:
+        supabase = settlement_supabase_client().schema("settlement")
+        (
+            supabase
+            .table("mobile_settlement_breakdown_overrides")
+            .delete()
+            .eq("period_start", month_value.isoformat())
+            .eq("courier_id", courier_id)
+            .execute()
+        )
+        (
+            supabase
+            .table("mobile_settlement_breakdown_overrides")
+            .upsert(rows, on_conflict="period_start,courier_id,item_key")
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Snapshot visszaállítási hiba: {exc}") from exc
+
+    view_user = {
+        "courierId": courier_id,
+        "username": read_courier_display_name(courier_id) or courier_id,
+    }
+    return {
+        "ok": True,
+        "month": month_value.strftime("%Y-%m"),
+        "courierId": courier_id,
+        "snapshotId": snapshot_id,
+        "snapshotVersion": version,
+        "restoredRows": len(rows),
+        "workflow": build_workflow(
+            view_user,
+            month_value,
+            "",
+            preview_read_only=True,
+            allow_unpublished=True,
+            can_view_amounts=True,
+        ),
+    }
 
 
 @app.post("/api/admin/settlement-card-overrides")

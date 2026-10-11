@@ -3410,6 +3410,89 @@ def clear_devtest_finance_snapshot_cache() -> None:
         clear()
 
 
+def load_devtest_finance_snapshot_versions(courier_id: str, period_start: date) -> list[dict[str, object]]:
+    clean_courier_id = _courier_id_key(courier_id)
+    if not clean_courier_id:
+        return []
+    try:
+        return (
+            get_db().schema("settlement").table("courier_finance_snapshot")
+            .select("id,version,created_at,calculation_mode,warehouse_label,metadata,created_by")
+            .eq("period_start", period_start.replace(day=1).isoformat())
+            .eq("courier_id", clean_courier_id)
+            .order("version", desc=True)
+            .limit(30)
+            .execute().data or []
+        )
+    except BaseException:
+        return []
+
+
+def load_devtest_finance_snapshot_by_id(courier_id: str, period_start: date, snapshot_id: str) -> dict[str, object]:
+    clean_courier_id = _courier_id_key(courier_id)
+    clean_snapshot_id = str(snapshot_id or "").strip()
+    if not clean_courier_id or not clean_snapshot_id:
+        return {}
+    try:
+        snapshots = (
+            get_db().schema("settlement").table("courier_finance_snapshot")
+            .select("*")
+            .eq("id", clean_snapshot_id)
+            .eq("period_start", period_start.replace(day=1).isoformat())
+            .eq("courier_id", clean_courier_id)
+            .limit(1)
+            .execute().data or []
+        )
+        if not snapshots:
+            return {}
+        snapshot = dict(snapshots[0])
+        snapshot["items"] = (
+            get_db().schema("settlement").table("courier_finance_snapshot_item")
+            .select("*")
+            .eq("snapshot_id", clean_snapshot_id)
+            .order("section")
+            .order("display_order")
+            .execute().data or []
+        )
+        return snapshot
+    except BaseException:
+        return {}
+
+
+def restore_mobile_breakdown_from_finance_snapshot(
+    courier_id: str,
+    period_start: date,
+    snapshot_id: str,
+    updated_by: str,
+) -> dict[str, object]:
+    snapshot = load_devtest_finance_snapshot_by_id(courier_id, period_start, snapshot_id)
+    if not snapshot:
+        return {"saved": False, "reason": "missing_snapshot"}
+    version = int(parse_huf_value(snapshot.get("version")))
+    rows: list[dict[str, object]] = []
+    for item in snapshot.get("items") or []:
+        item_key = str(item.get("item_key") or "").strip()
+        if not item_key or item_key in {"tig_cash_deduction", "cash_deduction"}:
+            continue
+        amount_kind = str(item.get("amount_kind") or "huf").strip()
+        if amount_kind not in {"huf", "count"}:
+            amount_kind = "huf"
+        rows.append({
+            "item_key": item_key,
+            "item_label": str(item.get("item_label") or item_key),
+            "amount_kind": amount_kind,
+            "amount_value": parse_huf_value(item.get("amount_value")),
+            "note": f"Admin visszaállítás v{version}",
+        })
+    if not rows:
+        return {"saved": False, "reason": "empty_snapshot"}
+    saved = save_mobile_breakdown_overrides(courier_id, period_start, rows, updated_by)
+    if saved:
+        clear_mobile_breakdown_override_cache()
+        clear_devtest_finance_snapshot_cache()
+    return {"saved": saved, "version": version, "row_count": len(rows)}
+
+
 def _snapshot_section_frame(snapshot: dict[str, object], section: str) -> pd.DataFrame:
     rows = [
         {
@@ -17265,6 +17348,41 @@ def render_courier_detail_page() -> None:
                 st.info(f"A pénzügyi snapshot már naprakész. Verzió: {snapshot_result.get('version')}")
             else:
                 st.error(f"A pénzügyi snapshot mentése sikertelen: {snapshot_result.get('reason') or 'ismeretlen hiba'}")
+        snapshot_versions = load_devtest_finance_snapshot_versions(courier_id, period_start)
+        if snapshot_versions:
+            snapshot_options: dict[str, str] = {}
+            for snapshot_row in snapshot_versions:
+                metadata = snapshot_row.get("metadata") if isinstance(snapshot_row.get("metadata"), dict) else {}
+                version = int(parse_huf_value(snapshot_row.get("version")))
+                payable = format_huf(parse_huf_value(metadata.get("payable_total")))
+                created_at = str(snapshot_row.get("created_at") or "")[:19].replace("T", " ")
+                mode = str(snapshot_row.get("calculation_mode") or "")
+                label = f"v{version} | {payable} | {created_at} | {mode}".strip(" |")
+                snapshot_options[label] = str(snapshot_row.get("id") or "")
+            selected_snapshot_label = st.selectbox(
+                "Visszaállítás pénzügyi snapshotból",
+                list(snapshot_options.keys()),
+                key=f"restore_finance_snapshot_select_{courier_id}_{period_start:%Y%m}",
+            )
+            if st.button(
+                "Kiválasztott snapshot visszaállítása",
+                use_container_width=True,
+                key=f"restore_finance_snapshot_{courier_id}_{period_start:%Y%m}",
+            ):
+                restore_result = restore_mobile_breakdown_from_finance_snapshot(
+                    courier_id,
+                    period_start,
+                    snapshot_options.get(selected_snapshot_label, ""),
+                    str(st.session_state.get("user", {}).get("username") or "unknown"),
+                )
+                if restore_result.get("saved"):
+                    st.success(
+                        f"Snapshot visszaállítva. Verzió: {restore_result.get('version')}, "
+                        f"sorok: {restore_result.get('row_count')}"
+                    )
+                    st.rerun()
+                else:
+                    st.error(f"Snapshot visszaállítás sikertelen: {restore_result.get('reason') or 'ismeretlen hiba'}")
         edited_mobile = st.data_editor(
             mobile_editor,
             hide_index=True,

@@ -646,6 +646,12 @@ textarea { min-height: 96px; resize: vertical; }
 .financial-total-card span { color: #cfe88f; font-size: 11px; font-weight: 850; text-transform: uppercase; }
 .financial-total-card strong { font-size: 38px; line-height: 1; overflow-wrap: anywhere; }
 .financial-total-card small { color: #d8e0d9; font-size: 11px; font-weight: 750; }
+.financial-restore-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; margin-top: 12px; padding: 14px; border: 1px solid #f0c7c5; border-radius: 16px; background: #fff8f5; }
+.financial-restore-panel strong { display: block; font-size: 13px; text-transform: uppercase; }
+.financial-restore-panel small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 800; line-height: 1.35; }
+.financial-restore-actions { display: grid; grid-template-columns: auto minmax(190px, 1fr) auto; gap: 8px; align-items: center; }
+.financial-restore-actions select { min-height: 42px; border: 1px solid var(--line); border-radius: 12px; background: #fff; font-weight: 800; }
+.financial-restore-actions .secondary { min-height: 42px; border-radius: 12px; padding: 0 12px; }
 .financial-card-grid { display: grid; gap: 10px; margin-top: 12px; }
 .financial-card { border: 1px solid var(--line); border-radius: 16px; background: #f9faf8; overflow: hidden; }
 .financial-card summary { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; min-height: 68px; padding: 14px; cursor: pointer; list-style: none; }
@@ -680,6 +686,8 @@ textarea { min-height: 96px; resize: vertical; }
 .financial-detail-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; white-space: normal; }
 .financial-detail-row span { font-weight: 900; overflow-wrap: anywhere; text-align: right; }
 @media (max-width: 430px) {
+  .financial-restore-panel,
+  .financial-restore-actions { grid-template-columns: 1fr; }
   .financial-card summary { grid-template-columns: 1fr; }
   .financial-card summary strong { text-align: left; }
   .financial-card-summary-side { justify-content: space-between; }
