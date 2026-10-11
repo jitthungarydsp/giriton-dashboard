@@ -1014,15 +1014,27 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
 
     summary_by_courier: dict[str, dict[str, Any]] = {}
     for row in summary_rows:
-        key = settlement_import_courier_validation_key(row.get("courier_id"), row.get("driver_name"))
+        summary_courier_id = str(row.get("courier_id") or "").strip().removesuffix(".0")
+        summary_courier_name = str(row.get("driver_name") or "").strip()
+        embedded_id, clean_summary_name = settlement_import_identity_from_combined_name(summary_courier_name)
+        if embedded_id:
+            summary_courier_id = summary_courier_id or embedded_id
+            summary_courier_name = clean_summary_name
+        key = settlement_import_courier_validation_key(summary_courier_id, summary_courier_name)
         if not key or key == "name:":
             continue
-        summary_by_courier[key] = {
-            "courierId": str(row.get("courier_id") or "").strip().removesuffix(".0"),
-            "courierName": str(row.get("driver_name") or "").strip() or "Ismeretlen futár",
-            "routeCount": safe_int(row.get("route_count")),
-            "tipHuf": money_int(row.get("tip_huf")),
-        }
+        aggregate = summary_by_courier.setdefault(key, {
+            "courierId": summary_courier_id,
+            "courierName": summary_courier_name or "Ismeretlen futár",
+            "routeCount": 0,
+            "tipHuf": 0,
+        })
+        if summary_courier_id and not aggregate.get("courierId"):
+            aggregate["courierId"] = summary_courier_id
+        if summary_courier_name and aggregate.get("courierName") == "Ismeretlen futár":
+            aggregate["courierName"] = summary_courier_name
+        aggregate["routeCount"] = safe_int(aggregate.get("routeCount")) + safe_int(row.get("route_count"))
+        aggregate["tipHuf"] = money_int(aggregate.get("tipHuf")) + money_int(row.get("tip_huf"))
     excel_by_courier, summary_by_courier = settlement_import_merge_courier_reconciliation_keys(
         excel_by_courier,
         summary_by_courier,
