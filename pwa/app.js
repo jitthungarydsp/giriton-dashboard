@@ -5100,14 +5100,14 @@ function renderSettlementImportValidation(validation = {}) {
       <div class="settlement-import-header-title">
         <div>
           <span>Futár validáció</span>
-          <strong>${reconciliation.mismatchCount ? "Eltérés van az Excel és DB összesítő között" : "Excel és DB összesítő egyezik"}</strong>
+          <strong>${reconciliation.mismatchCount ? "Eltérés van az Excel és Hub DB között" : "Excel és Hub DB egyezik"}</strong>
         </div>
         <small>${escapeHtml(formatCount(reconciliation.ok || 0))} / ${escapeHtml(formatCount(reconciliation.total || 0))} futár rendben</small>
       </div>
       <div class="settlement-import-reconciliation-stats">
         <small>Túraszám eltérés: <b>${escapeHtml(formatCount(reconciliation.routeMismatchCount || 0))}</b></small>
         <small>Borravaló eltérés: <b>${escapeHtml(formatCount(reconciliation.tipMismatchCount || 0))}</b></small>
-        <small>Hiányzó összesítő: <b>${escapeHtml(formatCount(reconciliation.missingSummaryCount || 0))}</b></small>
+        <small>Hiányzó Hub adat: <b>${escapeHtml(formatCount(reconciliation.missingSummaryCount || 0))}</b></small>
       </div>
       ${reconciliationPreviewItems.length ? `
         <div class="settlement-import-reconciliation-list">
@@ -5119,7 +5119,7 @@ function renderSettlementImportValidation(validation = {}) {
               <strong>${escapeHtml(item.courierName || "Ismeretlen futár")} ${item.courierId ? `#${escapeHtml(item.courierId)}` : ""}</strong>
               <small>${escapeHtml((item.issues || []).join(", ") || "Rendben")}</small>
               <small>Excel: ${escapeHtml(formatCount(excel.total || 0))} túra (${escapeHtml(formatCount(excel.normal || 0))} normal, ${escapeHtml(formatCount(excel.express || 0))} express, ${escapeHtml(formatCount(excel.regional || 0))} régiós), ${escapeHtml(formatHuf(excel.tipHuf || 0))} borravaló</small>
-              <small>DB: ${escapeHtml(formatCount(calculated.routeCount || 0))} túra, ${escapeHtml(formatHuf(calculated.tipHuf || 0))} borravaló</small>
+              <small>Hub DB: ${escapeHtml(formatCount(calculated.routeCount || 0))} túra, ${escapeHtml(formatHuf(calculated.tipHuf || 0))} borravaló</small>
             </div>`;
           }).join("")}
         </div>
@@ -5315,7 +5315,8 @@ async function refreshSettlementImportValidation() {
   const sessionId = state.settlementImportResult?.sessionId;
   if (!sessionId) return;
   try {
-    const payload = await api(`/api/admin/settlement-imports/${encodeURIComponent(sessionId)}/validation`, {
+    const month = encodeURIComponent(state.settlementImportMonth || previousLocalMonth());
+    const payload = await api(`/api/admin/settlement-imports/${encodeURIComponent(sessionId)}/validation?month=${month}`, {
       loadingMessage: "Validáció frissítése...",
     });
     state.settlementImportResult = {

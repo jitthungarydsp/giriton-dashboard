@@ -974,7 +974,25 @@ def settlement_import_merge_courier_reconciliation_keys(
     return excel_by_courier, summary_by_courier
 
 
-def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]], jit_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def settlement_import_hub_route_identifier(row: dict[str, Any]) -> str:
+    route_id = str(row.get("route_id") or "").strip()
+    if route_id:
+        return ":".join([
+            str(row.get("work_date") or "").strip(),
+            str(row.get("warehouse_id") or row.get("warehouse_code") or "").strip(),
+            route_id,
+            str(row.get("dsp_id") or "").strip(),
+        ])
+    return ":".join(
+        str(row.get(key) or "").strip()
+        for key in ("work_date", "warehouse_id", "dsp_id", "courier_id")
+    )
+
+
+def settlement_import_hub_courier_reconciliation(
+    hub_rows: list[dict[str, Any]],
+    jit_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
     excel_by_courier: dict[str, dict[str, Any]] = {}
     seen_routes: set[tuple[str, str]] = set()
     for row in jit_rows:
@@ -1012,10 +1030,11 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
         aggregate["total"] = int(aggregate.get("total") or 0) + 1
         aggregate["tipHuf"] = money_int(aggregate.get("tipHuf")) + money_int(row.get("courier_tip_huf"))
 
-    summary_by_courier: dict[str, dict[str, Any]] = {}
-    for row in summary_rows:
+    hub_by_courier: dict[str, dict[str, Any]] = {}
+    seen_hub_routes: set[tuple[str, str]] = set()
+    for row in hub_rows:
         summary_courier_id = str(row.get("courier_id") or "").strip().removesuffix(".0")
-        summary_courier_name = str(row.get("driver_name") or "").strip()
+        summary_courier_name = str(row.get("courier_name") or row.get("driver_name") or "").strip()
         embedded_id, clean_summary_name = settlement_import_identity_from_combined_name(summary_courier_name)
         if embedded_id:
             summary_courier_id = summary_courier_id or embedded_id
@@ -1023,7 +1042,7 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
         key = settlement_import_courier_validation_key(summary_courier_id, summary_courier_name)
         if not key or key == "name:":
             continue
-        aggregate = summary_by_courier.setdefault(key, {
+        aggregate = hub_by_courier.setdefault(key, {
             "courierId": summary_courier_id,
             "courierName": summary_courier_name or "Ismeretlen futár",
             "routeCount": 0,
@@ -1033,11 +1052,15 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
             aggregate["courierId"] = summary_courier_id
         if summary_courier_name and aggregate.get("courierName") == "Ismeretlen futár":
             aggregate["courierName"] = summary_courier_name
-        aggregate["routeCount"] = safe_int(aggregate.get("routeCount")) + safe_int(row.get("route_count"))
+        route_key = (key, settlement_import_hub_route_identifier(row))
+        if route_key in seen_hub_routes:
+            continue
+        seen_hub_routes.add(route_key)
+        aggregate["routeCount"] = safe_int(aggregate.get("routeCount")) + 1
         aggregate["tipHuf"] = money_int(aggregate.get("tipHuf")) + money_int(row.get("tip_huf"))
-    excel_by_courier, summary_by_courier = settlement_import_merge_courier_reconciliation_keys(
+    excel_by_courier, hub_by_courier = settlement_import_merge_courier_reconciliation_keys(
         excel_by_courier,
-        summary_by_courier,
+        hub_by_courier,
     )
 
     items: list[dict[str, Any]] = []
@@ -1047,15 +1070,15 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
     tip_mismatch_count = 0
     missing_summary_count = 0
     missing_excel_count = 0
-    for key in sorted(set(excel_by_courier) | set(summary_by_courier)):
+    for key in sorted(set(excel_by_courier) | set(hub_by_courier)):
         excel = excel_by_courier.get(key)
-        calculated = summary_by_courier.get(key)
+        calculated = hub_by_courier.get(key)
         status = "ok"
         issues: list[str] = []
         if not calculated:
             status = "error"
             missing_summary_count += 1
-            issues.append("Nincs DB összesítő sor")
+            issues.append("Nincs Hub DB sor")
         if not excel:
             status = "error"
             missing_excel_count += 1
@@ -1091,7 +1114,8 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
         })
 
     return {
-        "total": len(set(excel_by_courier) | set(summary_by_courier)),
+        "source": "courier_hub_route_statistics",
+        "total": len(set(excel_by_courier) | set(hub_by_courier)),
         "ok": ok_count,
         "mismatchCount": len(items),
         "routeMismatchCount": route_mismatch_count,
@@ -1106,7 +1130,7 @@ def settlement_import_courier_reconciliation(summary_rows: list[dict[str, Any]],
     }
 
 
-def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str, Any]:
+def settlement_import_quality_checks(supabase: Any, session_id: str, month_value: date | None = None) -> dict[str, Any]:
     summary_rows = (
         supabase
         .table("courier_settlement_summary")
@@ -1207,6 +1231,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         "document_reference": "",
     }
     tig_preview = build_tig_breakdown(sample_courier, sample_amounts) if sample_row else {}
+    hub_rows = load_courier_hub_route_stat_rows_for_month(month_value) if month_value else []
     return {
         "couriersTotal": len({
             str(row.get("courier_id") or row.get("driver_name") or "").strip()
@@ -1215,7 +1240,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
         }),
         "summaryRows": len(summary_rows),
         "payableTotalHuf": sum(money_int(row.get("payable_huf")) for row in summary_rows),
-        "courierReconciliation": settlement_import_courier_reconciliation(summary_rows, reconciliation_rows),
+        "courierReconciliation": settlement_import_hub_courier_reconciliation(hub_rows, reconciliation_rows),
         "routeCounts": route_counts,
         "routeTypeSamples": route_type_samples,
         "sampleCourier": {
@@ -20944,7 +20969,7 @@ async def admin_settlement_excel_import(
             )
         normalize_settlement_import_jit_identity(supabase, str(import_result.get("session_id") or ""))
         recalculate_excel_base_rates(supabase, str(import_result.get("session_id") or ""))
-        validation = settlement_import_quality_checks(supabase, str(import_result.get("session_id") or ""))
+        validation = settlement_import_quality_checks(supabase, str(import_result.get("session_id") or ""), month_value)
     except HTTPException:
         raise
     except Exception as exc:
@@ -20978,7 +21003,7 @@ def admin_publish_settlement_import(
         raise HTTPException(status_code=422, detail="Hiányzik a session ID.")
     try:
         supabase = settlement_supabase_client()
-        validation = settlement_import_quality_checks(supabase, clean_session_id)
+        validation = settlement_import_quality_checks(supabase, clean_session_id, month_value)
         if not validation.get("summaryRows"):
             raise HTTPException(status_code=409, detail="Nincs feldolgozott elszámolási összesítés ehhez a sessionhöz.")
         reconciliation = validation.get("courierReconciliation") or {}
@@ -20986,7 +21011,7 @@ def admin_publish_settlement_import(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Az Excel és a DB összesítő nem egyezik minden futárnál. "
+                    "Az Excel és a Hub DB túra/borravaló adatai nem egyeznek minden futárnál. "
                     "Frissítsd a validációt, nézd meg az eltéréseket, és csak hibamentes importot tölts be PWA-ra."
                 ),
             )
@@ -21017,6 +21042,7 @@ def admin_publish_settlement_import(
 @app.get("/api/admin/settlement-imports/{session_id}/validation")
 def admin_refresh_settlement_import_validation(
     session_id: str,
+    month: str | None = None,
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
@@ -21024,10 +21050,11 @@ def admin_refresh_settlement_import_validation(
     if not clean_session_id:
         raise HTTPException(status_code=422, detail="Hiányzik a session ID.")
     try:
+        month_value = parse_month(month) if month else None
         supabase = settlement_supabase_client()
         normalize_settlement_import_jit_identity(supabase, clean_session_id)
         recalculate_excel_base_rates(supabase, clean_session_id)
-        validation = settlement_import_quality_checks(supabase, clean_session_id)
+        validation = settlement_import_quality_checks(supabase, clean_session_id, month_value)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Validáció frissítési hiba: {exc}") from exc
     return {
