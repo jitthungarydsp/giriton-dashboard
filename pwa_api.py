@@ -790,7 +790,7 @@ def normalize_settlement_import_jit_identity(supabase: Any, session_id: str) -> 
         rows = (
             supabase
             .table("jit_row")
-            .select("id,source_sheet,source_row_no,courier_id,driver_name,normalized_data")
+            .select("id,source_sheet,source_row_no,normalized_data")
             .eq("session_id", clean_session_id)
             .range(offset, offset + page_size - 1)
             .execute()
@@ -803,18 +803,21 @@ def normalize_settlement_import_jit_identity(supabase: Any, session_id: str) -> 
             row_id = row.get("id")
             if not row_id:
                 continue
-            current_id = str(row.get("courier_id") or "").strip().removesuffix(".0")
-            current_name = str(row.get("driver_name") or "").strip()
+            normalized_data = settlement_import_normalized_data(row)
+            current_id = text_from_nested(normalized_data, "Courier ID", "courier_id", "Driver ID", "driver_id").strip().removesuffix(".0")
+            current_name = text_from_nested(normalized_data, "Driver", "driver", "Driver Name", "driver_name", "Futár", "futar").strip()
             parsed_id, parsed_name = settlement_import_courier_identity_from_jit_row(row)
             if not parsed_id and current_name:
                 parsed_id, parsed_name = settlement_import_identity_from_combined_name(current_name)
-            payload: dict[str, Any] = {}
+            payload_data = dict(normalized_data)
             if parsed_id and parsed_id != current_id:
-                payload["courier_id"] = parsed_id
+                payload_data["courier_id"] = parsed_id
+                payload_data["Courier ID"] = parsed_id
             if parsed_name and parsed_name != current_name:
-                payload["driver_name"] = parsed_name
-            if payload:
-                supabase.table("jit_row").update(payload).eq("id", row_id).execute()
+                payload_data["driver_name"] = parsed_name
+                payload_data["Driver"] = parsed_name
+            if payload_data != normalized_data:
+                supabase.table("jit_row").update({"normalized_data": payload_data}).eq("id", row_id).execute()
                 updated += 1
         if len(rows) < page_size:
             break
@@ -1042,7 +1045,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str) -> dict[str
             supabase
             .table("jit_row")
             .select(
-                "normalized_data,source_sheet,source_row_no,route_unique_id,is_route_primary,courier_id,driver_name,"
+                "normalized_data,source_sheet,source_row_no,route_unique_id,is_route_primary,"
                 "courier_base_rate_huf,courier_tip_huf,"
                 "courier_delay_bonus_huf,courier_compliance_bonus_huf,courier_other_bonus_huf"
             )
