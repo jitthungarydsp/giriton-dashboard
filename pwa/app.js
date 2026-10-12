@@ -91,7 +91,7 @@ const state = {
   settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v199";
+const APP_VERSION = "v202";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -2619,22 +2619,11 @@ function renderRouteStatistics() {
     return;
   }
   const payload = state.routeStatistics;
-  const excelUrl = routeStatisticsExcelUrl();
   if (!payload) {
-    panel.innerHTML = `
-      <div class="route-details-head">
-        <div>
-          <span>Statisztika</span>
-          <strong>Tartományos túra statisztika</strong>
-          <small>Válassz időszakot és raktárat, majd kérd le az összesített körszámokat.</small>
-        </div>
-        <div class="route-details-actions">
-          ${excelUrl ? `<a class="download-link" href="${excelUrl}">Statisztika Excel</a>` : ""}
-        </div>
-      </div>
-    `;
+    panel.innerHTML = "";
     return;
   }
+  const excelUrl = routeStatisticsExcelUrl();
   const summary = payload.summary || {};
   const daily = payload.daily || [];
   const topDaily = [...daily].sort((a, b) => Number(b.routes || 0) - Number(a.routes || 0)).slice(0, 14);
@@ -2836,24 +2825,11 @@ function renderRouteShiftReport() {
     return;
   }
   const payload = state.routeShiftReport;
-  const excelUrl = monthlyShiftRouteReportExcelUrl();
   if (!payload) {
-    panel.innerHTML = `
-      <div class="route-details-head">
-        <div>
-          <span>Futár statisztika</span>
-          <strong>MűszakPro / HUB / kivitt kör</strong>
-          <small>Hónap, futár és raktár alapján nézhető a foglalás, a kapott műszak és a ténylegesen kivitt kör.</small>
-        </div>
-        <div class="route-details-actions">
-          <button class="secondary" type="button" data-route-shift-report-load>Megjelenítés</button>
-          ${excelUrl ? `<a class="download-link" href="${excelUrl}">Riport Excel</a>` : ""}
-        </div>
-      </div>
-    `;
-    panel.querySelector("[data-route-shift-report-load]")?.addEventListener("click", loadRouteShiftReport);
+    panel.innerHTML = "";
     return;
   }
+  const excelUrl = monthlyShiftRouteReportExcelUrl();
   const rows = payload.summary || [];
   const daily = payload.daily || [];
   const cityRows = payload.cityOver5hRows || payload.city_over_5h_rows || [];
@@ -3046,8 +3022,17 @@ function renderRouteDetails() {
       <div class="stat-card"><span>Átlag teljes idő</span><strong>${escapeHtml(routeDetailClock(summary.fullAvg))}</strong><small>bepakolással</small></div>
       <div class="stat-card"><span>5 óra felett</span><strong>${formatCount(summary.over5h)}</strong><small>teljes idő alapján</small></div>
     </div>
-    <div class="route-details-table-wrap">
-      <table class="route-details-table">
+    <div class="route-report-workspace">
+      <div class="route-report-list">
+        <div class="route-report-list-head">
+          <div>
+            <span>Túra lista</span>
+            <strong>Szűrt route sorok</strong>
+          </div>
+          <small>Kattints egy sorra a jobb oldali bontáshoz</small>
+        </div>
+        <div class="route-details-table-wrap">
+          <table class="route-details-table">
         <thead>
           <tr>
             <th>Raktár</th>
@@ -3104,9 +3089,10 @@ function renderRouteDetails() {
             </tr>
           `).join("")}
         </tbody>
-      </table>
-    </div>
-    <article class="route-story-card">
+          </table>
+        </div>
+      </div>
+      <article class="route-story-card route-report-side">
       <div class="route-story-card-head">
         <span>Szöveges túra részletező</span>
         <strong>Route ${escapeHtml(selected.routeId || "-")}</strong>
@@ -3143,7 +3129,8 @@ function renderRouteDetails() {
         <div class="stat-row"><span>Forrás</span><strong>${escapeHtml(selected.dataSource || "-")}</strong></div>
       </div>
       ${renderRouteLegs(selected)}
-    </article>
+      </article>
+    </div>
   `;
   panel.querySelectorAll("[data-route-detail-index]").forEach((row) => {
     row.addEventListener("click", () => {
