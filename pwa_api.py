@@ -20087,19 +20087,76 @@ def route_statistics_excel(
     )
 
 
+def route_detail_filter_type_key(row: dict[str, Any]) -> str:
+    text = normalize_text(f"{row.get('routeType') or ''} {row.get('routeTypeLabel') or ''}")
+    if "express" in text:
+        return "express"
+    if "region" in text or "regio" in text or "régio" in text:
+        return "regional"
+    return "city"
+
+
+def filter_route_detail_rows(
+    rows: list[dict[str, Any]],
+    *,
+    q: str = "",
+    route_id: str = "",
+    warehouse: str = "all",
+    route_type: str = "all",
+) -> list[dict[str, Any]]:
+    query_text = normalize_person_match_text(q)
+    route_id_text = normalize_text(route_id)
+    warehouse_key = normalize_warehouse(warehouse)
+    if normalize_text(warehouse) in {"", "all", "osszes", "összes"}:
+        warehouse_key = ""
+    route_type_key = normalize_text(route_type)
+    if route_type_key in {"", "all", "osszes", "összes"}:
+        route_type_key = ""
+    result = []
+    for row in rows:
+        if warehouse_key and normalize_warehouse(row.get("warehouse")) != warehouse_key:
+            continue
+        if route_type_key and route_detail_filter_type_key(row) != route_type_key:
+            continue
+        if route_id_text and route_id_text not in normalize_text(row.get("routeId")):
+            continue
+        if query_text:
+            person_text = normalize_person_match_text(f"{row.get('courierName') or ''} {row.get('courierId') or ''}")
+            if query_text not in person_text:
+                continue
+        result.append(row)
+    return result
+
+
 @app.get("/api/routes/details")
 def route_details(
     month: str = Query(default=""),
     courier: str = Query(default=""),
+    q: str = Query(default=""),
+    route_id: str = Query(default=""),
+    warehouse: str = Query(default="all"),
+    route_type: str = Query(default="all"),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
     if not can_preview_couriers(user):
         raise HTTPException(status_code=403, detail="A túra részletezőhöz admin jogosultság szükséges.")
-    if not str(courier or "").strip():
-        raise HTTPException(status_code=422, detail="Válassz futárt a futártörzsből.")
-    view_user, _preview = workflow_view_user(user, courier)
-    return route_details_for_user(view_user, parse_month(month), allow_unpublished=True)
+    month_value = parse_month(month)
+    if str(courier or "").strip():
+        view_user, _preview = workflow_view_user(user, courier)
+        payload = route_details_for_user(view_user, month_value, allow_unpublished=True)
+    else:
+        payload = route_details_for_all_couriers(month_value)
+    payload = dict(payload)
+    payload["rows"] = filter_route_detail_rows(
+        payload.get("rows") or [],
+        q=q,
+        route_id=route_id,
+        warehouse=warehouse,
+        route_type=route_type,
+    )
+    payload["filters"] = {"q": q, "route_id": route_id, "warehouse": warehouse, "route_type": route_type}
+    return payload
 
 
 @app.post("/api/routes/details/distance")
@@ -20117,6 +20174,10 @@ def route_details_distance(
 def route_details_excel(
     month: str = Query(default=""),
     courier: str = Query(default=""),
+    q: str = Query(default=""),
+    route_id: str = Query(default=""),
+    warehouse: str = Query(default="all"),
+    route_type: str = Query(default="all"),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
@@ -20128,6 +20189,14 @@ def route_details_excel(
         payload = route_details_for_user(view_user, month_value, allow_unpublished=True)
     else:
         payload = route_details_for_all_couriers(month_value)
+    payload = dict(payload)
+    payload["rows"] = filter_route_detail_rows(
+        payload.get("rows") or [],
+        q=q,
+        route_id=route_id,
+        warehouse=warehouse,
+        route_type=route_type,
+    )
 
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
@@ -20151,7 +20220,8 @@ def route_details_excel(
         "Tervezett hossz/idő",
         "Tervezett visszaérkezés",
         "Tervezett km",
-        "Tényleges túraidő",
+        "Túra bepakolás nélkül",
+        "Túra bepakolással",
         "Tényleges visszaérkezés",
         "Hub tényleges km",
         "Címekből számolt km",
@@ -20194,6 +20264,7 @@ def route_details_excel(
             route_detail_time_text(item.get("plannedReturnAt")),
             distance_check.get("kifliKm"),
             route_detail_duration_text(item.get("routeMinutes")),
+            route_detail_duration_text(item.get("totalMinutes")),
             route_detail_time_text(item.get("returnedAt")),
             item.get("actualKm"),
             item.get("calculatedRouteKm") or distance_check.get("calculatedKm"),
@@ -20219,7 +20290,8 @@ def route_details_excel(
     output = io.BytesIO()
     workbook.save(output)
     output.seek(0)
-    filename = f"tura-reszletek-{slugify_filename((payload.get('courier') or {}).get('name'))}-{payload.get('month')}.xlsx"
+    courier_part = slugify_filename((payload.get("courier") or {}).get("name")) or "osszes-futar"
+    filename = f"tura-reszletek-{courier_part}-{payload.get('month')}.xlsx"
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

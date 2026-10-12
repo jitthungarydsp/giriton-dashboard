@@ -64,6 +64,9 @@ const state = {
   routeStatistics: null,
   routeShiftReport: null,
   routeDetailsSelectedIndex: 0,
+  routeDetailsQuery: "",
+  routeDetailsRouteId: "",
+  routeDetailsType: "all",
   section: "home",
   routeAutoDelayKeys: new Set(),
   routePlannerSelectedStopIndex: null,
@@ -88,7 +91,7 @@ const state = {
   settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v198";
+const APP_VERSION = "v199";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -2465,6 +2468,53 @@ function routeDetailCalculatedKm(row = {}) {
   return row.calculatedRouteKm ?? row.routeDistance?.distanceKm ?? "";
 }
 
+function routeDetailsSearchText(value = "") {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function routeDetailsTypeKey(row = {}) {
+  const text = routeDetailsSearchText(`${row.routeType || ""} ${row.routeTypeLabel || ""}`);
+  if (text.includes("express")) return "express";
+  if (text.includes("region") || text.includes("regio")) return "regional";
+  return "city";
+}
+
+function routeDetailsFilteredRows(rows = []) {
+  const query = routeDetailsSearchText(state.routeDetailsQuery || $("#route-details-query")?.value || "");
+  const routeId = routeDetailsSearchText(state.routeDetailsRouteId || $("#route-details-route-id")?.value || "");
+  const routeType = state.routeDetailsType || $("#route-details-type")?.value || "all";
+  const warehouse = $("#route-stats-warehouse")?.value || "all";
+  return rows.filter((row) => {
+    if (warehouse !== "all" && String(row.warehouse || "").toUpperCase() !== warehouse) return false;
+    if (routeType !== "all" && routeDetailsTypeKey(row) !== routeType) return false;
+    if (routeId && !routeDetailsSearchText(row.routeId).includes(routeId)) return false;
+    if (query) {
+      const haystack = routeDetailsSearchText(`${row.courierName || ""} ${row.courierId || ""}`);
+      if (!haystack.includes(query)) return false;
+    }
+    return true;
+  });
+}
+
+function routeDetailsSummary(rows = []) {
+  const totalLoading = rows.reduce((sum, row) => sum + Number(row.loadingMinutes || 0), 0);
+  const totalRoute = rows.reduce((sum, row) => sum + Number(row.routeMinutes || 0), 0);
+  const totalFull = rows.reduce((sum, row) => sum + Number(row.totalMinutes || 0), 0);
+  const over5h = rows.filter((row) => Number(row.totalMinutes || row.routeMinutes || 0) > 300).length;
+  return {
+    routes: rows.length,
+    orders: rows.reduce((sum, row) => sum + Number(row.orders || 0), 0),
+    loadingAvg: rows.length ? Math.round(totalLoading / rows.length) : 0,
+    routeAvg: rows.length ? Math.round(totalRoute / rows.length) : 0,
+    fullAvg: rows.length ? Math.round(totalFull / rows.length) : 0,
+    over5h,
+  };
+}
+
 function renderRouteLegs(row = {}) {
   const legs = Array.isArray(row.routeLegs)
     ? row.routeLegs
@@ -2496,9 +2546,17 @@ function renderRouteLegs(row = {}) {
 function routeDetailsExcelUrl() {
   const month = $("#route-details-month")?.value || state.statisticsMonth;
   const courier = $("#route-details-courier")?.value || "";
+  const query = state.routeDetailsQuery || $("#route-details-query")?.value || "";
+  const routeId = state.routeDetailsRouteId || $("#route-details-route-id")?.value || "";
+  const routeType = state.routeDetailsType || $("#route-details-type")?.value || "all";
+  const warehouse = $("#route-stats-warehouse")?.value || "all";
   if (!month) return "";
   const params = new URLSearchParams({ month });
   if (courier) params.set("courier", courier);
+  if (query) params.set("q", query);
+  if (routeId) params.set("route_id", routeId);
+  if (routeType && routeType !== "all") params.set("route_type", routeType);
+  if (warehouse && warehouse !== "all") params.set("warehouse", warehouse);
   return `/api/routes/details.xlsx?${params.toString()}`;
 }
 
@@ -2939,14 +2997,15 @@ function renderRouteDetails() {
     return;
   }
   const payload = state.routeDetails;
-  const rows = payload?.rows || [];
+  const allRows = payload?.rows || [];
+  const rows = routeDetailsFilteredRows(allRows);
   if (!payload) {
     const excelUrl = routeDetailsExcelUrl();
     const monthlyReportUrl = monthlyShiftRouteReportExcelUrl();
     panel.innerHTML = `
       <div class="process-title">
         <span class="step-code">⇲</span>
-        <div><h3>Túra részletező</h3><p>Válassz futárt és hónapot, majd kérd le a route adatokat. Futár nélkül a hónap összes route-ja letölthető Excelben.</p></div>
+        <div><h3>Túra részletező</h3><p>Válassz hónapot és szűrőket. Üres futárválasztással az összes futár route sora betöltődik.</p></div>
       </div>
       ${excelUrl ? `<a class="download-link route-details-export-all" href="${excelUrl}">Összes futár Excel letöltés</a>` : ""}
       ${monthlyReportUrl ? `<a class="download-link route-details-export-all" href="${monthlyReportUrl}">Havi műszak/kör riport letöltés</a>` : ""}
@@ -2957,7 +3016,7 @@ function renderRouteDetails() {
     panel.innerHTML = `
       <div class="route-empty">
         <span class="route-empty-icon">0</span>
-        <div><h3>Nincs túra adat</h3><p>A kiválasztott hónapban ehhez a futárhoz nem találtam route sort.</p></div>
+        <div><h3>Nincs túra adat</h3><p>A kiválasztott szűrőkkel nem találtam route sort. Próbáld törölni a név/ID vagy Route ID szűrőt.</p></div>
       </div>
     `;
     return;
@@ -2966,17 +3025,26 @@ function renderRouteDetails() {
   const selected = rows[selectedIndex];
   const excelUrl = routeDetailsExcelUrl();
   const monthlyReportUrl = monthlyShiftRouteReportExcelUrl();
+  const summary = routeDetailsSummary(rows);
   panel.innerHTML = `
     <div class="route-details-head">
       <div>
         <span>${escapeHtml(payload.month || "-")}</span>
         <strong>${escapeHtml(payload.courier?.name || "Futár")}</strong>
-        <small>${formatCount(rows.length)} route sor</small>
+        <small>${formatCount(rows.length)} route sor szűrve · ${formatCount(allRows.length)} összes sor</small>
       </div>
       <div class="route-details-actions">
         ${excelUrl ? `<a class="download-link" href="${excelUrl}">Excel letöltés</a>` : ""}
         ${monthlyReportUrl ? `<a class="download-link" href="${monthlyReportUrl}">Havi műszak/kör riport</a>` : ""}
       </div>
+    </div>
+    <div class="statistics-grid route-details-kpis">
+      <div class="stat-card"><span>Túra összesen</span><strong>${formatCount(summary.routes)}</strong><small>szűrés után</small></div>
+      <div class="stat-card"><span>Rendelés / cím</span><strong>${formatCount(summary.orders)}</strong><small>route sorokból</small></div>
+      <div class="stat-card"><span>Átlag bepakolás</span><strong>${escapeHtml(routeDetailMinutes(summary.loadingAvg))}</strong><small>kiosztástól indulásig</small></div>
+      <div class="stat-card"><span>Átlag túraidő</span><strong>${escapeHtml(routeDetailClock(summary.routeAvg))}</strong><small>bepakolás nélkül</small></div>
+      <div class="stat-card"><span>Átlag teljes idő</span><strong>${escapeHtml(routeDetailClock(summary.fullAvg))}</strong><small>bepakolással</small></div>
+      <div class="stat-card"><span>5 óra felett</span><strong>${formatCount(summary.over5h)}</strong><small>teljes idő alapján</small></div>
     </div>
     <div class="route-details-table-wrap">
       <table class="route-details-table">
@@ -2991,13 +3059,14 @@ function renderRouteDetails() {
             <th>Tényleges műszak kezdés</th>
             <th>Túrát kapott</th>
             <th>Várakozás</th>
-            <th>Bepakolási idő</th>
+            <th>Bepakolás</th>
             <th>Indulás a raktárból</th>
             <th>Késés a túrán</th>
             <th>Tervezett hossz/idő</th>
             <th>Tervezett visszaérkezés</th>
             <th>Tervezett km</th>
-            <th>Tényleges túraidő</th>
+            <th>Túra bepakolás nélkül</th>
+            <th>Túra bepakolással</th>
             <th>Tényleges visszaérkezés</th>
             <th>Címekből számolt km</th>
             <th>Hub mileage km</th>
@@ -3025,6 +3094,7 @@ function renderRouteDetails() {
               <td>${escapeHtml(timeOnly(row.plannedReturnAt))}</td>
               <td>${escapeHtml(routeDetailDistance(row.hubPlannedKm))}</td>
               <td>${escapeHtml(routeDetailClock(row.routeMinutes))}</td>
+              <td>${escapeHtml(routeDetailClock(row.totalMinutes))}</td>
               <td>${escapeHtml(timeOnly(row.returnedAt))}</td>
               <td>${escapeHtml(routeDetailDistance(routeDetailCalculatedKm(row)))}</td>
               <td>${escapeHtml(routeDetailDistance(row.hubMileageKm))}</td>
@@ -3089,14 +3159,12 @@ async function loadRouteDetails() {
   const courierSelect = $("#route-details-courier");
   const month = monthInput?.value || state.statisticsMonth;
   const courier = courierSelect?.value || "";
-  if (!courier) {
-    if (message) message.innerHTML = `<div class="notice error">Válassz futárt a futártörzsből.</div>`;
-    return;
-  }
   try {
     if (message) message.innerHTML = `<div class="notice">Túra részletek betöltése...</div>`;
     state.routeDetailsSelectedIndex = 0;
-    state.routeDetails = await api(`/api/routes/details?month=${encodeURIComponent(month)}&courier=${encodeURIComponent(courier)}`);
+    const params = new URLSearchParams({ month });
+    if (courier) params.set("courier", courier);
+    state.routeDetails = await api(`/api/routes/details?${params.toString()}`);
     if (message) message.innerHTML = "";
     renderRouteDetails();
   } catch (error) {
@@ -9672,6 +9740,21 @@ $("#route-details-courier")?.addEventListener("change", () => {
   renderRouteShiftReport();
   renderRouteDetails();
 });
+$("#route-details-query")?.addEventListener("input", (event) => {
+  state.routeDetailsQuery = event.currentTarget.value || "";
+  state.routeDetailsSelectedIndex = 0;
+  renderRouteDetails();
+});
+$("#route-details-route-id")?.addEventListener("input", (event) => {
+  state.routeDetailsRouteId = event.currentTarget.value || "";
+  state.routeDetailsSelectedIndex = 0;
+  renderRouteDetails();
+});
+$("#route-details-type")?.addEventListener("change", (event) => {
+  state.routeDetailsType = event.currentTarget.value || "all";
+  state.routeDetailsSelectedIndex = 0;
+  renderRouteDetails();
+});
 $("#route-details-month")?.addEventListener("change", () => {
   state.routeDetails = null;
   state.routeStatistics = null;
@@ -9688,8 +9771,10 @@ $("#route-details-month")?.addEventListener("change", () => {
   $(selector)?.addEventListener("change", () => {
     state.routeStatistics = null;
     state.routeShiftReport = null;
+    state.routeDetailsSelectedIndex = 0;
     renderRouteShiftReport();
     renderRouteStatistics();
+    renderRouteDetails();
   });
 });
 
