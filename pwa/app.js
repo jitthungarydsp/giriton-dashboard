@@ -83,6 +83,8 @@ const state = {
   settlementImportMonth: previousLocalMonth(),
   settlementImportResult: null,
   settlementImportUploading: false,
+  settlementImportColumnConfig: {},
+  settlementImportDraggedColumnId: "",
 };
 const APP_VERSION = "v196";
 const $ = (selector) => document.querySelector(selector);
@@ -5000,7 +5002,8 @@ function renderSettlementImportSteps() {
   const steps = [
     [1, "Hónap", "Elszámolási hónap kiválasztása"],
     [2, "Excel", "Fájl feltöltése"],
-    [3, "Validálás", "Fejlécek ellenőrzése"],
+    [3, "Konfigurátor", "Oszlopok kártyákhoz"],
+    [4, "Validálás", "Ellenőrzés és betöltés"],
   ];
   return `<div class="settlement-import-stepper">
     ${steps.map(([index, title, detail]) => {
@@ -5011,6 +5014,97 @@ function renderSettlementImportSteps() {
         <small>${escapeHtml(detail)}</small>
       </div>`;
     }).join("")}
+  </div>`;
+}
+
+const SETTLEMENT_IMPORT_CARD_TARGETS = [
+  { key: "base", label: "Alapdíj", rule: "Túratípus + futár díj szabály" },
+  { key: "tip", label: "Borravaló", rule: "Borravaló összegzés" },
+  { key: "delay", label: "Késedelmi díj", rule: "Delay bonus szabály" },
+  { key: "compliance", label: "Túramegfelelés", rule: "Compliance / hibamutató szabály" },
+  { key: "stop_count", label: "Cím bónusz (Kifli)", rule: "Stop-count Bonus" },
+  { key: "loyalty", label: "Lojalitás", rule: "Aktuális kör alapján" },
+  { key: "customer_rating", label: "Ügyfélértékelési bónusz", rule: "Értékelés szabály" },
+  { key: "kifli_adjustments", label: "Kiflis levonások / bónuszok", rule: "Kifli tétel besorolás" },
+  { key: "jitt_adjustments", label: "JITT bónusz / malus", rule: "JITT tétel besorolás" },
+  { key: "atm", label: "ATM hatás", rule: "ATM import / kézi KP" },
+  { key: "correction", label: "Korrekció", rule: "Kézi / Excel korrekció" },
+  { key: "payable", label: "Fizetendő", rule: "Összesítő kontroll" },
+];
+
+function settlementImportColumnId(sheetName, header) {
+  return `${String(sheetName || "Munkalap")}::${String(header || "")}`;
+}
+
+function settlementImportColumnsFromHeaders(headers = []) {
+  return (headers || []).flatMap((sheet) => (sheet.headers || []).map((header) => ({
+    id: settlementImportColumnId(sheet.sheetName, header),
+    sheetName: sheet.sheetName || "Munkalap",
+    header: String(header || ""),
+  }))).filter((column) => column.header);
+}
+
+function settlementImportAssignedColumnIds() {
+  return new Set(Object.values(state.settlementImportColumnConfig || {}).flat());
+}
+
+function settlementImportColumnById(columns, columnId) {
+  return columns.find((column) => column.id === columnId) || null;
+}
+
+function renderSettlementImportColumnChip(column, extra = "") {
+  return `<span class="settlement-import-column-chip ${extra}" draggable="true" data-settlement-column-id="${escapeHtml(column.id)}">
+    <b>${escapeHtml(column.header)}</b>
+    <small>${escapeHtml(column.sheetName)}</small>
+  </span>`;
+}
+
+function renderSettlementImportConfigurator(result = {}) {
+  const columns = settlementImportColumnsFromHeaders(result.headers || []);
+  const assignedIds = settlementImportAssignedColumnIds();
+  const unassignedColumns = columns.filter((column) => !assignedIds.has(column.id));
+  if (!columns.length) {
+    return `<div class="empty-card">Nincs felismerhető oszlop a konfigurátorhoz.</div>`;
+  }
+  return `<div class="settlement-import-configurator">
+    <section class="settlement-import-column-bank">
+      <div class="settlement-import-header-title">
+        <div>
+          <span>Felismert Excel oszlopok</span>
+          <strong>${escapeHtml(formatCount(unassignedColumns.length))} szabad oszlop</strong>
+        </div>
+        <small>Húzd át őket a megfelelő fő kártyára</small>
+      </div>
+      <div class="settlement-import-column-chip-list" data-settlement-card-key="">
+        ${unassignedColumns.length
+          ? unassignedColumns.map((column) => renderSettlementImportColumnChip(column)).join("")
+          : `<em>Minden kiválasztott oszlop kártyára került.</em>`}
+      </div>
+    </section>
+    <section class="settlement-import-card-config-grid">
+      ${SETTLEMENT_IMPORT_CARD_TARGETS.map((card) => {
+        const ids = state.settlementImportColumnConfig?.[card.key] || [];
+        const assignedColumns = ids.map((id) => settlementImportColumnById(columns, id)).filter(Boolean);
+        return `<article class="settlement-import-config-card" data-settlement-card-key="${escapeHtml(card.key)}">
+          <div>
+            <span>${escapeHtml(card.label)}</span>
+            <strong>${escapeHtml(formatCount(assignedColumns.length))} oszlop</strong>
+            <small>${escapeHtml(card.rule)}</small>
+          </div>
+          <div class="settlement-import-card-dropzone ${assignedColumns.length ? "has-items" : ""}" data-settlement-card-key="${escapeHtml(card.key)}">
+            ${assignedColumns.length
+              ? assignedColumns.map((column) => `
+                <span class="settlement-import-column-chip assigned" draggable="true" data-settlement-column-id="${escapeHtml(column.id)}">
+                  <b>${escapeHtml(column.header)}</b>
+                  <small>${escapeHtml(column.sheetName)}</small>
+                  <button type="button" data-settlement-remove-column="${escapeHtml(column.id)}" aria-label="Oszlop eltávolítása">×</button>
+                </span>
+              `).join("")
+              : `<em>Dobd ide az oszlopot</em>`}
+          </div>
+        </article>`;
+      }).join("")}
+    </section>
   </div>`;
 }
 
@@ -5237,8 +5331,29 @@ function renderSettlementImportConfig() {
       ${step === 3 ? `
         <div class="settlement-import-copy">
           <p class="eyebrow">3. lépés</p>
-          <h3>Validálás és fejlécek</h3>
-          <p class="muted">Itt már látszik, hogy a raw import sikerült-e, hány sort töltöttünk be, és milyen fejlécekből lehet majd konfigurációt építeni.</p>
+          <h3>Oszlopok és fő kártyák összerendelése</h3>
+          <p class="muted">A felismert Excel oszlopokat húzd át arra a fő kártyára, ahol később meg kell jelenniük vagy szabályt kell kapniuk.</p>
+        </div>
+        ${result?.ok ? `
+          <div class="settlement-import-result-grid">
+            <div><span>Hónap</span><strong>${escapeHtml(formatMonthLabel(result.month))}</strong></div>
+            <div><span>Fájl</span><strong>${escapeHtml(result.sourceFileName || "-")}</strong></div>
+            <div><span>Munkalap</span><strong>${escapeHtml(formatCount(result.sheetCount || 0))}</strong></div>
+            <div><span>Betöltött sor</span><strong>${escapeHtml(formatCount(result.insertedRows || 0))}</strong></div>
+          </div>
+          ${renderSettlementImportHeaders(result.headers || [])}
+          ${renderSettlementImportConfigurator(result)}
+        ` : `<div class="empty-card">Nincs még feltöltött Excel a konfigurátorhoz.</div>`}
+        <div class="settlement-import-actions">
+          <button class="secondary" type="button" data-settlement-import-action="back">Vissza</button>
+          <button class="primary" type="button" data-settlement-import-action="next-validation" ${canFinish ? "" : "disabled"}>Tovább a validálásra</button>
+        </div>
+      ` : ""}
+      ${step === 4 ? `
+        <div class="settlement-import-copy">
+          <p class="eyebrow">4. lépés</p>
+          <h3>Validálás és betöltés</h3>
+          <p class="muted">Itt látszik, hogy a feldolgozás sikerült-e, mit számoltunk ki, és az Excel-Hub ellenőrzés alapján betölthető-e PWA-ra.</p>
         </div>
         ${result?.ok ? `
           <div class="settlement-import-result-grid">
@@ -5250,7 +5365,6 @@ function renderSettlementImportConfig() {
           ${renderSettlementImportProcessing(result.processing || {})}
           ${renderSettlementImportValidation(result.validation || {})}
           ${renderSettlementImportPublishedConfig(result.publishedConfig || {})}
-          ${renderSettlementImportHeaders(result.headers || [])}
         ` : `<div class="empty-card">Nincs még validált feltöltés.</div>`}
         <div class="settlement-import-actions">
           <button class="secondary" type="button" data-settlement-import-action="back">Vissza</button>
@@ -5283,6 +5397,7 @@ async function submitSettlementImport() {
       body: formData,
       loadingMessage: "Excel feltöltése...",
     });
+    state.settlementImportColumnConfig = {};
     state.settlementImportStep = 3;
   } catch (error) {
     window.alert(error.message);
@@ -5340,6 +5455,7 @@ async function deleteSettlementImport() {
       loadingMessage: "Import törlése...",
     });
     state.settlementImportResult = null;
+    state.settlementImportColumnConfig = {};
     state.settlementImportStep = 1;
     state.settlementDashboard = null;
     renderSettlementImportConfig();
@@ -9289,9 +9405,52 @@ $("#settlement-import-config-panel")?.addEventListener("change", (event) => {
   if (monthInput) {
     state.settlementImportMonth = monthInput.value || previousLocalMonth();
     state.settlementImportResult = null;
+    state.settlementImportColumnConfig = {};
   }
 });
+$("#settlement-import-config-panel")?.addEventListener("dragstart", (event) => {
+  const chip = event.target.closest("[data-settlement-column-id]");
+  if (!chip) return;
+  state.settlementImportDraggedColumnId = chip.dataset.settlementColumnId || "";
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", state.settlementImportDraggedColumnId);
+});
+$("#settlement-import-config-panel")?.addEventListener("dragover", (event) => {
+  const dropzone = event.target.closest("[data-settlement-card-key]");
+  if (!dropzone) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+});
+$("#settlement-import-config-panel")?.addEventListener("drop", (event) => {
+  const dropzone = event.target.closest("[data-settlement-card-key]");
+  if (!dropzone) return;
+  event.preventDefault();
+  const columnId = event.dataTransfer.getData("text/plain") || state.settlementImportDraggedColumnId;
+  if (!columnId) return;
+  const targetKey = dropzone.dataset.settlementCardKey || "";
+  const nextConfig = {};
+  for (const [cardKey, ids] of Object.entries(state.settlementImportColumnConfig || {})) {
+    nextConfig[cardKey] = (ids || []).filter((id) => id !== columnId);
+  }
+  if (targetKey) {
+    nextConfig[targetKey] = [...(nextConfig[targetKey] || []), columnId];
+  }
+  state.settlementImportColumnConfig = nextConfig;
+  state.settlementImportDraggedColumnId = "";
+  renderSettlementImportConfig();
+});
 $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
+  const removeButton = event.target.closest("[data-settlement-remove-column]");
+  if (removeButton) {
+    const columnId = removeButton.dataset.settlementRemoveColumn || "";
+    const nextConfig = {};
+    for (const [cardKey, ids] of Object.entries(state.settlementImportColumnConfig || {})) {
+      nextConfig[cardKey] = (ids || []).filter((id) => id !== columnId);
+    }
+    state.settlementImportColumnConfig = nextConfig;
+    renderSettlementImportConfig();
+    return;
+  }
   const actionButton = event.target.closest("[data-settlement-import-action]");
   if (!actionButton) return;
   const action = actionButton.dataset.settlementImportAction;
@@ -9311,6 +9470,11 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
     submitSettlementImport();
     return;
   }
+  if (action === "next-validation") {
+    state.settlementImportStep = 4;
+    renderSettlementImportConfig();
+    return;
+  }
   if (action === "publish") {
     publishSettlementImport();
     return;
@@ -9326,6 +9490,7 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
   if (action === "finish") {
     state.settlementImportStep = 1;
     state.settlementImportResult = null;
+    state.settlementImportColumnConfig = {};
     renderSettlementImportConfig();
   }
 });
