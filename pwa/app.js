@@ -67,6 +67,10 @@ const state = {
   routeDetailsQuery: "",
   routeDetailsRouteId: "",
   routeDetailsType: "all",
+  routeDetailsReportFields: ["courierId", "courierName", "warehouse", "routeType", "orders", "loading", "routeTime", "fullTime", "over5h", "tip"],
+  routeDetailsIncludeSummary: true,
+  routeDetailsAutoExcel: false,
+  routeDetailsDialogShownOnce: false,
   section: "home",
   routeAutoDelayKeys: new Set(),
   routePlannerSelectedStopIndex: null,
@@ -91,8 +95,56 @@ const state = {
   settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v202";
+const APP_VERSION = "v204";
 const $ = (selector) => document.querySelector(selector);
+
+const ROUTE_REPORT_FIELDS = [
+  { key: "date", label: "Munkanap", column: "Munkanap", get: (row) => routeDetailValue(row.date) },
+  { key: "courierId", label: "Futár ID", column: "Futár ID", get: (row) => routeDetailValue(row.courierId) },
+  { key: "courierName", label: "Futár neve", column: "Futár neve", get: (row) => routeDetailValue(row.courierName) },
+  { key: "warehouse", label: "Raktár", column: "Raktár", get: (row) => routeDetailValue(row.warehouse) },
+  { key: "warehouseAddress", label: "Raktár cím", column: "Raktár cím", get: (row) => routeDetailValue(row.warehouseAddress) },
+  { key: "shiftName", label: "Műszak neve", column: "Műszak", get: (row) => routeDetailValue(row.shiftName) },
+  { key: "shiftStart", label: "Műszak kezdés", column: "Műszak kezdés", get: (row) => shortDateTime(row.shiftStartAt) },
+  { key: "shiftEnd", label: "Műszak vége", column: "Műszak vége", get: (row) => shortDateTime(row.shiftEndAt) },
+  { key: "shiftAvailable", label: "Elérhető műszakra", column: "Elérhető", get: (row) => shortDateTime(row.shiftAvailableAt) },
+  { key: "queueStarted", label: "Sorbaállt", column: "Sorbaállt", get: (row) => shortDateTime(row.queueStartedAt) },
+  { key: "actualShiftStart", label: "Tényleges műszak kezdés", column: "Tényleges kezdés", get: (row) => shortDateTime(row.actualShiftStartAt) },
+  { key: "routeAssigned", label: "Túrát kapott", column: "Túrát kapott", get: (row) => shortDateTime(row.routeAssignedAt) },
+  { key: "plannedDeparture", label: "Tervezett indulás", column: "Tervezett indulás", get: (row) => shortDateTime(row.plannedDepartureAt) },
+  { key: "departed", label: "Indulás a raktárból", column: "Indulás", get: (row) => shortDateTime(row.departedAt) },
+  { key: "plannedReturn", label: "Tervezett visszaérkezés", column: "Tervezett vissza", get: (row) => shortDateTime(row.plannedReturnAt) },
+  { key: "returned", label: "Tényleges visszaérkezés", column: "Visszaérkezés", get: (row) => shortDateTime(row.returnedAt) },
+  { key: "routeType", label: "Túratípus", column: "Túratípus", get: (row) => routeDetailValue(row.routeTypeLabel) },
+  { key: "orders", label: "Rendelés / cím", column: "Címek", summary: "orders", get: (row) => formatCount(row.orders || 0) },
+  { key: "stops", label: "Stopok", column: "Stopok", summary: "stops", get: (row) => formatCount(row.stops || 0) },
+  { key: "waiting", label: "Várakozás", column: "Várakozás", summary: "waitingAvg", get: (row) => routeDetailMinutes(row.waitingMinutes) },
+  { key: "plannedLoading", label: "Tervezett bepakolás", column: "Terv bepakolás", get: (row) => routeDetailMinutes(row.plannedLoadingMinutes) },
+  { key: "loading", label: "Bepakolás", column: "Bepakolás", summary: "loadingAvg", get: (row) => routeDetailMinutes(row.loadingMinutes) },
+  { key: "plannedRouteTime", label: "Tervezett túraidő", column: "Terv túraidő", get: (row) => routeDetailClock(row.plannedRouteMinutes) },
+  { key: "routeTime", label: "Túraidő", column: "Túra bepakolás nélkül", summary: "routeAvg", get: (row) => routeDetailClock(row.routeMinutes) },
+  { key: "fullTime", label: "Teljes idő", column: "Túra bepakolással", summary: "fullAvg", get: (row) => routeDetailClock(row.totalMinutes) },
+  { key: "over5h", label: "5 óra felett", column: "5h+", summary: "over5h", get: (row) => Number(row.totalMinutes || row.routeMinutes || 0) > 300 ? "Igen" : "Nem" },
+  { key: "delay", label: "Késés a túrán", column: "Késés", get: (row) => `${formatCount(row.routeDelayCount || 0)} db` },
+  { key: "delayMinutes", label: "Késés percek", column: "Késés perc", get: (row) => routeDetailMinutes(row.routeDelayMinutes) },
+  { key: "plannedKm", label: "Tervezett km", column: "Tervezett km", get: (row) => routeDetailDistance(row.hubPlannedKm) },
+  { key: "hubMileageKm", label: "Hub mileage km", column: "Hub km", get: (row) => routeDetailDistance(row.hubMileageKm) },
+  { key: "actualKm", label: "Hub tényleges km", column: "Tényleges km", get: (row) => routeDetailDistance(row.actualKm) },
+  { key: "googleRouteKm", label: "Google útvonal km", column: "Google km", get: (row) => routeDetailDistance(row.googleRouteKm) },
+  { key: "distance", label: "Címekből számolt km", column: "Számolt km", get: (row) => routeDetailDistance(routeDetailCalculatedKm(row)) },
+  { key: "distanceDelta", label: "Km eltérés", column: "Km eltérés", get: (row) => routeDetailDistance(row.distanceDeltaKm) },
+  { key: "distanceSource", label: "Km forrás", column: "Km forrás", get: (row) => routeDetailValue(row.distanceSource || row.distanceStatus) },
+  { key: "nextShift", label: "Következő műszak aznap", column: "Következő műszak", get: (row) => routeDetailValue(row.nextShiftSameDay) },
+  { key: "vehiclePlate", label: "Rendszám", column: "Rendszám", get: (row) => routeDetailValue(row.vehiclePlate) },
+  { key: "vehicleModel", label: "Autó", column: "Autó", get: (row) => routeDetailValue(row.vehicleModel || row.vehicleLabel) },
+  { key: "kifliVehicle", label: "Kiflis autó", column: "Kiflis autó", get: (row) => routeDetailValue(row.kifliVehicle) },
+  { key: "tip", label: "Borravaló", column: "Borravaló", summary: "tipSum", get: (row) => formatHuf(row.tipHuf || 0) },
+  { key: "tipSource", label: "Borravaló forrás", column: "Tip forrás", get: (row) => routeDetailValue(row.tipSource) },
+  { key: "dataSource", label: "Adatforrás", column: "Forrás", get: (row) => routeDetailValue(row.dataSource) },
+  { key: "narrative", label: "Szöveges összefoglaló", column: "Összefoglaló", get: (row) => routeDetailValue(row.narrative) },
+];
+
+const DEFAULT_ROUTE_REPORT_FIELDS = ["courierId", "courierName", "warehouse", "routeType", "orders", "loading", "routeTime", "fullTime", "over5h", "tip"];
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
 const COORDINATOR_LIVE_REFRESH_MS = 60 * 1000;
@@ -574,6 +626,11 @@ function showSection(section) {
       if (!$("#route-stats-start")?.value) $("#route-stats-start").value = monthStartDate($("#route-details-month")?.value || state.statisticsMonth);
       if (!$("#route-stats-end")?.value) $("#route-stats-end").value = monthEndDate($("#route-details-month")?.value || state.statisticsMonth);
       if (state.workflowPreviewCourierId && $("#route-details-courier")) $("#route-details-courier").value = state.workflowPreviewCourierId;
+      renderRouteReportBuilder();
+      if (!state.routeDetails && !state.routeDetailsDialogShownOnce) {
+        state.routeDetailsDialogShownOnce = true;
+        openRouteReportDialog();
+      }
     });
     renderRouteShiftReport();
     renderRouteStatistics();
@@ -2501,18 +2558,100 @@ function routeDetailsFilteredRows(rows = []) {
 }
 
 function routeDetailsSummary(rows = []) {
+  const totalWaiting = rows.reduce((sum, row) => sum + Number(row.waitingMinutes || 0), 0);
   const totalLoading = rows.reduce((sum, row) => sum + Number(row.loadingMinutes || 0), 0);
   const totalRoute = rows.reduce((sum, row) => sum + Number(row.routeMinutes || 0), 0);
   const totalFull = rows.reduce((sum, row) => sum + Number(row.totalMinutes || 0), 0);
+  const tipSum = rows.reduce((sum, row) => sum + Number(row.tipHuf || 0), 0);
   const over5h = rows.filter((row) => Number(row.totalMinutes || row.routeMinutes || 0) > 300).length;
   return {
     routes: rows.length,
     orders: rows.reduce((sum, row) => sum + Number(row.orders || 0), 0),
+    stops: rows.reduce((sum, row) => sum + Number(row.stops || 0), 0),
+    waitingAvg: rows.length ? Math.round(totalWaiting / rows.length) : 0,
     loadingAvg: rows.length ? Math.round(totalLoading / rows.length) : 0,
     routeAvg: rows.length ? Math.round(totalRoute / rows.length) : 0,
     fullAvg: rows.length ? Math.round(totalFull / rows.length) : 0,
+    tipSum,
     over5h,
   };
+}
+
+function routeReportFieldsByKey() {
+  return Object.fromEntries(ROUTE_REPORT_FIELDS.map((field) => [field.key, field]));
+}
+
+function routeReportSelectedFields() {
+  const fieldsByKey = routeReportFieldsByKey();
+  const keys = (state.routeDetailsReportFields || []).filter((key) => fieldsByKey[key]);
+  if (!keys.length) return DEFAULT_ROUTE_REPORT_FIELDS.map((key) => fieldsByKey[key]).filter(Boolean);
+  return keys.map((key) => fieldsByKey[key]).filter(Boolean);
+}
+
+function routeReportMoveField(key, target) {
+  const fieldsByKey = routeReportFieldsByKey();
+  if (!fieldsByKey[key]) return;
+  const current = state.routeDetailsReportFields || [];
+  if (target === "selected") {
+    if (!current.includes(key)) state.routeDetailsReportFields = [...current, key];
+  } else {
+    state.routeDetailsReportFields = current.filter((item) => item !== key);
+  }
+  renderRouteReportBuilder();
+  renderRouteDetails();
+}
+
+function renderRouteReportBuilder() {
+  const availableTarget = $("#route-report-available-fields");
+  const selectedTarget = $("#route-report-selected-fields");
+  if (!availableTarget || !selectedTarget) return;
+  const selectedKeys = new Set(state.routeDetailsReportFields || []);
+  const renderChip = (field, zone) => `
+    <button class="route-report-field-chip" type="button" draggable="true" data-route-report-field="${escapeHtml(field.key)}" data-route-report-zone-source="${zone}">
+      <strong>${escapeHtml(field.label)}</strong>
+      <small>${zone === "selected" ? "látható" : "hozzáadás"}</small>
+    </button>
+  `;
+  availableTarget.innerHTML = ROUTE_REPORT_FIELDS
+    .filter((field) => !selectedKeys.has(field.key))
+    .map((field) => renderChip(field, "available"))
+    .join("") || `<p class="muted">Minden mező a riportban van.</p>`;
+  selectedTarget.innerHTML = routeReportSelectedFields()
+    .map((field) => renderChip(field, "selected"))
+    .join("") || `<p class="muted">Kattints vagy húzz ide mezőket.</p>`;
+}
+
+function openRouteReportDialog() {
+  const dialog = $("#route-report-dialog");
+  if (!dialog) return;
+  if ($("#route-report-auto-excel")) $("#route-report-auto-excel").checked = Boolean(state.routeDetailsAutoExcel);
+  if ($("#route-report-include-summary")) $("#route-report-include-summary").checked = state.routeDetailsIncludeSummary !== false;
+  renderRouteReportBuilder();
+  if (typeof dialog.showModal === "function") dialog.showModal();
+}
+
+function closeRouteReportDialog() {
+  const dialog = $("#route-report-dialog");
+  if (dialog?.open) dialog.close();
+}
+
+function routeReportSummaryCards(summary = {}) {
+  const selectedSummaries = new Set(routeReportSelectedFields().map((field) => field.summary).filter(Boolean));
+  const cards = [
+    { key: "routes", label: "Túra összesen", value: formatCount(summary.routes), note: "szűrés után", always: true },
+    { key: "orders", label: "Rendelés / cím", value: formatCount(summary.orders), note: "route sorokból" },
+    { key: "stops", label: "Stopok", value: formatCount(summary.stops), note: "route sorokból" },
+    { key: "waitingAvg", label: "Átlag várakozás", value: routeDetailMinutes(summary.waitingAvg), note: "sorbaállástól kiosztásig" },
+    { key: "loadingAvg", label: "Átlag bepakolás", value: routeDetailMinutes(summary.loadingAvg), note: "kiosztástól indulásig" },
+    { key: "routeAvg", label: "Átlag túraidő", value: routeDetailClock(summary.routeAvg), note: "bepakolás nélkül" },
+    { key: "fullAvg", label: "Átlag teljes idő", value: routeDetailClock(summary.fullAvg), note: "bepakolással" },
+    { key: "over5h", label: "5 óra felett", value: formatCount(summary.over5h), note: "teljes idő alapján" },
+    { key: "tipSum", label: "Borravaló", value: formatHuf(summary.tipSum || 0), note: "összesen" },
+  ];
+  return cards
+    .filter((card) => card.always || selectedSummaries.has(card.key))
+    .map((card) => `<div class="stat-card"><span>${escapeHtml(card.label)}</span><strong>${escapeHtml(card.value)}</strong><small>${escapeHtml(card.note)}</small></div>`)
+    .join("");
 }
 
 function renderRouteLegs(row = {}) {
@@ -2976,16 +3115,14 @@ function renderRouteDetails() {
   const allRows = payload?.rows || [];
   const rows = routeDetailsFilteredRows(allRows);
   if (!payload) {
-    const excelUrl = routeDetailsExcelUrl();
-    const monthlyReportUrl = monthlyShiftRouteReportExcelUrl();
     panel.innerHTML = `
       <div class="process-title">
         <span class="step-code">⇲</span>
-        <div><h3>Túra részletező</h3><p>Válassz hónapot és szűrőket. Üres futárválasztással az összes futár route sora betöltődik.</p></div>
+        <div><h3>Nincs aktív riport</h3><p>Nyisd meg az új riport ablakot, válassz időszakot, raktárt, futárt és megjelenítendő statisztikákat.</p></div>
       </div>
-      ${excelUrl ? `<a class="download-link route-details-export-all" href="${excelUrl}">Összes futár Excel letöltés</a>` : ""}
-      ${monthlyReportUrl ? `<a class="download-link route-details-export-all" href="${monthlyReportUrl}">Havi műszak/kör riport letöltés</a>` : ""}
+      <button class="secondary route-details-export-all" type="button" data-route-report-open>Új riport kérése</button>
     `;
+    panel.querySelector("[data-route-report-open]")?.addEventListener("click", openRouteReportDialog);
     return;
   }
   if (!rows.length) {
@@ -3002,26 +3139,22 @@ function renderRouteDetails() {
   const excelUrl = routeDetailsExcelUrl();
   const monthlyReportUrl = monthlyShiftRouteReportExcelUrl();
   const summary = routeDetailsSummary(rows);
+  const selectedFields = routeReportSelectedFields();
+  const summaryCards = state.routeDetailsIncludeSummary === false ? "" : routeReportSummaryCards(summary);
   panel.innerHTML = `
     <div class="route-details-head">
       <div>
         <span>${escapeHtml(payload.month || "-")}</span>
-        <strong>${escapeHtml(payload.courier?.name || "Futár")}</strong>
+        <strong>${escapeHtml(payload.courier?.name || "Összes futár")}</strong>
         <small>${formatCount(rows.length)} route sor szűrve · ${formatCount(allRows.length)} összes sor</small>
       </div>
       <div class="route-details-actions">
+        <button class="secondary" type="button" data-route-report-open>Új riport</button>
         ${excelUrl ? `<a class="download-link" href="${excelUrl}">Excel letöltés</a>` : ""}
         ${monthlyReportUrl ? `<a class="download-link" href="${monthlyReportUrl}">Havi műszak/kör riport</a>` : ""}
       </div>
     </div>
-    <div class="statistics-grid route-details-kpis">
-      <div class="stat-card"><span>Túra összesen</span><strong>${formatCount(summary.routes)}</strong><small>szűrés után</small></div>
-      <div class="stat-card"><span>Rendelés / cím</span><strong>${formatCount(summary.orders)}</strong><small>route sorokból</small></div>
-      <div class="stat-card"><span>Átlag bepakolás</span><strong>${escapeHtml(routeDetailMinutes(summary.loadingAvg))}</strong><small>kiosztástól indulásig</small></div>
-      <div class="stat-card"><span>Átlag túraidő</span><strong>${escapeHtml(routeDetailClock(summary.routeAvg))}</strong><small>bepakolás nélkül</small></div>
-      <div class="stat-card"><span>Átlag teljes idő</span><strong>${escapeHtml(routeDetailClock(summary.fullAvg))}</strong><small>bepakolással</small></div>
-      <div class="stat-card"><span>5 óra felett</span><strong>${formatCount(summary.over5h)}</strong><small>teljes idő alapján</small></div>
-    </div>
+    ${summaryCards ? `<div class="statistics-grid route-details-kpis">${summaryCards}</div>` : ""}
     <div class="route-report-workspace">
       <div class="route-report-list">
         <div class="route-report-list-head">
@@ -3035,57 +3168,15 @@ function renderRouteDetails() {
           <table class="route-details-table">
         <thead>
           <tr>
-            <th>Raktár</th>
-            <th>Futár ID</th>
-            <th>Futár neve</th>
             <th>Route ID</th>
-            <th>Műszak neve</th>
-            <th>Sorbaállt</th>
-            <th>Tényleges műszak kezdés</th>
-            <th>Túrát kapott</th>
-            <th>Várakozás</th>
-            <th>Bepakolás</th>
-            <th>Indulás a raktárból</th>
-            <th>Késés a túrán</th>
-            <th>Tervezett hossz/idő</th>
-            <th>Tervezett visszaérkezés</th>
-            <th>Tervezett km</th>
-            <th>Túra bepakolás nélkül</th>
-            <th>Túra bepakolással</th>
-            <th>Tényleges visszaérkezés</th>
-            <th>Címekből számolt km</th>
-            <th>Hub mileage km</th>
-            <th>Következő műszak aznap</th>
-            <th>Túra típusa</th>
-            <th>Borravaló</th>
+            ${selectedFields.map((field) => `<th>${escapeHtml(field.column)}</th>`).join("")}
           </tr>
         </thead>
         <tbody>
           ${rows.map((row, index) => `
             <tr class="${index === selectedIndex ? "active" : ""}" data-route-detail-index="${index}">
-              <td>${escapeHtml(routeDetailValue(row.warehouse))}</td>
-              <td>${escapeHtml(routeDetailValue(row.courierId))}</td>
-              <td>${escapeHtml(routeDetailValue(row.courierName))}</td>
               <td><strong>${escapeHtml(routeDetailValue(row.routeId))}</strong></td>
-              <td>${escapeHtml(routeDetailValue(row.shiftName))}</td>
-              <td>${escapeHtml(timeOnly(row.queueStartedAt))}</td>
-              <td>${escapeHtml(timeOnly(row.actualShiftStartAt))}</td>
-              <td>${escapeHtml(timeOnly(row.routeAssignedAt))}</td>
-              <td>${escapeHtml(routeDetailMinutes(row.waitingMinutes))}</td>
-              <td>${escapeHtml(routeDetailMinutes(row.loadingMinutes))}</td>
-              <td>${escapeHtml(timeOnly(row.departedAt))}</td>
-              <td>${formatCount(row.routeDelayCount || 0)} db</td>
-              <td>${escapeHtml(routeDetailClock(row.plannedRouteMinutes))}</td>
-              <td>${escapeHtml(timeOnly(row.plannedReturnAt))}</td>
-              <td>${escapeHtml(routeDetailDistance(row.hubPlannedKm))}</td>
-              <td>${escapeHtml(routeDetailClock(row.routeMinutes))}</td>
-              <td>${escapeHtml(routeDetailClock(row.totalMinutes))}</td>
-              <td>${escapeHtml(timeOnly(row.returnedAt))}</td>
-              <td>${escapeHtml(routeDetailDistance(routeDetailCalculatedKm(row)))}</td>
-              <td>${escapeHtml(routeDetailDistance(row.hubMileageKm))}</td>
-              <td>${escapeHtml(routeDetailValue(row.nextShiftSameDay))}</td>
-              <td>${escapeHtml(routeDetailValue(row.routeTypeLabel))}</td>
-              <td>${escapeHtml(formatHuf(row.tipHuf || 0))}</td>
+              ${selectedFields.map((field) => `<td>${escapeHtml(field.get(row))}</td>`).join("")}
             </tr>
           `).join("")}
         </tbody>
@@ -3132,6 +3223,7 @@ function renderRouteDetails() {
       </article>
     </div>
   `;
+  panel.querySelector("[data-route-report-open]")?.addEventListener("click", openRouteReportDialog);
   panel.querySelectorAll("[data-route-detail-index]").forEach((row) => {
     row.addEventListener("click", () => {
       state.routeDetailsSelectedIndex = Number(row.dataset.routeDetailIndex || 0);
@@ -3147,13 +3239,25 @@ async function loadRouteDetails() {
   const month = monthInput?.value || state.statisticsMonth;
   const courier = courierSelect?.value || "";
   try {
+    state.routeDetailsAutoExcel = Boolean($("#route-report-auto-excel")?.checked);
+    state.routeDetailsIncludeSummary = $("#route-report-include-summary")?.checked !== false;
+    state.routeDetailsQuery = $("#route-details-query")?.value || "";
+    state.routeDetailsRouteId = $("#route-details-route-id")?.value || "";
+    state.routeDetailsType = $("#route-details-type")?.value || "all";
     if (message) message.innerHTML = `<div class="notice">Túra részletek betöltése...</div>`;
     state.routeDetailsSelectedIndex = 0;
     const params = new URLSearchParams({ month });
     if (courier) params.set("courier", courier);
+    if (state.routeDetailsQuery) params.set("q", state.routeDetailsQuery);
+    if (state.routeDetailsRouteId) params.set("route_id", state.routeDetailsRouteId);
+    if (state.routeDetailsType && state.routeDetailsType !== "all") params.set("route_type", state.routeDetailsType);
+    const warehouse = $("#route-stats-warehouse")?.value || "all";
+    if (warehouse && warehouse !== "all") params.set("warehouse", warehouse);
     state.routeDetails = await api(`/api/routes/details?${params.toString()}`);
     if (message) message.innerHTML = "";
+    closeRouteReportDialog();
     renderRouteDetails();
+    if (state.routeDetailsAutoExcel) window.open(routeDetailsExcelUrl(), "_blank", "noopener");
   } catch (error) {
     if (message) message.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
@@ -9716,6 +9820,39 @@ document.addEventListener("click", (event) => {
     if (note && !note.value) note.value = "Admin által törölve";
     row.classList.add("deleted");
   }
+});
+$("#route-report-open")?.addEventListener("click", openRouteReportDialog);
+document.querySelectorAll("[data-route-report-close]").forEach((button) => button.addEventListener("click", closeRouteReportDialog));
+$("#route-report-dialog")?.addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeRouteReportDialog();
+});
+$("#route-report-dialog")?.addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-route-report-field]");
+  if (!chip) return;
+  const key = chip.dataset.routeReportField;
+  const source = chip.dataset.routeReportZoneSource;
+  routeReportMoveField(key, source === "selected" ? "available" : "selected");
+});
+$("#route-report-dialog")?.addEventListener("dragstart", (event) => {
+  const chip = event.target.closest("[data-route-report-field]");
+  if (!chip) return;
+  event.dataTransfer.setData("text/plain", chip.dataset.routeReportField || "");
+});
+$("#route-report-dialog")?.addEventListener("dragover", (event) => {
+  if (event.target.closest("[data-route-report-zone]")) event.preventDefault();
+});
+$("#route-report-dialog")?.addEventListener("drop", (event) => {
+  const zone = event.target.closest("[data-route-report-zone]");
+  if (!zone) return;
+  event.preventDefault();
+  routeReportMoveField(event.dataTransfer.getData("text/plain"), zone.dataset.routeReportZone);
+});
+$("#route-report-include-summary")?.addEventListener("change", (event) => {
+  state.routeDetailsIncludeSummary = event.currentTarget.checked;
+  renderRouteDetails();
+});
+$("#route-report-auto-excel")?.addEventListener("change", (event) => {
+  state.routeDetailsAutoExcel = event.currentTarget.checked;
 });
 $("#route-details-load")?.addEventListener("click", loadRouteDetails);
 $("#route-stats-load")?.addEventListener("click", loadRouteStatistics);

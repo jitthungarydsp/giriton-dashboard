@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#17231c" />
     <meta name="description" content="Jitt futár mobilalkalmazás" />
-    <link rel="manifest" href="/manifest.webmanifest?v=202" />
-    <link rel="icon" href="/icon.svg?v=156" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icon.svg?v=156" />
-    <link rel="stylesheet" href="/styles.css?v=202" />
+    <link rel="manifest" href="/manifest.webmanifest?v=204" />
+    <link rel="icon" href="/icon.svg?v=204" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg?v=204" />
+    <link rel="stylesheet" href="/styles.css?v=204" />
     <title>Jitt</title>
   </head>
   <body>
@@ -674,32 +674,9 @@
           <div>
             <p class="eyebrow">TÚRA RÉSZLETEZŐ</p>
             <h2>Túra részletező</h2>
-            <p class="muted">Futártörzsből választva nézhetők és Excelbe tölthetők a route adatok.</p>
+            <p class="muted">Riportkérés felugró ablakból: időszak, raktár, futár és megjelenített statisztikák.</p>
           </div>
-          <div class="workflow-controls">
-            <label class="month-picker">Hónap<input id="route-details-month" type="month" /></label>
-            <label class="month-picker">Kezdő dátum<input id="route-stats-start" type="date" /></label>
-            <label class="month-picker">Záró dátum<input id="route-stats-end" type="date" /></label>
-            <label class="month-picker">Raktár
-              <select id="route-stats-warehouse">
-                <option value="all">Összes</option>
-                <option value="BUD1">BUD1</option>
-                <option value="BUD2">BUD2</option>
-              </select>
-            </label>
-            <label class="month-picker">Futár<select id="route-details-courier"></select></label>
-            <label class="month-picker">Név / ID<input id="route-details-query" placeholder="Futár név vagy ID" autocomplete="off" /></label>
-            <label class="month-picker">Route ID<input id="route-details-route-id" placeholder="Route ID" autocomplete="off" /></label>
-            <label class="month-picker">Túratípus
-              <select id="route-details-type">
-                <option value="all">Összes</option>
-                <option value="city">Normal / City</option>
-                <option value="express">Express</option>
-                <option value="regional">Régiós</option>
-              </select>
-            </label>
-            <button id="route-details-load" class="primary" type="button">Lekérés</button>
-          </div>
+          <button id="route-report-open" class="primary" type="button">Új riport</button>
         </section>
         <section id="route-details-message" aria-live="polite"></section>
         <section id="route-shift-report-panel" class="process-card"></section>
@@ -868,7 +845,80 @@
         <button id="nav-registration-admin" class="hidden"><span>✓</span>Futárok jóváhagyása</button>
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
+
+      <dialog id="route-report-dialog" class="route-report-dialog">
+        <section class="route-report-dialog-card">
+          <div class="route-report-dialog-head">
+            <div>
+              <span>Riport varázsló</span>
+              <strong>Túra részletező beállítása</strong>
+              <small>Válaszd ki az időszakot, szűrést és a megjelenő statisztikákat.</small>
+            </div>
+            <button type="button" class="icon-button" data-route-report-close aria-label="Bezárás">×</button>
+          </div>
+          <div class="route-report-step">
+            <span>1</span>
+            <div>
+              <strong>Időszak</strong>
+              <div class="route-report-form-grid">
+                <label class="month-picker">Hónap<input id="route-details-month" type="month" /></label>
+                <label class="month-picker">Kezdő dátum<input id="route-stats-start" type="date" /></label>
+                <label class="month-picker">Záró dátum<input id="route-stats-end" type="date" /></label>
+              </div>
+            </div>
+          </div>
+          <div class="route-report-step">
+            <span>2</span>
+            <div>
+              <strong>Raktár és futár</strong>
+              <div class="route-report-form-grid">
+                <label class="month-picker">Raktár
+                  <select id="route-stats-warehouse">
+                    <option value="all">Összes raktár</option>
+                    <option value="BUD1">BUD1</option>
+                    <option value="BUD2">BUD2</option>
+                  </select>
+                </label>
+                <label class="month-picker">Futár<select id="route-details-courier"></select></label>
+                <label class="month-picker">Név / ID<input id="route-details-query" placeholder="Futár név vagy ID" autocomplete="off" /></label>
+                <label class="month-picker">Route ID<input id="route-details-route-id" placeholder="Route ID" autocomplete="off" /></label>
+                <label class="month-picker">Túratípus
+                  <select id="route-details-type">
+                    <option value="all">Összes</option>
+                    <option value="city">Normal / City</option>
+                    <option value="express">Express</option>
+                    <option value="regional">Régiós</option>
+                  </select>
+                </label>
+              </div>
+              <label class="checkbox-line route-report-checkbox"><input id="route-report-auto-excel" type="checkbox" /> Automatikus Excel letöltés</label>
+            </div>
+          </div>
+          <div class="route-report-step">
+            <span>3</span>
+            <div>
+              <strong>Mit szeretnél látni?</strong>
+              <p class="muted">A Route ID fixen benne van. A többi mezőt kattintással vagy drag/drop-pal tudod átrakni.</p>
+              <label class="checkbox-line route-report-checkbox"><input id="route-report-include-summary" type="checkbox" checked /> Szükséges szumma / összesítő kártyák</label>
+              <div class="route-report-field-builder">
+                <section>
+                  <small>Elérhető mezők</small>
+                  <div id="route-report-available-fields" class="route-report-dropzone" data-route-report-zone="available"></div>
+                </section>
+                <section>
+                  <small>Riportban látható</small>
+                  <div id="route-report-selected-fields" class="route-report-dropzone active" data-route-report-zone="selected"></div>
+                </section>
+              </div>
+            </div>
+          </div>
+          <div class="route-report-dialog-actions">
+            <button type="button" class="secondary" data-route-report-close>Mégsem</button>
+            <button id="route-details-load" class="primary" type="button">Statisztika kérése</button>
+          </div>
+        </section>
+      </dialog>
     </main>
-    <script src="/app.js?v=202" defer></script>
+    <script src="/app.js?v=204" defer></script>
   </body>
 </html>

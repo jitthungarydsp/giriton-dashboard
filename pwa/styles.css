@@ -893,6 +893,29 @@ textarea { min-height: 96px; resize: vertical; }
 .route-details-head strong { display: block; margin-top: 3px; font-size: 19px; overflow-wrap: anywhere; }
 .route-details-head small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 800; }
 .route-details-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.route-report-dialog { width: min(94vw, 720px); max-height: calc(100dvh - 24px); padding: 0; border: 0; border-radius: 24px; background: transparent; }
+.route-report-dialog::backdrop { background: rgba(23, 35, 28, .48); backdrop-filter: blur(2px); }
+.route-report-dialog-card { display: grid; gap: 14px; max-height: calc(100dvh - 24px); overflow: auto; padding: 18px; border: 1px solid #cbd8c6; border-radius: 24px; background: var(--surface); box-shadow: 0 24px 70px #08100a42; }
+.route-report-dialog-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.route-report-dialog-head span { display: block; color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.route-report-dialog-head strong { display: block; margin-top: 4px; font-size: 22px; overflow-wrap: anywhere; }
+.route-report-dialog-head small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 750; }
+.route-report-step { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: #fbfdf9; }
+.route-report-step > span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; background: var(--green-dark); color: #fff; font-weight: 950; }
+.route-report-step strong { display: block; margin-bottom: 8px; font-size: 15px; }
+.route-report-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.route-report-checkbox { margin-top: 9px; }
+.route-report-field-builder { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.route-report-field-builder section { display: grid; gap: 7px; min-width: 0; }
+.route-report-field-builder small { color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.route-report-dropzone { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 8px; min-height: 120px; padding: 10px; border: 1px dashed #b8d5b4; border-radius: 16px; background: #f8faf6; }
+.route-report-dropzone.active { background: #eff8ed; }
+.route-report-dropzone p { margin: 0; font-size: 12px; }
+.route-report-field-chip { display: grid; gap: 2px; min-height: 48px; padding: 8px 10px; border: 1px solid #cbd8c6; border-radius: 14px; background: #fff; color: var(--ink); text-align: left; cursor: grab; }
+.route-report-field-chip:active { cursor: grabbing; }
+.route-report-field-chip strong { margin: 0; font-size: 12px; }
+.route-report-field-chip small { color: var(--muted); font-size: 10px; text-transform: none; }
+.route-report-dialog-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; position: sticky; bottom: 0; padding-top: 4px; background: linear-gradient(180deg, rgba(248, 250, 246, 0), var(--surface) 32%); }
 .route-report-filters { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 10px; align-items: end; }
 .route-report-filters .month-picker { min-width: 0; }
 .route-report-filters button { min-height: 44px; }
@@ -1047,6 +1070,14 @@ textarea { min-height: 96px; resize: vertical; }
   .vehicle-assignment-row > span { justify-self: start; max-width: none; text-align: left; }
   .vehicle-config-row { grid-template-columns: minmax(0, 1fr); }
   .vehicle-config-row button { width: 100%; }
+  .route-report-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); border-radius: 20px; }
+  .route-report-dialog-card { max-height: calc(100dvh - 16px); padding: 14px; border-radius: 20px; }
+  .route-report-form-grid,
+  .route-report-field-builder,
+  .route-report-dialog-actions { grid-template-columns: 1fr; }
+  .route-report-step { grid-template-columns: 1fr; }
+  .route-report-step > span { width: 32px; height: 32px; }
+  .route-report-dropzone { min-height: 92px; }
   .route-details-head { grid-template-columns: 1fr; }
   .route-details-actions { justify-content: stretch; }
   .route-details-actions .download-link { width: 100%; }
