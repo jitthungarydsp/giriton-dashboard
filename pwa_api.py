@@ -932,26 +932,31 @@ def settlement_import_courier_validation_key(courier_id: Any, courier_name: Any)
     return f"name:{normalize_text(courier_name)}"
 
 
+def settlement_import_courier_name_match_key(value: Any) -> str:
+    text = re.sub(r"(?<!\d)#?\d{4}(?!\d)", " ", str(value or ""))
+    return normalize_text(text)
+
+
 def settlement_import_merge_courier_reconciliation_keys(
     excel_by_courier: dict[str, dict[str, Any]],
     summary_by_courier: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     summary_key_by_name = {
-        normalize_text(row.get("courierName")): key
+        settlement_import_courier_name_match_key(row.get("courierName")): key
         for key, row in summary_by_courier.items()
-        if key.startswith("id:") and normalize_text(row.get("courierName"))
+        if key.startswith("id:") and settlement_import_courier_name_match_key(row.get("courierName"))
     }
     excel_key_by_name = {
-        normalize_text(row.get("courierName")): key
+        settlement_import_courier_name_match_key(row.get("courierName")): key
         for key, row in excel_by_courier.items()
-        if key.startswith("id:") and normalize_text(row.get("courierName"))
+        if key.startswith("id:") and settlement_import_courier_name_match_key(row.get("courierName"))
     }
 
     for key in list(excel_by_courier.keys()):
         if not key.startswith("name:"):
             continue
         excel = excel_by_courier.get(key) or {}
-        target_key = summary_key_by_name.get(normalize_text(excel.get("courierName")))
+        target_key = summary_key_by_name.get(settlement_import_courier_name_match_key(excel.get("courierName")))
         if not target_key or target_key == key:
             continue
         target = excel_by_courier.pop(key)
@@ -963,7 +968,7 @@ def settlement_import_merge_courier_reconciliation_keys(
         if not key.startswith("name:"):
             continue
         summary = summary_by_courier.get(key) or {}
-        target_key = excel_key_by_name.get(normalize_text(summary.get("courierName")))
+        target_key = excel_key_by_name.get(settlement_import_courier_name_match_key(summary.get("courierName")))
         if not target_key or target_key == key:
             continue
         target = summary_by_courier.pop(key)

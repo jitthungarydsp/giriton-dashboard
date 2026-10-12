@@ -73,6 +73,7 @@ with excel_raw as (
 excel_routes as (
     select distinct on (courier_key, route_id)
         courier_key,
+        name_key,
         courier_id,
         courier_name,
         route_id,
@@ -84,6 +85,7 @@ excel_routes as (
                 when courier_id is not null then 'id:' || courier_id
                 else 'name:' || regexp_replace(lower(coalesce(clean_courier_name, '')), '[^[:alnum:]]+', '', 'g')
             end as courier_key,
+            regexp_replace(lower(coalesce(clean_courier_name, '')), '[^[:alnum:]]+', '', 'g') as name_key,
             courier_id,
             clean_courier_name as courier_name,
             route_id,
@@ -101,6 +103,25 @@ excel_routes as (
     ) keyed
     where courier_key <> 'name:'
     order by courier_key, route_id, tip_huf desc
+),
+excel_resolved as (
+    select distinct on (resolved_key, route_id)
+        resolved_key as courier_key,
+        courier_id,
+        courier_name,
+        route_id,
+        route_type,
+        tip_huf
+    from (
+        select
+            coalesce(
+                case when name_key <> '' then 'id:' || max(courier_id) over (partition by name_key) end,
+                courier_key
+            ) as resolved_key,
+            *
+        from excel_routes
+    ) resolved
+    order by resolved_key, route_id, tip_huf desc
 )
 select
     courier_key,
@@ -111,7 +132,7 @@ select
     count(*) filter (where route_type = 'express')::integer as express_routes,
     count(*) filter (where route_type = 'regional')::integer as regional_routes,
     round(coalesce(sum(tip_huf), 0))::bigint as tip_huf
-from excel_routes
+from excel_resolved
 group by courier_key
 order by max(courier_name), max(courier_id);
 $$;
@@ -282,6 +303,7 @@ excel_raw as (
 excel_routes as (
     select distinct on (courier_key, route_id)
         courier_key,
+        name_key,
         courier_id,
         courier_name,
         route_id,
@@ -293,6 +315,7 @@ excel_routes as (
                 when courier_id is not null then 'id:' || courier_id
                 else 'name:' || regexp_replace(lower(coalesce(clean_courier_name, '')), '[^[:alnum:]]+', '', 'g')
             end as courier_key,
+            regexp_replace(lower(coalesce(clean_courier_name, '')), '[^[:alnum:]]+', '', 'g') as name_key,
             courier_id,
             clean_courier_name as courier_name,
             route_id,
@@ -311,9 +334,34 @@ excel_routes as (
     where courier_key <> 'name:'
     order by courier_key, route_id, tip_huf desc
 ),
+excel_resolved as (
+    select distinct on (resolved_key, route_id)
+        resolved_key as courier_key,
+        courier_id,
+        courier_name,
+        route_id,
+        route_type,
+        tip_huf
+    from (
+        select
+            coalesce(
+                case when name_key <> '' then 'id:' || max(courier_id) over (partition by name_key) end,
+                courier_key
+            ) as resolved_key,
+            *
+        from excel_routes
+    ) resolved
+    order by resolved_key, route_id, tip_huf desc
+),
 excel_grouped as (
     select
         courier_key,
+        regexp_replace(
+            regexp_replace(lower(coalesce(max(courier_name), '')), '(^|[[:space:]])#?[0-9]{4}([[:space:]]|$)', ' ', 'g'),
+            '[^[:alnum:]]+',
+            '',
+            'g'
+        ) as name_key,
         max(courier_id) as courier_id,
         max(courier_name) as courier_name,
         count(*)::integer as total,
@@ -321,7 +369,7 @@ excel_grouped as (
         count(*) filter (where route_type = 'express')::integer as express,
         count(*) filter (where route_type = 'regional')::integer as regional,
         round(coalesce(sum(tip_huf), 0))::bigint as tip_huf
-    from excel_routes
+    from excel_resolved
     group by courier_key
 ),
 hub_routes as (
@@ -356,6 +404,12 @@ hub_routes as (
 hub_grouped as (
     select
         courier_key,
+        regexp_replace(
+            regexp_replace(lower(coalesce(max(courier_name), '')), '(^|[[:space:]])#?[0-9]{4}([[:space:]]|$)', ' ', 'g'),
+            '[^[:alnum:]]+',
+            '',
+            'g'
+        ) as name_key,
         max(courier_id) as courier_id,
         max(courier_name) as courier_name,
         count(*)::integer as total,
@@ -384,7 +438,13 @@ joined as (
         e.courier_key is null as missing_excel,
         h.courier_key is null as missing_hub
     from excel_grouped e
-    full join hub_grouped h on h.courier_key = e.courier_key
+    full join hub_grouped h
+        on h.courier_key = e.courier_key
+        or (
+            e.name_key <> ''
+            and h.name_key <> ''
+            and h.name_key = e.name_key
+        )
 ),
 compared as (
     select
