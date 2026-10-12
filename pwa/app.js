@@ -85,9 +85,10 @@ const state = {
   settlementImportUploading: false,
   settlementImportColumnConfig: {},
   settlementImportColumnConfigSignature: "",
+  settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v197";
+const APP_VERSION = "v198";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -5063,7 +5064,7 @@ function settlementImportAutoTargetForColumn(column) {
   const header = settlementImportRuleText(column.header);
   if (!header) return "";
   if (/\btip\b|\btips\b|borravalo|gratuity/.test(header)) return "tip";
-  if (/delay bonus|kesedel|late/.test(header)) return "delay";
+  if (/\bdelay bonus\b|kesedel|\blate\b/.test(header)) return "delay";
   if (/compliance bonus|compliance|hibamutato|hibam/.test(header)) return "compliance";
   if (/stop count|stopcount|stop bonus|cim bonus|address bonus/.test(header)) return "stop_count";
   if (/rating|ertekeles|customer/.test(header)) return "customer_rating";
@@ -5080,13 +5081,14 @@ function settlementImportAutoTargetForColumn(column) {
 
 function ensureSettlementImportAutoColumnConfig(columns = []) {
   const signature = settlementImportColumnSignature(columns);
-  if (!signature || state.settlementImportColumnConfigSignature === signature) return;
+  if (!signature || state.settlementImportColumnConfigTouched) return;
   const nextConfig = {};
   columns.forEach((column) => {
     const targetKey = settlementImportAutoTargetForColumn(column);
     if (!targetKey) return;
     nextConfig[targetKey] = [...(nextConfig[targetKey] || []), column.id];
   });
+  if (state.settlementImportColumnConfigSignature === signature && JSON.stringify(state.settlementImportColumnConfig || {}) === JSON.stringify(nextConfig)) return;
   state.settlementImportColumnConfig = nextConfig;
   state.settlementImportColumnConfigSignature = signature;
 }
@@ -5447,6 +5449,7 @@ async function submitSettlementImport() {
     });
     state.settlementImportColumnConfig = {};
     state.settlementImportColumnConfigSignature = "";
+    state.settlementImportColumnConfigTouched = false;
     state.settlementImportStep = 3;
   } catch (error) {
     window.alert(error.message);
@@ -5506,6 +5509,7 @@ async function deleteSettlementImport() {
     state.settlementImportResult = null;
     state.settlementImportColumnConfig = {};
     state.settlementImportColumnConfigSignature = "";
+    state.settlementImportColumnConfigTouched = false;
     state.settlementImportStep = 1;
     state.settlementDashboard = null;
     renderSettlementImportConfig();
@@ -9457,6 +9461,7 @@ $("#settlement-import-config-panel")?.addEventListener("change", (event) => {
     state.settlementImportResult = null;
     state.settlementImportColumnConfig = {};
     state.settlementImportColumnConfigSignature = "";
+    state.settlementImportColumnConfigTouched = false;
   }
 });
 $("#settlement-import-config-panel")?.addEventListener("dragstart", (event) => {
@@ -9487,6 +9492,7 @@ $("#settlement-import-config-panel")?.addEventListener("drop", (event) => {
     nextConfig[targetKey] = [...(nextConfig[targetKey] || []), columnId];
   }
   state.settlementImportColumnConfig = nextConfig;
+  state.settlementImportColumnConfigTouched = true;
   state.settlementImportDraggedColumnId = "";
   renderSettlementImportConfig();
 });
@@ -9499,6 +9505,7 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
       nextConfig[cardKey] = (ids || []).filter((id) => id !== columnId);
     }
     state.settlementImportColumnConfig = nextConfig;
+    state.settlementImportColumnConfigTouched = true;
     renderSettlementImportConfig();
     return;
   }
@@ -9543,6 +9550,7 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
     state.settlementImportResult = null;
     state.settlementImportColumnConfig = {};
     state.settlementImportColumnConfigSignature = "";
+    state.settlementImportColumnConfigTouched = false;
     renderSettlementImportConfig();
   }
 });
