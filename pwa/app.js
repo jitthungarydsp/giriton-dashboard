@@ -5106,6 +5106,7 @@ function renderSettlementImportValidation(validation = {}) {
       </div>
       <div class="settlement-import-reconciliation-stats">
         <small>Túraszám eltérés: <b>${escapeHtml(formatCount(reconciliation.routeMismatchCount || 0))}</b></small>
+        <small>Túratípus eltérés: <b>${escapeHtml(formatCount(reconciliation.routeTypeMismatchCount || 0))}</b></small>
         <small>Borravaló eltérés: <b>${escapeHtml(formatCount(reconciliation.tipMismatchCount || 0))}</b></small>
         <small>Hiányzó Hub adat: <b>${escapeHtml(formatCount(reconciliation.missingSummaryCount || 0))}</b></small>
       </div>
@@ -5119,7 +5120,7 @@ function renderSettlementImportValidation(validation = {}) {
               <strong>${escapeHtml(item.courierName || "Ismeretlen futár")} ${item.courierId ? `#${escapeHtml(item.courierId)}` : ""}</strong>
               <small>${escapeHtml((item.issues || []).join(", ") || "Rendben")}</small>
               <small>Excel: ${escapeHtml(formatCount(excel.total || 0))} túra (${escapeHtml(formatCount(excel.normal || 0))} normal, ${escapeHtml(formatCount(excel.express || 0))} express, ${escapeHtml(formatCount(excel.regional || 0))} régiós), ${escapeHtml(formatHuf(excel.tipHuf || 0))} borravaló</small>
-              <small>Hub DB: ${escapeHtml(formatCount(calculated.routeCount || 0))} túra, ${escapeHtml(formatHuf(calculated.tipHuf || 0))} borravaló</small>
+              <small>Hub DB: ${escapeHtml(formatCount(calculated.routeCount || 0))} túra (${escapeHtml(formatCount(calculated.normal || 0))} normal, ${escapeHtml(formatCount(calculated.express || 0))} express, ${escapeHtml(formatCount(calculated.regional || 0))} régiós), ${escapeHtml(formatHuf(calculated.tipHuf || 0))} borravaló</small>
             </div>`;
           }).join("")}
         </div>

@@ -1045,6 +1045,9 @@ def settlement_import_hub_courier_reconciliation(
         aggregate = hub_by_courier.setdefault(key, {
             "courierId": summary_courier_id,
             "courierName": summary_courier_name or "Ismeretlen futár",
+            "normal": 0,
+            "express": 0,
+            "regional": 0,
             "routeCount": 0,
             "tipHuf": 0,
         })
@@ -1056,6 +1059,10 @@ def settlement_import_hub_courier_reconciliation(
         if route_key in seen_hub_routes:
             continue
         seen_hub_routes.add(route_key)
+        route_type = settlement_import_route_type(row.get("route_type") or row.get("route_type_label"))
+        if route_type not in {"normal", "express", "regional"}:
+            route_type = "normal"
+        aggregate[route_type] = safe_int(aggregate.get(route_type)) + 1
         aggregate["routeCount"] = safe_int(aggregate.get("routeCount")) + 1
         aggregate["tipHuf"] = money_int(aggregate.get("tipHuf")) + money_int(row.get("tip_huf"))
     excel_by_courier, hub_by_courier = settlement_import_merge_courier_reconciliation_keys(
@@ -1067,6 +1074,7 @@ def settlement_import_hub_courier_reconciliation(
     preview_items: list[dict[str, Any]] = []
     ok_count = 0
     route_mismatch_count = 0
+    route_type_mismatch_count = 0
     tip_mismatch_count = 0
     missing_summary_count = 0
     missing_excel_count = 0
@@ -1088,6 +1096,14 @@ def settlement_import_hub_courier_reconciliation(
                 status = "error"
                 route_mismatch_count += 1
                 issues.append("Túraszám eltérés")
+            route_type_issues: list[str] = []
+            for route_type, label in (("normal", "NORMAL"), ("express", "EXPRESS"), ("regional", "REGION")):
+                if safe_int(excel.get(route_type)) != safe_int(calculated.get(route_type)):
+                    route_type_issues.append(label)
+            if route_type_issues:
+                status = "error"
+                route_type_mismatch_count += 1
+                issues.append("Túratípus eltérés: " + ", ".join(route_type_issues))
             if money_int(excel.get("tipHuf")) != money_int(calculated.get("tipHuf")):
                 status = "error"
                 tip_mismatch_count += 1
@@ -1099,7 +1115,7 @@ def settlement_import_hub_courier_reconciliation(
             "courierId": source.get("courierId") or "",
             "courierName": source.get("courierName") or "Ismeretlen futár",
             "excel": excel or {"normal": 0, "express": 0, "regional": 0, "total": 0, "tipHuf": 0},
-            "calculated": calculated or {"routeCount": 0, "tipHuf": 0},
+            "calculated": calculated or {"normal": 0, "express": 0, "regional": 0, "routeCount": 0, "tipHuf": 0},
         })
         if status == "ok":
             ok_count += 1
@@ -1110,7 +1126,7 @@ def settlement_import_hub_courier_reconciliation(
             "courierId": source.get("courierId") or "",
             "courierName": source.get("courierName") or "Ismeretlen futár",
             "excel": excel or {"normal": 0, "express": 0, "regional": 0, "total": 0, "tipHuf": 0},
-            "calculated": calculated or {"routeCount": 0, "tipHuf": 0},
+            "calculated": calculated or {"normal": 0, "express": 0, "regional": 0, "routeCount": 0, "tipHuf": 0},
         })
 
     return {
@@ -1119,6 +1135,7 @@ def settlement_import_hub_courier_reconciliation(
         "ok": ok_count,
         "mismatchCount": len(items),
         "routeMismatchCount": route_mismatch_count,
+        "routeTypeMismatchCount": route_type_mismatch_count,
         "tipMismatchCount": tip_mismatch_count,
         "missingSummaryCount": missing_summary_count,
         "missingExcelCount": missing_excel_count,
@@ -1127,6 +1144,92 @@ def settlement_import_hub_courier_reconciliation(
             preview_items,
             key=lambda item: (0 if item.get("status") != "ok" else 1, str(item.get("courierName") or "")),
         )[:30],
+    }
+
+
+def settlement_import_sql_courier_reconciliation(supabase: Any, session_id: str, month_value: date) -> dict[str, Any]:
+    period_start = month_value.replace(day=1)
+    period_end = (period_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    rows = (
+        supabase
+        .rpc(
+            "import_hub_courier_reconciliation",
+            {
+                "p_session_id": str(session_id),
+                "p_period_start": period_start.isoformat(),
+                "p_period_end": period_end.isoformat(),
+            },
+        )
+        .execute()
+        .data
+        or []
+    )
+
+    items: list[dict[str, Any]] = []
+    preview_items: list[dict[str, Any]] = []
+    ok_count = 0
+    route_mismatch_count = 0
+    route_type_mismatch_count = 0
+    tip_mismatch_count = 0
+    missing_summary_count = 0
+    missing_excel_count = 0
+    for row in rows:
+        issues = row.get("issues") or []
+        if isinstance(issues, str):
+            issues = [part.strip() for part in issues.strip("{}").split(",") if part.strip()]
+        issues = [str(issue or "").strip() for issue in issues if str(issue or "").strip()]
+        status = str(row.get("status") or ("error" if issues else "ok"))
+        if status == "ok":
+            ok_count += 1
+        if "Túraszám eltérés" in issues:
+            route_mismatch_count += 1
+        if "Túratípus eltérés" in issues:
+            route_type_mismatch_count += 1
+        if "Borravaló eltérés" in issues:
+            tip_mismatch_count += 1
+        if "Nincs Hub DB sor" in issues:
+            missing_summary_count += 1
+        if "Nincs Excel/JIT sor" in issues:
+            missing_excel_count += 1
+
+        item = {
+            "status": status,
+            "issues": issues,
+            "courierId": str(row.get("courier_id") or "").strip(),
+            "courierName": str(row.get("courier_name") or "Ismeretlen futár").strip(),
+            "excel": {
+                "normal": safe_int(row.get("excel_normal")),
+                "express": safe_int(row.get("excel_express")),
+                "regional": safe_int(row.get("excel_regional")),
+                "total": safe_int(row.get("excel_total")),
+                "tipHuf": money_int(row.get("excel_tip_huf")),
+            },
+            "calculated": {
+                "normal": safe_int(row.get("hub_normal")),
+                "express": safe_int(row.get("hub_express")),
+                "regional": safe_int(row.get("hub_regional")),
+                "routeCount": safe_int(row.get("hub_total")),
+                "tipHuf": money_int(row.get("hub_tip_huf")),
+            },
+            "routeDelta": safe_int(row.get("route_delta")),
+            "tipDeltaHuf": money_int(row.get("tip_delta")),
+        }
+        preview_items.append(item)
+        if status != "ok":
+            items.append(item)
+
+    return {
+        "source": "settlement.import_hub_courier_reconciliation",
+        "total": len(rows),
+        "ok": ok_count,
+        "mismatchCount": len(items),
+        "routeMismatchCount": route_mismatch_count,
+        "routeTypeMismatchCount": route_type_mismatch_count,
+        "tipMismatchCount": tip_mismatch_count,
+        "missingSummaryCount": missing_summary_count,
+        "missingExcelCount": missing_excel_count,
+        "items": items[:80],
+        "previewItems": preview_items[:30],
     }
 
 
@@ -1231,7 +1334,14 @@ def settlement_import_quality_checks(supabase: Any, session_id: str, month_value
         "document_reference": "",
     }
     tig_preview = build_tig_breakdown(sample_courier, sample_amounts) if sample_row else {}
-    hub_rows = load_courier_hub_route_stat_rows_for_month(month_value) if month_value else []
+    if month_value:
+        try:
+            courier_reconciliation = settlement_import_sql_courier_reconciliation(supabase, session_id, month_value)
+        except Exception:
+            hub_rows = load_courier_hub_route_stat_rows_for_month(month_value)
+            courier_reconciliation = settlement_import_hub_courier_reconciliation(hub_rows, reconciliation_rows)
+    else:
+        courier_reconciliation = settlement_import_hub_courier_reconciliation([], reconciliation_rows)
     return {
         "couriersTotal": len({
             str(row.get("courier_id") or row.get("driver_name") or "").strip()
@@ -1240,7 +1350,7 @@ def settlement_import_quality_checks(supabase: Any, session_id: str, month_value
         }),
         "summaryRows": len(summary_rows),
         "payableTotalHuf": sum(money_int(row.get("payable_huf")) for row in summary_rows),
-        "courierReconciliation": settlement_import_hub_courier_reconciliation(hub_rows, reconciliation_rows),
+        "courierReconciliation": courier_reconciliation,
         "routeCounts": route_counts,
         "routeTypeSamples": route_type_samples,
         "sampleCourier": {
