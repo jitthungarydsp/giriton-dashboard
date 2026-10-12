@@ -84,9 +84,10 @@ const state = {
   settlementImportResult: null,
   settlementImportUploading: false,
   settlementImportColumnConfig: {},
+  settlementImportColumnConfigSignature: "",
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v196";
+const APP_VERSION = "v197";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -5044,6 +5045,52 @@ function settlementImportColumnsFromHeaders(headers = []) {
   }))).filter((column) => column.header);
 }
 
+function settlementImportColumnSignature(columns = []) {
+  return columns.map((column) => column.id).sort().join("|");
+}
+
+function settlementImportRuleText(value = "") {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function settlementImportAutoTargetForColumn(column) {
+  const text = settlementImportRuleText(`${column.sheetName} ${column.header}`);
+  const header = settlementImportRuleText(column.header);
+  if (!header) return "";
+  if (/\btip\b|\btips\b|borravalo|gratuity/.test(header)) return "tip";
+  if (/delay bonus|kesedel|late/.test(header)) return "delay";
+  if (/compliance bonus|compliance|hibamutato|hibam/.test(header)) return "compliance";
+  if (/stop count|stopcount|stop bonus|cim bonus|address bonus/.test(header)) return "stop_count";
+  if (/rating|ertekeles|customer/.test(header)) return "customer_rating";
+  if (/loyal/.test(header)) return "loyalty";
+  if (/atm|wallet deduction|wallet deductions|cash|kp|keszpenz/.test(header)) return "atm";
+  if (/jitt|jit bonus|malus/.test(text)) return "jitt_adjustments";
+  if (/kifli|levonas|deduction|bonus routes/.test(text)) return "kifli_adjustments";
+  if (/correction|korrekcio|manual/.test(header)) return "correction";
+  if (/payable|fizetendo|total payable|osszesen|vegosszeg/.test(header)) return "payable";
+  if (/route type|fixed rate|base rate|alapdij|turatipus|normal|express|region/.test(header)) return "base";
+  if (/orders|routen|route count|stops|stop/.test(header)) return "stop_count";
+  return "";
+}
+
+function ensureSettlementImportAutoColumnConfig(columns = []) {
+  const signature = settlementImportColumnSignature(columns);
+  if (!signature || state.settlementImportColumnConfigSignature === signature) return;
+  const nextConfig = {};
+  columns.forEach((column) => {
+    const targetKey = settlementImportAutoTargetForColumn(column);
+    if (!targetKey) return;
+    nextConfig[targetKey] = [...(nextConfig[targetKey] || []), column.id];
+  });
+  state.settlementImportColumnConfig = nextConfig;
+  state.settlementImportColumnConfigSignature = signature;
+}
+
 function settlementImportAssignedColumnIds() {
   return new Set(Object.values(state.settlementImportColumnConfig || {}).flat());
 }
@@ -5061,6 +5108,7 @@ function renderSettlementImportColumnChip(column, extra = "") {
 
 function renderSettlementImportConfigurator(result = {}) {
   const columns = settlementImportColumnsFromHeaders(result.headers || []);
+  ensureSettlementImportAutoColumnConfig(columns);
   const assignedIds = settlementImportAssignedColumnIds();
   const unassignedColumns = columns.filter((column) => !assignedIds.has(column.id));
   if (!columns.length) {
@@ -5398,6 +5446,7 @@ async function submitSettlementImport() {
       loadingMessage: "Excel feltöltése...",
     });
     state.settlementImportColumnConfig = {};
+    state.settlementImportColumnConfigSignature = "";
     state.settlementImportStep = 3;
   } catch (error) {
     window.alert(error.message);
@@ -5456,6 +5505,7 @@ async function deleteSettlementImport() {
     });
     state.settlementImportResult = null;
     state.settlementImportColumnConfig = {};
+    state.settlementImportColumnConfigSignature = "";
     state.settlementImportStep = 1;
     state.settlementDashboard = null;
     renderSettlementImportConfig();
@@ -9406,6 +9456,7 @@ $("#settlement-import-config-panel")?.addEventListener("change", (event) => {
     state.settlementImportMonth = monthInput.value || previousLocalMonth();
     state.settlementImportResult = null;
     state.settlementImportColumnConfig = {};
+    state.settlementImportColumnConfigSignature = "";
   }
 });
 $("#settlement-import-config-panel")?.addEventListener("dragstart", (event) => {
@@ -9491,6 +9542,7 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
     state.settlementImportStep = 1;
     state.settlementImportResult = null;
     state.settlementImportColumnConfig = {};
+    state.settlementImportColumnConfigSignature = "";
     renderSettlementImportConfig();
   }
 });
