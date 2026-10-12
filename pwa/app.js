@@ -35,6 +35,7 @@ const state = {
   expenseRequests: [],
   atmPayments: [],
   registrationRequests: [],
+  passwordResetRequests: [],
   documentArchive: [],
   atmSubmitting: false,
   currentRouteLoading: false,
@@ -95,7 +96,7 @@ const state = {
   settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v204";
+const APP_VERSION = "v205";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -940,11 +941,12 @@ function renderSalaryAdvanceRequests() {
   const target = $("#salary-advance-list");
   if (!target) return;
   const rows = state.salaryAdvanceRequests || [];
+  const isAdminList = Boolean(state.user?.canPreviewCouriers);
   if (!rows.length) {
     target.innerHTML = `
       <div class="process-title">
         <span class="step-code">Ft</span>
-        <div><h3>Előleg kérelmek</h3><p>Még nincs rögzített előleg igényed.</p></div>
+        <div><h3>Előleg kérelmek</h3><p>${isAdminList ? "Nincs rögzített előleg kérelem." : "Még nincs rögzített előleg igényed."}</p></div>
       </div>
     `;
     return;
@@ -962,12 +964,13 @@ function renderSalaryAdvanceRequests() {
             <strong>${formatHuf(item.requestedAmountHuf)}</strong>
           </summary>
           <div class="stat-breakdown-list">
+            ${isAdminList ? `<div class="stat-row"><span>Futár</span><strong>${escapeHtml(item.courierName || "-")} #${escapeHtml(item.courierId || "-")}</strong></div>` : ""}
             <div class="stat-row"><span>Kezdés</span><strong>${escapeHtml(item.startDate || "-")}</strong></div>
             <div class="stat-row"><span>Havi bontás</span><strong>${formatCount(item.installmentMonths)} hó</strong></div>
             <div class="stat-row"><span>Havi levonás</span><strong>${formatHuf(item.monthlyAmountHuf)}</strong></div>
             ${item.processId ? `<div class="stat-row"><span>Folyamat</span><strong>${escapeHtml(item.processId)}</strong></div>` : ""}
           </div>
-          ${canUseAdminWorkflowActions() && item.status === "requested"
+          ${state.user?.canPreviewCouriers && item.status === "requested"
             ? `<button class="primary full-width salary-advance-approve" type="button" data-id="${escapeHtml(item.id)}">Előleg jóváhagyása admin módban</button>`
             : ""}
         </article>
@@ -980,7 +983,8 @@ async function loadSalaryAdvanceRequests() {
   const message = $("#salary-advance-message");
   if (message) message.textContent = "Előleg kérelmek betöltése...";
   try {
-    const payload = await api(withPreviewCourier("/api/salary-advance/requests"));
+    const url = state.user?.canPreviewCouriers ? "/api/salary-advance/requests?scope=all" : withPreviewCourier("/api/salary-advance/requests");
+    const payload = await api(url);
     state.salaryAdvanceRequests = payload.requests || [];
     renderSalaryAdvanceRequests();
     if (message) message.textContent = "";
@@ -990,7 +994,7 @@ async function loadSalaryAdvanceRequests() {
 }
 
 async function approveSalaryAdvanceRequest(requestId) {
-  if (!requestId || !canUseAdminWorkflowActions()) return;
+  if (!requestId || !state.user?.canPreviewCouriers) return;
   const message = $("#salary-advance-message");
   if (message) message.textContent = "Előleg jóváhagyása...";
   try {
@@ -8999,9 +9003,49 @@ $("#coordinator-entry-list").addEventListener("click", async (event) => {
 function registrationStatusLabel(status) {
   return {
     new: "Jóváhagyásra vár",
+    queued: "Devtest jobra vár",
     approved: "Jóváhagyva",
     rejected: "Elutasítva",
+    sent: "Kiküldve",
   }[String(status || "").toLowerCase()] || String(status || "-");
+}
+
+function isAdminJobQueued(item) {
+  return String(item?.adminNote || "").includes("PWA_JOB_APPROVED");
+}
+
+function adminRequestStatus(item) {
+  return isAdminJobQueued(item) ? "queued" : String(item?.status || "").toLowerCase();
+}
+
+function adminRequestNote(item) {
+  return String(item?.adminNote || "").replace("PWA_JOB_APPROVED |", "").trim();
+}
+
+function renderAdminRequestCard(item, options) {
+  const status = adminRequestStatus(item);
+  const canApprove = options.approveStatuses.includes(status);
+  const canReject = options.rejectStatuses.includes(status);
+  const adminNote = adminRequestNote(item);
+  return `
+    <article class="financial-card registration-request-card">
+      <summary>
+        <span>${escapeHtml(registrationStatusLabel(status))}</span>
+        <strong>${escapeHtml(item.courierName || "Névtelen futár")}</strong>
+      </summary>
+      <div class="stat-breakdown-list">
+        <div class="stat-row"><span>Futár ID</span><strong>${escapeHtml(item.courierId || "-")}</strong></div>
+        <div class="stat-row"><span>E-mail</span><strong>${escapeHtml(item.email || "-")}</strong></div>
+        ${item.phoneNumber !== undefined ? `<div class="stat-row"><span>Telefon</span><strong>${escapeHtml(item.phoneNumber || "-")}</strong></div>` : ""}
+        <div class="stat-row"><span>Beküldve</span><strong>${item.createdAt ? escapeHtml(new Date(item.createdAt).toLocaleString("hu-HU")) : "-"}</strong></div>
+        ${adminNote ? `<div class="stat-row full-row"><span>Megjegyzés</span><strong>${escapeHtml(adminNote)}</strong></div>` : ""}
+      </div>
+      <div class="request-actions">
+        ${canApprove ? `<button class="primary ${options.approveClass}" type="button" data-id="${escapeHtml(item.id)}">${escapeHtml(options.approveLabel)}</button>` : ""}
+        ${canReject ? `<button class="secondary ${options.rejectClass}" type="button" data-id="${escapeHtml(item.id)}">Elutasítás</button>` : ""}
+      </div>
+    </article>
+  `;
 }
 
 function renderRegistrationRequests() {
@@ -9023,37 +9067,64 @@ function renderRegistrationRequests() {
       <div><h3>Jóváhagyásra váró futárok</h3><p>Jóváhagyás után bekerülnek a futártörzsbe és megkapják a PWA belépést.</p></div>
     </div>
     <div class="financial-card-grid salary-advance-grid">
-      ${rows.map((item) => `
-        <article class="financial-card registration-request-card">
-          <summary>
-            <span>${escapeHtml(registrationStatusLabel(item.status))}</span>
-            <strong>${escapeHtml(item.courierName || "Névtelen futár")}</strong>
-          </summary>
-          <div class="stat-breakdown-list">
-            <div class="stat-row"><span>Futár ID</span><strong>${escapeHtml(item.courierId || "-")}</strong></div>
-            <div class="stat-row"><span>E-mail</span><strong>${escapeHtml(item.email || "-")}</strong></div>
-            <div class="stat-row"><span>Telefon</span><strong>${escapeHtml(item.phoneNumber || "-")}</strong></div>
-            <div class="stat-row"><span>Beküldve</span><strong>${item.createdAt ? escapeHtml(new Date(item.createdAt).toLocaleString("hu-HU")) : "-"}</strong></div>
-          </div>
-          <div class="request-actions">
-            <button class="primary registration-approve" type="button" data-id="${escapeHtml(item.id)}">Jóváhagyás</button>
-            <button class="secondary registration-reject" type="button" data-id="${escapeHtml(item.id)}">Elutasítás</button>
-          </div>
-        </article>
-      `).join("")}
+      ${rows.map((item) => renderAdminRequestCard(item, {
+        approveStatuses: ["new"],
+        rejectStatuses: ["new", "queued"],
+        approveClass: "registration-approve",
+        rejectClass: "registration-reject",
+        approveLabel: "Jóváhagyás indítása",
+      })).join("")}
+    </div>
+  `;
+}
+
+function renderPasswordResetRequests() {
+  const container = $("#password-reset-admin-list");
+  if (!container) return;
+  const rows = state.passwordResetRequests || [];
+  if (!rows.length) {
+    container.innerHTML = `
+      <div class="process-title">
+        <span class="step-code">PW</span>
+        <div><h3>Nincs jelszó-visszaállítási kérelem</h3><p>Minden PWA jelszó kérelem feldolgozva.</p></div>
+      </div>
+    `;
+    return;
+  }
+  container.innerHTML = `
+    <div class="process-title">
+      <span class="step-code">${rows.length}</span>
+      <div><h3>Jelszó-visszaállítási kérelmek</h3><p>A PWA csak jóváhagyásra jelöli, az új jelszót a devtest job küldi ki.</p></div>
+    </div>
+    <div class="financial-card-grid salary-advance-grid">
+      ${rows.map((item) => renderAdminRequestCard(item, {
+        approveStatuses: ["new"],
+        rejectStatuses: ["new", "queued"],
+        approveClass: "password-reset-approve",
+        rejectClass: "password-reset-reject",
+        approveLabel: "Jelszó reset indítása",
+      })).join("")}
     </div>
   `;
 }
 
 async function loadRegistrationRequests() {
   const container = $("#registration-admin-list");
+  const passwordContainer = $("#password-reset-admin-list");
   if (container) container.innerHTML = `<div class="process-title"><span class="step-code">...</span><div><h3>Regisztrációk betöltése</h3><p>Kérelmek frissítése folyamatban.</p></div></div>`;
+  if (passwordContainer) passwordContainer.innerHTML = `<div class="process-title"><span class="step-code">...</span><div><h3>Jelszó kérelmek betöltése</h3><p>Kérelmek frissítése folyamatban.</p></div></div>`;
   try {
-    const payload = await api("/api/admin/registration-requests?status=new");
-    state.registrationRequests = payload.requests || [];
+    const [payload, passwordPayload] = await Promise.all([
+      api("/api/admin/registration-requests?status=all"),
+      api("/api/admin/password-reset-requests?status=all"),
+    ]);
+    state.registrationRequests = (payload.requests || []).filter((item) => ["new", "queued"].includes(adminRequestStatus(item)));
+    state.passwordResetRequests = (passwordPayload.requests || []).filter((item) => ["new", "queued"].includes(adminRequestStatus(item)));
     renderRegistrationRequests();
+    renderPasswordResetRequests();
   } catch (error) {
     if (container) container.innerHTML = `<div class="empty-card error-state">${escapeHtml(error.message)}</div>`;
+    if (passwordContainer) passwordContainer.innerHTML = `<div class="empty-card error-state">${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -9079,6 +9150,31 @@ $("#registration-admin-list")?.addEventListener("click", async (event) => {
     state.couriers = [];
     await loadRegistrationRequests();
     await loadCourierMasterOptions();
+  } catch (error) {
+    button.disabled = false;
+    window.alert(error.message);
+  }
+});
+
+$("#password-reset-admin-list")?.addEventListener("click", async (event) => {
+  const approveButton = event.target.closest(".password-reset-approve");
+  const rejectButton = event.target.closest(".password-reset-reject");
+  const button = approveButton || rejectButton;
+  if (!button) return;
+  const requestId = button.dataset.id;
+  if (!requestId) return;
+  const approving = Boolean(approveButton);
+  const adminNote = approving ? "" : window.prompt("Mi legyen az elutasítás oka?") || "";
+  if (!approving && !adminNote.trim()) return;
+  button.disabled = true;
+  try {
+    const endpoint = approving ? "approve" : "reject";
+    await api(`/api/admin/password-reset-requests/${encodeURIComponent(requestId)}/${endpoint}`, {
+      method: "POST",
+      body: JSON.stringify({ admin_note: adminNote.trim() }),
+      loadingMessage: approving ? "Jelszó reset indítása..." : "Kérelem elutasítása...",
+    });
+    await loadRegistrationRequests();
   } catch (error) {
     button.disabled = false;
     window.alert(error.message);
@@ -9518,6 +9614,7 @@ $("#logout").addEventListener("click", async () => {
   state.salaryAdvanceRequests = [];
   state.expenseRequests = [];
   state.registrationRequests = [];
+  state.passwordResetRequests = [];
   state.coordinatorLiveMap = null;
   state.departureHelper = null;
   if (state.coordinatorLeafletMap) {

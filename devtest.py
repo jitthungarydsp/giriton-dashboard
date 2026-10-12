@@ -371,11 +371,70 @@ def reject_pwa_password_reset_request(request_id: int, note: str) -> None:
     update_pwa_password_reset_request_status(request_id, "rejected", note)
 
 
+PWA_ADMIN_JOB_MARKER = "PWA_JOB_APPROVED"
+
+
+def is_pwa_admin_job_queued(row: dict[str, object]) -> bool:
+    return PWA_ADMIN_JOB_MARKER in str(row.get("admin_note") or "")
+
+
+def process_queued_pwa_admin_jobs(actor: dict[str, object]) -> dict[str, int]:
+    registration_rows = [row for row in load_pwa_registration_requests("new") if is_pwa_admin_job_queued(row)]
+    password_rows = [row for row in load_pwa_password_reset_requests("new") if is_pwa_admin_job_queued(row)]
+    result = {
+        "registration_ok": 0,
+        "registration_failed": 0,
+        "password_ok": 0,
+        "password_failed": 0,
+    }
+    for item in registration_rows:
+        request_id = int(item.get("id") or 0)
+        if not request_id:
+            continue
+        try:
+            approve_pwa_registration_request(
+                request_id,
+                str(item.get("admin_note") or "PWA admin jobból jóváhagyva."),
+                actor,
+            )
+            result["registration_ok"] += 1
+        except Exception as exc:
+            update_pwa_registration_request_status(
+                request_id,
+                "new",
+                f"{item.get('admin_note') or ''}\nJob hiba: {exc}".strip(),
+            )
+            result["registration_failed"] += 1
+    for item in password_rows:
+        request_id = int(item.get("id") or 0)
+        if not request_id:
+            continue
+        try:
+            send_pwa_password_reset_request(
+                request_id,
+                str(item.get("admin_note") or "PWA admin jobból kiküldve."),
+                actor,
+            )
+            result["password_ok"] += 1
+        except Exception as exc:
+            update_pwa_password_reset_request_status(
+                request_id,
+                "new",
+                f"{item.get('admin_note') or ''}\nJob hiba: {exc}".strip(),
+                str(actor.get("username") or "unknown"),
+            )
+            result["password_failed"] += 1
+    load_pwa_registration_requests.clear()
+    load_pwa_password_reset_requests.clear()
+    return result
+
+
 def render_pwa_password_reset_panel(expanded: bool = False) -> None:
     if not can_approve_pwa_registrations(user):
         return
     status_options = {
         "Új": "new",
+        "PWA jóváhagyott, jobra vár": "queued",
         "Kiküldve": "sent",
         "Elutasítva": "rejected",
         "Összes": "all",
@@ -387,7 +446,10 @@ def render_pwa_password_reset_panel(expanded: bool = False) -> None:
             key="pwa_password_reset_status_filter",
         )
         try:
-            rows = load_pwa_password_reset_requests(status_options[selected_status_label])
+            selected_status = status_options[selected_status_label]
+            rows = load_pwa_password_reset_requests("new" if selected_status == "queued" else selected_status)
+            if selected_status == "queued":
+                rows = [row for row in rows if is_pwa_admin_job_queued(row)]
         except Exception as exc:
             st.error(f"A jelszó-visszaállítási kérelmek nem olvashatók: {exc}")
             st.caption("Ha még nincs tábla, futtasd a docs/pwa_password_reset_requests.sql migrációt.")
@@ -468,17 +530,21 @@ def show_pwa_registration_approval_page() -> None:
 
     status_label = st.radio(
         "Státusz",
-        ["Új", "Jóváhagyott", "Elutasított", "Összes"],
+        ["Új", "PWA jóváhagyott, jobra vár", "Jóváhagyott", "Elutasított", "Összes"],
         horizontal=True,
         key="pwa_registration_status_filter",
     )
     status_map = {
         "Új": "new",
+        "PWA jóváhagyott, jobra vár": "queued",
         "Jóváhagyott": "approved",
         "Elutasított": "rejected",
         "Összes": "all",
     }
-    rows = load_pwa_registration_requests(status_map[status_label])
+    selected_status = status_map[status_label]
+    rows = load_pwa_registration_requests("new" if selected_status == "queued" else selected_status)
+    if selected_status == "queued":
+        rows = [row for row in rows if is_pwa_admin_job_queued(row)]
 
     col_a, col_b, col_c, col_d = st.columns(4)
     col_a.metric("Megjelenített", len(rows))
@@ -562,6 +628,17 @@ def show_pwa_requests_page() -> None:
         st.error("Ez a menüpont csak admin jogosultsággal érhető el.")
         return
     st.title("PWA kérelmek")
+    if st.button("Függő PWA admin jobok feldolgozása", type="primary", use_container_width=True):
+        try:
+            result = process_queued_pwa_admin_jobs(user)
+            st.success(
+                "Job lefutott: "
+                f"regisztráció {result['registration_ok']} sikeres / {result['registration_failed']} hiba, "
+                f"jelszó {result['password_ok']} sikeres / {result['password_failed']} hiba."
+            )
+            st.rerun()
+        except Exception as exc:
+            st.error(f"A PWA admin job nem futott le: {exc}")
     render_pwa_password_reset_panel(expanded=True)
     st.divider()
     show_pwa_registration_approval_page()

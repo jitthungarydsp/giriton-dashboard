@@ -799,6 +799,8 @@ textarea { min-height: 96px; resize: vertical; }
 .stat-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px 13px; border-radius: 14px; background: #f5f7f3; }
 .stat-row span { min-width: 0; color: var(--muted); font-size: 13px; font-weight: 750; overflow-wrap: anywhere; }
 .stat-row strong { min-width: 0; font-size: 16px; text-align: right; overflow-wrap: anywhere; }
+.stat-row.full-row { grid-template-columns: minmax(0, 1fr); }
+.stat-row.full-row strong { font-size: 13px; text-align: left; }
 .stat-row.missing { border: 1px solid var(--danger); background: #fff0ef; }
 .stat-row.missing span, .stat-row.missing strong { color: var(--danger); }
 .stat-detail-section { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }

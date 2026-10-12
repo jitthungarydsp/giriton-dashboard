@@ -16142,6 +16142,21 @@ def normalize_registration_request_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalize_password_reset_request_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "courierId": str(row.get("courier_id") or "").strip(),
+        "courierName": str(row.get("courier_name") or "").strip(),
+        "email": str(row.get("email") or "").strip(),
+        "status": str(row.get("status") or "new").strip(),
+        "adminNote": str(row.get("admin_note") or "").strip(),
+        "sentAt": str(row.get("sent_at") or ""),
+        "sentBy": str(row.get("sent_by") or ""),
+        "createdAt": str(row.get("created_at") or ""),
+        "updatedAt": str(row.get("updated_at") or ""),
+    }
+
+
 def save_password_reset_request(payload: PasswordResetRequest) -> dict[str, Any]:
     courier_id = normalize_profile_courier_id(payload.courier_id)
     email = normalize_email_address(payload.email)
@@ -16192,6 +16207,21 @@ def save_password_reset_request(payload: PasswordResetRequest) -> dict[str, Any]
     result = rows[0] if rows else {}
     result["email_updated"] = email_updated
     return result
+
+
+def read_password_reset_request_by_id(request_id: int) -> dict[str, Any]:
+    rows = supabase_rest(
+        "GET",
+        "pwa_password_reset_requests",
+        params={
+            "select": "id,courier_id,courier_name,email,status,admin_note,sent_at,sent_by,created_at,updated_at",
+            "id": f"eq.{request_id}",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="A jelszó-visszaállítási kérelem nem található.")
+    return rows[0]
 
 
 def read_registration_request_by_id(request_id: int) -> dict[str, Any]:
@@ -16252,6 +16282,29 @@ def update_registration_request_status(request_id: int, status: str, note: str =
             "admin_note": clean_text(note, limit=500),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         },
+        prefer="return=minimal",
+    )
+
+
+def update_password_reset_request_status(
+    request_id: int,
+    status: str,
+    note: str = "",
+    actor: str = "",
+) -> None:
+    payload: dict[str, Any] = {
+        "status": status,
+        "admin_note": clean_text(note, limit=500),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if status == "sent":
+        payload["sent_at"] = datetime.now(timezone.utc).isoformat()
+        payload["sent_by"] = clean_text(actor, limit=120)
+    supabase_rest(
+        "PATCH",
+        "pwa_password_reset_requests",
+        params={"id": f"eq.{request_id}"},
+        payload=payload,
         prefer="return=minimal",
     )
 
@@ -18864,26 +18917,13 @@ def admin_approve_registration_request(
     if status == "rejected":
         raise HTTPException(status_code=409, detail="Elutasított kérelmet nem lehet jóváhagyni.")
 
-    upsert_courier_master_from_registration(request_row, user)
-    auth_result = upsert_pwa_user_with_password(
-        courier_id=str(request_row.get("courier_id") or ""),
-        username=str(request_row.get("courier_name") or ""),
-        recipient_email=str(request_row.get("email") or ""),
-        role="user",
-    )
-    try:
-        send_login_credentials(
-            str(request_row.get("email") or ""),
-            auth_result["username"],
-            auth_result["password"],
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"A belépési e-mail küldése sikertelen: {exc}") from exc
-
-    update_registration_request_status(request_id, "approved", payload.admin_note)
+    actor = str(user.get("username") or "admin").strip() or "admin"
+    note = clean_text(payload.admin_note, limit=400)
+    queue_note = f"PWA_JOB_APPROVED | PWA admin jóváhagyásra jelölte: {actor}" + (f" | {note}" if note else "")
+    update_registration_request_status(request_id, "new", queue_note)
     return {
         "ok": True,
-        "message": "Regisztráció jóváhagyva, a futár bekerült a futártörzsbe és megkapta a belépést.",
+        "message": "Regisztráció jóváhagyásra jelölve. A devtest job fogja létrehozni a belépést és kiküldeni az e-mailt.",
         "request": normalize_registration_request_row(read_registration_request_by_id(request_id)),
     }
 
@@ -18912,6 +18952,71 @@ def password_reset(payload: PasswordResetRequest):
         "message": "A jelszó-visszaállítási kérésed beérkezett. Admin jóváhagyás után küldjük az új jelszót.",
         "emailUpdated": bool(request_row.get("email_updated")),
         "status": str(request_row.get("status") or "new"),
+    }
+
+
+@app.get("/api/admin/password-reset-requests")
+def admin_password_reset_requests(
+    status: str = Query(default="new"),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_registration_admin(require_user(giriton_pwa_session))
+    clean_status = str(status or "new").strip().lower()
+    params = {
+        "select": "id,courier_id,courier_name,email,status,admin_note,sent_at,sent_by,created_at,updated_at",
+        "order": "updated_at.desc,created_at.desc",
+        "limit": "200",
+    }
+    if clean_status and clean_status != "all":
+        params["status"] = f"eq.{clean_status}"
+    rows = supabase_rest(
+        "GET",
+        "pwa_password_reset_requests",
+        params=params,
+    )
+    return {
+        "requests": [normalize_password_reset_request_row(row) for row in rows or []],
+        "user": public_user(user),
+    }
+
+
+@app.post("/api/admin/password-reset-requests/{request_id}/approve")
+def admin_approve_password_reset_request(
+    request_id: int,
+    payload: RegistrationAdminAction,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_registration_admin(require_user(giriton_pwa_session))
+    request_row = read_password_reset_request_by_id(request_id)
+    status = str(request_row.get("status") or "new").strip().lower()
+    if status == "sent":
+        raise HTTPException(status_code=409, detail="Ehhez a kéréshez már lett új jelszó kiküldve.")
+    if status == "rejected":
+        raise HTTPException(status_code=409, detail="Elutasított kérést nem lehet jóváhagyni.")
+    actor = str(user.get("username") or "admin").strip() or "admin"
+    note = clean_text(payload.admin_note, limit=400)
+    queue_note = f"PWA_JOB_APPROVED | PWA admin jóváhagyásra jelölte: {actor}" + (f" | {note}" if note else "")
+    update_password_reset_request_status(request_id, "new", queue_note, actor)
+    return {
+        "ok": True,
+        "message": "Jelszó-visszaállítás jóváhagyásra jelölve. A devtest job küldi ki az új jelszót.",
+        "request": normalize_password_reset_request_row(read_password_reset_request_by_id(request_id)),
+    }
+
+
+@app.post("/api/admin/password-reset-requests/{request_id}/reject")
+def admin_reject_password_reset_request(
+    request_id: int,
+    payload: RegistrationAdminAction,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_registration_admin(require_user(giriton_pwa_session))
+    read_password_reset_request_by_id(request_id)
+    update_password_reset_request_status(request_id, "rejected", payload.admin_note)
+    return {
+        "ok": True,
+        "message": "Jelszó-visszaállítási kérelem elutasítva.",
+        "request": normalize_password_reset_request_row(read_password_reset_request_by_id(request_id)),
     }
 
 
@@ -22289,9 +22394,25 @@ def delete_coordinator_adjustment(
 @app.get("/api/salary-advance/requests")
 def salary_advance_requests(
     courier: str = Query(default=""),
+    scope: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
+    clean_scope = str(scope or "").strip().lower()
+    if clean_scope == "all":
+        if not can_preview_couriers(user):
+            raise HTTPException(status_code=403, detail="Admin jogosultság szükséges az összes előleg kérelemhez.")
+        rows = supabase_rest(
+            "GET",
+            "courier_salary_advance_request",
+            params={
+                "select": "*",
+                "order": "requested_at.desc",
+                "limit": "500",
+            },
+            schema="settlement",
+        )
+        return {"requests": [normalize_salary_advance_request(row) for row in rows], "scope": "all"}
     view_user, _preview = workflow_view_user(user, courier)
     courier_id, _courier_name = courier_identity(view_user)
     rows = supabase_rest(
