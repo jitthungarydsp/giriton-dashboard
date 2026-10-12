@@ -14431,6 +14431,19 @@ def read_route_report_financial_route_rows(month_value: date) -> list[dict[str, 
                     "plannedDepartureAt": planned_departure,
                     "plannedReturnAt": planned_return,
                     "returnedAt": returned_at,
+                    "plannedRouteMinutes": safe_int(
+                        route.get("plannedRouteMinutes")
+                        or route.get("planned_route_minutes")
+                        or route.get("plannedDurationMinutes")
+                        or route.get("planned_duration_minutes")
+                    ),
+                    "routeMinutes": safe_int(
+                        route.get("routeMinutes")
+                        or route.get("actualRouteMinutes")
+                        or route.get("actual_route_minutes")
+                        or route.get("durationMinutes")
+                        or route.get("duration_minutes")
+                    ),
                     "orders": safe_int(route.get("orderCount") or route.get("orders")),
                     "stops": safe_int(route.get("stopsTotal") or route.get("stops_total") or route.get("stops")),
                     "routeType": str(route.get("routeLayer") or route.get("routeType") or "").strip(),
@@ -14441,8 +14454,21 @@ def read_route_report_financial_route_rows(month_value: date) -> list[dict[str, 
 
 
 def planned_route_minutes_from_departure_return(item: dict[str, Any]) -> int | None:
-    departure = local_datetime(item.get("plannedDepartureAt"))
-    planned_return = local_datetime(item.get("plannedReturnAt"))
+    for key in (
+        "plannedRouteMinutes",
+        "planned_route_minutes",
+        "routeMinutes",
+        "actualRouteMinutes",
+        "actual_route_minutes",
+        "totalMinutes",
+        "total_minutes",
+    ):
+        minutes_value = safe_int(item.get(key))
+        if minutes_value and minutes_value > 0:
+            return minutes_value
+
+    departure = local_datetime(item.get("plannedDepartureAt") or item.get("planned_departure_at"))
+    planned_return = local_datetime(item.get("plannedReturnAt") or item.get("planned_return_at"))
     if not departure or not planned_return:
         return None
     minutes = int((planned_return - departure).total_seconds() // 60)
@@ -14452,8 +14478,8 @@ def planned_route_minutes_from_departure_return(item: dict[str, Any]) -> int | N
 
 
 def is_city_route(item: dict[str, Any]) -> bool:
-    route_type = normalize_text(item.get("routeType"))
-    route_label = normalize_text(item.get("routeTypeLabel"))
+    route_type = normalize_text(item.get("routeType") or item.get("route_type"))
+    route_label = normalize_text(item.get("routeTypeLabel") or item.get("route_type_label"))
     not_city = {"express", "regional", "regio", "régio"}
     if any(value in route_type or value in route_label for value in not_city):
         return False
@@ -14469,9 +14495,9 @@ def build_monthly_shift_route_report(month_value: date) -> dict[str, Any]:
     names = courier_name_lookup()
     muszakpro_rows = read_route_report_muszakpro_rows(month_value)
     hub_rows = read_route_report_hub_shift_rows(month_value)
-    route_rows = read_route_report_financial_route_rows(month_value)
+    route_rows = route_details_for_all_couriers(month_value).get("rows") or []
     if not route_rows:
-        route_rows = route_details_for_all_couriers(month_value).get("rows") or []
+        route_rows = read_route_report_financial_route_rows(month_value)
     summary: dict[str, dict[str, Any]] = {}
     daily: dict[tuple[str, str, str], dict[str, Any]] = {}
 
