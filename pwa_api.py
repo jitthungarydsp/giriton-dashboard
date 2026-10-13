@@ -6894,16 +6894,18 @@ def read_coordinator_schedule(
         if detail_day and (detail_day < start or detail_day > end):
             detail_day = None
 
-    capacity_start = detail_day or start
-    capacity_end = detail_day or end
-    capacity_by_day = schedule_capacity_summary(
-        read_schedule_capacity_rows(
-            capacity_start,
-            capacity_end,
-            allow_raw_fallback=bool(detail_day) and not fast_detail,
-        ),
-        warehouse_ids,
-    )
+    capacity_by_day: dict[str, dict[str, Any]] = {}
+    if not (detail_day and fast_detail):
+        capacity_start = detail_day or start
+        capacity_end = detail_day or end
+        capacity_by_day = schedule_capacity_summary(
+            read_schedule_capacity_rows(
+                capacity_start,
+                capacity_end,
+                allow_raw_fallback=bool(detail_day),
+            ),
+            warehouse_ids,
+        )
 
     workers: list[dict[str, Any]] = []
     recommendations_by_day: dict[str, list[dict[str, Any]]] = {}
@@ -6926,7 +6928,6 @@ def read_coordinator_schedule(
                 ],
                 key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
             )
-            attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids, fast=True)
         else:
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = {
@@ -7008,7 +7009,7 @@ def read_coordinator_schedule(
             attach_schedule_contacts(workers, contact_rows)
             attach_giriton_attendance_logins(workers, detail_start, detail_end, attendance_rows)
         attach_schedule_attendance_statuses(workers, detail_start)
-        attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids)
+        attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids, fast=fast_detail)
         for row in slot_rows:
             if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
                 continue
@@ -7016,6 +7017,8 @@ def read_coordinator_schedule(
             if not slot or not slot.get("date"):
                 continue
             slots_by_day.setdefault(slot["date"], []).append(slot)
+        if fast_detail:
+            capacity_by_day = schedule_capacity_summary(slot_rows, warehouse_ids)
         existing_slot_keys = {
             (
                 str(slot.get("date") or ""),
@@ -7326,7 +7329,7 @@ def read_schedule_daily_route_counts(
             merge_count(row.get("courier_id"), max(finished_count, len(route_ids), finished_count + active_count))
 
     if fast:
-        merge_live_map_counts(timeout=6)
+        merge_live_map_counts(timeout=2)
         return counts
 
     view_rows = optional_supabase_rows(
