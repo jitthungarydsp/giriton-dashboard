@@ -102,7 +102,7 @@ select
   courier_id,
   max(courier_name) as courier_name,
   warehouse,
-  max(daily_route_count)::integer as daily_route_count
+  max(daily_route_count)::bigint as daily_route_count
 from source_counts
 group by work_date, courier_id, warehouse;
 

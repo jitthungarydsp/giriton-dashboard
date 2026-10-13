@@ -6922,7 +6922,7 @@ def read_coordinator_schedule(
                 ],
                 key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
             )
-            attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids)
+            attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids, fast=True)
         else:
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = {
@@ -7286,7 +7286,11 @@ def attach_schedule_attendance_statuses(workers: list[dict[str, Any]], work_date
         worker["attendanceMarkedAt"] = iso_local_text(attendance.get("marked_at") or attendance.get("updated_at"))
 
 
-def read_schedule_daily_route_counts(work_date: date, warehouse_ids: list[int] | None = None) -> dict[str, int]:
+def read_schedule_daily_route_counts(
+    work_date: date,
+    warehouse_ids: list[int] | None = None,
+    fast: bool = False,
+) -> dict[str, int]:
     counts: dict[str, int] = {}
 
     def merge_count(courier_id: Any, count_value: Any) -> None:
@@ -7314,6 +7318,29 @@ def read_schedule_daily_route_counts(work_date: date, warehouse_ids: list[int] |
                 view_counts[courier_id] = view_counts.get(courier_id, 0) + safe_int(row.get("daily_route_count"))
     for courier_id, count in view_counts.items():
         merge_count(courier_id, count)
+
+    live_rows = optional_supabase_rows(
+        "courier_hub_live_map_courier_latest",
+        params={
+            "select": "courier_id,warehouse_id,warehouse_code,finished_route_count,route_ids,fetched_at",
+            "order": "courier_id.asc,fetched_at.desc",
+            "limit": "1000",
+        },
+        timeout=6 if fast else 10,
+    )
+    for row in live_rows:
+        fetched_at = local_datetime(row.get("fetched_at"))
+        if fetched_at and fetched_at.date() != work_date:
+            continue
+        if not warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
+            continue
+        route_ids = live_map_route_ids(row.get("route_ids"))
+        finished_count = safe_int(row.get("finished_route_count"))
+        active_count = 1 if route_ids else 0
+        merge_count(row.get("courier_id"), max(finished_count, len(route_ids), finished_count + active_count))
+
+    if fast:
+        return counts
 
     performance_rows = optional_supabase_rows(
         "raw_jitt_invoice_perf_couriers_daily",
@@ -7390,8 +7417,9 @@ def attach_schedule_daily_route_counts(
     workers: list[dict[str, Any]],
     work_date: date,
     warehouse_ids: list[int] | None = None,
+    fast: bool = False,
 ) -> None:
-    route_counts = read_schedule_daily_route_counts(work_date, warehouse_ids)
+    route_counts = read_schedule_daily_route_counts(work_date, warehouse_ids, fast=fast)
     if not route_counts:
         return
     for worker in workers:
