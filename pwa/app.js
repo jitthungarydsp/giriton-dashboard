@@ -8942,8 +8942,10 @@ async function loadCoordinatorScheduleDay(day, options = {}) {
     const fastQuery = fast ? "&fast=true" : "";
     const payload = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}${warehouseQuery}&day=${encodeURIComponent(selectedDay)}${fastQuery}`);
     if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
-    await loadScheduleVehicleConfigurations();
-    if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
+    if (!fast) {
+      await loadScheduleVehicleConfigurations();
+      if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
+    }
     mergeCoordinatorScheduleDay(payload);
     state.coordinatorScheduleDay = selectedDay;
     state.coordinatorScheduleView = "day";

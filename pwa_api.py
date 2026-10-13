@@ -1931,6 +1931,47 @@ def send_shift_delay_discord_alert(user: dict[str, Any], payload: ShiftDelayAler
         )
 
 
+def send_schedule_sent_home_discord_alert(
+    user: dict[str, Any],
+    payload: TodayWorkerAttendanceRequest,
+    daily_route_count: int = 0,
+) -> None:
+    warehouse = normalize_warehouse(payload.warehouse) or str(payload.warehouse or "").strip() or "-"
+    webhook_url = discord_webhook_for_shift(warehouse)
+    if not webhook_url:
+        print("Hazaküldés Discord értesítés kihagyva: nincs webhook.")
+        return
+
+    courier_id = str(payload.courier_id or "").strip()
+    courier_name = str(payload.courier_name or "").strip() or "Futár"
+    work_date = str(payload.work_date or "").strip() or date.today().isoformat()
+    shift_time = normalize_time(payload.start) or "?"
+    end_time = normalize_time(payload.end)
+    if end_time:
+        shift_time = f"{shift_time}-{end_time}"
+    shift_name = str(payload.shift_name or payload.booking_code or "Műszak").strip() or "Műszak"
+    actor = str(user.get("username") or user.get("email") or "koordinátor").strip() or "koordinátor"
+    note = str(payload.note or "").strip()
+    lines = [
+        "🏠 **HAZA KÜLDTÉK**",
+        "",
+        f"**Futár:** {courier_name} `#{courier_id}`",
+        f"**Raktár:** `{warehouse}`",
+        f"**Műszak:** {work_date} {shift_time} · {shift_name}",
+        f"**Napi kör:** {safe_int(daily_route_count)}",
+        f"**Jelölte:** {actor}",
+    ]
+    if note:
+        lines.append(f"**Megjegyzés:** {note}")
+
+    try:
+        response = requests.post(webhook_url, json={"content": "\n".join(lines)}, timeout=15)
+        if not response.ok:
+            print(f"Hazaküldés Discord értesítés hiba: HTTP {response.status_code}")
+    except Exception as exc:
+        print(f"Hazaküldés Discord értesítés hiba: {exc}")
+
+
 def notify_shift_delay_push(user: dict[str, Any], payload: ShiftDelayAlertRequest) -> None:
     courier_id, courier_name = courier_identity(user)
     work_date = payload.work_date.strip() or datetime.now(LOCAL_TIMEZONE).date().isoformat()
@@ -6831,6 +6872,7 @@ def read_coordinator_schedule(
                 ],
                 key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
             )
+            attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids)
         else:
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = {
@@ -6912,6 +6954,7 @@ def read_coordinator_schedule(
             attach_schedule_contacts(workers, contact_rows)
             attach_giriton_attendance_logins(workers, detail_start, detail_end, attendance_rows)
         attach_schedule_attendance_statuses(workers, detail_start)
+        attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids)
         for row in slot_rows:
             if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
                 continue
@@ -7176,6 +7219,47 @@ def attach_schedule_attendance_statuses(workers: list[dict[str, Any]], work_date
         worker["attendanceNote"] = str(attendance.get("note") or "")
         worker["attendanceMarkedBy"] = str(attendance.get("marked_by") or "")
         worker["attendanceMarkedAt"] = iso_local_text(attendance.get("marked_at") or attendance.get("updated_at"))
+
+
+def read_schedule_daily_route_counts(work_date: date, warehouse_ids: list[int] | None = None) -> dict[str, int]:
+    rows = optional_supabase_rows(
+        "courier_hub_route_statistics",
+        params={
+            "select": "courier_id,courier_name,work_date,route_id,warehouse_id,warehouse_code",
+            "work_date": f"eq.{work_date.isoformat()}",
+            "order": "courier_id.asc,route_id.asc",
+            "limit": "5000",
+        },
+        timeout=15,
+    )
+    seen: set[tuple[str, str]] = set()
+    counts: dict[str, int] = {}
+    for row in rows:
+        if not warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
+            continue
+        courier_id = str(row.get("courier_id") or "").strip()
+        route_id = str(row.get("route_id") or "").strip()
+        if not courier_id or not route_id:
+            continue
+        key = (courier_id, route_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        counts[courier_id] = counts.get(courier_id, 0) + 1
+    return counts
+
+
+def attach_schedule_daily_route_counts(
+    workers: list[dict[str, Any]],
+    work_date: date,
+    warehouse_ids: list[int] | None = None,
+) -> None:
+    route_counts = read_schedule_daily_route_counts(work_date, warehouse_ids)
+    if not route_counts:
+        return
+    for worker in workers:
+        courier_id = str(worker.get("courierId") or "").strip()
+        worker["dailyRouteCount"] = route_counts.get(courier_id, 0)
 
 
 def route_detail_value(route: dict[str, Any], *keys: str) -> Any:
