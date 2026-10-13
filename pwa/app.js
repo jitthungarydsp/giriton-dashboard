@@ -96,7 +96,7 @@ const state = {
   settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v207";
+const APP_VERSION = "v208";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -8156,6 +8156,7 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
   const vehiclePanelOpen = state.scheduleOpenVehiclePanels?.has(workerKey);
   const attendanceStatus = String(worker.attendanceStatus || "");
   const sentHome = attendanceStatus === "sent_home";
+  const dailyRouteCount = Number(worker.dailyRouteCount || 0);
   const attendanceMeta = worker.attendanceMarkedAt
     ? ` · ${shortDateTime(worker.attendanceMarkedAt)}${worker.attendanceMarkedBy ? ` · ${worker.attendanceMarkedBy}` : ""}`
     : "";
@@ -8164,7 +8165,7 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
       <button class="schedule-slot-worker-head" type="button" data-schedule-vehicle-toggle="${escapeHtml(workerKey)}">
         <span>
           <strong>${escapeHtml(worker.courierName || "Futár")}</strong>
-          <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.shiftName || worker.bookingCode || "Műszak")}</small>
+          <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.shiftName || worker.bookingCode || "Műszak")} · ${formatCount(dailyRouteCount)} kör ma</small>
           <small>Autó: ${escapeHtml(recommendedVehicle?.licensePlate || worker.vehicle?.licensePlate || "-")}</small>
         </span>
         <b>Autó</b>
@@ -8212,9 +8213,10 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
             data-slot-from="${escapeHtml(slot.start || "")}"
             data-courier-id="${escapeHtml(worker.courierId || "")}"
             data-courier-name="${escapeHtml(worker.courierName || "Futár")}"
-            ${hasCourierId ? "" : "disabled"}>
-            ${hasCourierId ? "Törlés indítása" : "Törléshez hiányzik futár ID"}
+            ${hasCourierId && !sentHome ? "" : "disabled"}>
+            ${sentHome ? "Törlés inaktív" : hasCourierId ? "Törlés indítása" : "Törléshez hiányzik futár ID"}
           </button>
+          ${sentHome ? `<span class="schedule-sent-home-label">Hazaküldték</span>` : ""}
           <button type="button"
             class="${sentHome ? "active" : ""}"
             data-schedule-sent-home
@@ -8226,7 +8228,7 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
             data-shift-name="${escapeHtml(worker.shiftName || worker.bookingCode || "")}"
             data-courier-id="${escapeHtml(worker.courierId || "")}"
             data-courier-name="${escapeHtml(worker.courierName || "Futár")}"
-            ${hasCourierId ? "" : "disabled"}>
+            ${hasCourierId && !sentHome ? "" : "disabled"}>
             ${sentHome ? "Haza küldve" : "Haza küldték"}
           </button>
           <div class="schedule-slot-action-status" data-schedule-action-status role="status" aria-live="polite"></div>

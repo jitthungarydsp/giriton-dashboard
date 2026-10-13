@@ -7170,7 +7170,7 @@ def today_worker_attendance_key(
 
 def read_today_worker_attendance_statuses(work_date: date) -> dict[tuple[str, str, str, str], dict[str, Any]]:
     rows = optional_supabase_rows(
-        "pwa_today_worker_attendance",
+        "pwa_schedule_worker_status_v",
         params={
             "select": (
                 "courier_id,courier_name,work_date,start_time,end_time,warehouse,"
@@ -7182,6 +7182,20 @@ def read_today_worker_attendance_statuses(work_date: date) -> dict[tuple[str, st
         },
         timeout=20,
     )
+    if not rows:
+        rows = optional_supabase_rows(
+            "pwa_today_worker_attendance",
+            params={
+                "select": (
+                    "courier_id,courier_name,work_date,start_time,end_time,warehouse,"
+                    "shift_name,booking_code,attendance_status,note,marked_by,marked_at,updated_at"
+                ),
+                "work_date": f"eq.{work_date.isoformat()}",
+                "order": "updated_at.desc,marked_at.desc",
+                "limit": "2000",
+            },
+            timeout=20,
+        )
     latest: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for row in rows:
         key = today_worker_attendance_key(
@@ -7222,6 +7236,25 @@ def attach_schedule_attendance_statuses(workers: list[dict[str, Any]], work_date
 
 
 def read_schedule_daily_route_counts(work_date: date, warehouse_ids: list[int] | None = None) -> dict[str, int]:
+    view_rows = optional_supabase_rows(
+        "pwa_schedule_day_route_counts_v",
+        params={
+            "select": "courier_id,work_date,warehouse,daily_route_count",
+            "work_date": f"eq.{work_date.isoformat()}",
+            "order": "courier_id.asc",
+            "limit": "5000",
+        },
+        timeout=10,
+    )
+    if view_rows:
+        counts: dict[str, int] = {}
+        for row in view_rows:
+            courier_id = str(row.get("courier_id") or "").strip()
+            if not courier_id or not warehouse_allowed(row.get("warehouse"), warehouse_ids):
+                continue
+            counts[courier_id] = counts.get(courier_id, 0) + safe_int(row.get("daily_route_count"))
+        return counts
+
     rows = optional_supabase_rows(
         "courier_hub_route_statistics",
         params={
@@ -8440,8 +8473,26 @@ def save_today_worker_attendance(payload: TodayWorkerAttendanceRequest, user: di
     if attendance_status not in {"present", "absent", "sent_home"}:
         raise HTTPException(status_code=422, detail="Ismeretlen jelenlét státusz.")
     work_date = str(payload.work_date or "").strip() or date.today().isoformat()
+    try:
+        work_day = datetime.strptime(work_date[:10], "%Y-%m-%d").date()
+    except ValueError:
+        work_day = date.today()
     start_time = normalize_time(payload.start)
     warehouse = normalize_warehouse(payload.warehouse) or str(payload.warehouse or "").strip()
+    existing_statuses = read_today_worker_attendance_statuses(work_day)
+    existing_status = existing_statuses.get(today_worker_attendance_key(
+        courier_id,
+        start_time,
+        warehouse,
+        payload.booking_code,
+    ))
+    if not existing_status:
+        existing_status = existing_statuses.get(today_worker_attendance_key(
+            courier_id,
+            start_time,
+            warehouse,
+            "",
+        ))
     marked_by = str(
         user.get("username")
         or user.get("email")
@@ -8470,6 +8521,16 @@ def save_today_worker_attendance(payload: TodayWorkerAttendanceRequest, user: di
         },
         prefer="resolution=merge-duplicates,return=minimal",
     )
+    if attendance_status == "sent_home" and str((existing_status or {}).get("attendance_status") or "") != "sent_home":
+        warehouse_id = warehouse_id_for_hub(warehouse)
+        route_counts = read_schedule_daily_route_counts(work_day, [warehouse_id] if warehouse_id else None)
+        run_pwa_background(
+            "schedule sent home discord",
+            send_schedule_sent_home_discord_alert,
+            user,
+            payload,
+            route_counts.get(courier_id, 0),
+        )
 
 
 def latest_shift_queue_status(user: dict[str, Any]) -> dict[str, Any]:

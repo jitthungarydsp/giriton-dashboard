@@ -1,0 +1,58 @@
+-- PWA beosztas gyorsito view-k.
+-- Normal view-k: mindig az aktualis tablakbol olvasnak, kulon refresh job nem kell.
+
+create index if not exists idx_pwa_today_worker_attendance_work_date
+  on public.pwa_today_worker_attendance (work_date, courier_id, warehouse, start_time, booking_code);
+
+create index if not exists idx_courier_hub_route_statistics_schedule_day
+  on public.courier_hub_route_statistics (work_date, courier_id, warehouse_id, route_id);
+
+create or replace view public.pwa_schedule_worker_status_v as
+select
+  courier_id::text as courier_id,
+  courier_name,
+  work_date::date as work_date,
+  start_time,
+  end_time,
+  warehouse,
+  shift_name,
+  booking_code,
+  attendance_status,
+  note,
+  marked_by,
+  marked_at,
+  updated_at
+from public.pwa_today_worker_attendance;
+
+create or replace view public.pwa_schedule_day_route_counts_v as
+select
+  work_date::date as work_date,
+  courier_id::text as courier_id,
+  max(courier_name) as courier_name,
+  coalesce(
+    nullif(upper(trim(warehouse_code::text)), ''),
+    case
+      when warehouse_id::text = '1' then 'BUD1'
+      when warehouse_id::text = '2' then 'BUD2'
+      else nullif(warehouse_id::text, '')
+    end
+  ) as warehouse,
+  count(distinct route_id) as daily_route_count
+from public.courier_hub_route_statistics
+where courier_id is not null
+  and route_id is not null
+  and nullif(route_id::text, '') is not null
+group by
+  work_date::date,
+  courier_id::text,
+  coalesce(
+    nullif(upper(trim(warehouse_code::text)), ''),
+    case
+      when warehouse_id::text = '1' then 'BUD1'
+      when warehouse_id::text = '2' then 'BUD2'
+      else nullif(warehouse_id::text, '')
+    end
+  );
+
+grant select on public.pwa_schedule_worker_status_v to anon, authenticated, service_role;
+grant select on public.pwa_schedule_day_route_counts_v to anon, authenticated, service_role;
