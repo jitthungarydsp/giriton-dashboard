@@ -7304,7 +7304,7 @@ def read_schedule_daily_route_counts(
         live_rows = optional_supabase_rows(
             "courier_hub_live_map_courier_latest",
             params={
-                "select": "courier_id,warehouse_id,warehouse_code,finished_route_count,route_ids,fetched_at",
+                "select": "courier_id,warehouse_id,finished_route_count,route_ids,fetched_at",
                 "order": "courier_id.asc,fetched_at.desc",
                 "limit": "1000",
             },
@@ -7314,7 +7314,7 @@ def read_schedule_daily_route_counts(
             fetched_at = local_datetime(row.get("fetched_at"))
             if fetched_at and fetched_at.date() != work_date:
                 continue
-            if not warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
+            if not warehouse_allowed(row.get("warehouse_id"), warehouse_ids):
                 continue
             route_ids = live_map_route_ids(row.get("route_ids"))
             finished_count = safe_int(row.get("finished_route_count"))

@@ -129,14 +129,11 @@ with source_counts as (
   group by
     (fetched_at at time zone 'Europe/Budapest')::date,
     courier_id::text,
-    coalesce(
-      nullif(upper(trim(warehouse_code::text)), ''),
-      case
-        when warehouse_id::text = '1' then 'BUD1'
-        when warehouse_id::text = '2' then 'BUD2'
-        else nullif(warehouse_id::text, '')
-      end
-    )
+    case
+      when warehouse_id::text = '1' then 'BUD1'
+      when warehouse_id::text = '2' then 'BUD2'
+      else nullif(warehouse_id::text, '')
+    end
 )
 select
   work_date,
