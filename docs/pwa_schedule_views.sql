@@ -106,14 +106,11 @@ with source_counts as (
     (fetched_at at time zone 'Europe/Budapest')::date as work_date,
     courier_id::text as courier_id,
     max(courier_name) as courier_name,
-    coalesce(
-      nullif(upper(trim(warehouse_code::text)), ''),
-      case
-        when warehouse_id::text = '1' then 'BUD1'
-        when warehouse_id::text = '2' then 'BUD2'
-        else nullif(warehouse_id::text, '')
-      end
-    ) as warehouse,
+    case
+      when warehouse_id::text = '1' then 'BUD1'
+      when warehouse_id::text = '2' then 'BUD2'
+      else nullif(warehouse_id::text, '')
+    end as warehouse,
     max(
       coalesce(finished_route_count, 0)
       + case
