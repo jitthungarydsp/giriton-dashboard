@@ -96,7 +96,7 @@ const state = {
   settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v206";
+const APP_VERSION = "v207";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -544,8 +544,9 @@ function showApp() {
   const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
   if (coordinatorOnly) {
-    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-vehicle-config", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard", "#nav-settlement-import-config"]
+    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard", "#nav-settlement-import-config"]
       .forEach((selector) => $(selector)?.classList.add("hidden"));
+    $("#nav-vehicle-config")?.classList.toggle("hidden", !state.user.canManageVehicles);
   }
   if (hrOnly) {
     ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard", "#nav-settlement-import-config"]
@@ -7066,6 +7067,7 @@ function vehicleSmallText(vehicle = {}) {
 function workerAttendanceLabel(status) {
   if (status === "present") return "Bejött";
   if (status === "absent") return "Nem jött";
+  if (status === "sent_home") return "Haza küldték";
   return "Nincs jelölve";
 }
 
@@ -8152,6 +8154,11 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
   const vehicleOptions = scheduleVehicleOptions(slot, recommendedVehicle);
   const workerKey = `${slot.date || ""}|${slot.warehouse || ""}|${slot.start || ""}|${worker.courierId || worker.courierName || ""}`;
   const vehiclePanelOpen = state.scheduleOpenVehiclePanels?.has(workerKey);
+  const attendanceStatus = String(worker.attendanceStatus || "");
+  const sentHome = attendanceStatus === "sent_home";
+  const attendanceMeta = worker.attendanceMarkedAt
+    ? ` · ${shortDateTime(worker.attendanceMarkedAt)}${worker.attendanceMarkedBy ? ` · ${worker.attendanceMarkedBy}` : ""}`
+    : "";
   return `
     <div class="schedule-slot-worker">
       <button class="schedule-slot-worker-head" type="button" data-schedule-vehicle-toggle="${escapeHtml(workerKey)}">
@@ -8165,6 +8172,7 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
       <div class="schedule-chip-row">
         ${scheduleStatusChip(`MűszakPro: ${String(worker.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, worker.muszakproTone)}
         ${scheduleStatusChip(`Hub: ${String(worker.hubStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, worker.hubTone)}
+        ${attendanceStatus ? scheduleStatusChip(`Jelenlét: ${workerAttendanceLabel(attendanceStatus)}${attendanceMeta}`, sentHome ? "missing" : "ok") : ""}
       </div>
       <div class="schedule-slot-worker-meta">
         <span>MűszakPro: ${escapeHtml(shortDateTime(worker.muszakproBookedAt || "") || "-")}</span>
@@ -8206,6 +8214,20 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
             data-courier-name="${escapeHtml(worker.courierName || "Futár")}"
             ${hasCourierId ? "" : "disabled"}>
             ${hasCourierId ? "Törlés indítása" : "Törléshez hiányzik futár ID"}
+          </button>
+          <button type="button"
+            class="${sentHome ? "active" : ""}"
+            data-schedule-sent-home
+            data-work-date="${escapeHtml(slot.date || "")}"
+            data-warehouse="${escapeHtml(slot.warehouse || "")}"
+            data-start="${escapeHtml(slot.start || "")}"
+            data-end="${escapeHtml(slot.end || "")}"
+            data-booking-code="${escapeHtml(worker.bookingCode || "")}"
+            data-shift-name="${escapeHtml(worker.shiftName || worker.bookingCode || "")}"
+            data-courier-id="${escapeHtml(worker.courierId || "")}"
+            data-courier-name="${escapeHtml(worker.courierName || "Futár")}"
+            ${hasCourierId ? "" : "disabled"}>
+            ${sentHome ? "Haza küldve" : "Haza küldték"}
           </button>
           <div class="schedule-slot-action-status" data-schedule-action-status role="status" aria-live="polite"></div>
         </div>
@@ -8509,6 +8531,47 @@ function renderCoordinatorScheduleDayDetail(payload, day) {
 }
 
 function bindSchedulePrepActions(target) {
+  target.querySelectorAll("[data-schedule-sent-home]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const panel = button.closest(".schedule-slot-worker") || button.closest(".schedule-slot-card");
+      const status = panel?.querySelector("[data-schedule-action-status]");
+      const name = button.dataset.courierName || "Futár";
+      const id = button.dataset.courierId || "-";
+      if (!id || id === "-") return;
+      if (status) {
+        status.classList.add("active");
+        status.classList.remove("error");
+        status.textContent = `${name} (#${id}) haza küldés mentése...`;
+      }
+      button.disabled = true;
+      try {
+        await api("/api/coordinator/today-workers/attendance", {
+          method: "POST",
+          body: JSON.stringify({
+            courier_id: id,
+            courier_name: name,
+            work_date: button.dataset.workDate || "",
+            start: button.dataset.start || button.dataset.slotFrom || "",
+            end: button.dataset.end || "",
+            warehouse: button.dataset.warehouse || "",
+            shift_name: button.dataset.shiftName || "",
+            booking_code: button.dataset.bookingCode || "",
+            attendance_status: "sent_home",
+            note: "Beosztásból jelölve: haza küldték.",
+          }),
+        });
+        if (status) status.textContent = `${name} (#${id}) haza küldve jelölve.`;
+        state.coordinatorScheduleActionActive = false;
+        await loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true, preserveScroll: true });
+      } catch (error) {
+        button.disabled = false;
+        if (status) {
+          status.classList.add("active", "error");
+          status.textContent = error.message || "A haza küldés mentése nem sikerült.";
+        }
+      }
+    });
+  });
   target.querySelectorAll("[data-schedule-delete-prep]").forEach((button) => {
     button.addEventListener("click", async () => {
       const panel = button.closest(".schedule-slot-worker") || button.closest(".schedule-slot-card");

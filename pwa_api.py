@@ -466,7 +466,7 @@ def can_view_settlement_dashboard(user: dict[str, Any]) -> bool:
 def can_manage_vehicle_history(user: dict[str, Any]) -> bool:
     role = str(user.get("role") or "").strip().lower()
     username_key = normalize_text(user.get("username"))
-    return role in {"admin", "superadmin", "hr"} or username_key == normalize_text("admin")
+    return role in {"admin", "superadmin", "hr", "coordinator"} or username_key == normalize_text("admin")
 
 
 def can_approve_pwa_registrations(user: dict[str, Any]) -> bool:
@@ -6911,6 +6911,7 @@ def read_coordinator_schedule(
             attach_schedule_vehicles(workers, detail_start, detail_end, vehicle_rows=vehicle_rows, live_rows=live_vehicle_rows)
             attach_schedule_contacts(workers, contact_rows)
             attach_giriton_attendance_logins(workers, detail_start, detail_end, attendance_rows)
+        attach_schedule_attendance_statuses(workers, detail_start)
         for row in slot_rows:
             if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
                 continue
@@ -7149,6 +7150,32 @@ def read_today_worker_attendance_statuses(work_date: date) -> dict[tuple[str, st
         if key[0] and key not in latest:
             latest[key] = row
     return latest
+
+
+def attach_schedule_attendance_statuses(workers: list[dict[str, Any]], work_date: date) -> None:
+    attendance_by_key = read_today_worker_attendance_statuses(work_date)
+    if not attendance_by_key:
+        return
+    for worker in workers:
+        attendance = attendance_by_key.get(today_worker_attendance_key(
+            worker.get("courierId"),
+            worker.get("start"),
+            worker.get("warehouse"),
+            worker.get("bookingCode"),
+        ))
+        if not attendance:
+            attendance = attendance_by_key.get(today_worker_attendance_key(
+                worker.get("courierId"),
+                worker.get("start"),
+                worker.get("warehouse"),
+                "",
+            ))
+        if not attendance:
+            continue
+        worker["attendanceStatus"] = str(attendance.get("attendance_status") or "")
+        worker["attendanceNote"] = str(attendance.get("note") or "")
+        worker["attendanceMarkedBy"] = str(attendance.get("marked_by") or "")
+        worker["attendanceMarkedAt"] = iso_local_text(attendance.get("marked_at") or attendance.get("updated_at"))
 
 
 def route_detail_value(route: dict[str, Any], *keys: str) -> Any:
@@ -8326,7 +8353,7 @@ def save_today_worker_attendance(payload: TodayWorkerAttendanceRequest, user: di
     if not courier_id.isdigit():
         raise HTTPException(status_code=422, detail="Hiányzik a futár azonosító.")
     attendance_status = str(payload.attendance_status or "").strip().lower()
-    if attendance_status not in {"present", "absent"}:
+    if attendance_status not in {"present", "absent", "sent_home"}:
         raise HTTPException(status_code=422, detail="Ismeretlen jelenlét státusz.")
     work_date = str(payload.work_date or "").strip() or date.today().isoformat()
     start_time = normalize_time(payload.start)
