@@ -7323,15 +7323,18 @@ def read_schedule_daily_route_counts(
             counts[key] = max(counts.get(key, 0), count)
 
     def merge_live_map_counts(timeout: int) -> None:
-        live_rows = optional_supabase_rows(
-            "courier_hub_live_map_courier_latest",
-            params={
-                "select": "courier_id,courier_name,warehouse_id,finished_route_count,route_ids,fetched_at",
-                "order": "courier_id.asc,fetched_at.desc",
-                "limit": "1000",
-            },
-            timeout=timeout,
-        )
+        live_params = {
+            "select": "courier_id,courier_name,warehouse_id,finished_route_count,route_ids,fetched_at",
+            "order": "courier_id.asc,fetched_at.desc",
+            "limit": "1000",
+        }
+        live_rows = optional_supabase_rows("courier_hub_live_map_courier_latest", params=live_params, timeout=timeout)
+        if not live_rows:
+            live_rows = optional_supabase_rows(
+                "courier_hub_live_map_courier_latest",
+                params={**live_params, "select": "courier_id,warehouse_id,finished_route_count,route_ids,fetched_at"},
+                timeout=timeout,
+            )
         for row in live_rows:
             fetched_at = local_datetime(row.get("fetched_at"))
             if fetched_at and fetched_at.date() != work_date:
@@ -7344,16 +7347,19 @@ def read_schedule_daily_route_counts(
             merge_count(row.get("courier_id"), row.get("courier_name"), max(finished_count, len(route_ids), finished_count + active_count))
 
     def merge_view_counts(timeout: int) -> None:
-        view_rows = optional_supabase_rows(
-            "pwa_schedule_day_route_counts_v",
-            params={
-                "select": "courier_id,courier_name,work_date,warehouse,daily_route_count",
-                "work_date": f"eq.{work_date.isoformat()}",
-                "order": "courier_id.asc",
-                "limit": "5000",
-            },
-            timeout=timeout,
-        )
+        view_params = {
+            "select": "courier_id,courier_name,work_date,warehouse,daily_route_count",
+            "work_date": f"eq.{work_date.isoformat()}",
+            "order": "courier_id.asc",
+            "limit": "5000",
+        }
+        view_rows = optional_supabase_rows("pwa_schedule_day_route_counts_v", params=view_params, timeout=timeout)
+        if not view_rows:
+            view_rows = optional_supabase_rows(
+                "pwa_schedule_day_route_counts_v",
+                params={**view_params, "select": "courier_id,work_date,warehouse,daily_route_count"},
+                timeout=timeout,
+            )
         view_counts: dict[str, int] = {}
         for row in view_rows:
             if warehouse_allowed(row.get("warehouse"), warehouse_ids):
@@ -7363,32 +7369,38 @@ def read_schedule_daily_route_counts(
         for key, count in view_counts.items():
             counts[key] = max(counts.get(key, 0), count)
 
-    if fast:
-        merge_view_counts(timeout=4)
-        merge_live_map_counts(timeout=2)
-        return counts
-
-    merge_view_counts(timeout=10)
-    merge_live_map_counts(timeout=10)
-
-    performance_rows = optional_supabase_rows(
-        "raw_jitt_invoice_perf_couriers_daily",
-        params={
+    def merge_performance_counts(timeout: int) -> None:
+        performance_params = {
             "select": "courier_id,courier_name,work_date,warehouse_id,warehouse_code,route_count",
             "work_date": f"eq.{work_date.isoformat()}",
             "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
             "order": "courier_id.asc,warehouse_id.asc",
             "limit": "5000",
-        },
-        timeout=10,
-    )
-    performance_counts: dict[str, int] = {}
-    for row in performance_rows:
-        if warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
-            for key in route_count_keys(row.get("courier_id"), row.get("courier_name")):
-                performance_counts[key] = performance_counts.get(key, 0) + safe_int(row.get("route_count"))
-    for key, count in performance_counts.items():
-        counts[key] = max(counts.get(key, 0), count)
+        }
+        performance_rows = optional_supabase_rows("raw_jitt_invoice_perf_couriers_daily", params=performance_params, timeout=timeout)
+        if not performance_rows:
+            performance_rows = optional_supabase_rows(
+                "raw_jitt_invoice_perf_couriers_daily",
+                params={**performance_params, "select": "courier_id,work_date,warehouse_id,warehouse_code,route_count"},
+                timeout=timeout,
+            )
+        performance_counts: dict[str, int] = {}
+        for row in performance_rows:
+            if warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
+                for key in route_count_keys(row.get("courier_id"), row.get("courier_name")):
+                    performance_counts[key] = performance_counts.get(key, 0) + safe_int(row.get("route_count"))
+        for key, count in performance_counts.items():
+            counts[key] = max(counts.get(key, 0), count)
+
+    if fast:
+        merge_view_counts(timeout=4)
+        merge_performance_counts(timeout=4)
+        merge_live_map_counts(timeout=2)
+        return counts
+
+    merge_view_counts(timeout=10)
+    merge_live_map_counts(timeout=10)
+    merge_performance_counts(timeout=10)
 
     story_rows = optional_supabase_rows(
         "mart_dsp_route_stories",
