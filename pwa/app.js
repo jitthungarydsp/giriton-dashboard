@@ -96,7 +96,7 @@ const state = {
   settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v208";
+const APP_VERSION = "v209";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -8145,7 +8145,7 @@ function vehicleConfigAssignmentPayload(item = {}, courierId = "", courierName =
   };
 }
 
-function renderScheduleSlotWorker(worker = {}, slot = {}) {
+function renderScheduleSlotWorker(worker = {}, slot = {}, day = {}) {
   const phone = String(worker.phoneNumber || "").trim();
   const hasCourierId = Boolean(String(worker.courierId || "").trim());
   const slotHasBookedCapacity = Number(slot.assigned || 0) > 0 && Number(slot.opened || 0) > 0;
@@ -8213,8 +8213,8 @@ function renderScheduleSlotWorker(worker = {}, slot = {}) {
             data-slot-from="${escapeHtml(slot.start || "")}"
             data-courier-id="${escapeHtml(worker.courierId || "")}"
             data-courier-name="${escapeHtml(worker.courierName || "Futár")}"
-            ${hasCourierId && !sentHome ? "" : "disabled"}>
-            ${sentHome ? "Törlés inaktív" : hasCourierId ? "Törlés indítása" : "Törléshez hiányzik futár ID"}
+            disabled>
+            Törlés inaktív
           </button>
           ${sentHome ? `<span class="schedule-sent-home-label">Hazaküldték</span>` : ""}
           <button type="button"
@@ -8386,7 +8386,7 @@ function renderScheduleSlotDetails(slot = {}, day = {}) {
         <div><span>Hub felvezetés</span><strong>${hubCount ? `${formatCount(hubCount)} futár` : escapeHtml(hubFallbackTime || "-")}</strong></div>
       </div>
       ${workers.length
-        ? `<div class="schedule-slot-worker-list">${workers.map((worker) => renderScheduleSlotWorker(worker, slot)).join("")}</div>`
+        ? `<div class="schedule-slot-worker-list">${workers.map((worker) => renderScheduleSlotWorker(worker, slot, day)).join("")}</div>`
         : `<div class="empty-card compact">Nincs ehhez az idősávhoz kapcsolt futáradat.</div>`}
       ${renderScheduleSlotRecommendations(slot)}
       ${renderScheduleSlotBookingPrep(slot, day)}
@@ -8547,7 +8547,7 @@ function bindSchedulePrepActions(target) {
       }
       button.disabled = true;
       try {
-        await api("/api/coordinator/today-workers/attendance", {
+        const result = await api("/api/coordinator/today-workers/attendance", {
           method: "POST",
           body: JSON.stringify({
             courier_id: id,
@@ -8562,7 +8562,11 @@ function bindSchedulePrepActions(target) {
             note: "Beosztásból jelölve: haza küldték.",
           }),
         });
-        if (status) status.textContent = `${name} (#${id}) haza küldve jelölve.`;
+        if (status) {
+          status.textContent = result?.discordSent === false
+            ? `${name} (#${id}) haza küldve jelölve, de Discord webhook nincs beállítva vagy nem válaszolt.`
+            : `${name} (#${id}) haza küldve jelölve, Discord értesítés elküldve.`;
+        }
         state.coordinatorScheduleActionActive = false;
         await loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true, preserveScroll: true });
       } catch (error) {

@@ -1935,12 +1935,12 @@ def send_schedule_sent_home_discord_alert(
     user: dict[str, Any],
     payload: TodayWorkerAttendanceRequest,
     daily_route_count: int = 0,
-) -> None:
+) -> bool:
     warehouse = normalize_warehouse(payload.warehouse) or str(payload.warehouse or "").strip() or "-"
     webhook_url = discord_webhook_for_shift(warehouse)
     if not webhook_url:
         print("Hazaküldés Discord értesítés kihagyva: nincs webhook.")
-        return
+        return False
 
     courier_id = str(payload.courier_id or "").strip()
     courier_name = str(payload.courier_name or "").strip() or "Futár"
@@ -1968,8 +1968,11 @@ def send_schedule_sent_home_discord_alert(
         response = requests.post(webhook_url, json={"content": "\n".join(lines)}, timeout=15)
         if not response.ok:
             print(f"Hazaküldés Discord értesítés hiba: HTTP {response.status_code}")
+            return False
+        return True
     except Exception as exc:
         print(f"Hazaküldés Discord értesítés hiba: {exc}")
+        return False
 
 
 def notify_shift_delay_push(user: dict[str, Any], payload: ShiftDelayAlertRequest) -> None:
@@ -5788,6 +5791,29 @@ def read_schedule_slot_rows(start: date, end: date) -> list[dict[str, Any]]:
     ]
 
 
+def read_schedule_slot_rows_fast(start: date, end: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "vw_courier_hub_shift_block_capacity",
+        params={
+            "select": (
+                "work_date,warehouse_id,warehouse_code,dsp_id,block_key,shift_template_id,"
+                "template_name,slot_from,slot_to,occupancy_from,occupancy_to,status,"
+                "assigned,opened,free_slots,capacity_published,fetched_at,updated_at"
+            ),
+            "work_date": supabase_work_date_filter(start, end),
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+            "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc,block_key.asc",
+            "limit": "1000",
+        },
+        timeout=8,
+    )
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+        and str(row.get("status") or "OPEN").strip().upper() not in {"CANCELLED", "CANCELED", "DELETED"}
+    ]
+
+
 def read_schedule_hub_booking_rows(start: date, end: date) -> list[dict[str, Any]]:
     booking_rows = optional_supabase_rows(
         "courier_hub_shift_bookings_raw",
@@ -5822,6 +5848,30 @@ def read_schedule_hub_booking_rows(start: date, end: date) -> list[dict[str, Any
     rows = booking_rows + [{**row, "source_name": "courier_hub_roster_shift_subscribers"} for row in subscriber_rows]
     return [
         row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+        and str(row.get("status") or "ACTIVE").strip().upper() not in {"CANCELLED", "CANCELED", "DELETED"}
+        and row.get("active", True) is not False
+    ]
+
+
+def read_schedule_hub_booking_rows_fast(start: date, end: date) -> list[dict[str, Any]]:
+    booking_rows = optional_supabase_rows(
+        "courier_hub_shift_bookings_raw",
+        params={
+            "select": (
+                "work_date,warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,"
+                "phone_number,block_key,shift_template_id,shift_text,slot_from,slot_to,"
+                "status,movement_type,active,first_seen_at,last_seen_at,updated_at"
+            ),
+            "work_date": supabase_work_date_filter(start, end),
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+            "order": "work_date.asc,warehouse_code.asc,slot_from.asc,courier_name.asc",
+            "limit": "1000",
+        },
+        timeout=8,
+    )
+    return [
+        row for row in booking_rows
         if str(row.get("work_date") or "")[:10] <= end.isoformat()
         and str(row.get("status") or "ACTIVE").strip().upper() not in {"CANCELLED", "CANCELED", "DELETED"}
         and row.get("active", True) is not False
@@ -6860,8 +6910,8 @@ def read_coordinator_schedule(
         detail_end = detail_day
         if fast_detail:
             with ThreadPoolExecutor(max_workers=2) as executor:
-                slot_future = executor.submit(read_schedule_slot_rows, detail_start, detail_end)
-                hub_booking_future = executor.submit(read_schedule_hub_booking_rows, detail_start, detail_end)
+                slot_future = executor.submit(read_schedule_slot_rows_fast, detail_start, detail_end)
+                hub_booking_future = executor.submit(read_schedule_hub_booking_rows_fast, detail_start, detail_end)
                 slot_rows = slot_future.result()
                 hub_booking_rows = hub_booking_future.result()
             workers = sorted(
@@ -7023,6 +7073,7 @@ def read_coordinator_schedule(
             "slots": slots_by_day.get(day_key, []),
             "recommendations": recommendations_by_day.get(day_key, []),
             "detailsLoaded": bool(detail_day and day_key == detail_day.isoformat()),
+            "fastDetail": bool(detail_day and fast_detail and day_key == detail_day.isoformat()),
             "giritonOk": len([worker for worker in day_workers if worker.get("giritonTone") == "ok"]),
             "muszakproOk": len([worker for worker in day_workers if worker.get("muszakproTone") == "ok"]),
             "missing": len([
@@ -8465,7 +8516,7 @@ def save_coordinator_shift_signal(payload: CoordinatorShiftSignalRequest) -> Non
     )
 
 
-def save_today_worker_attendance(payload: TodayWorkerAttendanceRequest, user: dict[str, Any]) -> None:
+def save_today_worker_attendance(payload: TodayWorkerAttendanceRequest, user: dict[str, Any]) -> dict[str, Any]:
     courier_id = str(payload.courier_id or "").strip()
     if not courier_id.isdigit():
         raise HTTPException(status_code=422, detail="Hiányzik a futár azonosító.")
@@ -8479,20 +8530,6 @@ def save_today_worker_attendance(payload: TodayWorkerAttendanceRequest, user: di
         work_day = date.today()
     start_time = normalize_time(payload.start)
     warehouse = normalize_warehouse(payload.warehouse) or str(payload.warehouse or "").strip()
-    existing_statuses = read_today_worker_attendance_statuses(work_day)
-    existing_status = existing_statuses.get(today_worker_attendance_key(
-        courier_id,
-        start_time,
-        warehouse,
-        payload.booking_code,
-    ))
-    if not existing_status:
-        existing_status = existing_statuses.get(today_worker_attendance_key(
-            courier_id,
-            start_time,
-            warehouse,
-            "",
-        ))
     marked_by = str(
         user.get("username")
         or user.get("email")
@@ -8521,16 +8558,16 @@ def save_today_worker_attendance(payload: TodayWorkerAttendanceRequest, user: di
         },
         prefer="resolution=merge-duplicates,return=minimal",
     )
-    if attendance_status == "sent_home" and str((existing_status or {}).get("attendance_status") or "") != "sent_home":
+    discord_sent = None
+    if attendance_status == "sent_home":
         warehouse_id = warehouse_id_for_hub(warehouse)
         route_counts = read_schedule_daily_route_counts(work_day, [warehouse_id] if warehouse_id else None)
-        run_pwa_background(
-            "schedule sent home discord",
-            send_schedule_sent_home_discord_alert,
+        discord_sent = send_schedule_sent_home_discord_alert(
             user,
             payload,
             route_counts.get(courier_id, 0),
         )
+    return {"ok": True, "discordSent": discord_sent}
 
 
 def latest_shift_queue_status(user: dict[str, Any]) -> dict[str, Any]:
@@ -20098,8 +20135,7 @@ def coordinator_today_worker_attendance(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
-    save_today_worker_attendance(payload, user)
-    return {"ok": True}
+    return save_today_worker_attendance(payload, user)
 
 
 @app.get("/api/coordinator/schedule")
