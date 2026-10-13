@@ -5805,7 +5805,7 @@ def read_schedule_slot_rows_fast(start: date, end: date) -> list[dict[str, Any]]
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc,block_key.asc",
             "limit": "1000",
         },
-        timeout=8,
+        timeout=4,
     )
     return [
         row for row in rows
@@ -5868,7 +5868,7 @@ def read_schedule_hub_booking_rows_fast(start: date, end: date) -> list[dict[str
             "order": "work_date.asc,warehouse_code.asc,slot_from.asc,courier_name.asc",
             "limit": "1000",
         },
-        timeout=8,
+        timeout=4,
     )
     return [
         row for row in booking_rows
@@ -6897,7 +6897,11 @@ def read_coordinator_schedule(
     capacity_start = detail_day or start
     capacity_end = detail_day or end
     capacity_by_day = schedule_capacity_summary(
-        read_schedule_capacity_rows(capacity_start, capacity_end, allow_raw_fallback=bool(detail_day)),
+        read_schedule_capacity_rows(
+            capacity_start,
+            capacity_end,
+            allow_raw_fallback=bool(detail_day) and not fast_detail,
+        ),
         warehouse_ids,
     )
 
