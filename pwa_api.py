@@ -6055,6 +6055,7 @@ def schedule_slot_worker_payload(worker: dict[str, Any]) -> dict[str, Any]:
         "hubTone": str(worker.get("hubTone") or "unknown"),
         "muszakproBookedAt": str(worker.get("muszakproBookedAt") or ""),
         "hubUploadedAt": str(worker.get("hubUploadedAt") or ""),
+        "dailyRouteCount": safe_int(worker.get("dailyRouteCount")),
         "source": str(worker.get("source") or ""),
     }
 
@@ -6080,6 +6081,7 @@ def schedule_slot_booking_worker_payload(row: dict[str, Any]) -> dict[str, Any]:
             or row.get("updated_at")
             or ""
         ),
+        "dailyRouteCount": safe_int(row.get("daily_route_count")),
         "source": str(row.get("source_name") or "courier_hub_shift_bookings_raw"),
     }
 
@@ -6844,6 +6846,8 @@ def merge_schedule_worker(existing: dict[str, Any], incoming: dict[str, Any]) ->
             existing[tone_key] = incoming.get(tone_key) or existing.get(tone_key) or "unknown"
     if incoming.get("source") and incoming.get("source") not in existing_source:
         existing["source"] = " + ".join(part for part in [existing.get("source"), incoming.get("source")] if part)
+    if "dailyRouteCount" in incoming:
+        existing["dailyRouteCount"] = max(safe_int(existing.get("dailyRouteCount")), safe_int(incoming.get("dailyRouteCount")))
     existing["missingSource"] = ""
     if existing.get("giritonTone") != "ok":
         existing["missingSource"] = "Giriton hiányzik"
@@ -7328,29 +7332,32 @@ def read_schedule_daily_route_counts(
             active_count = 1 if route_ids else 0
             merge_count(row.get("courier_id"), max(finished_count, len(route_ids), finished_count + active_count))
 
+    def merge_view_counts(timeout: int) -> None:
+        view_rows = optional_supabase_rows(
+            "pwa_schedule_day_route_counts_v",
+            params={
+                "select": "courier_id,work_date,warehouse,daily_route_count",
+                "work_date": f"eq.{work_date.isoformat()}",
+                "order": "courier_id.asc",
+                "limit": "5000",
+            },
+            timeout=timeout,
+        )
+        view_counts: dict[str, int] = {}
+        for row in view_rows:
+            if warehouse_allowed(row.get("warehouse"), warehouse_ids):
+                courier_id = str(row.get("courier_id") or "").strip()
+                if courier_id:
+                    view_counts[courier_id] = view_counts.get(courier_id, 0) + safe_int(row.get("daily_route_count"))
+        for courier_id, count in view_counts.items():
+            merge_count(courier_id, count)
+
     if fast:
+        merge_view_counts(timeout=4)
         merge_live_map_counts(timeout=2)
         return counts
 
-    view_rows = optional_supabase_rows(
-        "pwa_schedule_day_route_counts_v",
-        params={
-            "select": "courier_id,work_date,warehouse,daily_route_count",
-            "work_date": f"eq.{work_date.isoformat()}",
-            "order": "courier_id.asc",
-            "limit": "5000",
-        },
-        timeout=10,
-    )
-    view_counts: dict[str, int] = {}
-    for row in view_rows:
-        if warehouse_allowed(row.get("warehouse"), warehouse_ids):
-            courier_id = str(row.get("courier_id") or "").strip()
-            if courier_id:
-                view_counts[courier_id] = view_counts.get(courier_id, 0) + safe_int(row.get("daily_route_count"))
-    for courier_id, count in view_counts.items():
-        merge_count(courier_id, count)
-
+    merge_view_counts(timeout=10)
     merge_live_map_counts(timeout=10)
 
     performance_rows = optional_supabase_rows(

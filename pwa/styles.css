@@ -334,6 +334,10 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-slot-card.open em { background: #ffdada; color: #a52d28; }
 .schedule-slot-card.closed em { background: #dfe5dc; color: #6a756b; }
 .schedule-slot-card.missing em { background: #ffffff18; color: #fff; }
+.schedule-slot-worker-preview { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.schedule-slot-worker-preview span { display: inline-flex; max-width: 100%; padding: 4px 7px; border-radius: 999px; background: #ffffffc9; color: var(--green-dark); font-size: 10px; font-weight: 950; line-height: 1.25; text-transform: none; overflow-wrap: anywhere; }
+.schedule-slot-card.closed .schedule-slot-worker-preview span { background: #f8faf7; color: #657568; }
+.schedule-slot-card.missing .schedule-slot-worker-preview span { background: #ffffff18; color: #fff; }
 .schedule-slot-rec-badges { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; min-height: 26px; align-items: center; }
 .schedule-slot-rec-pill { display: inline-flex !important; width: fit-content; max-width: 100%; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 999px; background: #fff; color: #a52d28 !important; font-size: 11px !important; font-weight: 950; text-transform: none !important; box-shadow: inset 0 0 0 1px #f0b5b0; overflow-wrap: anywhere; }
 .schedule-slot-card .schedule-slot-rec-pill { display: inline-flex !important; color: #a52d28 !important; font-weight: 950; text-transform: none !important; }

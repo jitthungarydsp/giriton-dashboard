@@ -96,7 +96,7 @@ const state = {
   settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v209";
+const APP_VERSION = "v210";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -8405,15 +8405,32 @@ function scheduleSlotDomKey(slot = {}) {
   ].join("|");
 }
 
+function renderScheduleSlotWorkerPreview(slot = {}) {
+  const workers = slot.workers || [];
+  if (!workers.length) return "";
+  const visibleWorkers = workers.slice(0, 2);
+  const moreCount = Math.max(0, workers.length - visibleWorkers.length);
+  const chips = visibleWorkers.map((worker) => {
+    const courierId = String(worker.courierId || "").trim();
+    const routeCount = Number(worker.dailyRouteCount || 0);
+    const idText = courierId ? ` #${courierId}` : "";
+    return `<span>${escapeHtml(worker.courierName || "Futár")}${escapeHtml(idText)} · ${formatCount(routeCount)} kör ma</span>`;
+  });
+  if (moreCount) chips.push(`<span>+${formatCount(moreCount)} futár</span>`);
+  return `<div class="schedule-slot-worker-preview">${chips.join("")}</div>`;
+}
+
 function renderScheduleSlotCard(slot = {}, day = {}) {
   const tone = scheduleSlotTone(slot);
   const recommendations = slot.recommendations || [];
+  const workerPreview = renderScheduleSlotWorkerPreview(slot);
   return `
     <details class="schedule-slot-card ${tone}" data-schedule-slot="${escapeHtml(scheduleSlotDomKey(slot))}">
       <summary>
         <div>
           <strong>${escapeHtml(slot.start || "-")}${slot.end ? `-${escapeHtml(slot.end)}` : ""}</strong>
           <small>${escapeHtml(slot.shiftText || slot.blockKey || "Műszak")}</small>
+          ${workerPreview}
         </div>
         <div>
           <span>Kapacitás</span>
