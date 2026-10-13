@@ -7287,6 +7287,15 @@ def attach_schedule_attendance_statuses(workers: list[dict[str, Any]], work_date
 
 
 def read_schedule_daily_route_counts(work_date: date, warehouse_ids: list[int] | None = None) -> dict[str, int]:
+    counts: dict[str, int] = {}
+
+    def merge_count(courier_id: Any, count_value: Any) -> None:
+        clean_id = str(courier_id or "").strip()
+        count = safe_int(count_value)
+        if not clean_id or count <= 0:
+            return
+        counts[clean_id] = max(counts.get(clean_id, 0), count)
+
     view_rows = optional_supabase_rows(
         "pwa_schedule_day_route_counts_v",
         params={
@@ -7297,14 +7306,56 @@ def read_schedule_daily_route_counts(work_date: date, warehouse_ids: list[int] |
         },
         timeout=10,
     )
-    if view_rows:
-        counts: dict[str, int] = {}
-        for row in view_rows:
+    view_counts: dict[str, int] = {}
+    for row in view_rows:
+        if warehouse_allowed(row.get("warehouse"), warehouse_ids):
             courier_id = str(row.get("courier_id") or "").strip()
-            if not courier_id or not warehouse_allowed(row.get("warehouse"), warehouse_ids):
-                continue
-            counts[courier_id] = counts.get(courier_id, 0) + safe_int(row.get("daily_route_count"))
-        return counts
+            if courier_id:
+                view_counts[courier_id] = view_counts.get(courier_id, 0) + safe_int(row.get("daily_route_count"))
+    for courier_id, count in view_counts.items():
+        merge_count(courier_id, count)
+
+    performance_rows = optional_supabase_rows(
+        "raw_jitt_invoice_perf_couriers_daily",
+        params={
+            "select": "courier_id,work_date,warehouse_id,warehouse_code,route_count",
+            "work_date": f"eq.{work_date.isoformat()}",
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+            "order": "courier_id.asc,warehouse_id.asc",
+            "limit": "5000",
+        },
+        timeout=10,
+    )
+    performance_counts: dict[str, int] = {}
+    for row in performance_rows:
+        if warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
+            courier_id = str(row.get("courier_id") or "").strip()
+            if courier_id:
+                performance_counts[courier_id] = performance_counts.get(courier_id, 0) + safe_int(row.get("route_count"))
+    for courier_id, count in performance_counts.items():
+        merge_count(courier_id, count)
+
+    story_rows = optional_supabase_rows(
+        "mart_dsp_route_stories",
+        params={
+            "select": "courier_id,work_date,warehouse_name,route_id",
+            "work_date": f"eq.{work_date.isoformat()}",
+            "order": "courier_id.asc,route_id.asc",
+            "limit": "10000",
+        },
+        timeout=10,
+    )
+    story_routes_by_courier: dict[str, set[str]] = {}
+    for row in story_rows:
+        warehouse_value = row.get("warehouse_name")
+        if warehouse_ids and warehouse_id_for_hub(warehouse_value) and not warehouse_allowed(warehouse_value, warehouse_ids):
+            continue
+        courier_id = str(row.get("courier_id") or "").strip()
+        route_id = str(row.get("route_id") or "").strip()
+        if courier_id and route_id:
+            story_routes_by_courier.setdefault(courier_id, set()).add(route_id)
+    for courier_id, route_ids in story_routes_by_courier.items():
+        merge_count(courier_id, len(route_ids))
 
     rows = optional_supabase_rows(
         "courier_hub_route_statistics",
@@ -7317,7 +7368,6 @@ def read_schedule_daily_route_counts(work_date: date, warehouse_ids: list[int] |
         timeout=15,
     )
     seen: set[tuple[str, str]] = set()
-    counts: dict[str, int] = {}
     for row in rows:
         if not warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
             continue
@@ -7329,7 +7379,10 @@ def read_schedule_daily_route_counts(work_date: date, warehouse_ids: list[int] |
         if key in seen:
             continue
         seen.add(key)
-        counts[courier_id] = counts.get(courier_id, 0) + 1
+        counts[courier_id] = max(
+            counts.get(courier_id, 0),
+            sum(1 for item in seen if item[0] == courier_id),
+        )
     return counts
 
 

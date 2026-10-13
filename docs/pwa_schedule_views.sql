@@ -25,34 +25,86 @@ select
 from public.pwa_today_worker_attendance;
 
 create or replace view public.pwa_schedule_day_route_counts_v as
+with source_counts as (
+  select
+    work_date::date as work_date,
+    courier_id::text as courier_id,
+    max(courier_name) as courier_name,
+    coalesce(
+      nullif(upper(trim(warehouse_code::text)), ''),
+      case
+        when warehouse_id::text = '1' then 'BUD1'
+        when warehouse_id::text = '2' then 'BUD2'
+        else nullif(warehouse_id::text, '')
+      end
+    ) as warehouse,
+    count(distinct route_id) as daily_route_count
+  from public.courier_hub_route_statistics
+  where courier_id is not null
+    and route_id is not null
+    and nullif(route_id::text, '') is not null
+  group by
+    work_date::date,
+    courier_id::text,
+    coalesce(
+      nullif(upper(trim(warehouse_code::text)), ''),
+      case
+        when warehouse_id::text = '1' then 'BUD1'
+        when warehouse_id::text = '2' then 'BUD2'
+        else nullif(warehouse_id::text, '')
+      end
+    )
+
+  union all
+
+  select
+    work_date::date as work_date,
+    courier_id::text as courier_id,
+    max(courier_name) as courier_name,
+    coalesce(
+      nullif(upper(trim(warehouse_code::text)), ''),
+      case
+        when warehouse_id::text = '1' then 'BUD1'
+        when warehouse_id::text = '2' then 'BUD2'
+        else nullif(warehouse_id::text, '')
+      end
+    ) as warehouse,
+    sum(coalesce(route_count, 0))::bigint as daily_route_count
+  from public.raw_jitt_invoice_perf_couriers_daily
+  where courier_id is not null
+  group by
+    work_date::date,
+    courier_id::text,
+    coalesce(
+      nullif(upper(trim(warehouse_code::text)), ''),
+      case
+        when warehouse_id::text = '1' then 'BUD1'
+        when warehouse_id::text = '2' then 'BUD2'
+        else nullif(warehouse_id::text, '')
+      end
+    )
+
+  union all
+
+  select
+    work_date::date as work_date,
+    courier_id::text as courier_id,
+    max(courier_name) as courier_name,
+    upper(nullif(trim(warehouse_name), '')) as warehouse,
+    count(distinct route_id) as daily_route_count
+  from public.mart_dsp_route_stories
+  where courier_id is not null
+    and route_id is not null
+  group by work_date::date, courier_id::text, upper(nullif(trim(warehouse_name), ''))
+)
 select
-  work_date::date as work_date,
-  courier_id::text as courier_id,
+  work_date,
+  courier_id,
   max(courier_name) as courier_name,
-  coalesce(
-    nullif(upper(trim(warehouse_code::text)), ''),
-    case
-      when warehouse_id::text = '1' then 'BUD1'
-      when warehouse_id::text = '2' then 'BUD2'
-      else nullif(warehouse_id::text, '')
-    end
-  ) as warehouse,
-  count(distinct route_id) as daily_route_count
-from public.courier_hub_route_statistics
-where courier_id is not null
-  and route_id is not null
-  and nullif(route_id::text, '') is not null
-group by
-  work_date::date,
-  courier_id::text,
-  coalesce(
-    nullif(upper(trim(warehouse_code::text)), ''),
-    case
-      when warehouse_id::text = '1' then 'BUD1'
-      when warehouse_id::text = '2' then 'BUD2'
-      else nullif(warehouse_id::text, '')
-    end
-  );
+  warehouse,
+  max(daily_route_count)::integer as daily_route_count
+from source_counts
+group by work_date, courier_id, warehouse;
 
 grant select on public.pwa_schedule_worker_status_v to anon, authenticated, service_role;
 grant select on public.pwa_schedule_day_route_counts_v to anon, authenticated, service_role;
