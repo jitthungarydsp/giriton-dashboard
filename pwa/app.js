@@ -96,7 +96,7 @@ const state = {
   settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v210";
+const APP_VERSION = "v211";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -8420,10 +8420,22 @@ function renderScheduleSlotWorkerPreview(slot = {}) {
   return `<div class="schedule-slot-worker-preview">${chips.join("")}</div>`;
 }
 
+function scheduleSlotMaxRouteCount(slot = {}) {
+  return Math.max(0, ...(slot.workers || []).map((worker) => Number(worker.dailyRouteCount || 0)));
+}
+
+function renderScheduleSlotRouteAlert(slot = {}) {
+  const routeCount = scheduleSlotMaxRouteCount(slot);
+  if (routeCount <= 0) return "";
+  const level = routeCount > 3 ? "high" : routeCount === 3 ? "medium" : routeCount === 2 ? "low" : "faint";
+  return `<span class="schedule-route-alert ${level}" title="${escapeHtml(formatCount(routeCount))} kör ma">!</span>`;
+}
+
 function renderScheduleSlotCard(slot = {}, day = {}) {
   const tone = scheduleSlotTone(slot);
   const recommendations = slot.recommendations || [];
   const workerPreview = renderScheduleSlotWorkerPreview(slot);
+  const routeAlert = renderScheduleSlotRouteAlert(slot);
   return `
     <details class="schedule-slot-card ${tone}" data-schedule-slot="${escapeHtml(scheduleSlotDomKey(slot))}">
       <summary>
@@ -8436,7 +8448,10 @@ function renderScheduleSlotCard(slot = {}, day = {}) {
           <span>Kapacitás</span>
           <b>${escapeHtml(scheduleSlotCapacityText(slot))}</b>
         </div>
-        <em>${escapeHtml(scheduleSlotStatusText(slot))}</em>
+        <div class="schedule-slot-status-stack">
+          <em>${escapeHtml(scheduleSlotStatusText(slot))}</em>
+          ${routeAlert}
+        </div>
         ${tone === "open" && recommendations.length
           ? `<div class="schedule-slot-rec-badges">${recommendations.map(renderScheduleSlotRecommendationBadge).join("")}</div>`
           : ""}

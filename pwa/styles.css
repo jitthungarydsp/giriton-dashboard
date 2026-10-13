@@ -329,11 +329,16 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-slot-card.closed span { color: #7c887f; }
 .schedule-slot-card.missing span { color: #cfe88f; }
 .schedule-slot-card b { display: block; margin-top: 4px; font-size: 14px; overflow-wrap: anywhere; }
+.schedule-slot-status-stack { justify-self: end; display: inline-flex; align-items: center; gap: 6px; }
 .schedule-slot-card em { justify-self: end; padding: 6px 9px; border-radius: 999px; background: #eef1eb; color: var(--ink); font-size: 11px; font-style: normal; font-weight: 950; white-space: nowrap; }
 .schedule-slot-card.full em { background: #d9f0d4; color: var(--green-dark); }
 .schedule-slot-card.open em { background: #ffdada; color: #a52d28; }
 .schedule-slot-card.closed em { background: #dfe5dc; color: #6a756b; }
 .schedule-slot-card.missing em { background: #ffffff18; color: #fff; }
+.schedule-route-alert { display: inline-grid !important; width: 24px; height: 24px; place-items: center; border-radius: 999px; background: #dc2626; color: #fff !important; font-size: 15px !important; font-weight: 1000 !important; line-height: 1; text-transform: none !important; box-shadow: 0 4px 12px #dc262633; }
+.schedule-route-alert.medium { background: #ef4444; opacity: .74; }
+.schedule-route-alert.low { background: #f87171; opacity: .46; }
+.schedule-route-alert.faint { background: #fecaca; color: #991b1b !important; opacity: .25; box-shadow: none; }
 .schedule-slot-worker-preview { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .schedule-slot-worker-preview span { display: inline-flex; max-width: 100%; padding: 4px 7px; border-radius: 999px; background: #ffffffc9; color: var(--green-dark); font-size: 10px; font-weight: 950; line-height: 1.25; text-transform: none; overflow-wrap: anywhere; }
 .schedule-slot-card.closed .schedule-slot-worker-preview span { background: #f8faf7; color: #657568; }
@@ -1053,6 +1058,7 @@ textarea { min-height: 96px; resize: vertical; }
   .schedule-day-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .schedule-slot-grid { grid-template-columns: 1fr; }
   .schedule-slot-card > summary { grid-template-columns: minmax(0, 1fr); }
+  .schedule-slot-status-stack { justify-self: start; }
   .schedule-slot-card em { justify-self: start; white-space: normal; }
   .schedule-slot-detail-grid { grid-template-columns: 1fr; }
   .schedule-slot-action-row { grid-template-columns: 1fr; }

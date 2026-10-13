@@ -7013,7 +7013,7 @@ def read_coordinator_schedule(
             attach_schedule_contacts(workers, contact_rows)
             attach_giriton_attendance_logins(workers, detail_start, detail_end, attendance_rows)
         attach_schedule_attendance_statuses(workers, detail_start)
-        attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids, fast=fast_detail)
+        route_counts = attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids, fast=fast_detail)
         for row in slot_rows:
             if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
                 continue
@@ -7052,6 +7052,7 @@ def read_coordinator_schedule(
                 if warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids)
             ],
         )
+        attach_schedule_slot_daily_route_counts(slots_by_day, route_counts)
         if not fast_detail:
             attach_schedule_slot_recommendations(slots_by_day, workers)
 
@@ -7304,18 +7305,28 @@ def read_schedule_daily_route_counts(
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
 
-    def merge_count(courier_id: Any, count_value: Any) -> None:
+    def route_count_keys(courier_id: Any, courier_name: Any = "") -> list[str]:
         clean_id = str(courier_id or "").strip()
+        clean_name = normalize_person_match_text(courier_name)
+        keys = []
+        if clean_id:
+            keys.append(f"id:{clean_id}")
+        if clean_name:
+            keys.append(f"name:{clean_name}")
+        return keys
+
+    def merge_count(courier_id: Any, courier_name: Any, count_value: Any) -> None:
         count = safe_int(count_value)
-        if not clean_id or count <= 0:
+        if count <= 0:
             return
-        counts[clean_id] = max(counts.get(clean_id, 0), count)
+        for key in route_count_keys(courier_id, courier_name):
+            counts[key] = max(counts.get(key, 0), count)
 
     def merge_live_map_counts(timeout: int) -> None:
         live_rows = optional_supabase_rows(
             "courier_hub_live_map_courier_latest",
             params={
-                "select": "courier_id,warehouse_id,finished_route_count,route_ids,fetched_at",
+                "select": "courier_id,courier_name,warehouse_id,finished_route_count,route_ids,fetched_at",
                 "order": "courier_id.asc,fetched_at.desc",
                 "limit": "1000",
             },
@@ -7330,13 +7341,13 @@ def read_schedule_daily_route_counts(
             route_ids = live_map_route_ids(row.get("route_ids"))
             finished_count = safe_int(row.get("finished_route_count"))
             active_count = 1 if route_ids else 0
-            merge_count(row.get("courier_id"), max(finished_count, len(route_ids), finished_count + active_count))
+            merge_count(row.get("courier_id"), row.get("courier_name"), max(finished_count, len(route_ids), finished_count + active_count))
 
     def merge_view_counts(timeout: int) -> None:
         view_rows = optional_supabase_rows(
             "pwa_schedule_day_route_counts_v",
             params={
-                "select": "courier_id,work_date,warehouse,daily_route_count",
+                "select": "courier_id,courier_name,work_date,warehouse,daily_route_count",
                 "work_date": f"eq.{work_date.isoformat()}",
                 "order": "courier_id.asc",
                 "limit": "5000",
@@ -7346,11 +7357,11 @@ def read_schedule_daily_route_counts(
         view_counts: dict[str, int] = {}
         for row in view_rows:
             if warehouse_allowed(row.get("warehouse"), warehouse_ids):
-                courier_id = str(row.get("courier_id") or "").strip()
-                if courier_id:
-                    view_counts[courier_id] = view_counts.get(courier_id, 0) + safe_int(row.get("daily_route_count"))
-        for courier_id, count in view_counts.items():
-            merge_count(courier_id, count)
+                keys = route_count_keys(row.get("courier_id"), row.get("courier_name"))
+                for key in keys:
+                    view_counts[key] = view_counts.get(key, 0) + safe_int(row.get("daily_route_count"))
+        for key, count in view_counts.items():
+            counts[key] = max(counts.get(key, 0), count)
 
     if fast:
         merge_view_counts(timeout=4)
@@ -7363,7 +7374,7 @@ def read_schedule_daily_route_counts(
     performance_rows = optional_supabase_rows(
         "raw_jitt_invoice_perf_couriers_daily",
         params={
-            "select": "courier_id,work_date,warehouse_id,warehouse_code,route_count",
+            "select": "courier_id,courier_name,work_date,warehouse_id,warehouse_code,route_count",
             "work_date": f"eq.{work_date.isoformat()}",
             "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
             "order": "courier_id.asc,warehouse_id.asc",
@@ -7374,16 +7385,15 @@ def read_schedule_daily_route_counts(
     performance_counts: dict[str, int] = {}
     for row in performance_rows:
         if warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
-            courier_id = str(row.get("courier_id") or "").strip()
-            if courier_id:
-                performance_counts[courier_id] = performance_counts.get(courier_id, 0) + safe_int(row.get("route_count"))
-    for courier_id, count in performance_counts.items():
-        merge_count(courier_id, count)
+            for key in route_count_keys(row.get("courier_id"), row.get("courier_name")):
+                performance_counts[key] = performance_counts.get(key, 0) + safe_int(row.get("route_count"))
+    for key, count in performance_counts.items():
+        counts[key] = max(counts.get(key, 0), count)
 
     story_rows = optional_supabase_rows(
         "mart_dsp_route_stories",
         params={
-            "select": "courier_id,work_date,warehouse_name,route_id",
+            "select": "courier_id,courier_name,work_date,warehouse_name,route_id",
             "work_date": f"eq.{work_date.isoformat()}",
             "order": "courier_id.asc,route_id.asc",
             "limit": "10000",
@@ -7395,12 +7405,12 @@ def read_schedule_daily_route_counts(
         warehouse_value = row.get("warehouse_name")
         if warehouse_ids and warehouse_id_for_hub(warehouse_value) and not warehouse_allowed(warehouse_value, warehouse_ids):
             continue
-        courier_id = str(row.get("courier_id") or "").strip()
         route_id = str(row.get("route_id") or "").strip()
-        if courier_id and route_id:
-            story_routes_by_courier.setdefault(courier_id, set()).add(route_id)
-    for courier_id, route_ids in story_routes_by_courier.items():
-        merge_count(courier_id, len(route_ids))
+        if route_id:
+            for key in route_count_keys(row.get("courier_id"), row.get("courier_name")):
+                story_routes_by_courier.setdefault(key, set()).add(route_id)
+    for key, route_ids in story_routes_by_courier.items():
+        counts[key] = max(counts.get(key, 0), len(route_ids))
 
     rows = optional_supabase_rows(
         "courier_hub_route_statistics",
@@ -7416,18 +7426,18 @@ def read_schedule_daily_route_counts(
     for row in rows:
         if not warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
             continue
-        courier_id = str(row.get("courier_id") or "").strip()
         route_id = str(row.get("route_id") or "").strip()
-        if not courier_id or not route_id:
+        if not route_id:
             continue
-        key = (courier_id, route_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        counts[courier_id] = max(
-            counts.get(courier_id, 0),
-            sum(1 for item in seen if item[0] == courier_id),
-        )
+        for route_key in route_count_keys(row.get("courier_id"), row.get("courier_name")):
+            seen_key = (route_key, route_id)
+            if seen_key in seen:
+                continue
+            seen.add(seen_key)
+            counts[route_key] = max(
+                counts.get(route_key, 0),
+                sum(1 for item in seen if item[0] == route_key),
+            )
     return counts
 
 
@@ -7436,13 +7446,34 @@ def attach_schedule_daily_route_counts(
     work_date: date,
     warehouse_ids: list[int] | None = None,
     fast: bool = False,
-) -> None:
+) -> dict[str, int]:
     route_counts = read_schedule_daily_route_counts(work_date, warehouse_ids, fast=fast)
     if not route_counts:
-        return
+        return route_counts
     for worker in workers:
-        courier_id = str(worker.get("courierId") or "").strip()
-        worker["dailyRouteCount"] = route_counts.get(courier_id, 0)
+        worker["dailyRouteCount"] = schedule_daily_route_count_for(route_counts, worker.get("courierId"), worker.get("courierName"))
+    return route_counts
+
+
+def schedule_daily_route_count_for(route_counts: dict[str, int], courier_id: Any, courier_name: Any) -> int:
+    clean_id = str(courier_id or "").strip()
+    name_key = normalize_person_match_text(courier_name)
+    return max(
+        route_counts.get(f"id:{clean_id}", 0) if clean_id else 0,
+        route_counts.get(f"name:{name_key}", 0) if name_key else 0,
+    )
+
+
+def attach_schedule_slot_daily_route_counts(slots_by_day: dict[str, list[dict[str, Any]]], route_counts: dict[str, int]) -> None:
+    if not route_counts:
+        return
+    for day_slots in slots_by_day.values():
+        for slot in day_slots:
+            for worker in slot.get("workers") or []:
+                worker["dailyRouteCount"] = max(
+                    safe_int(worker.get("dailyRouteCount")),
+                    schedule_daily_route_count_for(route_counts, worker.get("courierId"), worker.get("courierName")),
+                )
 
 
 def route_detail_value(route: dict[str, Any], *keys: str) -> Any:
@@ -8664,7 +8695,7 @@ def save_today_worker_attendance(payload: TodayWorkerAttendanceRequest, user: di
         discord_sent = send_schedule_sent_home_discord_alert(
             user,
             payload,
-            route_counts.get(courier_id, 0),
+            schedule_daily_route_count_for(route_counts, courier_id, payload.courier_name),
         )
     return {"ok": True, "discordSent": discord_sent}
 
