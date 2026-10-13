@@ -7,6 +7,9 @@ create index if not exists idx_pwa_today_worker_attendance_work_date
 create index if not exists idx_courier_hub_route_statistics_schedule_day
   on public.courier_hub_route_statistics (work_date, courier_id, warehouse_id, route_id);
 
+create index if not exists idx_courier_hub_live_map_courier_latest_fetched
+  on public.courier_hub_live_map_courier_latest (fetched_at, courier_id, warehouse_id);
+
 create or replace view public.pwa_schedule_worker_status_v as
 select
   courier_id::text as courier_id,
@@ -96,6 +99,44 @@ with source_counts as (
   where courier_id is not null
     and route_id is not null
   group by work_date::date, courier_id::text, upper(nullif(trim(warehouse_name), ''))
+
+  union all
+
+  select
+    (fetched_at at time zone 'Europe/Budapest')::date as work_date,
+    courier_id::text as courier_id,
+    max(courier_name) as courier_name,
+    coalesce(
+      nullif(upper(trim(warehouse_code::text)), ''),
+      case
+        when warehouse_id::text = '1' then 'BUD1'
+        when warehouse_id::text = '2' then 'BUD2'
+        else nullif(warehouse_id::text, '')
+      end
+    ) as warehouse,
+    max(
+      coalesce(finished_route_count, 0)
+      + case
+          when nullif(route_ids::text, '') is not null
+           and route_ids::text not in ('[]', 'null')
+          then 1
+          else 0
+        end
+    )::bigint as daily_route_count
+  from public.courier_hub_live_map_courier_latest
+  where courier_id is not null
+    and fetched_at is not null
+  group by
+    (fetched_at at time zone 'Europe/Budapest')::date,
+    courier_id::text,
+    coalesce(
+      nullif(upper(trim(warehouse_code::text)), ''),
+      case
+        when warehouse_id::text = '1' then 'BUD1'
+        when warehouse_id::text = '2' then 'BUD2'
+        else nullif(warehouse_id::text, '')
+      end
+    )
 )
 select
   work_date,

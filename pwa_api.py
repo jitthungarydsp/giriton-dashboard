@@ -7300,6 +7300,31 @@ def read_schedule_daily_route_counts(
             return
         counts[clean_id] = max(counts.get(clean_id, 0), count)
 
+    def merge_live_map_counts(timeout: int) -> None:
+        live_rows = optional_supabase_rows(
+            "courier_hub_live_map_courier_latest",
+            params={
+                "select": "courier_id,warehouse_id,warehouse_code,finished_route_count,route_ids,fetched_at",
+                "order": "courier_id.asc,fetched_at.desc",
+                "limit": "1000",
+            },
+            timeout=timeout,
+        )
+        for row in live_rows:
+            fetched_at = local_datetime(row.get("fetched_at"))
+            if fetched_at and fetched_at.date() != work_date:
+                continue
+            if not warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
+                continue
+            route_ids = live_map_route_ids(row.get("route_ids"))
+            finished_count = safe_int(row.get("finished_route_count"))
+            active_count = 1 if route_ids else 0
+            merge_count(row.get("courier_id"), max(finished_count, len(route_ids), finished_count + active_count))
+
+    if fast:
+        merge_live_map_counts(timeout=6)
+        return counts
+
     view_rows = optional_supabase_rows(
         "pwa_schedule_day_route_counts_v",
         params={
@@ -7319,28 +7344,7 @@ def read_schedule_daily_route_counts(
     for courier_id, count in view_counts.items():
         merge_count(courier_id, count)
 
-    live_rows = optional_supabase_rows(
-        "courier_hub_live_map_courier_latest",
-        params={
-            "select": "courier_id,warehouse_id,warehouse_code,finished_route_count,route_ids,fetched_at",
-            "order": "courier_id.asc,fetched_at.desc",
-            "limit": "1000",
-        },
-        timeout=6 if fast else 10,
-    )
-    for row in live_rows:
-        fetched_at = local_datetime(row.get("fetched_at"))
-        if fetched_at and fetched_at.date() != work_date:
-            continue
-        if not warehouse_allowed(row.get("warehouse_id") or row.get("warehouse_code"), warehouse_ids):
-            continue
-        route_ids = live_map_route_ids(row.get("route_ids"))
-        finished_count = safe_int(row.get("finished_route_count"))
-        active_count = 1 if route_ids else 0
-        merge_count(row.get("courier_id"), max(finished_count, len(route_ids), finished_count + active_count))
-
-    if fast:
-        return counts
+    merge_live_map_counts(timeout=10)
 
     performance_rows = optional_supabase_rows(
         "raw_jitt_invoice_perf_couriers_daily",
