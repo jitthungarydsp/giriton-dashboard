@@ -6806,7 +6806,7 @@ def read_coordinator_schedule(
     capacity_start = detail_day or start
     capacity_end = detail_day or end
     capacity_by_day = schedule_capacity_summary(
-        read_schedule_capacity_rows(capacity_start, capacity_end, allow_raw_fallback=True),
+        read_schedule_capacity_rows(capacity_start, capacity_end, allow_raw_fallback=bool(detail_day)),
         warehouse_ids,
     )
 

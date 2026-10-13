@@ -96,7 +96,7 @@ const state = {
   settlementImportColumnConfigTouched: false,
   settlementImportDraggedColumnId: "",
 };
-const APP_VERSION = "v205";
+const APP_VERSION = "v206";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -670,7 +670,9 @@ function showSection(section) {
   }
   if (section === "registration-admin") loadRegistrationRequests();
 
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  if (section !== "coordinator-schedule") {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 }
 
 function formatCount(value) {
@@ -8405,7 +8407,9 @@ function renderScheduleSlotCard(slot = {}, day = {}) {
 
 function preserveScrollAfterRender(previousScrollY) {
   if (typeof previousScrollY !== "number") return;
-  requestAnimationFrame(() => window.scrollTo({ top: previousScrollY, behavior: "auto" }));
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => window.scrollTo({ top: previousScrollY, behavior: "auto" }));
+  });
 }
 
 function renderScheduleSlots(day = {}) {
@@ -8788,7 +8792,7 @@ function renderCoordinatorSchedule() {
     button.addEventListener("click", () => {
       state.coordinatorScheduleDay = button.dataset.scheduleDay || state.coordinatorScheduleDay;
       state.coordinatorScheduleView = "day";
-      loadCoordinatorScheduleDay(state.coordinatorScheduleDay);
+      loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { preserveScroll: true });
     });
   });
 }
