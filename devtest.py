@@ -6204,6 +6204,65 @@ def apply_monthly_closure_status(data: pd.DataFrame, period_start: date, period_
     return result
 
 
+def apply_settlement_attention_flags(data: pd.DataFrame, document_month: date) -> pd.DataFrame:
+    """Apply the courier highlight flag without loading the full workflow."""
+    result = data.copy()
+    if "Courier ID" not in result.columns:
+        result["Futár kiemelve"] = False
+        result["Kiemelés megjegyzés"] = ""
+        return result
+
+    try:
+        month_start = document_month.replace(day=1)
+        statuses = read_peopleforce_card_statuses_for_month(month_start)
+        previous_statuses = read_peopleforce_card_statuses_for_month(
+            (month_start - timedelta(days=1)).replace(day=1)
+        )
+    except Exception:
+        statuses = pd.DataFrame()
+        previous_statuses = pd.DataFrame()
+
+    current_by_courier: dict[str, tuple[str, str]] = {}
+    previous_by_courier: dict[str, tuple[str, str]] = {}
+    all_statuses = pd.concat([statuses, previous_statuses], ignore_index=True)
+    if not all_statuses.empty:
+        sort_columns = [
+            column for column in ["document_month", "updated_at"]
+            if column in all_statuses.columns
+        ]
+        if sort_columns:
+            all_statuses = all_statuses.sort_values(
+                sort_columns,
+                ascending=[False] * len(sort_columns),
+                na_position="last",
+            )
+        for item in all_statuses.to_dict("records"):
+            courier_key = _courier_id_key(item.get("courier_id"))
+            if not courier_key or str(item.get("action_key") or "").strip() != SETTLEMENT_ATTENTION_ACTION_KEY:
+                continue
+            status = str(item.get("status") or "").strip().casefold()
+            note = str(item.get("status_note") or "").strip()
+            status_month = str(item.get("document_month") or "")[:10]
+            target = current_by_courier if status_month == month_start.isoformat() else previous_by_courier
+            target.setdefault(courier_key, (status, note))
+
+    attention_notes: dict[str, str] = {
+        courier_key: note
+        for courier_key, (status, note) in current_by_courier.items()
+        if status == "done"
+    }
+    for courier_key, (status, note) in previous_by_courier.items():
+        if courier_key not in current_by_courier and status == "done":
+            attention_notes.setdefault(courier_key, note)
+
+    courier_ids = result["Courier ID"].map(_courier_id_key)
+    result["Futár kiemelve"] = courier_ids.isin(set(attention_notes))
+    result["Kiemelés megjegyzés"] = courier_ids.map(
+        lambda value: attention_notes.get(_courier_id_key(value), "")
+    )
+    return result
+
+
 def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) -> pd.DataFrame:
     result = data.copy()
     if result.empty or "Courier ID" not in result.columns:
@@ -10159,8 +10218,12 @@ def build_fast_settlement_overview_data(
     )
     if not used_dashboard_view:
         data = apply_peopleforce_workflow_status(data, period_start)
-        data = apply_monthly_closure_status(data, period_start, period_end)
-    elif "Kifizetve" not in data.columns:
+    else:
+        # The fast snapshot already contains the settlement totals, but the
+        # manual courier highlight still comes from the live status table.
+        data = apply_settlement_attention_flags(data, period_start)
+    data = apply_monthly_closure_status(data, period_start, period_end)
+    if used_dashboard_view and "Kifizetve" not in data.columns:
         data["Kifizetve"] = data["Státusz"].astype(str).str.casefold().eq("kifizetve")
     data = apply_salary_advance_request_status(data, period_start, period_end)
     data = apply_expense_request_status(data, period_start)
