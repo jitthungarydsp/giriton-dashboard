@@ -100,7 +100,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v212";
+const APP_VERSION = "v213";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -8295,15 +8295,148 @@ function vehicleConfigAssignmentPayload(item = {}, courierId = "", courierName =
   };
 }
 
+function scheduleDayVehicleRows(day = {}) {
+  const rows = [];
+  const seen = new Set();
+  (day.slots || []).forEach((slot) => {
+    (slot.workers || []).forEach((worker) => {
+      const key = `${slot.date || day.date || ""}|${slot.start || ""}|${worker.courierId || worker.courierName || ""}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push({ slot, worker });
+    });
+  });
+  return rows.sort((a, b) => (
+    (Number.isFinite(Number(a.slot?.startMinutes)) ? Number(a.slot?.startMinutes) : 99999)
+    - (Number.isFinite(Number(b.slot?.startMinutes)) ? Number(b.slot?.startMinutes) : 99999)
+    || String(a.worker?.courierName || "").localeCompare(String(b.worker?.courierName || ""), "hu")
+  ));
+}
+
+function renderScheduleVehicleAssignmentRow(row = {}, index = 0) {
+  const slot = row.slot || {};
+  const worker = row.worker || {};
+  const hasCourierId = Boolean(String(worker.courierId || "").trim());
+  const recommendedVehicle = scheduleRecommendedVehicle(worker, slot);
+  const vehicleOptions = scheduleVehicleOptions(slot, recommendedVehicle);
+  const selectedPlate = String(recommendedVehicle?.licensePlate || worker.vehicle?.licensePlate || "").trim();
+  return `
+    <article class="schedule-vehicle-row" data-schedule-vehicle-row>
+      <div class="schedule-vehicle-row-main">
+        <span>${escapeHtml(slot.start || "-")}${slot.end ? `-${escapeHtml(slot.end)}` : ""}</span>
+        <strong>${escapeHtml(worker.courierName || "Futár")}</strong>
+        <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.shiftName || worker.bookingCode || slot.shiftText || "Műszak")}</small>
+      </div>
+      <div class="schedule-vehicle-row-current">
+        <span>Jelenlegi / ajánlott</span>
+        <strong>${escapeHtml(selectedPlate || "-")}</strong>
+        <small>${escapeHtml(recommendedVehicle ? vehicleConfigLabel(recommendedVehicle) : "Nincs beállított ajánlás")}</small>
+      </div>
+      <div class="schedule-slot-action-row">
+        <select data-schedule-vehicle-select ${vehicleOptions.length && hasCourierId ? "" : "disabled"}>
+          ${vehicleOptions.length
+            ? vehicleOptions.map((item) => `<option value="${escapeHtml(item.licensePlate)}" ${String(item.licensePlate || "") === selectedPlate ? "selected" : ""}>${escapeHtml(vehicleConfigLabel(item))}</option>`).join("")
+            : `<option value="">Nincs felvett autó ehhez a raktárhoz</option>`}
+        </select>
+        <button type="button"
+          data-schedule-vehicle-save
+          data-work-date="${escapeHtml(slot.date || "")}"
+          data-warehouse="${escapeHtml(slot.warehouse || "")}"
+          data-courier-id="${escapeHtml(worker.courierId || "")}"
+          data-courier-name="${escapeHtml(worker.courierName || "Futár")}"
+          ${vehicleOptions.length && hasCourierId ? "" : "disabled"}>
+          Mentés
+        </button>
+      </div>
+      <div class="schedule-slot-action-status" data-schedule-vehicle-status role="status" aria-live="polite"></div>
+    </article>
+  `;
+}
+
+function ensureScheduleVehicleDialog() {
+  let dialog = $("#schedule-vehicle-dialog");
+  if (dialog) return dialog;
+  dialog = document.createElement("dialog");
+  dialog.id = "schedule-vehicle-dialog";
+  dialog.className = "worker-shift-dialog schedule-vehicle-dialog";
+  dialog.innerHTML = `
+    <div class="worker-shift-dialog-card">
+      <div class="worker-shift-dialog-head">
+        <div>
+          <span>Autóbeosztás</span>
+          <strong data-schedule-vehicle-title>Napi autóbeosztás</strong>
+          <small data-schedule-vehicle-subtitle></small>
+        </div>
+        <button type="button" class="icon-btn" data-schedule-vehicle-close>×</button>
+      </div>
+      <div class="schedule-vehicle-list" data-schedule-vehicle-list></div>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+  dialog.querySelector("[data-schedule-vehicle-close]")?.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  dialog.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-schedule-vehicle-save]");
+    if (!button) return;
+    saveScheduleVehicleAssignment(button);
+  });
+  return dialog;
+}
+
+function openScheduleVehicleDialog(day = {}) {
+  const dialog = ensureScheduleVehicleDialog();
+  const rows = scheduleDayVehicleRows(day);
+  dialog.querySelector("[data-schedule-vehicle-title]").textContent = day?.date ? dateLabel(day.date) : "Napi autóbeosztás";
+  dialog.querySelector("[data-schedule-vehicle-subtitle]").textContent = `${formatCount(rows.length)} műszak időrendben`;
+  dialog.querySelector("[data-schedule-vehicle-list]").innerHTML = rows.length
+    ? rows.map(renderScheduleVehicleAssignmentRow).join("")
+    : `<div class="empty-card compact">Nincs futár ehhez a naphoz.</div>`;
+  dialog.showModal();
+}
+
+async function saveScheduleVehicleAssignment(button) {
+  const panel = button.closest("[data-schedule-vehicle-row]");
+  const select = panel?.querySelector("[data-schedule-vehicle-select]");
+  const status = panel?.querySelector("[data-schedule-vehicle-status]");
+  const plate = String(select?.value || "").trim();
+  const courierId = button.dataset.courierId || "";
+  const courierName = button.dataset.courierName || "Futár";
+  const item = scheduleVehicleConfigs().find((row) => String(row.licensePlate || "") === plate);
+  if (!item || !courierId) return;
+  if (status) {
+    status.classList.add("active");
+    status.classList.remove("error");
+    status.textContent = `${courierName} (#${courierId}) autó beállítása: ${plate}...`;
+  }
+  button.disabled = true;
+  if (select) select.disabled = true;
+  try {
+    await api("/api/vehicles/configurations", {
+      method: "POST",
+      body: JSON.stringify(vehicleConfigAssignmentPayload(item, courierId, courierName)),
+    });
+    await loadScheduleVehicleConfigurations({ force: true });
+    if (status) status.textContent = `${courierName} (#${courierId}) ajánlott autója mentve: ${plate}.`;
+    loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true, preserveScroll: true }).catch(() => {});
+  } catch (error) {
+    if (status) {
+      status.classList.add("active", "error");
+      status.textContent = error.message || "Az autó beállítása nem sikerült.";
+    }
+  } finally {
+    button.disabled = false;
+    if (select) select.disabled = false;
+  }
+}
+
 function renderScheduleSlotWorker(worker = {}, slot = {}, day = {}) {
   const phone = String(worker.phoneNumber || "").trim();
   const hasCourierId = Boolean(String(worker.courierId || "").trim());
   const slotHasBookedCapacity = Number(slot.assigned || 0) > 0 && Number(slot.opened || 0) > 0;
   const hubBooked = worker.hubTone === "ok" || String(worker.hubStatus || "").toLowerCase().includes("felvezet") || slotHasBookedCapacity;
   const recommendedVehicle = scheduleRecommendedVehicle(worker, slot);
-  const vehicleOptions = scheduleVehicleOptions(slot, recommendedVehicle);
-  const workerKey = `${slot.date || ""}|${slot.warehouse || ""}|${slot.start || ""}|${worker.courierId || worker.courierName || ""}`;
-  const vehiclePanelOpen = state.scheduleOpenVehiclePanels?.has(workerKey);
   const attendanceStatus = String(worker.attendanceStatus || "");
   const sentHome = attendanceStatus === "sent_home";
   const dailyRouteCount = Number(worker.dailyRouteCount || 0);
@@ -8312,14 +8445,13 @@ function renderScheduleSlotWorker(worker = {}, slot = {}, day = {}) {
     : "";
   return `
     <div class="schedule-slot-worker">
-      <button class="schedule-slot-worker-head" type="button" data-schedule-vehicle-toggle="${escapeHtml(workerKey)}">
+      <div class="schedule-slot-worker-head">
         <span>
           <strong>${escapeHtml(worker.courierName || "Futár")}</strong>
           <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.shiftName || worker.bookingCode || "Műszak")} · ${formatCount(dailyRouteCount)} kör ma</small>
           <small>Autó: ${escapeHtml(recommendedVehicle?.licensePlate || worker.vehicle?.licensePlate || "-")}</small>
         </span>
-        <b>Autó</b>
-      </button>
+      </div>
       <div class="schedule-chip-row">
         ${scheduleStatusChip(`MűszakPro: ${String(worker.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, worker.muszakproTone)}
         ${scheduleStatusChip(`Hub: ${String(worker.hubStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, worker.hubTone)}
@@ -8329,29 +8461,6 @@ function renderScheduleSlotWorker(worker = {}, slot = {}, day = {}) {
         <span>MűszakPro: ${escapeHtml(shortDateTime(worker.muszakproBookedAt || "") || "-")}</span>
         <span>Hub: ${escapeHtml(shortDateTime(worker.hubUploadedAt || "") || "-")}</span>
         ${phone ? `<a href="tel:${escapeHtml(phone)}">${escapeHtml(phone)}</a>` : `<span>Telefon: -</span>`}
-      </div>
-      <div class="schedule-slot-vehicle-panel ${vehiclePanelOpen ? "" : "hidden"}" data-schedule-vehicle-panel="${escapeHtml(workerKey)}">
-        <div>
-          <strong>Futár autó konfiguráció</strong>
-          <small>Ajánlott autó: ${escapeHtml(recommendedVehicle ? vehicleConfigLabel(recommendedVehicle) : "Nincs beállított ajánlás")}</small>
-        </div>
-        <div class="schedule-slot-action-row">
-          <select data-schedule-vehicle-select ${vehicleOptions.length && hasCourierId ? "" : "disabled"}>
-            ${vehicleOptions.length
-              ? vehicleOptions.map((item) => `<option value="${escapeHtml(item.licensePlate)}" ${item.licensePlate === recommendedVehicle?.licensePlate ? "selected" : ""}>${escapeHtml(vehicleConfigLabel(item))}</option>`).join("")
-              : `<option value="">Nincs felvett autó ehhez a raktárhoz</option>`}
-          </select>
-          <button type="button"
-            data-schedule-vehicle-save
-            data-work-date="${escapeHtml(slot.date || "")}"
-            data-warehouse="${escapeHtml(slot.warehouse || "")}"
-            data-courier-id="${escapeHtml(worker.courierId || "")}"
-            data-courier-name="${escapeHtml(worker.courierName || "Futár")}"
-            ${vehicleOptions.length && hasCourierId ? "" : "disabled"}>
-            Mentés
-          </button>
-        </div>
-        <div class="schedule-slot-action-status" data-schedule-vehicle-status role="status" aria-live="polite"></div>
       </div>
       ${hubBooked ? `
         <div class="schedule-slot-actions">
@@ -8699,6 +8808,7 @@ function renderCoordinatorScheduleDayDetail(payload, day) {
         <button class="ghost-btn schedule-back-btn" type="button" data-schedule-back>Vissza a naptárhoz</button>
         <button class="ghost-btn" type="button" data-schedule-prev-day="${escapeHtml(previousDay?.date || "")}" ${previousDay ? "" : "disabled"}>Előző nap</button>
         <button class="ghost-btn" type="button" data-schedule-next-day="${escapeHtml(nextDay?.date || "")}" ${nextDay ? "" : "disabled"}>Következő nap</button>
+        <button class="ghost-btn" type="button" data-schedule-vehicles-open ${day?.detailsLoaded ? "" : "disabled"}>Autóbeosztás</button>
       </div>
       <div class="device-history-head">
         <strong>${day ? escapeHtml(dateLabel(day.date)) : "Nincs kiválasztott nap"}</strong>
@@ -8715,6 +8825,10 @@ function renderCoordinatorScheduleDayDetail(payload, day) {
 }
 
 function bindSchedulePrepActions(target) {
+  target.querySelector("[data-schedule-vehicles-open]")?.addEventListener("click", async () => {
+    await loadScheduleVehicleConfigurations();
+    openScheduleVehicleDialog(selectedScheduleDay(state.coordinatorSchedule) || {});
+  });
   target.querySelectorAll("[data-schedule-sent-home]").forEach((button) => {
     button.addEventListener("click", async () => {
       const panel = button.closest(".schedule-slot-worker") || button.closest(".schedule-slot-card");
@@ -8851,58 +8965,6 @@ function bindSchedulePrepActions(target) {
           status.classList.add("active", "error");
           status.textContent = error.message || "A foglalás nem sikerült.";
         }
-      }
-    });
-  });
-  target.querySelectorAll("[data-schedule-vehicle-toggle]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const panel = button.closest(".schedule-slot-worker")?.querySelector("[data-schedule-vehicle-panel]");
-      const key = button.getAttribute("data-schedule-vehicle-toggle") || panel?.getAttribute("data-schedule-vehicle-panel") || "";
-      if (!panel || !key) return;
-      const willOpen = panel.classList.contains("hidden");
-      panel.classList.toggle("hidden", !willOpen);
-      if (willOpen) {
-        state.scheduleOpenVehiclePanels.add(key);
-      } else {
-        state.scheduleOpenVehiclePanels.delete(key);
-      }
-    });
-  });
-  target.querySelectorAll("[data-schedule-vehicle-save]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const panel = button.closest(".schedule-slot-vehicle-panel");
-      const select = panel?.querySelector("[data-schedule-vehicle-select]");
-      const status = panel?.querySelector("[data-schedule-vehicle-status]");
-      const plate = String(select?.value || "").trim();
-      const courierId = button.dataset.courierId || "";
-      const courierName = button.dataset.courierName || "Futár";
-      const item = scheduleVehicleConfigs().find((row) => String(row.licensePlate || "") === plate);
-      if (!item || !courierId) return;
-      const key = panel?.getAttribute("data-schedule-vehicle-panel") || "";
-      if (key) state.scheduleOpenVehiclePanels.add(key);
-      if (status) {
-        status.classList.add("active");
-        status.classList.remove("error");
-        status.textContent = `${courierName} (#${courierId}) autó beállítása: ${plate}...`;
-      }
-      button.disabled = true;
-      if (select) select.disabled = true;
-      try {
-        await api("/api/vehicles/configurations", {
-          method: "POST",
-          body: JSON.stringify(vehicleConfigAssignmentPayload(item, courierId, courierName)),
-        });
-        await loadScheduleVehicleConfigurations({ force: true });
-        if (status) status.textContent = `${courierName} (#${courierId}) ajánlott autója mentve: ${plate}.`;
-        loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true, full: true, preserveScroll: true }).catch(() => {});
-      } catch (error) {
-        if (status) {
-          status.classList.add("active", "error");
-          status.textContent = error.message || "Az autó beállítása nem sikerült.";
-        }
-      } finally {
-        button.disabled = false;
-        if (select) select.disabled = false;
       }
     });
   });
