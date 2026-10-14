@@ -4865,6 +4865,137 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     return df[columns]
 
 
+def augment_settlement_courier_master(
+    data: pd.DataFrame,
+    session_id: str | None = None,
+) -> pd.DataFrame:
+    """Keep Excel-only and active legacy courier identities in the settlement list.
+
+    The settlement workbook is not a complete personnel register: a courier
+    can have no route in the selected workbook and still needs a visible,
+    zero-valued settlement row.  Conversely, old imports can contain a route
+    identity that has not reached ``public.courier_master`` yet.
+    """
+    result = data.copy()
+    if result.empty:
+        result = pd.DataFrame(columns=[
+            "Courier ID", "Futár", "Branch", "Számítás módja", "Raktár", "Vállalkozás", "Státusz",
+            "Nettó bevétel", "Bónusz", "Borravaló", "Alvállalkozói összeg", "Levonás",
+            "Kifizetendő", "Előző havi összeg", "KPI", "Munkakezdés", "FA státusz", "Jogviszony",
+        ])
+
+    identities: dict[str, dict[str, object]] = {}
+
+    def add_identity(courier_id: object, courier_name: object, **fields: object) -> None:
+        clean_id = _courier_id_key(courier_id)
+        clean_name = str(courier_name or "").strip()
+        if not clean_id or not clean_name:
+            return
+        key = clean_id
+        current = identities.get(key, {})
+        if not current.get("courier_name") or len(clean_name) > len(str(current.get("courier_name") or "")):
+            identities[key] = {
+                **current,
+                "courier_id": clean_id,
+                "courier_name": clean_name,
+                **{name: value for name, value in fields.items() if value not in (None, "")},
+            }
+
+    # The persisted summary is authoritative for the selected Excel session.
+    summary = load_courier_settlement_summary(session_id)
+    if not summary.empty:
+        for row in summary.to_dict("records"):
+            add_identity(
+                row.get("courier_id") or _courier_id_from_text(row.get("driver_name")),
+                row.get("driver_name"),
+            )
+
+    # The DB PWA account table is also a personnel source.  This covers
+    # couriers such as Gurzó Balázs or Kövesdi Zsolt when they have no route
+    # in the selected workbook and are not yet in courier_master.
+    try:
+        pwa_rows = (
+            get_db()
+            .schema("public")
+            .table("pwa_users")
+            .select("courier_id,username,active")
+            .eq("active", True)
+            .limit(10000)
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        pwa_rows = []
+    for user in pwa_rows:
+        if not isinstance(user, dict):
+            continue
+        courier_name = str(user.get("username") or "").strip()
+        courier_name_key = _courier_match_key(courier_name)
+        if "coordin" in courier_name_key or "cordinat" in courier_name_key:
+            continue
+        add_identity(user.get("courier_id"), courier_name)
+
+    # Keep active PWA users visible even when they had no row in this month's Excel.
+    try:
+        legacy_users = load_users().get("users", [])
+    except Exception:
+        legacy_users = []
+    for user in legacy_users:
+        if not isinstance(user, dict) or not bool(user.get("active", True)):
+            continue
+        courier_name = str(
+            user.get("username") or user.get("courierName") or user.get("courier_name") or ""
+        ).strip()
+        # These are technical coordinator logins, not settlement couriers.
+        courier_name_key = _courier_match_key(courier_name)
+        if "coordin" in courier_name_key or "cordinat" in courier_name_key:
+            continue
+        add_identity(
+            user.get("courierId") or user.get("courier_id"),
+            courier_name,
+            warehouse_name=user.get("warehouse") or user.get("warehouseName") or "",
+            email=user.get("email") or "",
+        )
+
+    if not identities:
+        return result
+
+    result_id_set = set(result["Courier ID"].map(_courier_id_key))
+    missing_rows: list[dict[str, object]] = []
+    for courier_id, identity in identities.items():
+        if courier_id in result_id_set:
+            continue
+        missing_rows.append({
+            "Courier ID": courier_id,
+            "Futár": identity.get("courier_name") or f"Futár {courier_id}",
+            "Branch": "JIT",
+            "Számítás módja": "Excel",
+            "Raktár": identity.get("warehouse_name") or "BUD1",
+            "Vállalkozás": "",
+            "Státusz": "Elszámolásra vár",
+            "Nettó bevétel": 0.0,
+            "Bónusz": 0.0,
+            "Borravaló": 0.0,
+            "Alvállalkozói összeg": 0.0,
+            "Levonás": 0.0,
+            "Kifizetendő": 0.0,
+            "Előző havi összeg": 0.0,
+            "KPI": 0.0,
+            "Munkakezdés": "",
+            "FA státusz": "",
+            "Jogviszony": "",
+        })
+    if not missing_rows:
+        return result
+
+    missing = pd.DataFrame(missing_rows)
+    for column in result.columns:
+        if column not in missing.columns:
+            missing[column] = 0.0 if column not in {"Courier ID", "Futár", "Branch", "Számítás módja", "Raktár", "Státusz"} else ""
+    return pd.concat([result, missing[result.columns]], ignore_index=True)
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_courier_profile(courier_id: str) -> dict[str, object]:
     try:
@@ -9785,7 +9916,10 @@ def apply_api_base_rates(
 
 def build_settlement_working_data(calculation_mode: str, session_id: str | None, period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
     """Build the main settlement table without changing its shape per source."""
-    data = load_courier_master("Excel")
+    data = augment_settlement_courier_master(
+        load_courier_master("Excel"),
+        session_id,
+    )
     return apply_excel_base_rates(data, session_id)
 
 
@@ -9924,7 +10058,10 @@ def build_fast_settlement_overview_data(
     if not rows:
         return pd.DataFrame()
 
-    master = load_courier_master("Excel")
+    master = augment_settlement_courier_master(
+        load_courier_master("Excel"),
+        session_id,
+    )
     master_by_id: dict[str, dict[str, object]] = {}
     if not master.empty and "Courier ID" in master.columns:
         master_lookup = master.copy()
@@ -9934,6 +10071,31 @@ def build_fast_settlement_overview_data(
             for item in master_lookup.to_dict("records")
             if str(item.get("_courier_id_lookup") or "")
         }
+
+    # Fast snapshot rows contain only couriers with a persisted monthly row.
+    # Append the remaining known identities so zero-activity couriers remain
+    # selectable and visible in the monthly settlement list.
+    persisted_ids = {
+        _courier_id_key(row.get("courier_id"))
+        for row in rows
+        if _courier_id_key(row.get("courier_id"))
+    }
+    for master_row in master_by_id.values():
+        courier_id = _courier_id_key(master_row.get("Courier ID"))
+        if not courier_id or courier_id in persisted_ids:
+            continue
+        rows.append({
+            "courier_id": courier_id,
+            "courier_name": master_row.get("Futár") or f"Futár {courier_id}",
+            "warehouse": master_row.get("Raktár") or "BUD1",
+            "order_count": 0,
+            "route_count": 0,
+            "routes": 0,
+            "payable_huf": 0,
+            "payable_total_huf": 0,
+            "dashboard_status_label": "Elszámolás",
+        })
+        persisted_ids.add(courier_id)
 
     output_rows: list[dict[str, object]] = []
     for row in rows:
