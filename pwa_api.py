@@ -6171,6 +6171,65 @@ def attach_schedule_slot_workers(
             )
 
 
+def schedule_daily_shift_identity(worker: dict[str, Any]) -> str:
+    return str(worker.get("courierId") or "").strip() or normalize_person_match_text(worker.get("courierName"))
+
+
+def attach_schedule_daily_shift_counts(workers: list[dict[str, Any]]) -> None:
+    shifts_by_worker: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
+    for worker in workers:
+        day = str(worker.get("date") or "")[:10]
+        identity = schedule_daily_shift_identity(worker)
+        start = normalize_time(worker.get("start"))
+        if not day or not identity or not start:
+            continue
+        shift_key = (
+            normalize_warehouse(worker.get("warehouse")),
+            start,
+            str(worker.get("bookingCode") or worker.get("shiftName") or "").strip(),
+        )
+        shifts_by_worker.setdefault((day, identity), set()).add(shift_key)
+    for worker in workers:
+        day = str(worker.get("date") or "")[:10]
+        identity = schedule_daily_shift_identity(worker)
+        if not day or not identity:
+            continue
+        worker["dailyRouteCount"] = max(
+            safe_int(worker.get("dailyRouteCount")),
+            len(shifts_by_worker.get((day, identity), set())),
+        )
+
+
+def attach_schedule_slot_daily_shift_counts(slots_by_day: dict[str, list[dict[str, Any]]]) -> None:
+    shifts_by_worker: dict[tuple[str, str], set[tuple[str, str, str, str]]] = {}
+    for day_key, day_slots in slots_by_day.items():
+        day = str(day_key or "")[:10]
+        for slot in day_slots:
+            slot_day = str(slot.get("date") or day)[:10]
+            slot_key = (
+                normalize_warehouse(slot.get("warehouse")),
+                normalize_time(slot.get("start")),
+                str(slot.get("shiftTemplateId") or "").strip(),
+                str(slot.get("blockKey") or "").strip(),
+            )
+            for worker in slot.get("workers") or []:
+                identity = schedule_daily_shift_identity(worker)
+                if slot_day and identity and slot_key[1]:
+                    shifts_by_worker.setdefault((slot_day, identity), set()).add(slot_key)
+    for day_key, day_slots in slots_by_day.items():
+        day = str(day_key or "")[:10]
+        for slot in day_slots:
+            slot_day = str(slot.get("date") or day)[:10]
+            for worker in slot.get("workers") or []:
+                identity = schedule_daily_shift_identity(worker)
+                if not slot_day or not identity:
+                    continue
+                worker["dailyRouteCount"] = max(
+                    safe_int(worker.get("dailyRouteCount")),
+                    len(shifts_by_worker.get((slot_day, identity), set())),
+                )
+
+
 def schedule_worker_slot_payloads(workers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for worker in workers:
@@ -7014,6 +7073,7 @@ def read_coordinator_schedule(
             attach_giriton_attendance_logins(workers, detail_start, detail_end, attendance_rows)
         attach_schedule_attendance_statuses(workers, detail_start)
         route_counts = attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids, fast=fast_detail)
+        attach_schedule_daily_shift_counts(workers)
         for row in slot_rows:
             if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
                 continue
@@ -7053,6 +7113,7 @@ def read_coordinator_schedule(
             ],
         )
         attach_schedule_slot_daily_route_counts(slots_by_day, route_counts)
+        attach_schedule_slot_daily_shift_counts(slots_by_day)
         if not fast_detail:
             attach_schedule_slot_recommendations(slots_by_day, workers)
 
