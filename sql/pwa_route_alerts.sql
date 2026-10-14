@@ -34,6 +34,9 @@ create table if not exists public.courier_route_alert_photos (
     mime_type text not null,
     file_size integer not null default 0,
     file_content_base64 text not null,
+    storage_bucket text,
+    storage_path text,
+    content_sha256 text,
     uploaded_at timestamptz not null default now()
 );
 

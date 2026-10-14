@@ -44,6 +44,9 @@ create table if not exists public.pwa_device_condition_photos (
     mime_type text not null,
     file_size integer not null,
     file_content_base64 text not null,
+    storage_bucket text,
+    storage_path text,
+    content_sha256 text,
     photo_label text,
     uploaded_at timestamptz not null default now()
 );

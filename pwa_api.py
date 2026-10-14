@@ -8911,15 +8911,24 @@ def route_alert_payload(
 
 
 def save_route_alert_photo(alert_id: str, photo: UploadFile, content: bytes) -> None:
+    file_name = (photo.filename or "route_alert_photo").replace('"', "")
+    storage = upload_pwa_attachment(
+        prefix="route-alerts",
+        record_id=alert_id,
+        file_name=file_name,
+        mime_type=photo.content_type or "application/octet-stream",
+        content=content,
+    )
     supabase_rest(
         "POST",
         "courier_route_alert_photos",
         payload={
             "alert_id": alert_id,
-            "file_name": (photo.filename or "route_alert_photo").replace('"', ""),
+            "file_name": file_name,
             "mime_type": photo.content_type or "application/octet-stream",
             "file_size": len(content),
-            "file_content_base64": base64.b64encode(content).decode("ascii"),
+            "file_content_base64": "",
+            **storage,
             "uploaded_at": datetime.now(timezone.utc).isoformat(),
         },
         prefer="return=minimal",
@@ -9214,6 +9223,76 @@ def supabase_rest(
         return response.json()
     except ValueError:
         return []
+
+
+def pwa_attachment_bucket() -> str:
+    return clean_text(load_setting("SUPABASE_STORAGE_BUCKET") or "pwa-attachments", limit=80)
+
+
+def storage_file_name(value: Any, fallback: str = "attachment") -> str:
+    name = clean_text(value, limit=160) or fallback
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+    return name[:120] or fallback
+
+
+def storage_object_path(prefix: str, record_id: Any, file_name: Any) -> str:
+    clean_prefix = re.sub(r"[^A-Za-z0-9/_-]+", "_", str(prefix or "attachments")).strip("/")
+    clean_record_id = re.sub(r"[^A-Za-z0-9_-]+", "_", str(record_id or "record"))
+    return f"{clean_prefix}/{clean_record_id}/{secrets.token_hex(12)}-{storage_file_name(file_name)}"
+
+
+def upload_pwa_attachment(
+    *,
+    prefix: str,
+    record_id: Any,
+    file_name: Any,
+    mime_type: str,
+    content: bytes,
+    timeout: int = 90,
+) -> dict[str, Any]:
+    bucket = pwa_attachment_bucket()
+    path = storage_object_path(prefix, record_id, file_name)
+    key = load_setting("SUPABASE_SERVICE_ROLE_KEY").strip()
+    url = load_setting("SUPABASE_URL").rstrip("/")
+    if not url or not key:
+        raise HTTPException(status_code=503, detail="Hiányzik a Supabase Storage konfiguráció.")
+    headers = supabase_key_headers(key)
+    headers.update({
+        "Content-Type": mime_type or "application/octet-stream",
+        "Cache-Control": "private, max-age=31536000",
+        "x-upsert": "false",
+    })
+    response = requests.post(
+        f"{url}/storage/v1/object/{quote(bucket, safe='')}/{quote(path, safe='/')}",
+        headers=headers,
+        data=content,
+        timeout=timeout,
+    )
+    if not response.ok:
+        print("Supabase Storage upload failed:", response.status_code, response.text[:500])
+        raise HTTPException(status_code=502, detail="A csatolmány Storage feltöltése nem sikerült.")
+    return {
+        "storage_bucket": bucket,
+        "storage_path": path,
+        "content_sha256": hashlib.sha256(content).hexdigest(),
+    }
+
+
+def download_pwa_attachment(bucket: Any, path: Any, *, timeout: int = 60) -> bytes:
+    clean_bucket = clean_text(bucket, limit=80)
+    clean_path = str(path or "").strip().lstrip("/")
+    key = load_setting("SUPABASE_SERVICE_ROLE_KEY").strip()
+    url = load_setting("SUPABASE_URL").rstrip("/")
+    if not clean_bucket or not clean_path or not url or not key:
+        raise HTTPException(status_code=404, detail="A csatolmány nem található.")
+    response = requests.get(
+        f"{url}/storage/v1/object/{quote(clean_bucket, safe='')}/{quote(clean_path, safe='/')}",
+        headers=supabase_key_headers(key),
+        timeout=timeout,
+    )
+    if not response.ok:
+        raise HTTPException(status_code=404, detail="A csatolmány nem található.")
+    return response.content
 
 
 def courier_identity(user: dict[str, Any]) -> tuple[str, str]:
@@ -18888,11 +18967,11 @@ def load_report_photos_with_content(report_id: str) -> list[dict[str, Any]]:
     if not report_id:
         return []
     try:
-        return supabase_rest(
+        rows = supabase_rest(
             "GET",
             "pwa_device_condition_photos",
             params={
-                "select": "id,report_id,file_name,mime_type,file_content_base64,photo_label,uploaded_at",
+                "select": "id,report_id,file_name,mime_type,file_content_base64,storage_bucket,storage_path,photo_label,uploaded_at",
                 "report_id": f"eq.{report_id}",
                 "order": "uploaded_at.asc",
                 "limit": "8",
@@ -18900,6 +18979,15 @@ def load_report_photos_with_content(report_id: str) -> list[dict[str, Any]]:
         ) or []
     except HTTPException:
         return []
+    for photo in rows:
+        if photo.get("storage_path") and not photo.get("file_content_base64"):
+            try:
+                photo["file_content_base64"] = base64.b64encode(
+                    download_pwa_attachment(photo.get("storage_bucket"), photo.get("storage_path"))
+                ).decode("ascii")
+            except HTTPException:
+                photo["file_content_base64"] = ""
+    return rows
 
 
 def latest_previous_vehicle_report(courier_id: str, serial: str, current_report_id: str) -> dict[str, Any] | None:
@@ -20158,6 +20246,13 @@ async def create_device_condition_report(
         mime_type = str(photo.content_type or "").lower()
         if mime_type not in DEVICE_PHOTO_MIME_TYPES:
             raise HTTPException(status_code=422, detail=f"Nem tamogatott kepformatum: {photo.filename}.")
+        storage = upload_pwa_attachment(
+            prefix="device-condition",
+            record_id=report_id,
+            file_name=photo.filename or f"{clean_device_type}_{index}.jpg",
+            mime_type=mime_type,
+            content=content,
+        )
         photo_payloads.append(
             {
                 "report_id": report_id,
@@ -20165,15 +20260,20 @@ async def create_device_condition_report(
                 "mime_type": mime_type,
                 "file_size": len(content),
                 "file_content_base64": base64.b64encode(content).decode("ascii"),
+                **storage,
                 "photo_label": f"Serules foto {index}" if clean_device_type == "vehicle" else f"Foto {index}",
             }
         )
 
     if photo_payloads:
+        db_photo_payloads = [
+            {**payload, "file_content_base64": ""}
+            for payload in photo_payloads
+        ]
         supabase_rest(
             "POST",
             "pwa_device_condition_photos",
-            payload=photo_payloads if len(photo_payloads) > 1 else photo_payloads[0],
+            payload=db_photo_payloads if len(db_photo_payloads) > 1 else db_photo_payloads[0],
             prefer="return=minimal",
             timeout=90,
         )
@@ -20269,7 +20369,7 @@ def get_device_condition_photo(
         "GET",
         "pwa_device_condition_photos",
         params={
-            "select": "id,report_id,file_name,mime_type,file_content_base64",
+            "select": "id,report_id,file_name,mime_type,file_content_base64,storage_bucket,storage_path",
             "id": f"eq.{photo_id}",
             "limit": "1",
         },
@@ -20288,10 +20388,13 @@ def get_device_condition_photo(
     )
     if not report_rows or str(report_rows[0].get("courier_id") or "") != str(courier_id):
         raise HTTPException(status_code=404, detail="A foto nem talalhato.")
-    try:
-        content = base64.b64decode(photo.get("file_content_base64") or "", validate=True)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="A foto nem olvashato.") from exc
+    if photo.get("storage_path"):
+        content = download_pwa_attachment(photo.get("storage_bucket"), photo.get("storage_path"))
+    else:
+        try:
+            content = base64.b64decode(photo.get("file_content_base64") or "", validate=True)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="A foto nem olvashato.") from exc
     file_name = str(photo.get("file_name") or "telefon_foto").replace('"', "")
     return Response(
         content=content,
@@ -23182,7 +23285,7 @@ def atm_payment_receipt(
         "GET",
         "pwa_atm_payment",
         params={
-            "select": "id,courier_id,file_name,mime_type,file_content_base64",
+            "select": "id,courier_id,file_name,mime_type,file_content_base64,storage_bucket,storage_path",
             "id": f"eq.{payment_id}",
             "courier_id": f"eq.{courier_id}",
             "limit": "1",
@@ -23192,10 +23295,13 @@ def atm_payment_receipt(
     if not rows:
         raise HTTPException(status_code=404, detail="A bizonylat nem található.")
     row = rows[0]
-    try:
-        content = base64.b64decode(row.get("file_content_base64") or "", validate=True)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="A bizonylat tartalma sérült.") from exc
+    if row.get("storage_path"):
+        content = download_pwa_attachment(row.get("storage_bucket"), row.get("storage_path"))
+    else:
+        try:
+            content = base64.b64decode(row.get("file_content_base64") or "", validate=True)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="A bizonylat tartalma sérült.") from exc
     file_name = str(row.get("file_name") or "atm_bizonylat").replace('"', "")
     return Response(
         content=content,
@@ -23245,6 +23351,13 @@ async def create_atm_payment(
     if duplicate_rows:
         return atm_payments(giriton_pwa_session=giriton_pwa_session)
 
+    storage = upload_pwa_attachment(
+        prefix="atm-payments",
+        record_id=courier_id,
+        file_name=receipt_file.filename,
+        mime_type=receipt_file.content_type or "application/octet-stream",
+        content=content,
+    )
     now = datetime.now(timezone.utc)
     supabase_rest(
         "POST",
@@ -23258,7 +23371,8 @@ async def create_atm_payment(
             "file_name": receipt_file.filename,
             "mime_type": receipt_file.content_type or "application/octet-stream",
             "file_size": len(content),
-            "file_content_base64": base64.b64encode(content).decode("ascii"),
+            "file_content_base64": "",
+            **storage,
             "status": "submitted",
             "paid_at": now.isoformat(),
             "created_by": courier_name,
