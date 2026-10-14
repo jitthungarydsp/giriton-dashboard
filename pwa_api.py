@@ -18051,6 +18051,11 @@ def workflow_dashboard_candidate_rows(month: date) -> dict[str, dict[str, Any]]:
 
     config = read_mobile_settlement_period_config(month_start)
     session_id = str(config.get("session_id") or "").strip()
+    if not session_id:
+        # The devtest page can import/process an Excel session before the
+        # PWA publish step. Admins should still see that same latest monthly
+        # settlement in the PWA dashboard.
+        session_id = latest_excel_balance_session_for_month(month_start)
     if session_id:
         summary_rows = optional_supabase_rows_paged(
             "courier_settlement_summary",
@@ -18086,24 +18091,30 @@ def workflow_dashboard_candidate_rows(month: date) -> dict[str, dict[str, Any]]:
         for row in rows:
             add_candidate(row.get(id_column), "", source)
 
-    if candidates:
-        master_rows = optional_supabase_rows_paged(
-            "courier_master",
-            params={
-                "select": "courier_id,courier_name,warehouse_name,vat_status,employment_type",
-                "order": "courier_name.asc,courier_id.asc",
-            },
-            timeout=30,
-            page_size=1000,
-            max_rows=50000,
-        )
-        for row in master_rows:
-            clean_id = str(row.get("courier_id") or "").strip()
-            if clean_id in candidates:
-                candidates[clean_id]["courierName"] = str(row.get("courier_name") or candidates[clean_id].get("courierName") or "").strip()
-                candidates[clean_id]["warehouse"] = str(row.get("warehouse_name") or "").strip()
-                candidates[clean_id]["vat_status"] = str(row.get("vat_status") or "").strip()
-                candidates[clean_id]["employment_type"] = str(row.get("employment_type") or "").strip()
+    master_rows = optional_supabase_rows_paged(
+        "courier_master",
+        params={
+            "select": "courier_id,courier_name,warehouse_name,vat_status,employment_type",
+            "order": "courier_name.asc,courier_id.asc",
+        },
+        timeout=30,
+        page_size=1000,
+        max_rows=50000,
+    )
+    for row in master_rows:
+        clean_id = str(row.get("courier_id") or "").strip()
+        if not clean_id:
+            continue
+        candidate = candidates.setdefault(clean_id, {
+            "courierId": clean_id,
+            "courierName": "",
+            "sources": set(),
+        })
+        candidate["courierName"] = str(row.get("courier_name") or candidate.get("courierName") or "").strip()
+        candidate["warehouse"] = str(row.get("warehouse_name") or "").strip()
+        candidate["vat_status"] = str(row.get("vat_status") or "").strip()
+        candidate["employment_type"] = str(row.get("employment_type") or "").strip()
+        candidate.setdefault("sources", set()).add("master")
 
     return candidates
 
@@ -18345,6 +18356,8 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
         return None
     config = read_mobile_settlement_period_config(month_start)
     session_id = str(config.get("session_id") or "").strip()
+    if not session_id:
+        session_id = latest_excel_balance_session_for_month(month_start)
     summary_rows: list[dict[str, Any]] = []
     if session_id:
         summary_rows = optional_supabase_rows_paged(
@@ -18435,6 +18448,10 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
     candidates = workflow_dashboard_candidate_rows(month_start)
     config = read_mobile_settlement_period_config(month_start)
     session_id = str(config.get("session_id") or "").strip()
+    if not session_id:
+        # Keep the admin PWA dashboard aligned with data imported from
+        # devtest.py, even when the month has not been published separately.
+        session_id = latest_excel_balance_session_for_month(month_start)
 
     summary_by_courier: dict[str, dict[str, Any]] = {}
     if session_id:
