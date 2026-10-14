@@ -40,6 +40,20 @@ def resolve_profile_route_metrics(route_detail: pd.DataFrame, summary_row: dict[
         route_total = int(len(route_detail))
         return {"route_total": route_total, "order_total": order_total}
 
-    order_total = _coerce_int(fallback.get("order_count"))
-    route_total = _coerce_int(fallback.get("route_count"))
+    order_total = max(
+        _coerce_int(fallback.get("order_count")),
+        _coerce_int(fallback.get("workload_order_count")),
+        _coerce_int(fallback.get("total_orders")),
+    )
+    route_candidates = [
+        _coerce_int(fallback.get("route_count")),
+        _coerce_int(fallback.get("completed_route_count")),
+        _coerce_int(fallback.get("calculated_routes")),
+        _coerce_int(fallback.get("total_routes")),
+    ]
+    typed_route_total = sum(
+        _coerce_int(fallback.get(column))
+        for column in ("normal_route_count", "express_route_count", "regional_route_count")
+    )
+    route_total = max(*route_candidates, typed_route_total)
     return {"route_total": route_total, "order_total": order_total}

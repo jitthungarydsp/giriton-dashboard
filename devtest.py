@@ -8540,18 +8540,24 @@ def courier_detail_frame_from_saved_summary(
         or parse_huf_value(summary_row.get("company_base_rate_huf"))
         + parse_huf_value(summary_row.get("company_quality_bonus_total_huf"))
     )
-    route_count = int(
-        parse_huf_value(
-            summary_row.get("route_count")
-            or summary_row.get("calculated_routes")
-            or summary_row.get("total_routes")
+    route_count_candidates = [
+        int(parse_huf_value(summary_row.get(column)))
+        for column in (
+            "route_count",
+            "completed_route_count",
+            "calculated_routes",
+            "total_routes",
         )
+    ]
+    typed_route_count = sum(
+        int(parse_huf_value(summary_row.get(column)))
+        for column in ("normal_route_count", "express_route_count", "regional_route_count")
     )
-    order_count = int(
-        parse_huf_value(
-            summary_row.get("order_count")
-            or summary_row.get("total_orders")
-        )
+    route_count = max(*route_count_candidates, typed_route_count)
+    order_count = max(
+        int(parse_huf_value(summary_row.get("order_count"))),
+        int(parse_huf_value(summary_row.get("workload_order_count"))),
+        int(parse_huf_value(summary_row.get("total_orders"))),
     )
     warehouse = str(
         summary_row.get("warehouse_name")
@@ -8580,7 +8586,11 @@ def courier_detail_frame_from_saved_summary(
         "Rendelések": order_count,
         "Útvonalak": route_count,
         "Kör": route_count,
-        "Számolt túrák": int(parse_huf_value(summary_row.get("calculated_routes"))) or route_count,
+        "Számolt túrák": (
+            int(parse_huf_value(summary_row.get("calculated_routes")))
+            or int(parse_huf_value(summary_row.get("completed_route_count")))
+            or route_count
+        ),
         "Nem számolt túrák": int(parse_huf_value(summary_row.get("uncalculated_routes"))),
         "Kiemelt túrák": int(parse_huf_value(summary_row.get("highlighted_routes"))),
         "Normál túrák": int(parse_huf_value(summary_row.get("normal_routes"))),
@@ -10179,7 +10189,13 @@ def _loyalty_route_counts_from_settlement_rows(data: pd.DataFrame) -> pd.DataFra
         driver_key = _courier_match_key(row.get("Futár"))
         if not driver_key:
             continue
-        total_routes = int(parse_huf_value(row.get("Számolt túrák") or row.get("Útvonalak") or row.get("Kör")))
+        total_routes = max(
+            int(parse_huf_value(row.get("Számolt túrák"))),
+            int(parse_huf_value(row.get("Útvonalak"))),
+            int(parse_huf_value(row.get("Kör"))),
+            int(parse_huf_value(row.get("completed_route_count"))),
+            int(parse_huf_value(row.get("calculated_routes"))),
+        )
         normal_routes = int(parse_huf_value(row.get("Normál túrák") or row.get("Normál túra") or row.get("Normál kör")))
         highlighted_routes = int(parse_huf_value(row.get("Kiemelt túrák") or row.get("Kiemelt túra") or row.get("Kiemelt kör")))
         express_normal = int(parse_huf_value(row.get("Express normál")))
@@ -10367,8 +10383,17 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
     result = data.copy()
     rules = load_loyalty_bonus_rules_for_month(period_start, period_end)
     current_counts = load_loyalty_route_counts(session_id)
+    settlement_counts = _loyalty_route_counts_from_settlement_rows(result)
     if current_counts.empty:
-        current_counts = _loyalty_route_counts_from_settlement_rows(result)
+        current_counts = settlement_counts
+    elif not settlement_counts.empty:
+        # Keep the larger value per courier/type so a partial source or a name
+        # mismatch cannot turn an existing loyalty calculation into zero.
+        current_counts = (
+            pd.concat([current_counts, settlement_counts], ignore_index=True)
+            .groupby(["driver_key", "route_type"], as_index=False)[["routes", "orders"]]
+            .max()
+        )
     previous_month_end = period_start - timedelta(days=1)
     previous_month_start = previous_month_end.replace(day=1)
     previous_counts = load_loyalty_route_counts_for_period(previous_month_start, previous_month_end, source_mode)
@@ -14888,12 +14913,16 @@ def refresh_settlement_profile_data() -> None:
     load_courier_booking_emails.clear()
     load_advance_booking_cancellation_summary.clear()
     load_loyalty_advance_booking_days.clear()
+    load_loyalty_bonus_rules_for_month.clear()
+    load_loyalty_route_counts.clear()
+    load_loyalty_route_counts_for_period.clear()
     load_loyalty_profile_lookup.clear()
     load_loyalty_month_requirement_for_date.clear()
     load_courier_master.clear()
 
 
 def refresh_loyalty_calculation_data() -> None:
+    clear_settlement_overview_data_cache()
     load_active_base_rate_rules.clear()
     load_active_bonus_level_rules.clear()
     load_courier_route_detail.clear()
@@ -14902,6 +14931,9 @@ def refresh_loyalty_calculation_data() -> None:
     load_courier_booking_emails.clear()
     load_advance_booking_cancellation_summary.clear()
     load_loyalty_advance_booking_days.clear()
+    load_loyalty_bonus_rules_for_month.clear()
+    load_loyalty_route_counts.clear()
+    load_loyalty_route_counts_for_period.clear()
     load_loyalty_profile_lookup.clear()
     load_loyalty_month_requirement_for_date.clear()
     load_courier_profile.clear()
