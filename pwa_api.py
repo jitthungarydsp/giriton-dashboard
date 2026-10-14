@@ -1866,7 +1866,8 @@ def extract_shift_time(value: Any) -> str:
 def normalize_warehouse(value: Any) -> str:
     text = normalize_text(value).replace("_", "").replace(" ", "")
     aliases = {
-        "budapest": "BUD",
+        "budapest": "BUD1",
+        "bud": "BUD1",
         "bud1": "BUD1",
         "bud2": "BUD2",
         "bud1jit": "BUD1",

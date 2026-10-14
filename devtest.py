@@ -12078,6 +12078,17 @@ def settlement_warehouse_id(value: str | None) -> int | None:
     return None
 
 
+def settlement_warehouse_label(value: object) -> str:
+    normalized = str(value or "").strip().upper().replace("-", "").replace("_", "").replace(" ", "")
+    if normalized in {"", "ÖSSZES", "OSSZES"}:
+        return ""
+    if "BUD2" in normalized or normalized == "2":
+        return "BUD2"
+    if "BUD1" in normalized or normalized in {"1", "BUD", "BUDAPEST", "BUDAPESTJIT"}:
+        return "BUD1"
+    return str(value or "").strip()
+
+
 def import_api_financial_overview_to_jit(period_start: date, warehouse_label: str | None) -> str:
     warehouse_id = settlement_warehouse_id(warehouse_label)
     response = (
@@ -13392,7 +13403,9 @@ def load_courier_route_detail(
         compliance_bonus = parse_huf_value(source.get("courier_compliance_bonus_huf"))
         parsed.append({
             "Route ID": str(source.get("route_unique_id") or "–"),
-            "_warehouse_code": str(normalized.get("Location") or normalized.get("warehouse_code") or warehouse_label or ""),
+            "_warehouse_code": settlement_warehouse_label(
+                normalized.get("Location") or normalized.get("warehouse_code") or warehouse_label
+            ),
             "Excel dátum": str(source.get("route_date") or "–"),
             "Hét napja": weekday_names.get(source.get("weekday_iso"), "–"),
             "Túratípus": route_type,
@@ -13550,9 +13563,9 @@ def calculate_periodic_fee_corrections(
     detail["_periodic_day_type"] = detail[day_type_column].map(lambda value: _performance_key_from_label(value, "day")) if day_type_column else "any"
     detail["_periodic_orders"] = pd.to_numeric(detail[order_column], errors="coerce").fillna(0.0) if order_column else 0.0
     if warehouse_column:
-        detail["_periodic_warehouse"] = detail[warehouse_column].astype(str).str.strip().str.casefold()
+        detail["_periodic_warehouse"] = detail[warehouse_column].map(settlement_warehouse_label).astype(str).str.casefold()
     else:
-        detail["_periodic_warehouse"] = str(warehouse_code or "").strip().casefold()
+        detail["_periodic_warehouse"] = settlement_warehouse_label(warehouse_code).casefold()
 
     rows: list[dict[str, object]] = []
     for _, rule in rules.sort_values("priority", kind="stable").iterrows():
@@ -13574,7 +13587,7 @@ def calculate_periodic_fee_corrections(
         rule_day_type = str(rule.get("day_type") or "any").casefold()
         if rule_day_type != "any":
             selected = selected[selected["_periodic_day_type"] == rule_day_type].copy()
-        rule_warehouse = str(rule.get("warehouse_code") or "").strip().casefold()
+        rule_warehouse = settlement_warehouse_label(rule.get("warehouse_code")).casefold()
         if rule_warehouse:
             selected = selected[selected["_periodic_warehouse"] == rule_warehouse].copy()
         if selected.empty:

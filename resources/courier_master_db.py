@@ -88,13 +88,16 @@ def _excel_summary_courier_id(row):
 
 
 def _excel_summary_warehouse(row):
-    return _clean_text(
-        _row_value(row, ("warehouse_name", "warehouse", "Raktár", "Raktar", "source_sheet"))
+    raw = _clean_text(
+        _row_value(row, ("warehouse_name", "warehouse", "Warehouse", "Location", "location", "Raktár", "Raktar", "source_sheet"))
     )
+    return _warehouse_from_worksheet(raw) or raw
 
 
 def _warehouse_from_worksheet(value):
     text = _clean_text(value).upper()
+    if text in {"BUD", "BUDAPEST"}:
+        return "BUD1"
     if "BUD1" in text:
         return "BUD1"
     if "BUD2" in text:
