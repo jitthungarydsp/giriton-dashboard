@@ -503,6 +503,12 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-import-column-chip small { color: var(--muted); font-size: 10px; font-weight: 850; line-height: 1.2; overflow-wrap: anywhere; }
 .settlement-import-column-chip.assigned { position: relative; padding-right: 32px; background: #eff8ed; }
 .settlement-import-column-chip button { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; min-width: 0; padding: 0; border-radius: 999px; border: 1px solid #bfd7ba; background: #fff; color: var(--muted); font-weight: 950; line-height: 1; }
+.settlement-import-sheet-grouper { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: #fbfcfa; }
+.settlement-import-sheet-bank { min-height: 58px; }
+.settlement-import-sheet-group-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.settlement-import-sheet-group { min-height: 144px; background: #fffdf8; }
+.settlement-import-sheet-chip { border-color: #e7d6ad; background: #fffaf0; }
+.settlement-import-sheet-chip.assigned { background: #fff3d8; }
 .settlement-import-card-config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .settlement-import-config-card { min-height: 156px; display: grid; grid-template-rows: auto 1fr; gap: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 16px; background: #fbfcfa; }
 .settlement-import-config-card span { display: block; color: var(--green-dark); font-size: 11px; font-weight: 950; text-transform: uppercase; }

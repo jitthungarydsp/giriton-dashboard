@@ -94,9 +94,13 @@ const state = {
   settlementImportColumnConfig: {},
   settlementImportColumnConfigSignature: "",
   settlementImportColumnConfigTouched: false,
+  settlementImportSheetConfig: {},
+  settlementImportSheetConfigSignature: "",
+  settlementImportSheetConfigTouched: false,
   settlementImportDraggedColumnId: "",
+  settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v211";
+const APP_VERSION = "v212";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5200,8 +5204,23 @@ const SETTLEMENT_IMPORT_CARD_TARGETS = [
   { key: "payable", label: "Fizetendő", rule: "Összesítő kontroll" },
 ];
 
+const SETTLEMENT_IMPORT_SHEET_GROUPS = [
+  { key: "main_jit", label: "JIT túra alapadatok", rule: "Túrák, route type, rendelés, borravaló" },
+  { key: "atm", label: "Wallet / ATM levonás", rule: "Wallet deducation / ATM hatás" },
+  { key: "bonus_routes", label: "Bonus Routes", rule: "Külön bónusz útvonal lap" },
+  { key: "penalties", label: "Penalties", rule: "Büntetés / levonás / malus sorok" },
+  { key: "claims", label: "Claims of last month", rule: "Előző havi reklamáció / korrekció" },
+  { key: "customer_rating", label: "Ügyfélértékelés", rule: "JITT courier ratings" },
+  { key: "performance", label: "Teljesítmény mutatók", rule: "Delay / compliance indikátorok" },
+  { key: "reference", label: "Referencia / nem elszámolás", rule: "Segédlap vagy kézi ellenőrzés" },
+];
+
 function settlementImportColumnId(sheetName, header) {
   return `${String(sheetName || "Munkalap")}::${String(header || "")}`;
+}
+
+function settlementImportSheetId(sheetName) {
+  return String(sheetName || "Munkalap");
 }
 
 function settlementImportColumnsFromHeaders(headers = []) {
@@ -5214,6 +5233,39 @@ function settlementImportColumnsFromHeaders(headers = []) {
 
 function settlementImportColumnSignature(columns = []) {
   return columns.map((column) => column.id).sort().join("|");
+}
+
+function settlementImportSheetsFromResult(result = {}) {
+  const byName = new Map();
+  (result.sheetNames || []).forEach((sheetName) => {
+    const cleanName = settlementImportSheetId(sheetName);
+    if (!byName.has(cleanName)) byName.set(cleanName, { id: cleanName, sheetName: cleanName });
+  });
+  (result.headers || []).forEach((sheet) => {
+    const cleanName = settlementImportSheetId(sheet.sheetName);
+    const current = byName.get(cleanName) || { id: cleanName, sheetName: cleanName };
+    byName.set(cleanName, {
+      ...current,
+      columnCount: Number(sheet.columnCount || current.columnCount || 0),
+      previewRows: Number(sheet.previewRows || current.previewRows || 0),
+    });
+  });
+  (result.processing?.sheets || []).forEach((sheet) => {
+    const cleanName = settlementImportSheetId(sheet.sheetName);
+    const current = byName.get(cleanName) || { id: cleanName, sheetName: cleanName };
+    byName.set(cleanName, {
+      ...current,
+      detectedType: sheet.targetTable || sheet.detectedType || "",
+      status: sheet.status || "",
+      acceptedRows: Number(sheet.acceptedRows || 0),
+      rejectedRows: Number(sheet.rejectedRows || 0),
+    });
+  });
+  return Array.from(byName.values()).sort((a, b) => a.sheetName.localeCompare(b.sheetName, "hu"));
+}
+
+function settlementImportSheetSignature(sheets = []) {
+  return sheets.map((sheet) => sheet.id).sort().join("|");
 }
 
 function settlementImportRuleText(value = "") {
@@ -5245,6 +5297,18 @@ function settlementImportAutoTargetForColumn(column) {
   return "";
 }
 
+function settlementImportAutoGroupForSheet(sheet = {}) {
+  const text = settlementImportRuleText(`${sheet.sheetName} ${sheet.detectedType}`);
+  if (/jit_row|\bjit\b|all jit/.test(text)) return "main_jit";
+  if (/atm_balance|wallet|atm|deducation|deduction/.test(text)) return "atm";
+  if (/bonus_route|bonus routes/.test(text)) return "bonus_routes";
+  if (/penalty|penalties|buntetes|levonas|malus/.test(text)) return "penalties";
+  if (/claims|claim|last month|reklamacio|korrekcio/.test(text)) return "claims";
+  if (/rating|ratings|courier ratings|ertekeles|customer/.test(text)) return "customer_rating";
+  if (/performance|indicator|kesedelmi mutato|turamegfeleles/.test(text)) return "performance";
+  return "";
+}
+
 function ensureSettlementImportAutoColumnConfig(columns = []) {
   const signature = settlementImportColumnSignature(columns);
   if (!signature || state.settlementImportColumnConfigTouched) return;
@@ -5259,12 +5323,34 @@ function ensureSettlementImportAutoColumnConfig(columns = []) {
   state.settlementImportColumnConfigSignature = signature;
 }
 
+function ensureSettlementImportAutoSheetConfig(sheets = []) {
+  const signature = settlementImportSheetSignature(sheets);
+  if (!signature || state.settlementImportSheetConfigTouched) return;
+  const nextConfig = {};
+  sheets.forEach((sheet) => {
+    const groupKey = settlementImportAutoGroupForSheet(sheet);
+    if (!groupKey) return;
+    nextConfig[groupKey] = [...(nextConfig[groupKey] || []), sheet.id];
+  });
+  if (state.settlementImportSheetConfigSignature === signature && JSON.stringify(state.settlementImportSheetConfig || {}) === JSON.stringify(nextConfig)) return;
+  state.settlementImportSheetConfig = nextConfig;
+  state.settlementImportSheetConfigSignature = signature;
+}
+
 function settlementImportAssignedColumnIds() {
   return new Set(Object.values(state.settlementImportColumnConfig || {}).flat());
 }
 
+function settlementImportAssignedSheetIds() {
+  return new Set(Object.values(state.settlementImportSheetConfig || {}).flat());
+}
+
 function settlementImportColumnById(columns, columnId) {
   return columns.find((column) => column.id === columnId) || null;
+}
+
+function settlementImportSheetById(sheets, sheetId) {
+  return sheets.find((sheet) => sheet.id === sheetId) || null;
 }
 
 function renderSettlementImportColumnChip(column, extra = "") {
@@ -5272,6 +5358,63 @@ function renderSettlementImportColumnChip(column, extra = "") {
     <b>${escapeHtml(column.header)}</b>
     <small>${escapeHtml(column.sheetName)}</small>
   </span>`;
+}
+
+function renderSettlementImportSheetChip(sheet, extra = "") {
+  const meta = [
+    sheet.detectedType || "nincs cél tábla",
+    `${formatCount(sheet.acceptedRows || 0)} sor`,
+  ].filter(Boolean).join(" · ");
+  return `<span class="settlement-import-column-chip settlement-import-sheet-chip ${extra}" draggable="true" data-settlement-sheet-id="${escapeHtml(sheet.id)}">
+    <b>${escapeHtml(sheet.sheetName || "Munkalap")}</b>
+    <small>${escapeHtml(meta)}</small>
+  </span>`;
+}
+
+function renderSettlementImportSheetGrouping(result = {}) {
+  const sheets = settlementImportSheetsFromResult(result);
+  ensureSettlementImportAutoSheetConfig(sheets);
+  const assignedIds = settlementImportAssignedSheetIds();
+  const unassignedSheets = sheets.filter((sheet) => !assignedIds.has(sheet.id));
+  if (!sheets.length) return "";
+  return `<section class="settlement-import-sheet-grouper">
+    <div class="settlement-import-header-title">
+      <div>
+        <span>Munkalap csoportosítás</span>
+        <strong>${escapeHtml(formatCount(unassignedSheets.length))} szabad munkalap</strong>
+      </div>
+      <small>A teljes sheeteket tedd importcsoportba</small>
+    </div>
+    <div class="settlement-import-column-chip-list settlement-import-sheet-bank" data-settlement-sheet-group-key="">
+      ${unassignedSheets.length
+        ? unassignedSheets.map((sheet) => renderSettlementImportSheetChip(sheet)).join("")
+        : `<em>Minden munkalap csoportba került.</em>`}
+    </div>
+    <div class="settlement-import-sheet-group-grid">
+      ${SETTLEMENT_IMPORT_SHEET_GROUPS.map((group) => {
+        const ids = state.settlementImportSheetConfig?.[group.key] || [];
+        const assignedSheets = ids.map((id) => settlementImportSheetById(sheets, id)).filter(Boolean);
+        return `<article class="settlement-import-config-card settlement-import-sheet-group" data-settlement-sheet-group-key="${escapeHtml(group.key)}">
+          <div>
+            <span>${escapeHtml(group.label)}</span>
+            <strong>${escapeHtml(formatCount(assignedSheets.length))} munkalap</strong>
+            <small>${escapeHtml(group.rule)}</small>
+          </div>
+          <div class="settlement-import-card-dropzone ${assignedSheets.length ? "has-items" : ""}" data-settlement-sheet-group-key="${escapeHtml(group.key)}">
+            ${assignedSheets.length
+              ? assignedSheets.map((sheet) => `
+                <span class="settlement-import-column-chip settlement-import-sheet-chip assigned" draggable="true" data-settlement-sheet-id="${escapeHtml(sheet.id)}">
+                  <b>${escapeHtml(sheet.sheetName)}</b>
+                  <small>${escapeHtml(sheet.detectedType || "kézi csoport")}</small>
+                  <button type="button" data-settlement-remove-sheet="${escapeHtml(sheet.id)}" aria-label="Munkalap eltávolítása">×</button>
+                </span>
+              `).join("")
+              : `<em>Dobd ide a munkalapot</em>`}
+          </div>
+        </article>`;
+      }).join("")}
+    </div>
+  </section>`;
 }
 
 function renderSettlementImportConfigurator(result = {}) {
@@ -5558,6 +5701,7 @@ function renderSettlementImportConfig() {
             <div><span>Betöltött sor</span><strong>${escapeHtml(formatCount(result.insertedRows || 0))}</strong></div>
           </div>
           ${renderSettlementImportHeaders(result.headers || [])}
+          ${renderSettlementImportSheetGrouping(result)}
           ${renderSettlementImportConfigurator(result)}
         ` : `<div class="empty-card">Nincs még feltöltött Excel a konfigurátorhoz.</div>`}
         <div class="settlement-import-actions">
@@ -5616,6 +5760,9 @@ async function submitSettlementImport() {
     state.settlementImportColumnConfig = {};
     state.settlementImportColumnConfigSignature = "";
     state.settlementImportColumnConfigTouched = false;
+    state.settlementImportSheetConfig = {};
+    state.settlementImportSheetConfigSignature = "";
+    state.settlementImportSheetConfigTouched = false;
     state.settlementImportStep = 3;
   } catch (error) {
     window.alert(error.message);
@@ -5676,6 +5823,9 @@ async function deleteSettlementImport() {
     state.settlementImportColumnConfig = {};
     state.settlementImportColumnConfigSignature = "";
     state.settlementImportColumnConfigTouched = false;
+    state.settlementImportSheetConfig = {};
+    state.settlementImportSheetConfigSignature = "";
+    state.settlementImportSheetConfigTouched = false;
     state.settlementImportStep = 1;
     state.settlementDashboard = null;
     renderSettlementImportConfig();
@@ -9743,6 +9893,12 @@ $("#logout").addEventListener("click", async () => {
   state.settlementImportMonth = previousLocalMonth();
   state.settlementImportResult = null;
   state.settlementImportUploading = false;
+  state.settlementImportColumnConfig = {};
+  state.settlementImportColumnConfigSignature = "";
+  state.settlementImportColumnConfigTouched = false;
+  state.settlementImportSheetConfig = {};
+  state.settlementImportSheetConfigSignature = "";
+  state.settlementImportSheetConfigTouched = false;
   renderQueueStatus();
   showLogin();
 });
@@ -9825,26 +9981,55 @@ $("#settlement-import-config-panel")?.addEventListener("change", (event) => {
     state.settlementImportColumnConfig = {};
     state.settlementImportColumnConfigSignature = "";
     state.settlementImportColumnConfigTouched = false;
+    state.settlementImportSheetConfig = {};
+    state.settlementImportSheetConfigSignature = "";
+    state.settlementImportSheetConfigTouched = false;
   }
 });
 $("#settlement-import-config-panel")?.addEventListener("dragstart", (event) => {
+  const sheetChip = event.target.closest("[data-settlement-sheet-id]");
+  if (sheetChip) {
+    state.settlementImportDraggedSheetId = sheetChip.dataset.settlementSheetId || "";
+    state.settlementImportDraggedColumnId = "";
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", state.settlementImportDraggedSheetId);
+    return;
+  }
   const chip = event.target.closest("[data-settlement-column-id]");
   if (!chip) return;
   state.settlementImportDraggedColumnId = chip.dataset.settlementColumnId || "";
+  state.settlementImportDraggedSheetId = "";
   event.dataTransfer.effectAllowed = "move";
   event.dataTransfer.setData("text/plain", state.settlementImportDraggedColumnId);
 });
 $("#settlement-import-config-panel")?.addEventListener("dragover", (event) => {
-  const dropzone = event.target.closest("[data-settlement-card-key]");
+  const dropzone = event.target.closest("[data-settlement-card-key], [data-settlement-sheet-group-key]");
   if (!dropzone) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = "move";
 });
 $("#settlement-import-config-panel")?.addEventListener("drop", (event) => {
-  const dropzone = event.target.closest("[data-settlement-card-key]");
+  const dropzone = event.target.closest("[data-settlement-card-key], [data-settlement-sheet-group-key]");
   if (!dropzone) return;
   event.preventDefault();
-  const columnId = event.dataTransfer.getData("text/plain") || state.settlementImportDraggedColumnId;
+  const sheetId = state.settlementImportDraggedSheetId;
+  if (dropzone.dataset.settlementSheetGroupKey !== undefined) {
+    if (!sheetId) return;
+    const targetKey = dropzone.dataset.settlementSheetGroupKey || "";
+    const nextConfig = {};
+    for (const [groupKey, ids] of Object.entries(state.settlementImportSheetConfig || {})) {
+      nextConfig[groupKey] = (ids || []).filter((id) => id !== sheetId);
+    }
+    if (targetKey) {
+      nextConfig[targetKey] = [...(nextConfig[targetKey] || []), sheetId];
+    }
+    state.settlementImportSheetConfig = nextConfig;
+    state.settlementImportSheetConfigTouched = true;
+    state.settlementImportDraggedSheetId = "";
+    renderSettlementImportConfig();
+    return;
+  }
+  const columnId = state.settlementImportDraggedColumnId || event.dataTransfer.getData("text/plain");
   if (!columnId) return;
   const targetKey = dropzone.dataset.settlementCardKey || "";
   const nextConfig = {};
@@ -9860,6 +10045,18 @@ $("#settlement-import-config-panel")?.addEventListener("drop", (event) => {
   renderSettlementImportConfig();
 });
 $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
+  const removeSheetButton = event.target.closest("[data-settlement-remove-sheet]");
+  if (removeSheetButton) {
+    const sheetId = removeSheetButton.dataset.settlementRemoveSheet || "";
+    const nextConfig = {};
+    for (const [groupKey, ids] of Object.entries(state.settlementImportSheetConfig || {})) {
+      nextConfig[groupKey] = (ids || []).filter((id) => id !== sheetId);
+    }
+    state.settlementImportSheetConfig = nextConfig;
+    state.settlementImportSheetConfigTouched = true;
+    renderSettlementImportConfig();
+    return;
+  }
   const removeButton = event.target.closest("[data-settlement-remove-column]");
   if (removeButton) {
     const columnId = removeButton.dataset.settlementRemoveColumn || "";
@@ -9914,6 +10111,9 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
     state.settlementImportColumnConfig = {};
     state.settlementImportColumnConfigSignature = "";
     state.settlementImportColumnConfigTouched = false;
+    state.settlementImportSheetConfig = {};
+    state.settlementImportSheetConfigSignature = "";
+    state.settlementImportSheetConfigTouched = false;
     renderSettlementImportConfig();
   }
 });
