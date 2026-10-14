@@ -29,6 +29,7 @@ const state = {
   vehicleConfigurationSetup: null,
   scheduleVehicleConfigurations: [],
   scheduleOpenVehiclePanels: new Set(),
+  scheduleVehicleSort: "time",
   queueStatus: null,
   queueTimer: null,
   salaryAdvanceRequests: [],
@@ -100,7 +101,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v214";
+const APP_VERSION = "v215";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -8306,10 +8307,20 @@ function scheduleDayVehicleRows(day = {}) {
       rows.push({ slot, worker });
     });
   });
+  const sortMode = state.scheduleVehicleSort || "time";
   return rows.sort((a, b) => (
-    (Number.isFinite(Number(a.slot?.startMinutes)) ? Number(a.slot?.startMinutes) : 99999)
-    - (Number.isFinite(Number(b.slot?.startMinutes)) ? Number(b.slot?.startMinutes) : 99999)
-    || String(a.worker?.courierName || "").localeCompare(String(b.worker?.courierName || ""), "hu")
+    sortMode === "routes"
+      ? Number(b.worker?.dailyRouteCount || 0) - Number(a.worker?.dailyRouteCount || 0)
+        || String(a.worker?.courierName || "").localeCompare(String(b.worker?.courierName || ""), "hu")
+        || (Number.isFinite(Number(a.slot?.startMinutes)) ? Number(a.slot?.startMinutes) : 99999)
+          - (Number.isFinite(Number(b.slot?.startMinutes)) ? Number(b.slot?.startMinutes) : 99999)
+      : sortMode === "name"
+        ? String(a.worker?.courierName || "").localeCompare(String(b.worker?.courierName || ""), "hu")
+          || (Number.isFinite(Number(a.slot?.startMinutes)) ? Number(a.slot?.startMinutes) : 99999)
+            - (Number.isFinite(Number(b.slot?.startMinutes)) ? Number(b.slot?.startMinutes) : 99999)
+        : (Number.isFinite(Number(a.slot?.startMinutes)) ? Number(a.slot?.startMinutes) : 99999)
+          - (Number.isFinite(Number(b.slot?.startMinutes)) ? Number(b.slot?.startMinutes) : 99999)
+          || String(a.worker?.courierName || "").localeCompare(String(b.worker?.courierName || ""), "hu")
   ));
 }
 
@@ -8325,7 +8336,7 @@ function renderScheduleVehicleAssignmentRow(row = {}, index = 0) {
       <div class="schedule-vehicle-row-main">
         <span>${escapeHtml(slot.start || "-")}${slot.end ? `-${escapeHtml(slot.end)}` : ""}</span>
         <strong>${escapeHtml(worker.courierName || "Futár")}</strong>
-        <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.shiftName || worker.bookingCode || slot.shiftText || "Műszak")}</small>
+        <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.shiftName || worker.bookingCode || slot.shiftText || "Műszak")} · ${formatCount(worker.dailyRouteCount || 0)} kör ma</small>
       </div>
       <div class="schedule-vehicle-row-current">
         <span>Jelenlegi / ajánlott</span>
@@ -8369,6 +8380,16 @@ function ensureScheduleVehicleDialog() {
         </div>
         <button type="button" class="icon-btn" data-schedule-vehicle-close>×</button>
       </div>
+      <div class="schedule-vehicle-toolbar">
+        <label>
+          <span>Rendezés</span>
+          <select data-schedule-vehicle-sort>
+            <option value="time">Műszak kezdése szerint</option>
+            <option value="name">Futár név szerint</option>
+            <option value="routes">Körszám szerint (4-3-2-1)</option>
+          </select>
+        </label>
+      </div>
       <div class="schedule-vehicle-list" data-schedule-vehicle-list></div>
     </div>
   `;
@@ -8382,17 +8403,30 @@ function ensureScheduleVehicleDialog() {
     if (!button) return;
     saveScheduleVehicleAssignment(button);
   });
+  dialog.querySelector("[data-schedule-vehicle-sort]")?.addEventListener("change", (event) => {
+    state.scheduleVehicleSort = event.target.value || "time";
+    renderScheduleVehicleDialogRows(dialog);
+  });
   return dialog;
+}
+
+function renderScheduleVehicleDialogRows(dialog = ensureScheduleVehicleDialog()) {
+  const day = dialog._scheduleVehicleDay || {};
+  const rows = scheduleDayVehicleRows(day);
+  const sort = dialog.querySelector("[data-schedule-vehicle-sort]");
+  if (sort && sort.value !== state.scheduleVehicleSort) sort.value = state.scheduleVehicleSort || "time";
+  dialog.querySelector("[data-schedule-vehicle-title]").textContent = day?.date ? dateLabel(day.date) : "Napi autóbeosztás";
+  const sortLabel = state.scheduleVehicleSort === "routes" ? "körszám szerint" : state.scheduleVehicleSort === "name" ? "futárnév szerint" : "időrendben";
+  dialog.querySelector("[data-schedule-vehicle-subtitle]").textContent = `${formatCount(rows.length)} műszak ${sortLabel}`;
+  dialog.querySelector("[data-schedule-vehicle-list]").innerHTML = rows.length
+    ? rows.map(renderScheduleVehicleAssignmentRow).join("")
+    : `<div class="empty-card compact">Nincs futár ehhez a naphoz.</div>`;
 }
 
 function openScheduleVehicleDialog(day = {}) {
   const dialog = ensureScheduleVehicleDialog();
-  const rows = scheduleDayVehicleRows(day);
-  dialog.querySelector("[data-schedule-vehicle-title]").textContent = day?.date ? dateLabel(day.date) : "Napi autóbeosztás";
-  dialog.querySelector("[data-schedule-vehicle-subtitle]").textContent = `${formatCount(rows.length)} műszak időrendben`;
-  dialog.querySelector("[data-schedule-vehicle-list]").innerHTML = rows.length
-    ? rows.map(renderScheduleVehicleAssignmentRow).join("")
-    : `<div class="empty-card compact">Nincs futár ehhez a naphoz.</div>`;
+  dialog._scheduleVehicleDay = day;
+  renderScheduleVehicleDialogRows(dialog);
   dialog.showModal();
 }
 

@@ -365,6 +365,10 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-slot-worker-meta a { color: var(--green-dark); font-weight: 950; text-decoration: none; }
 .schedule-slot-card.missing .schedule-slot-worker-meta a { color: #dff6b5; }
 .schedule-vehicle-dialog { width: min(94vw, 860px); }
+.schedule-vehicle-toolbar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.schedule-vehicle-toolbar label { display: grid; gap: 4px; min-width: min(100%, 280px); }
+.schedule-vehicle-toolbar span { color: var(--green-dark); font-size: 10px; font-weight: 950; text-transform: uppercase; }
+.schedule-vehicle-toolbar select { min-height: 38px; padding: 0 10px; border: 1px solid #d8dfd5; border-radius: 10px; background: #fff; color: var(--ink); font-size: 12px; font-weight: 850; }
 .schedule-vehicle-list { display: grid; gap: 9px; max-height: min(68dvh, 620px); overflow: auto; padding-right: 2px; }
 .schedule-vehicle-row { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, .85fr) minmax(0, 1.25fr); gap: 10px; align-items: center; padding: 11px; border: 1px solid var(--line); border-radius: 14px; background: #fbfcfa; }
 .schedule-vehicle-row-main span,
@@ -1077,6 +1081,8 @@ textarea { min-height: 96px; resize: vertical; }
   .schedule-slot-detail-grid { grid-template-columns: 1fr; }
   .schedule-slot-action-row { grid-template-columns: 1fr; }
   .schedule-vehicle-dialog { width: calc(100vw - 16px); }
+  .schedule-vehicle-toolbar { justify-content: stretch; }
+  .schedule-vehicle-toolbar label { width: 100%; }
   .schedule-vehicle-row { grid-template-columns: 1fr; }
   .schedule-recommendation { grid-template-columns: 1fr; }
   .schedule-rec-foot { justify-items: start; text-align: left; }
