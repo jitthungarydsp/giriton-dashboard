@@ -24,6 +24,10 @@ const state = {
   vehicleReports: [],
   vehicleAssignments: [],
   vehicleAssignmentQuery: "",
+  vehicleActiveTab: "today",
+  vehicleWarehouseFilter: "",
+  vehicleDateFilter: localDate(),
+  vehicleVisibleAssignments: [],
   vehicleSearchResults: [],
   vehicleConfigurations: [],
   vehicleConfigurationSetup: null,
@@ -6484,6 +6488,144 @@ async function loadDeviceReports() {
   }
 }
 
+function vehicleAssignmentLabel(item = {}) {
+  return [item.licensePlate || "-", item.car || "", item.source || ""].filter(Boolean).join(" · ");
+}
+
+function vehicleAssignmentStatus(item = {}) {
+  const date = String(item.date || "");
+  const today = localDate();
+  if (date === today) return "Mai kiosztás";
+  return date ? "Előzmény" : "Nincs dátum";
+}
+
+function vehicleConfigForPlate(plate = "") {
+  const normalized = String(plate || "").trim().toUpperCase();
+  return (state.vehicleConfigurations || []).find((item) => String(item.licensePlate || "").trim().toUpperCase() === normalized) || null;
+}
+
+function vehicleAssignmentWarehouse(item = {}) {
+  const configured = vehicleConfigForPlate(item.licensePlate);
+  const direct = String(item.warehouse || "").trim().toUpperCase();
+  if (direct === "BUD1" || direct === "BUD2") return direct;
+  const configuredWarehouse = String(configured?.warehouseCode || "").trim().toUpperCase();
+  if (configuredWarehouse === "BUD1" || configuredWarehouse === "BUD2") return configuredWarehouse;
+  const carText = String(item.car || "").trim().toUpperCase();
+  return ["BUD1", "BUD2"].includes(carText) ? carText : "";
+}
+
+function ensureVehicleDetailDialog() {
+  let dialog = $("#vehicle-detail-dialog");
+  if (dialog) return dialog;
+  dialog = document.createElement("dialog");
+  dialog.id = "vehicle-detail-dialog";
+  dialog.className = "worker-shift-dialog vehicle-detail-dialog";
+  dialog.innerHTML = `
+    <div class="worker-shift-dialog-card vehicle-detail-dialog-card">
+      <div class="worker-shift-dialog-head">
+        <div>
+          <span>Autó részletei</span>
+          <strong data-vehicle-detail-title>Autó</strong>
+          <small data-vehicle-detail-subtitle></small>
+        </div>
+        <button type="button" class="icon-button" data-vehicle-detail-close aria-label="Bezárás">×</button>
+      </div>
+      <div data-vehicle-detail-body></div>
+      <div class="vehicle-detail-actions">
+        <button class="primary" type="button" data-vehicle-condition-open>Felvétel / leadás rögzítése</button>
+      </div>
+      <section class="vehicle-condition-dialog-section hidden" data-vehicle-condition-wrap>
+        <div class="vehicle-dialog-section-head">
+          <div><span>ÁLLAPOTELLENŐRZÉS</span><strong>Autó felvétel / leadás</strong></div>
+          <button class="secondary" type="button" data-vehicle-condition-close>Vissza</button>
+        </div>
+        <form id="vehicle-condition-form" class="process-form two-column">
+          <label>Rendszám<input id="vehicle-license-plate" name="serial_number" autocomplete="off" required /></label>
+          <label>Folyamat
+            <select id="vehicle-event-type" name="event_type">
+              <option value="handover">Felvétel</option>
+              <option value="return">Leadás</option>
+            </select>
+          </label>
+          <label>Autón látható sérülések száma
+            <input id="vehicle-damage-count" name="damage_count" type="number" min="0" max="20" step="1" value="0" required />
+          </label>
+          <div class="vehicle-damage-help">Hibáról készíts fényképet, így az előző állapottal is összehasonlítható.</div>
+          <div id="vehicle-damage-photo-fields" class="vehicle-damage-fields full-width"></div>
+          <fieldset class="vehicle-checklist full-width">
+            <legend>Állapot kérdőív</legend>
+            <label>Olajszint<select name="oil_level_status" required><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+            <label>Hűtővíz szintje<select name="coolant_level_status" required><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+            <label>Guminyomás<select name="tire_pressure_status" required><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+            <label>Motorvédő lemez<select name="engine_cover_status" required><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+            <label>Lökhárító<select name="bumper_damage_status" required><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+            <label>Világító berendezések<select name="lights_status" required><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+          </fieldset>
+          <label class="full-width">Megjegyzés<textarea id="vehicle-condition-note" name="note" rows="3" placeholder="Kiegészítő megjegyzés, ha szükséges"></textarea></label>
+          <button class="primary full-width" type="submit">Autó állapot rögzítése</button>
+        </form>
+        <p id="vehicle-condition-message" class="updated-at" aria-live="polite"></p>
+        <section id="vehicle-condition-history" class="device-history"></section>
+      </section>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+  dialog.querySelector("[data-vehicle-detail-close]")?.addEventListener("click", () => dialog.close());
+  dialog.querySelectorAll("[data-vehicle-condition-close]").forEach((button) => {
+    button.addEventListener("click", () => {
+      dialog.querySelector("[data-vehicle-condition-wrap]")?.classList.add("hidden");
+      dialog.querySelector("[data-vehicle-condition-open]")?.classList.remove("hidden");
+    });
+  });
+  dialog.querySelector("[data-vehicle-condition-open]")?.addEventListener("click", () => {
+    dialog.querySelector("[data-vehicle-condition-wrap]")?.classList.remove("hidden");
+    dialog.querySelector("[data-vehicle-condition-open]")?.classList.add("hidden");
+    dialog.querySelector("#vehicle-license-plate")?.focus();
+  });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  return dialog;
+}
+
+function openVehicleDetailDialog(item = {}) {
+  const dialog = ensureVehicleDetailDialog();
+  const config = vehicleConfigForPlate(item.licensePlate) || item;
+  const plate = String(item.licensePlate || config.licensePlate || "-").trim();
+  const warehouse = vehicleAssignmentWarehouse(item) || config.warehouseCode || "-";
+  const assigned = item.driverName || "Szabad autó";
+  dialog.querySelector("[data-vehicle-detail-title]").textContent = plate;
+  dialog.querySelector("[data-vehicle-detail-subtitle]").textContent = `${warehouse} · ${assigned}`;
+  dialog.querySelector("[data-vehicle-detail-body]").innerHTML = `
+    <div class="vehicle-detail-summary">
+      <div><span>Raktár</span><strong>${escapeHtml(warehouse)}</strong></div>
+      <div><span>Kijelölt futár</span><strong>${escapeHtml(assigned)}</strong></div>
+      <div><span>Műszak kezdete</span><strong>${escapeHtml(item.date && item.shiftStart ? `${item.date} ${item.shiftStart}` : "-")}</strong></div>
+      <div><span>Műszak vége</span><strong>${escapeHtml(item.shiftEnd || "-")}</strong></div>
+      <div><span>Állapot</span><strong>${escapeHtml(config.carStatusLabel || (item.date ? "Kiosztva" : "Szabad"))}</strong></div>
+      <div><span>Autó</span><strong>${escapeHtml([config.brand, config.model, item.car].filter(Boolean).join(" ") || "Nincs típusadat")}</strong></div>
+    </div>
+    <div class="vehicle-detail-section">
+      <div class="vehicle-dialog-section-head"><div><span>FELVÉTEL / LEADÁS</span><strong>Használati napló</strong></div><small>${escapeHtml(item.source || "Beosztás és élő adat")}</small></div>
+      <div class="vehicle-detail-log"><span>Felvétel</span><strong>${escapeHtml(item.shiftStart ? `${item.date || ""} ${item.shiftStart}` : "Nincs adat")}</strong><span>Leadás</span><strong>Nincs rögzítve</strong></div>
+    </div>
+    <div class="vehicle-detail-section">
+      <div class="vehicle-dialog-section-head"><div><span>ELLENŐRZÉS</span><strong>Korábbi állapotok</strong></div><small>${escapeHtml(config.conditionLabel || "Nincs állapotadat")}</small></div>
+      <div class="vehicle-detail-note">A korábbi fotós ellenőrzések és az AI összehasonlítás a rögzítés után jelenik meg.</div>
+    </div>
+  `;
+  const wrap = dialog.querySelector("[data-vehicle-condition-wrap]");
+  wrap?.classList.add("hidden");
+  dialog.querySelector("[data-vehicle-condition-open]")?.classList.remove("hidden");
+  const form = dialog.querySelector("#vehicle-condition-form");
+  form?.reset();
+  const plateInput = dialog.querySelector("#vehicle-license-plate");
+  if (plateInput) plateInput.value = plate;
+  state.vehicleReports = [];
+  dialog.showModal();
+  loadVehicleReports();
+}
+
 function renderVehicleReports() {
   const plate = String($("#vehicle-license-plate")?.value || "").trim();
   renderConditionReports({
@@ -6496,19 +6638,30 @@ function renderVehicleReports() {
   });
 }
 
-function vehicleAssignmentRows(items = []) {
+function vehicleAssignmentRows(items = [], options = {}) {
   if (!items.length) return `<div class="empty-card">Nincs autó-hozzárendelés az adott időszakban.</div>`;
+  if (options.interactive !== false) state.vehicleVisibleAssignments = items;
   return items.map((item) => `
-    <article class="vehicle-assignment-row">
+    <article class="vehicle-assignment-row vehicle-assignment-card">
       <div>
-        <strong>${escapeHtml(item.licensePlate || "-")}</strong>
-        <small>${escapeHtml(item.car || "Autó típus nélkül")}</small>
+        <span class="vehicle-row-label">Indulás</span>
+        <strong>${escapeHtml(item.shiftStart || "-")}</strong>
+        <small>${escapeHtml(item.shiftEnd ? `- ${item.shiftEnd}` : "")}</small>
       </div>
       <div>
+        <span class="vehicle-row-label">Futár / rendszám</span>
         <strong>${escapeHtml(item.driverName || "-")}</strong>
-        <small>${escapeHtml(item.date || "-")} · ${escapeHtml([item.shiftStart, item.shiftEnd].filter(Boolean).join("–") || "-")}</small>
+        <small>${escapeHtml(item.licensePlate || "-")} · ${escapeHtml(item.car || "Autó")}</small>
       </div>
-      ${item.shiftType ? `<span>${escapeHtml(item.shiftType)}</span>` : `<span>-</span>`}
+      <div>
+        <span class="vehicle-row-label">Raktár</span>
+        <strong>${escapeHtml(vehicleAssignmentWarehouse(item) || "-")}</strong>
+        <small>${escapeHtml(vehicleAssignmentStatus(item))}</small>
+      </div>
+      <div class="vehicle-assignment-actions">
+        <span class="vehicle-status-pill ${item.date === localDate() ? "today" : "history"}">${escapeHtml(item.date === localDate() ? "Kiosztva" : "Előzmény")}</span>
+        ${options.interactive !== false ? `<button class="secondary vehicle-detail-button" type="button" data-vehicle-assignment-index="${items.indexOf(item)}">Részletek</button>` : ""}
+      </div>
     </article>
   `).join("");
 }
@@ -6550,29 +6703,88 @@ function updateVehicleAssignmentResults() {
       : `${(state.vehicleAssignments || []).length} bejegyzés`;
   }
   if (result) result.innerHTML = vehicleAssignmentRows(items);
+  bindVehicleDetailButtons(result);
+}
+
+function vehicleMainAssignments() {
+  const date = String(state.vehicleDateFilter || "").trim();
+  const warehouse = String(state.vehicleWarehouseFilter || "").trim().toUpperCase();
+  return (state.vehicleAssignments || [])
+    .filter((item) => !date || String(item.date || "") === date)
+    .filter((item) => !warehouse || vehicleAssignmentWarehouse(item) === warehouse)
+    .sort((left, right) => String(left.shiftStart || "").localeCompare(String(right.shiftStart || "")));
+}
+
+function renderVehicleFreeVehicles() {
+  const target = $("#vehicle-free-panel");
+  if (!target) return;
+  const warehouse = String(state.vehicleWarehouseFilter || "").trim().toUpperCase();
+  const assignedPlates = new Set(vehicleMainAssignments().map((item) => String(item.licensePlate || "").trim().toUpperCase()).filter(Boolean));
+  const items = (state.vehicleConfigurations || [])
+    .filter((item) => item.active !== false)
+    .filter((item) => !warehouse || String(item.warehouseCode || "").toUpperCase() === warehouse)
+    .filter((item) => !assignedPlates.has(String(item.licensePlate || "").trim().toUpperCase()))
+    .sort((left, right) => String(left.licensePlate || "").localeCompare(String(right.licensePlate || ""), "hu"));
+  target.innerHTML = `
+    <div class="device-history-head">
+      <strong>Szabad autók</strong>
+      <span>${formatCount(items.length)} autó</span>
+    </div>
+    ${items.length ? `<div class="vehicle-free-list">${items.map((item) => `
+      <article class="vehicle-free-row">
+        <div><span>Rendszám</span><strong>${escapeHtml(item.licensePlate || "-")}</strong><small>${escapeHtml([item.brand, item.model].filter(Boolean).join(" ") || "Autó")}</small></div>
+        <div><span>Raktár</span><strong>${escapeHtml(item.warehouseCode || "-")}</strong><small>${escapeHtml(item.carStatusLabel || "Szabad")}</small></div>
+        <span class="vehicle-status-pill free">Szabad</span>
+        <button class="secondary vehicle-detail-button" type="button" data-vehicle-config-plate="${escapeHtml(item.licensePlate || "")}">Részletek</button>
+      </article>
+    `).join("")}</div>` : `<div class="empty-card">Nincs szabad autó ehhez a naphoz és raktárhoz.</div>`}
+  `;
+  target.querySelectorAll("[data-vehicle-config-plate]").forEach((button) => {
+    button.addEventListener("click", () => openVehicleDetailDialog({
+      licensePlate: button.dataset.vehicleConfigPlate,
+      ...vehicleConfigForPlate(button.dataset.vehicleConfigPlate),
+    }));
+  });
 }
 
 function renderVehicleAssignments() {
   const target = $("#vehicle-assignment-history");
   if (!target) return;
-  const title = state.user?.canManageVehicles ? "Futár-autó lista" : "Saját autóhasználat";
-  target.innerHTML = `
-    <div class="device-history-head">
-      <strong>${escapeHtml(title)}</strong>
-      <span id="vehicle-assignment-count">${(state.vehicleAssignments || []).length} bejegyzés</span>
-    </div>
-    <label class="vehicle-assignment-search">
-      <span>Kereső</span>
-      <input id="vehicle-assignment-filter" type="search" placeholder="Rendszám vagy futár neve" value="${escapeHtml(state.vehicleAssignmentQuery || "")}" />
-    </label>
-    <div id="vehicle-assignment-results" class="vehicle-assignment-results"></div>
-  `;
-  const filter = $("#vehicle-assignment-filter");
-  filter?.addEventListener("input", (event) => {
-    state.vehicleAssignmentQuery = event.target.value || "";
-    updateVehicleAssignmentResults();
+  const canManage = Boolean(state.user?.canManageVehicles);
+  if (!canManage && state.vehicleActiveTab !== "today") state.vehicleActiveTab = "today";
+  const assignments = vehicleMainAssignments();
+  target.classList.toggle("hidden", state.vehicleActiveTab !== "today");
+  $("#vehicle-free-panel")?.classList.toggle("hidden", state.vehicleActiveTab !== "free");
+  renderVehicleHrPanel();
+  document.querySelectorAll('[data-vehicle-tab="free"], [data-vehicle-tab="search"]').forEach((button) => {
+    button.classList.toggle("hidden", !canManage);
   });
-  updateVehicleAssignmentResults();
+  document.querySelectorAll("[data-vehicle-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.vehicleTab === state.vehicleActiveTab);
+  });
+  document.querySelectorAll("[data-vehicle-warehouse]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.vehicleWarehouse === state.vehicleWarehouseFilter);
+  });
+  if (state.vehicleActiveTab === "today") {
+    target.innerHTML = `
+      <div class="device-history-head">
+        <strong>Mai autóbeosztás</strong>
+        <span>${formatCount(assignments.length)} autó</span>
+      </div>
+      ${assignments.length ? `<div class="vehicle-assignment-results">${vehicleAssignmentRows(assignments)}</div>` : `<div class="empty-card">Nincs autóbeosztás ehhez a naphoz és raktárhoz.</div>`}
+    `;
+    bindVehicleDetailButtons(target);
+  }
+  if (state.vehicleActiveTab === "free") renderVehicleFreeVehicles();
+}
+
+function bindVehicleDetailButtons(target) {
+  target?.querySelectorAll("[data-vehicle-assignment-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = state.vehicleVisibleAssignments[Number(button.dataset.vehicleAssignmentIndex)];
+      if (item) openVehicleDetailDialog(item);
+    });
+  });
 }
 
 async function loadVehicleAssignments(options = {}) {
@@ -6585,11 +6797,7 @@ async function loadVehicleAssignments(options = {}) {
   try {
     const payload = await api(withPreviewCourier("/api/vehicles/assignments?days=60"));
     state.vehicleAssignments = payload.items || [];
-    if (background && $("#vehicle-assignment-results")) {
-      updateVehicleAssignmentResults();
-    } else {
-      renderVehicleAssignments();
-    }
+    renderVehicleAssignments();
   } catch (error) {
     if (!background || !(state.vehicleAssignments || []).length) {
       target.innerHTML = `<div class="notice error">Az autó-hozzárendelések nem tölthetők be: ${escapeHtml(error.message)}</div>`;
@@ -6600,7 +6808,7 @@ async function loadVehicleAssignments(options = {}) {
 function renderVehicleHrPanel() {
   const panel = $("#vehicle-hr-panel");
   if (!panel) return;
-  panel.classList.toggle("hidden", !state.user?.canManageVehicles);
+  panel.classList.toggle("hidden", !state.user?.canManageVehicles || state.vehicleActiveTab !== "search");
   const monthInput = $("#vehicle-hr-month");
   if (monthInput && !monthInput.value) {
     monthInput.value = new Date().toISOString().slice(0, 7);
@@ -6626,6 +6834,7 @@ function renderVehicleSearchResults(lastUsage, items = []) {
     </div>
     ${vehicleAssignmentRows(items)}
   `;
+  bindVehicleDetailButtons(target);
 }
 
 async function searchVehicleAssignments() {
@@ -6657,11 +6866,11 @@ async function searchVehicleAssignments() {
 async function loadVehicleReports() {
   const target = $("#vehicle-condition-history");
   if (!target) return;
-  if (!state.user?.courierId && state.user?.canManageVehicles) {
-    target.innerHTML = `<div class="empty-card">HR nézetben a fotós előzményhez keress rendszámra vagy válassz futár előnézetet admin jogosultsággal.</div>`;
+  const plate = String($("#vehicle-license-plate")?.value || "").trim();
+  if (!state.user?.courierId && state.user?.canManageVehicles && !plate) {
+    target.innerHTML = `<div class="empty-card">A fotós előzményekhez válassz ki egy rendszámot.</div>`;
     return;
   }
-  const plate = String($("#vehicle-license-plate")?.value || "").trim();
   target.innerHTML = `<div class="empty-card">Autó előzmények betöltése...</div>`;
   try {
     const query = new URLSearchParams();
@@ -6675,8 +6884,19 @@ async function loadVehicleReports() {
 }
 
 async function loadVehicleSection() {
+  state.vehicleDateFilter = state.vehicleDateFilter || localDate();
+  const dateInput = $("#vehicle-dashboard-date");
+  if (dateInput && !dateInput.value) dateInput.value = state.vehicleDateFilter;
+  $("#vehicle-admin-open")?.classList.toggle("hidden", !state.user?.canManageVehicles);
   renderVehicleHrPanel();
-  await Promise.all([loadCourierMasterOptions(), loadVehicleAssignments(), loadVehicleReports()]);
+  renderVehicleAssignments();
+  await Promise.all([
+    loadCourierMasterOptions(),
+    loadVehicleAssignments(),
+    state.user?.canManageVehicles ? loadVehicleConfigurations() : Promise.resolve(),
+  ]);
+  renderVehicleAssignments();
+  renderVehicleFreeVehicles();
 }
 
 function setVehicleConfigMessage(message, isError = false) {
@@ -6874,6 +7094,28 @@ vehiclePlateInput?.addEventListener("keydown", (event) => {
   }
 });
 
+document.querySelectorAll("[data-vehicle-tab]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.vehicleActiveTab = button.dataset.vehicleTab || "today";
+    renderVehicleAssignments();
+  });
+});
+
+document.querySelectorAll("[data-vehicle-warehouse]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.vehicleWarehouseFilter = button.dataset.vehicleWarehouse || "";
+    renderVehicleAssignments();
+  });
+});
+
+$("#vehicle-dashboard-date")?.addEventListener("change", (event) => {
+  state.vehicleDateFilter = event.currentTarget.value || localDate();
+  renderVehicleAssignments();
+});
+
+$("#vehicle-dashboard-refresh")?.addEventListener("click", () => loadVehicleSection());
+$("#vehicle-admin-open")?.addEventListener("click", () => showSection("vehicle-config"));
+
 $("#vehicle-hr-search-form")?.addEventListener("submit", (event) => {
   event.preventDefault();
   searchVehicleAssignments();
@@ -6967,6 +7209,8 @@ function renderVehicleDamagePhotoFields() {
     </label>
   `).join("");
 }
+
+ensureVehicleDetailDialog();
 
 $("#vehicle-damage-count")?.addEventListener("input", renderVehicleDamagePhotoFields);
 renderVehicleDamagePhotoFields();

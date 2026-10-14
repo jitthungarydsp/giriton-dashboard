@@ -453,22 +453,33 @@
         <section class="workflow-header">
           <div>
             <p class="eyebrow">AUTÓ</p>
-            <h2>Autó állapot</h2>
-            <p class="muted">Rögzítsd felvételkor vagy leadáskor az autó állapotát, a hibákról pedig tölts fel fotót rendszám megjelöléssel.</p>
+            <h2>Autóbeosztás</h2>
+            <p class="muted">A mai autók, a kijelölt futárok és az autó állapotai egy helyen.</p>
+          </div>
+          <div class="vehicle-header-actions">
+            <button id="vehicle-dashboard-refresh" class="secondary" type="button">Frissítés</button>
+            <button id="vehicle-admin-open" class="secondary hidden" type="button">Autó-adminisztráció</button>
           </div>
         </section>
 
-        <section class="process-card">
-          <div class="process-title">
-            <span class="step-code">60N</span>
-            <div>
-              <h3>Elmúlt 60 nap autói</h3>
-              <p>Rendszámok műszakbeosztásból és élő futáradatból.</p>
+        <section class="process-card vehicle-dashboard-card">
+          <div class="vehicle-filter-row">
+            <div class="vehicle-warehouse-tabs" role="tablist" aria-label="Raktár szűrés">
+              <button type="button" class="active" data-vehicle-warehouse="">Összes</button>
+              <button type="button" data-vehicle-warehouse="BUD1">BUD1</button>
+              <button type="button" data-vehicle-warehouse="BUD2">BUD2</button>
             </div>
+            <label class="month-picker vehicle-date-picker">Dátum<input id="vehicle-dashboard-date" type="date" /></label>
+          </div>
+          <div class="vehicle-view-tabs" role="tablist" aria-label="Autó nézet">
+            <button type="button" class="active" data-vehicle-tab="today">Mai autóbeosztás</button>
+            <button type="button" data-vehicle-tab="free">Szabad autók</button>
+            <button type="button" data-vehicle-tab="search">Keresés</button>
           </div>
           <section id="vehicle-assignment-history" class="vehicle-assignment-list">
-            <div class="empty-card">Autó-hozzárendelések betöltése...</div>
+            <div class="empty-card">Mai autóbeosztás betöltése...</div>
           </section>
+          <section id="vehicle-free-panel" class="vehicle-free-panel hidden"></section>
         </section>
 
         <section id="vehicle-hr-panel" class="process-card hidden">
@@ -476,7 +487,7 @@
             <span class="step-code">HR</span>
             <div>
               <h3>Autóhasználat kereső</h3>
-              <p>Rendszám vagy kolléga neve alapján megmutatja, ki használta utoljára az autót.</p>
+              <p>Rendszám vagy kolléga neve alapján megmutatja, ki használta az autót.</p>
             </div>
           </div>
           <form id="vehicle-hr-search-form" class="process-form two-column">
@@ -492,73 +503,6 @@
           <section id="vehicle-hr-search-results" class="vehicle-assignment-list">
             <div class="empty-card">Válassz futárt vagy adj meg rendszámot.</div>
           </section>
-        </section>
-
-        <section class="process-card">
-          <div class="process-title">
-            <span class="step-code">AUTO</span>
-            <div>
-              <h3>Autó felvétel / leadás</h3>
-              <p>A rendszám alapján látni fogod az előző autós ellenőrzéseket is.</p>
-            </div>
-          </div>
-          <form id="vehicle-condition-form" class="process-form two-column">
-            <label>Rendszám<input id="vehicle-license-plate" name="serial_number" autocomplete="off" required /></label>
-            <label>Folyamat
-              <select id="vehicle-event-type" name="event_type">
-                <option value="handover">Felvétel</option>
-                <option value="return">Leadás</option>
-              </select>
-            </label>
-            <label>Autón látható sérülések száma
-              <input id="vehicle-damage-count" name="damage_count" type="number" min="0" max="20" step="1" value="0" required />
-            </label>
-            <div class="vehicle-damage-help">Hibákról küldj fotót ide rendszám megjelöléssel.</div>
-            <div id="vehicle-damage-photo-fields" class="vehicle-damage-fields full-width"></div>
-            <fieldset class="vehicle-checklist full-width">
-              <legend>Állapot kérdőív</legend>
-              <label>Olajszint
-                <select name="oil_level_status" required>
-                  <option value="ok">OK</option>
-                  <option value="not_ok">NEM OK</option>
-                </select>
-              </label>
-              <label>Hűtővíz szintje
-                <select name="coolant_level_status" required>
-                  <option value="ok">OK</option>
-                  <option value="not_ok">NEM OK</option>
-                </select>
-              </label>
-              <label>Guminyomás
-                <select name="tire_pressure_status" required>
-                  <option value="ok">OK</option>
-                  <option value="not_ok">NEM OK</option>
-                </select>
-              </label>
-              <label>Motorvédő lemez állapota, van-e?
-                <select name="engine_cover_status" required>
-                  <option value="ok">OK</option>
-                  <option value="not_ok">NEM OK</option>
-                </select>
-              </label>
-              <label>Lökhárítón sérülés látható-e?
-                <select name="bumper_damage_status" required>
-                  <option value="ok">OK</option>
-                  <option value="not_ok">NEM OK</option>
-                </select>
-              </label>
-              <label>Világító berendezések állapota?
-                <select name="lights_status" required>
-                  <option value="ok">OK</option>
-                  <option value="not_ok">NEM OK</option>
-                </select>
-              </label>
-            </fieldset>
-            <label class="full-width">Megjegyzés<textarea id="vehicle-condition-note" name="note" rows="3" placeholder="Kiegészítő megjegyzés, ha szükséges"></textarea></label>
-            <button class="primary full-width" type="submit">Autó állapot rögzítése</button>
-          </form>
-          <p id="vehicle-condition-message" class="updated-at" aria-live="polite"></p>
-          <section id="vehicle-condition-history" class="device-history"></section>
         </section>
       </div>
 
@@ -920,6 +864,6 @@
         </section>
       </dialog>
     </main>
-    <script src="/app.js?v=207" defer></script>
+    <script src="/app.js?v=208" defer></script>
   </body>
 </html>

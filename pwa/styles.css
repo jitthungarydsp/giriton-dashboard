@@ -1016,6 +1016,16 @@ textarea { min-height: 96px; resize: vertical; }
 .vehicle-checklist legend { padding: 0 6px; color: var(--green-dark); font-size: 12px; font-weight: 900; }
 .vehicle-checklist label { margin: 0; }
 .vehicle-assignment-list { display: grid; gap: 10px; margin-top: 14px; }
+.vehicle-header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.vehicle-dashboard-card { display: grid; gap: 14px; }
+.vehicle-filter-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .38fr); gap: 12px; align-items: end; }
+.vehicle-warehouse-tabs, .vehicle-view-tabs { display: flex; flex-wrap: wrap; gap: 7px; }
+.vehicle-warehouse-tabs button, .vehicle-view-tabs button { min-height: 42px; padding: 0 15px; border: 1px solid #cbd8c6; border-radius: 13px; background: #fff; color: var(--ink); font-weight: 850; }
+.vehicle-warehouse-tabs button.active, .vehicle-view-tabs button.active { border-color: var(--ink); background: var(--ink); color: #fff; }
+.vehicle-view-tabs { padding: 5px; border: 1px solid var(--line); border-radius: 16px; background: #f6faf3; }
+.vehicle-view-tabs button { flex: 1 1 150px; border-color: transparent; background: transparent; }
+.vehicle-view-tabs button.active { background: var(--green-dark); }
+.vehicle-date-picker { min-width: 0; }
 .vehicle-assignment-search { display: grid; gap: 6px; }
 .vehicle-assignment-search span { color: var(--muted); font-size: 12px; font-weight: 900; }
 .vehicle-assignment-search input { width: 100%; min-height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 14px; background: #f8faf6; color: var(--ink); font: inherit; font-weight: 850; }
@@ -1024,6 +1034,37 @@ textarea { min-height: 96px; resize: vertical; }
 .vehicle-assignment-row strong { display: block; font-size: 14px; font-weight: 950; overflow-wrap: anywhere; }
 .vehicle-assignment-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.35; }
 .vehicle-assignment-row > span { justify-self: end; max-width: 90px; color: var(--green-dark); font-size: 11px; font-weight: 900; text-align: right; overflow-wrap: anywhere; }
+.vehicle-assignment-card { grid-template-columns: minmax(72px, .55fr) minmax(0, 1.2fr) minmax(70px, .55fr) auto; }
+.vehicle-assignment-card > div { min-width: 0; }
+.vehicle-row-label, .vehicle-free-row span, .vehicle-detail-summary span { display: block; color: var(--green-dark); font-size: 10px; font-weight: 950; text-transform: uppercase; }
+.vehicle-assignment-card strong { font-size: 16px; }
+.vehicle-assignment-actions { display: grid; justify-items: end; gap: 7px; }
+.vehicle-status-pill { display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 0 10px; border-radius: 999px; background: #e2f2df; color: var(--green-dark); font-size: 11px; font-weight: 950; white-space: nowrap; }
+.vehicle-status-pill.history { background: #edf1eb; color: var(--muted); }
+.vehicle-status-pill.free { background: #e1efff; color: #195da9; }
+.vehicle-detail-button { min-height: 38px; padding: 0 12px; border-radius: 11px; }
+.vehicle-free-panel { display: grid; gap: 12px; }
+.vehicle-free-list { display: grid; gap: 9px; }
+.vehicle-free-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(100px, .7fr) auto auto; gap: 10px; align-items: center; padding: 13px; border: 1px solid var(--line); border-radius: 15px; background: #f8faf6; }
+.vehicle-free-row > div { min-width: 0; }
+.vehicle-free-row strong { display: block; margin-top: 4px; font-size: 15px; overflow-wrap: anywhere; }
+.vehicle-free-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; overflow-wrap: anywhere; }
+.vehicle-detail-dialog { width: min(94vw, 640px); max-height: calc(100dvh - 24px); overflow: visible; }
+.vehicle-detail-dialog-card { max-height: calc(100dvh - 24px); overflow: auto; }
+.vehicle-detail-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.vehicle-detail-summary > div, .vehicle-detail-section { display: grid; gap: 4px; padding: 13px; border: 1px solid var(--line); border-radius: 15px; background: #f8faf6; }
+.vehicle-detail-summary strong { display: block; margin-top: 4px; font-size: 15px; overflow-wrap: anywhere; }
+.vehicle-detail-actions { display: grid; gap: 8px; }
+.vehicle-detail-section { margin-top: 10px; }
+.vehicle-dialog-section-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+.vehicle-dialog-section-head span { display: block; color: var(--green-dark); font-size: 10px; font-weight: 950; }
+.vehicle-dialog-section-head strong { display: block; margin-top: 4px; font-size: 15px; }
+.vehicle-dialog-section-head small { color: var(--muted); font-size: 11px; font-weight: 800; text-align: right; }
+.vehicle-detail-log { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 5px 10px; padding-top: 5px; }
+.vehicle-detail-log span { color: var(--muted); font-size: 12px; font-weight: 800; }
+.vehicle-detail-log strong { font-size: 13px; overflow-wrap: anywhere; }
+.vehicle-detail-note { color: var(--muted); font-size: 12px; font-weight: 750; line-height: 1.4; }
+.vehicle-condition-dialog-section { padding-top: 12px; border-top: 1px solid var(--line); }
 .vehicle-last-usage { display: grid; gap: 3px; padding: 14px; border: 1px solid #b8d5b4; border-radius: 15px; background: #eff8ed; }
 .vehicle-last-usage span { color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
 .vehicle-last-usage strong { font-size: 17px; font-weight: 950; }
@@ -1048,6 +1089,18 @@ textarea { min-height: 96px; resize: vertical; }
 }
 
 @media (max-width: 430px) {
+  .vehicle-filter-row { grid-template-columns: 1fr; }
+  .vehicle-header-actions { align-items: stretch; }
+  .vehicle-header-actions button { flex: 1 1 150px; }
+  .vehicle-warehouse-tabs button { flex: 1 1 80px; }
+  .vehicle-view-tabs { display: grid; grid-template-columns: 1fr; }
+  .vehicle-view-tabs button { width: 100%; }
+  .vehicle-assignment-card { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .vehicle-assignment-actions { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; justify-items: stretch; }
+  .vehicle-free-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .vehicle-free-row .vehicle-status-pill { justify-self: start; }
+  .vehicle-free-row button { width: 100%; }
+  .vehicle-detail-summary { grid-template-columns: 1fr; }
   .route-planner-head,
   .route-planner-insights,
   .route-planner-actions { grid-template-columns: 1fr; }
