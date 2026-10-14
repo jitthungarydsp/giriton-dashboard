@@ -2403,12 +2403,73 @@ def safe_vehicle_assignment(row: dict[str, Any]) -> dict[str, str]:
         "driverName": str(row.get("driver_name") or "").strip(),
         "car": str(row.get("car") or "").strip(),
         "licensePlate": str(row.get("license_plate") or "").strip(),
+        "warehouse": normalize_warehouse(row.get("warehouse_code") or row.get("warehouse") or ""),
         "shiftStart": normalize_time(row.get("shift_start")),
         "shiftEnd": normalize_time(row.get("shift_end")),
         "shiftType": str(row.get("shift_type") or "").strip(),
         "source": str(row.get("source_name") or "").strip(),
         "fetchedAt": str(row.get("fetched_at") or "").strip(),
     }
+
+
+def read_live_monitoring_vehicle_assignment_rows(
+    *,
+    limit: int = 3000,
+    window_hours: int = 24,
+) -> list[dict[str, Any]]:
+    """Read today's vehicle assignment from the Courier Hub live dashboard snapshot."""
+    rows = optional_supabase_rows(
+        "courier_hub_live_monitoring_courier_snapshot_latest",
+        params={
+            "select": (
+                "warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,status_code,"
+                "departure_status,shift_status,vehicle_plate,planned_start_at,actual_start_at,"
+                "planned_departure_at,fetched_at,courier_json"
+            ),
+            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+            "status_code": "eq.200",
+            "order": "fetched_at.desc,planned_start_at.asc.nullslast",
+            "limit": str(int(limit)),
+        },
+        timeout=20,
+    )
+    now = datetime.now(LOCAL_TIMEZONE)
+    today = now.date().isoformat()
+    min_fetched_at = now - timedelta(hours=max(1, int(window_hours or 24)))
+    assignments: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        fetched_at = local_datetime(row.get("fetched_at"))
+        if fetched_at and fetched_at < min_fetched_at:
+            continue
+        plate = str(row.get("vehicle_plate") or "").strip()
+        if not plate:
+            continue
+        warehouse_code = normalize_warehouse(row.get("warehouse_code") or row.get("warehouse_id") or "")
+        courier_id = str(row.get("courier_id") or "").strip()
+        driver_name = str(row.get("courier_name") or "").strip()
+        key = (warehouse_code, courier_id or normalize_person_match_text(driver_name), plate.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        courier_json = row.get("courier_json") if isinstance(row.get("courier_json"), dict) else {}
+        assignments.append({
+            "source_name": "Courier Hub live-monitoring dashboard",
+            "work_date": fetched_at.date().isoformat() if fetched_at else today,
+            "driver_name": driver_name or f"Futár {courier_id}".strip(),
+            "warehouse_code": warehouse_code,
+            "shift_start": local_iso_time(row.get("planned_start_at") or row.get("actual_start_at")),
+            "shift_end": local_iso_time(row.get("planned_departure_at")),
+            "car": str(courier_json.get("fridgeConfig") or "").strip(),
+            "license_plate": plate,
+            "shift_type": str(
+                row.get("departure_status")
+                or row.get("shift_status")
+                or "Mai élő autóbeosztás"
+            ).strip(),
+            "fetched_at": str(row.get("fetched_at") or "").strip(),
+        })
+    return assignments
 
 
 def read_vehicle_assignment_rows(
@@ -2662,6 +2723,11 @@ def live_vehicle_assignment_for_user(user: dict[str, Any]) -> dict[str, Any] | N
 
 
 def read_live_vehicle_assignment_rows(limit: int = 1000, *, window_hours: int = 8) -> list[dict[str, Any]]:
+    # The live-monitoring dashboard is the primary today's assignment source.
+    live_monitoring_rows = read_live_monitoring_vehicle_assignment_rows(
+        limit=limit,
+        window_hours=window_hours,
+    )
     rows = optional_supabase_rows(
         "dsp_drivers_live_raw",
         params={
@@ -2723,7 +2789,7 @@ def read_live_vehicle_assignment_rows(limit: int = 1000, *, window_hours: int = 
             "shift_type": " · ".join(source_parts),
             "fetched_at": str(row.get("fetched_at") or "").strip(),
         })
-    return live_rows
+    return live_monitoring_rows + live_rows
 
 
 def read_vehicle_condition_assignment_rows(
