@@ -22072,6 +22072,10 @@ def is_jit_row_courier_id_missing_error(exc: BaseException) -> bool:
         or '"jit_row.courier_id" does not exist' in text
         or "column jit_row.courier_id" in text
         or 'column "courier_id" does not exist' in text
+        or "jit_row.driver_name does not exist" in text
+        or '"jit_row.driver_name" does not exist' in text
+        or "column jit_row.driver_name" in text
+        or 'column "driver_name" does not exist' in text
     )
 
 
@@ -22084,16 +22088,29 @@ def read_jit_rows_for_summary_rebuild(session_id: str, page_size: int = 1000) ->
         "courier_delay_bonus_huf,courier_compliance_bonus_huf,"
         "courier_other_bonus_huf,courier_bonus_total_huf"
     )
+    fallback_columns = (
+        "session_id,normalized_data,route_date,is_route_primary,"
+        "company_base_rate_huf,courier_base_rate_huf,courier_tip_huf,"
+        "courier_delay_bonus_huf,courier_compliance_bonus_huf,"
+        "courier_other_bonus_huf,courier_bonus_total_huf"
+    )
+    use_fallback_columns = False
     while True:
-        response = (
-            get_db()
-            .schema("settlement")
-            .table("jit_row")
-            .select(columns)
-            .eq("session_id", session_id)
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
+        try:
+            response = (
+                get_db()
+                .schema("settlement")
+                .table("jit_row")
+                .select(fallback_columns if use_fallback_columns else columns)
+                .eq("session_id", session_id)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+        except BaseException as exc:
+            if not use_fallback_columns and is_jit_row_courier_id_missing_error(exc):
+                use_fallback_columns = True
+                continue
+            raise
         page = response.data or []
         rows.extend(page)
         if len(page) < page_size:
@@ -22111,14 +22128,19 @@ def normalize_excel_jit_courier_identity(session_id: str) -> int:
     page_size = 1000
     client = get_db().schema("settlement")
     while True:
-        response = (
-            client
-            .table("jit_row")
-            .select("id,courier_id,driver_name,normalized_data")
-            .eq("session_id", clean_session_id)
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
+        try:
+            response = (
+                client
+                .table("jit_row")
+                .select("id,courier_id,driver_name,normalized_data")
+                .eq("session_id", clean_session_id)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+        except BaseException as exc:
+            if is_jit_row_courier_id_missing_error(exc):
+                return updated
+            raise
         rows = response.data or []
         if not rows:
             break
