@@ -18333,6 +18333,78 @@ def dashboard_profiles_by_courier(courier_ids: list[str]) -> dict[str, dict[str,
     return profiles
 
 
+def dashboard_latest_snapshot_payables(month: date, courier_ids: list[str]) -> dict[str, int]:
+    """Return the latest saved finance-snapshot payable per courier.
+
+    The dashboard fast view can lag behind the detail endpoint when its SQL
+    view has not yet been refreshed. The detail endpoint already treats the
+    latest finance snapshot as authoritative, so the list must use the same
+    source whenever it is available.
+    """
+    clean_ids = [str(item or "").strip() for item in courier_ids if str(item or "").strip()]
+    if not clean_ids:
+        return {}
+    month_key = month.replace(day=1).isoformat()
+    latest_rows = optional_supabase_rows_paged(
+        "courier_finance_snapshot",
+        schema="settlement",
+        params={
+            "select": "id,courier_id,version,metadata,created_at",
+            "period_start": f"eq.{month_key}",
+            "courier_id": f"in.({','.join(clean_ids)})",
+            "order": "courier_id.asc,version.desc,created_at.desc",
+        },
+        timeout=30,
+        page_size=1000,
+        max_rows=50000,
+    )
+    latest_by_courier: dict[str, dict[str, Any]] = {}
+    for row in latest_rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        if courier_id and courier_id not in latest_by_courier:
+            latest_by_courier[courier_id] = row
+    if not latest_by_courier:
+        return {}
+
+    snapshot_ids = [str(row.get("id") or "").strip() for row in latest_by_courier.values() if row.get("id")]
+    snapshot_to_courier = {
+        str(row.get("id") or "").strip(): courier_id
+        for courier_id, row in latest_by_courier.items()
+        if row.get("id")
+    }
+    payable_by_courier: dict[str, int] = {}
+    for index in range(0, len(snapshot_ids), 150):
+        chunk = snapshot_ids[index:index + 150]
+        if not chunk:
+            continue
+        item_rows = optional_supabase_rows_paged(
+            "courier_finance_snapshot_item",
+            schema="settlement",
+            params={
+                "select": "snapshot_id,amount_value",
+                "snapshot_id": f"in.({','.join(chunk)})",
+                "section": "eq.finance",
+                "item_key": "eq.payable",
+                "order": "snapshot_id.asc",
+            },
+            timeout=30,
+            page_size=1000,
+            max_rows=50000,
+        )
+        for item in item_rows:
+            courier_id = snapshot_to_courier.get(str(item.get("snapshot_id") or "").strip())
+            if courier_id:
+                payable_by_courier[courier_id] = money_int(item.get("amount_value"))
+
+    for courier_id, snapshot in latest_by_courier.items():
+        if courier_id in payable_by_courier:
+            continue
+        metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+        if "payable_total" in metadata:
+            payable_by_courier[courier_id] = money_int(metadata.get("payable_total"))
+    return payable_by_courier
+
+
 def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = "") -> dict[str, Any] | None:
     month_start = month.replace(day=1)
     month_key = month_start.isoformat()
@@ -18384,6 +18456,10 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
         )
         return None
 
+    latest_snapshot_payables = dashboard_latest_snapshot_payables(
+        month_start,
+        [str(row.get("courier_id") or "") for row in rows],
+    )
     clean_query = normalize_text(query)
     dashboard_rows: list[dict[str, Any]] = []
     for row in rows:
@@ -18397,6 +18473,7 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
             sources = [item.strip().strip('"') for item in raw_sources.strip("{}").split(",") if item.strip()]
         else:
             sources = list(raw_sources)
+        total_huf = latest_snapshot_payables.get(courier_id, money_int(row.get("payable_huf")))
         dashboard_rows.append({
             "courierId": courier_id,
             "courierName": courier_name,
@@ -18407,7 +18484,7 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
                 "tone": str(row.get("dashboard_status_tone") or "muted"),
                 "sort": safe_int(row.get("dashboard_status_sort")),
             },
-            "totalPayableHuf": money_int(row.get("payable_huf")),
+            "totalPayableHuf": total_huf,
             "sources": sources,
             "updatedAt": str(row.get("updated_at") or ""),
         })
