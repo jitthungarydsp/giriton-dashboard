@@ -164,7 +164,7 @@ const PHONEBOOK_CONTACTS = [
   { label: "FC2 Diszpécser", phone: "+3612002763", note: "FC2 támogatás" },
   { label: "FC2 Logisztikai műszakvezető", phone: "+3612069507", note: "Logisztikai vezető" },
   { label: "FC1 Logisztikai műszakvezető", phone: "+3612001147", note: "Logisztikai vezető" },
-  { label: "Ügyfélszolgálat", phone: "0612000881", note: "Központi ügyfélszolgálat" },
+  { label: "Ügyfélszolgálat", phone: "0612000882", note: "Központi ügyfélszolgálat" },
 ];
 const HUNGARIAN_COUNTIES = [
   "Bács-Kiskun",
@@ -263,7 +263,7 @@ async function api(path, options = {}) {
 }
 
 function previewCourierValue() {
-  if (!state.user?.canPreviewCouriers) return "";
+  if (!state.user?.canPreviewCouriers || String(state.user.role || "").toLowerCase() === "coordinator") return "";
   return String(state.workflowPreviewCourierId || "").trim();
 }
 
@@ -533,6 +533,11 @@ function showApp() {
   $("#app-view").classList.remove("hidden");
   $("#welcome").textContent = `Szia, ${state.user.username.split(" ")[0]}!`;
   const role = String(state.user.role || "").toLowerCase();
+  if (role === "coordinator") {
+    // A koordinátor a koordinátori menüket használja, admin előnézetet nem.
+    state.user.canPreviewCouriers = false;
+    state.workflowPreviewCourierId = "";
+  }
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   $("#nav-coordinator-live").classList.toggle("hidden", !canCoordinate);

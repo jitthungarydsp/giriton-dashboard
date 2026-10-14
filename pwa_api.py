@@ -446,8 +446,10 @@ def can_preview_couriers(user: dict[str, Any]) -> bool:
     username_key = normalize_text(user.get("username"))
     role = str(user.get("role") or "").strip().lower()
     trainer_key = normalize_text(user.get("trainer"))
+    if role == "coordinator":
+        return False
     return (
-        role in {"admin", "coordinator", "superadmin"}
+        role in {"admin", "superadmin"}
         or username_key in {normalize_text("admin"), normalize_text("Bagoly Zoltán")}
         or trainer_key == normalize_text("admin")
     )
