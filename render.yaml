@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: giriton-courier-pwa
+    name: jitt-courier-portal-pwa
     runtime: python
     plan: free
     branch: main
