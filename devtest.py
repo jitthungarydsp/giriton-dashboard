@@ -11152,11 +11152,10 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
         grouped = grouped.loc[grouped["courier_id"].astype(str).str.len() > 0].copy()
         if grouped.empty:
             continue
-        return _finalize_customer_rating_monthly_rows(
+        return _finalize_customer_rating_value_rows(
             grouped,
             uploaded_file,
             billing_month,
-            dashboard_data,
             rating_sheet,
         )
 
