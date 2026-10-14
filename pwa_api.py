@@ -5279,7 +5279,7 @@ def departure_helper_route_payload(row: dict[str, Any], warehouse_id: int) -> di
     minutes_to_departure = safe_int(row.get("minutesToDeparture"))
     platform = str(row.get("platformSectionMark") or "").strip()
     departed = bool(row.get("warehouseDepartureReal"))
-    on_ramp = bool(platform) and not departed and minutes_to_loading <= 0
+    on_ramp = bool(platform) and not departed
     waiting = not departed and not on_ramp
     orders = safe_int(row.get("ordersInRoute"))
     not_scanned_orders = safe_int(row.get("notScannedOrders"))

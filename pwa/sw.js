@@ -1,4 +1,4 @@
-const CACHE = "jitt-pwa-v215";
+const CACHE = "jitt-pwa-v216";
 const APP_SHELL = ["/", "/styles.css?v=215", "/app.js?v=215", "/sw.js?v=215", "/manifest.webmanifest?v=215", "/icon.svg?v=215"];
 
 self.addEventListener("install", (event) => {
