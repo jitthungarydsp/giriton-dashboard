@@ -8148,6 +8148,20 @@ function renderScheduleDayButton(day) {
   `;
 }
 
+function renderScheduleCalendarDays(days = []) {
+  const visibleDays = Array.isArray(days) ? days.filter((day) => day?.date) : [];
+  if (!visibleDays.length) return "";
+  const firstDate = new Date(`${visibleDays[0].date}T12:00:00`);
+  const mondayOffset = Number.isNaN(firstDate.getTime()) ? 0 : (firstDate.getDay() + 6) % 7;
+  const cells = [
+    ...Array.from({ length: mondayOffset }, () => '<div class="schedule-day-placeholder" aria-hidden="true"></div>'),
+    ...visibleDays.map(renderScheduleDayButton),
+  ];
+  const trailingOffset = (7 - (cells.length % 7)) % 7;
+  cells.push(...Array.from({ length: trailingOffset }, () => '<div class="schedule-day-placeholder" aria-hidden="true"></div>'));
+  return cells.join("");
+}
+
 function renderScheduleWorker(worker) {
   const vehicleText = opsVehicleText(worker.vehicle);
   const end = worker.end ? `-${escapeHtml(worker.end)}` : "";
@@ -9136,7 +9150,7 @@ function renderCoordinatorSchedule() {
     ])}
     <p class="updated-at">${escapeHtml(payload.month || "")} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
     <div class="schedule-day-grid">
-      ${(payload.days || []).map(renderScheduleDayButton).join("")}
+      ${renderScheduleCalendarDays(payload.days || [])}
     </div>
   `;
   target.querySelectorAll("[data-schedule-day]").forEach((button) => {

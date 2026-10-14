@@ -291,6 +291,7 @@ textarea { min-height: 96px; resize: vertical; }
 .ops-muted { color: var(--muted); font-weight: 850; }
 .ops-worker-foot { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 .schedule-day-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.schedule-day-placeholder { min-height: 104px; }
 .schedule-day { display: grid; gap: 5px; min-height: 104px; padding: 9px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); text-align: left; }
 .schedule-day.active { border-color: var(--green-dark); background: #eff8ed; box-shadow: 0 0 0 3px #6f9d3d1f; }
 .schedule-day.attention { border-color: #e0a39e; }

@@ -10700,7 +10700,21 @@ def build_financial_breakdown_from_snapshot(
         {"key": "delay_bonus", "label": "Késedelmi díj", "amountHuf": amount("delay_bonus"), "tone": "income", "items": detail_or_fallback("delay_bonus", ["delay_bonus"])},
         {"key": "compliance_bonus", "label": "Túramegfelelés", "amountHuf": amount("compliance_bonus"), "tone": "income", "items": detail_or_fallback("compliance_bonus", ["compliance_bonus"])},
         {"key": "address_bonus_kifli", "label": "Cím bónusz (Kifli)", "amountHuf": amount("address_bonus_kifli"), "tone": "income", "items": items(["address_bonus_kifli"])},
-        {"key": "loyalty_bonus", "label": "Lojalitási bónusz", "amountHuf": amount("loyalty_bonus"), "tone": "income", "items": detail_or_fallback("loyalty_bonus", ["loyalty_bonus"])},
+        {
+            "key": "loyalty_bonus",
+            "label": "Lojalitási bónusz",
+            "amountHuf": amount("loyalty_bonus"),
+            "tone": "income",
+            "items": detail_or_fallback(
+                "loyalty_bonus",
+                [
+                    "loyalty_bonus",
+                    "loyalty_previous_normal_routes",
+                    "loyalty_current_normal_routes",
+                    "loyalty_advance_booking_days",
+                ],
+            ),
+        },
         {"key": "customer_rating", "label": "Ügyfélértékelés", "amountHuf": amount("customer_rating"), "tone": "income", "items": items(["customer_rating"])},
         {
             "key": "kiflis_bonus_malus",
