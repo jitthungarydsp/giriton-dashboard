@@ -101,7 +101,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v216";
+const APP_VERSION = "v217";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -549,9 +549,7 @@ function showApp() {
   const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
   if (coordinatorOnly) {
-    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin", "#nav-settlement-dashboard", "#nav-settlement-import-config"]
-      .forEach((selector) => $(selector)?.classList.add("hidden"));
-    $("#nav-vehicle")?.classList.remove("hidden");
+    // A koordinátori jogosultság hozzáadódik a futár saját menüihez.
     $("#nav-vehicle-config")?.classList.toggle("hidden", !state.user.canManageVehicles);
   }
   if (hrOnly) {
