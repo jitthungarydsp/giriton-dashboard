@@ -12481,11 +12481,11 @@ def build_financial_breakdown(
         )
         if snapshot else None
     )
-    overrides = read_mobile_breakdown_overrides(courier_id, month)
-    has_manual_overrides = any(is_manual_mobile_override(row) for row in overrides.values())
-    if snapshot_breakdown and (not has_manual_overrides):
+    # The devtest snapshot is the canonical calculation. Older PWA overrides
+    # must not make the mobile detail diverge from what devtest.py displays.
+    if snapshot_breakdown:
         return snapshot_breakdown
-    if snapshot_only and not has_manual_overrides:
+    if snapshot_only:
         return {
             "available": False,
             "snapshotOnly": True,
@@ -12496,6 +12496,7 @@ def build_financial_breakdown(
             "source": "settlement.courier_finance_snapshot",
             "message": "Ehhez a hónaphoz még nincs mentett elszámolási snapshot.",
         }
+    overrides = read_mobile_breakdown_overrides(courier_id, month)
     quality_notes = financial_quality_card_notes(courier_id, month)
     row = read_courier_settlement_summary_row(courier_id, month, allow_unpublished=allow_unpublished)
     overrides = enrich_mobile_overrides_from_financial_sources(user, month, row or {}, overrides)
@@ -17501,8 +17502,11 @@ def build_workflow(
     ]
     mobile_config = read_mobile_settlement_period_config(month) if not process_id else {}
     visibility_mode = normalize_mobile_visibility_mode(mobile_config.get("visibility_mode"))
-    tig_hidden_by_admin = not process_id and visibility_mode == "settlement_only"
-    tig_open_by_admin = not process_id and visibility_mode == "settlement_and_tig"
+    # Admin preview is intentionally a full read-only view of the selected
+    # courier. Mobile visibility settings must not hide the settlement/TIG
+    # details from the administrator who opened that preview.
+    tig_hidden_by_admin = not preview_read_only and not process_id and visibility_mode == "settlement_only"
+    tig_open_by_admin = preview_read_only or (not process_id and visibility_mode == "settlement_and_tig")
     legacy_unrestricted_month = is_unrestricted_legacy_settlement_month(month)
     individual_monthly_billing_open = (
         not process_id
@@ -17522,11 +17526,12 @@ def build_workflow(
         or monthly_workflow_visible
         or (can_view_financial_amounts(user) if can_view_amounts is None else bool(can_view_amounts))
     )
+    preview_snapshot_only = not preview_read_only
     financial_breakdown = build_financial_breakdown(
         user,
         month,
         allow_unpublished=allow_unpublished or legacy_unrestricted_month,
-        snapshot_only=True,
+        snapshot_only=preview_snapshot_only,
     ) if not process_id else {
         "available": False,
         "month": month.strftime("%Y-%m"),
@@ -17579,9 +17584,9 @@ def build_workflow(
         or workflow_action_visible(states, "tig")
     )
     if kp_invoice_process and not tig_hidden_by_admin:
-        tig_breakdown = build_kp_invoice_tig_breakdown(user, month, snapshot_only=True)
+        tig_breakdown = build_kp_invoice_tig_breakdown(user, month, snapshot_only=preview_snapshot_only)
     elif not process_id and not tig_hidden_by_admin and tig_may_be_visible:
-        tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown, snapshot_only=True)
+        tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown, snapshot_only=preview_snapshot_only)
     else:
         tig_breakdown = {
             "available": False,
@@ -18405,6 +18410,69 @@ def dashboard_latest_snapshot_payables(month: date, courier_ids: list[str]) -> d
     return payable_by_courier
 
 
+def build_admin_settlement_totals(month: date) -> dict[str, Any]:
+    """Build a minimal courier-total list directly from devtest snapshots.
+
+    This endpoint intentionally avoids the workflow/status joins used by the
+    visual dashboard. The export robot only needs the same devtest final
+    amount for each courier, and this path remains usable when a workflow
+    table or the fast view is temporarily unavailable.
+    """
+    month_start = month.replace(day=1)
+    month_key = month_start.isoformat()
+    snapshots = optional_supabase_rows_paged(
+        "courier_finance_snapshot",
+        schema="settlement",
+        params={
+            "select": "courier_id,courier_name,warehouse_label,version,metadata,created_at",
+            "period_start": f"eq.{month_key}",
+            "order": "courier_id.asc,version.desc,created_at.desc",
+        },
+        timeout=45,
+        page_size=1000,
+        max_rows=50000,
+    )
+    latest_by_courier: dict[str, dict[str, Any]] = {}
+    for snapshot in snapshots:
+        courier_id = str(snapshot.get("courier_id") or "").strip()
+        if courier_id and courier_id not in latest_by_courier:
+            latest_by_courier[courier_id] = snapshot
+
+    courier_ids = list(latest_by_courier)
+    payable_by_courier = dashboard_latest_snapshot_payables(month_start, courier_ids)
+    rows: list[dict[str, Any]] = []
+    for courier_id, snapshot in latest_by_courier.items():
+        metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+        total_huf = payable_by_courier.get(courier_id, money_int(metadata.get("payable_total")))
+        rows.append({
+            "courierId": courier_id,
+            "courierName": str(snapshot.get("courier_name") or f"Futár {courier_id}").strip(),
+            "warehouse": str(snapshot.get("warehouse_label") or "").strip(),
+            "status": {
+                "label": "Devtest snapshot",
+                "detail": f"v{money_int(snapshot.get('version'))}",
+                "tone": "active",
+                "sort": 30,
+            },
+            "totalPayableHuf": total_huf,
+            "sources": ["devtest_finance_snapshot"],
+            "updatedAt": str(snapshot.get("created_at") or ""),
+            "snapshotVersion": money_int(snapshot.get("version")),
+        })
+    rows.sort(key=lambda row: (normalize_person_match_text(row.get("courierName")), str(row.get("courierId") or "")))
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "rows": rows,
+        "summary": {
+            "couriers": len(rows),
+            "totalPayableHuf": sum(money_int(row.get("totalPayableHuf")) for row in rows),
+            "statusCounts": {"Devtest snapshot": len(rows)} if rows else {},
+        },
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "source": "settlement.courier_finance_snapshot",
+    }
+
+
 def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = "") -> dict[str, Any] | None:
     month_start = month.replace(day=1)
     month_key = month_start.isoformat()
@@ -18595,6 +18663,10 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
         candidate["courierName"] = str(summary_row.get("courier_name") or summary_row.get("driver_name") or candidate.get("courierName") or "").strip()
         candidate.setdefault("sources", set()).add("summary")
 
+    latest_snapshot_payables = dashboard_latest_snapshot_payables(
+        month_start,
+        list(candidates.keys()),
+    )
     monthly_flags_by_courier = dashboard_monthly_flags_by_courier(month_start, list(candidates.keys()))
     rows: list[dict[str, Any]] = []
     clean_query = normalize_text(query)
@@ -18611,7 +18683,10 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
             states=statuses_by_courier.get(courier_id, {}),
             open_complaints=open_complaints_by_courier.get(courier_id, 0),
         )
-        total_huf = money_from(summary_row, "payable_total_huf", "payable_huf")
+        total_huf = latest_snapshot_payables.get(
+            courier_id,
+            money_from(summary_row, "payable_total_huf", "payable_huf"),
+        )
         updated_at = str(summary_row.get("calculated_at") or "")
         rows.append({
             "courierId": courier_id,
@@ -21577,7 +21652,55 @@ def admin_settlement_dashboard(
 ):
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
-    return build_admin_settlement_dashboard(month_value, q)
+    try:
+        dashboard = build_admin_settlement_dashboard(month_value, q)
+        # An empty fast-view response is still a successful query, but it is
+        # not useful when devtest snapshots exist for the selected month.
+        # Keep the visible dashboard aligned with the devtest final totals.
+        if dashboard.get("rows"):
+            return dashboard
+        snapshot_dashboard = build_admin_settlement_totals(month_value)
+        if snapshot_dashboard.get("rows"):
+            if q:
+                clean_query = normalize_text(q)
+                snapshot_dashboard["rows"] = [
+                    row for row in snapshot_dashboard.get("rows") or []
+                    if clean_query in normalize_text(
+                        f"{row.get('courierId')} {row.get('courierName')} {row.get('warehouse')}"
+                    )
+                ]
+                snapshot_dashboard["summary"]["couriers"] = len(snapshot_dashboard["rows"])
+                snapshot_dashboard["summary"]["totalPayableHuf"] = sum(
+                    money_int(row.get("totalPayableHuf")) for row in snapshot_dashboard["rows"]
+                )
+            return snapshot_dashboard
+        return dashboard
+    except Exception as exc:
+        print(f"Admin settlement dashboard fallback: {exc}")
+        snapshot_dashboard = build_admin_settlement_totals(month_value)
+        if q:
+            clean_query = normalize_text(q)
+            snapshot_dashboard["rows"] = [
+                row for row in snapshot_dashboard.get("rows") or []
+                if clean_query in normalize_text(
+                    f"{row.get('courierId')} {row.get('courierName')} {row.get('warehouse')}"
+                )
+            ]
+            snapshot_dashboard["summary"]["couriers"] = len(snapshot_dashboard["rows"])
+            snapshot_dashboard["summary"]["totalPayableHuf"] = sum(
+                money_int(row.get("totalPayableHuf")) for row in snapshot_dashboard["rows"]
+            )
+        return snapshot_dashboard
+
+
+@app.get("/api/admin/settlement-totals")
+def admin_settlement_totals(
+    month: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
+    return build_admin_settlement_totals(month_value)
 
 
 @app.get("/api/admin/settlement-dashboard/detail")

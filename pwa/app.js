@@ -543,6 +543,8 @@ function showApp() {
     state.workflowPreviewCourierId = "";
   }
   const canCoordinate = ["admin", "coordinator"].includes(role);
+  const canViewAdminSettlement = Boolean(state.user.canViewSettlementDashboard)
+    || ["admin", "superadmin"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   $("#nav-coordinator-live").classList.toggle("hidden", !canCoordinate);
   $("#nav-departure-helper").classList.toggle("hidden", !canCoordinate);
@@ -552,8 +554,8 @@ function showApp() {
     .forEach((selector) => $(selector)?.classList.remove("hidden"));
   $("#nav-registration-admin").classList.toggle("hidden", !state.user.canApproveRegistrations);
   $("#nav-route-details").classList.toggle("hidden", !state.user.canPreviewCouriers);
-  $("#nav-settlement-dashboard").classList.toggle("hidden", !state.user.canViewSettlementDashboard);
-  $("#nav-settlement-import-config").classList.toggle("hidden", !state.user.canViewSettlementDashboard);
+  $("#nav-settlement-dashboard").classList.toggle("hidden", !canViewAdminSettlement);
+  $("#nav-settlement-import-config").classList.toggle("hidden", !canViewAdminSettlement);
   $("#nav-vehicle-config").classList.toggle("hidden", !state.user.canManageVehicles);
   const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
