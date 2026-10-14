@@ -3822,6 +3822,9 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     delay = parse_huf_value(row.get("Késedelmi díj"))
     compliance = parse_huf_value(row.get("Túramegfelelés"))
     loyalty = parse_huf_value(row.get("Lojalitás"))
+    loyalty_previous_routes = int(parse_huf_value(row.get("Lojalitás előző havi normál kör")))
+    loyalty_current_routes = int(parse_huf_value(row.get("Lojalitás aktuális normál kör")))
+    loyalty_advance_booking_days = int(parse_huf_value(row.get("Lojalitás előre foglalt nap")))
     customer_rating = parse_huf_value(row.get("Ügyfélértékelés"))
     correction = parse_huf_value(
         row.get("Korrekció")
@@ -3884,6 +3887,9 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "address_bonus_kifli", "item_label": "Cím bónusz (Kifli)", "amount_kind": "huf", "amount_value": address_bonus_kifli, "note": "Stop-count Bonus"},
         {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "loyalty_previous_normal_routes", "item_label": "Előző havi normál kör", "amount_kind": "count", "amount_value": loyalty_previous_routes, "note": "Lojalitási paraméter alapja"},
+        {"item_key": "loyalty_current_normal_routes", "item_label": "Kifutott kör", "amount_kind": "count", "amount_value": loyalty_current_routes, "note": "Lojalitási paraméter alapja"},
+        {"item_key": "loyalty_advance_booking_days", "item_label": "Előre foglalt műszak", "amount_kind": "count", "amount_value": loyalty_advance_booking_days, "note": "Lojalitási paraméter alapja"},
         {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "correction", "item_label": "Korrekciók összesen", "amount_kind": "huf", "amount_value": correction, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "correction_income", "item_label": "Korrekció +", "amount_kind": "huf", "amount_value": correction_income, "note": "Havi nyitáskor publikált snapshot"},
@@ -4008,6 +4014,8 @@ def mobile_loyalty_amount_from_finance_source(
     period_start: date,
     calculation_mode: str,
 ) -> float:
+    if "Lojalitás" in row:
+        return parse_huf_value(row.get("Lojalitás"))
     cache_rows = st.session_state.get(settlement_loyalty_cache_key(session_id, period_start, calculation_mode)) or {}
     cached_values = (
         cache_rows.get(f"id:{_courier_id_key(courier_id)}")
@@ -4474,11 +4482,12 @@ def publish_mobile_settlement_snapshot(
             period_end=period_end,
             warehouse_label=warehouse_label,
         )
-        item = apply_cached_loyalty_values(
+        item = apply_loyalty_bonus(
             pd.DataFrame([item]),
-            period_start=period_start,
-            session_id=session_id,
-            calculation_mode=calculation_mode,
+            period_start,
+            period_end,
+            session_id,
+            calculation_mode,
         ).iloc[0].to_dict()
         component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
         item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
@@ -4564,11 +4573,12 @@ def refresh_mobile_settlement_breakdown_snapshot(
             period_end=period_end,
             warehouse_label=warehouse_label,
         )
-        item = apply_cached_loyalty_values(
+        item = apply_loyalty_bonus(
             pd.DataFrame([item]),
-            period_start=period_start,
-            session_id=session_id,
-            calculation_mode=calculation_mode,
+            period_start,
+            period_end,
+            session_id,
+            calculation_mode,
         ).iloc[0].to_dict()
         component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
         item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
@@ -4658,11 +4668,12 @@ def save_devtest_finance_snapshots_for_rows(
                 period_end=period_end,
                 warehouse_label=warehouse_label,
             )
-            item = apply_cached_loyalty_values(
+            item = apply_loyalty_bonus(
                 pd.DataFrame([item]),
-                period_start=period_start,
-                session_id=session_id,
-                calculation_mode=calculation_mode,
+                period_start,
+                period_end,
+                session_id,
+                calculation_mode,
             ).iloc[0].to_dict()
             component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
             item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
@@ -9811,11 +9822,12 @@ def build_settlement_overview_data(
         data,
         balance_component_session_id(calculation_mode, period_start, session_id),
     )
-    data = apply_cached_loyalty_values(
+    data = apply_loyalty_bonus(
         data,
-        period_start=period_start,
-        session_id=session_id,
-        calculation_mode=calculation_mode,
+        period_start,
+        period_end,
+        session_id,
+        calculation_mode,
     )
     data = apply_customer_rating_bonus(data, period_start, period_end)
     data = apply_manual_balance_adjustments(data, period_start, period_end)
@@ -9957,6 +9969,11 @@ def build_fast_settlement_overview_data(
             "Munkakezdés": str(master_row.get("Munkakezdés") or ""),
             "FA státusz": str(master_row.get("FA státusz") or ""),
             "Jogviszony": str(master_row.get("Jogviszony") or ""),
+            "Rendelések": parse_huf_value(row.get("order_count") or row.get("orders")),
+            "Útvonalak": parse_huf_value(row.get("route_count") or row.get("routes")),
+            "Számolt túrák": parse_huf_value(row.get("route_count") or row.get("routes")),
+            "Kiemelt túrák": parse_huf_value(row.get("highlighted_routes")),
+            "Normál túrák": parse_huf_value(row.get("normal_routes")),
             "Nettó bevétel": parse_huf_value(row.get("courier_base_rate_huf")),
             "Bónusz": parse_huf_value(row.get("route_bonus_total_huf")),
             "Borravaló": parse_huf_value(row.get("tip_huf")),
@@ -9971,6 +9988,13 @@ def build_fast_settlement_overview_data(
     data = pd.DataFrame(output_rows)
     if data.empty:
         return data
+    data = apply_loyalty_bonus(
+        data,
+        period_start,
+        period_end,
+        session_id,
+        "Excel",
+    )
     if not used_dashboard_view:
         data = apply_peopleforce_workflow_status(data, period_start)
         data = apply_monthly_closure_status(data, period_start, period_end)
@@ -10372,7 +10396,6 @@ def loyalty_advance_booking_min_from_rule(rule: pd.Series) -> int:
         "advance_booked_shifts_min",
         "advance_booking_days_min",
         "advance_booking_min",
-        "previous_normal_routes_min",
     ):
         if column in rule and pd.notna(rule.get(column)):
             return int(parse_huf_value(rule.get(column)))
@@ -10499,15 +10522,27 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
             required_months = int(parse_huf_value(rule.get("loyalty_months_required")))
             if months_worked < required_months:
                 missing.append(f"{required_months}. hónap")
+            previous_routes_min = int(parse_huf_value(rule.get("previous_normal_routes_min")))
+            if previous_normal_routes < previous_routes_min:
+                missing.append(f"előző havi normál kör < {previous_routes_min}")
             booked_shift_min = int(parse_huf_value(rule.get("_advance_booking_min")))
             if advance_booking_days < booked_shift_min:
                 missing.append(f"előre foglalt műszak < {booked_shift_min}")
             if _loyalty_rule_bool(rule, "require_active_relationship", True):
+                is_active = bool(profile.get("is_active", True))
                 is_notice_period = bool(profile.get("is_notice_period", False))
-                if is_notice_period:
+                if not is_active or is_notice_period:
                     missing.append("aktív jogviszony")
             if _loyalty_rule_bool(rule, "require_advance_booking", True) and advance_booking_days <= 0:
                 missing.append("előfoglalás")
+            route_type = normalize_customer_rating_route_type(rule.get("route_type") or "normal")
+            matched_counts = (
+                driver_counts
+                if route_type == "any"
+                else driver_counts.loc[driver_counts["route_type"] == route_type]
+            )
+            if matched_counts.empty:
+                missing.append("aktuális túratípus")
             if not missing:
                 selected_rule = rule
                 selected_missing = []
@@ -10523,7 +10558,14 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
 
         unit = str(selected_rule.get("calculation_unit") or "per_route")
         amount = parse_huf_value(selected_rule.get("bonus_amount_huf"))
-        quantity = float(current_order_count if unit == "per_order" else current_route_count)
+        route_type = normalize_customer_rating_route_type(selected_rule.get("route_type") or "normal")
+        matched_counts = (
+            driver_counts
+            if route_type == "any"
+            else driver_counts.loc[driver_counts["route_type"] == route_type]
+        )
+        quantity_column = "orders" if unit == "per_order" else "routes"
+        quantity = float(matched_counts[quantity_column].sum())
         total = quantity * amount
         loyalty_amounts.append(total)
         rate_values.append(amount)
@@ -15014,6 +15056,8 @@ def store_loyalty_recalculation_for_session(
     period_end: date,
     session_id: str | None,
     calculation_mode: str,
+    warehouse_label: str | None = None,
+    updated_by: str = "system",
 ) -> int:
     recalculated = apply_loyalty_bonus(data, period_start, period_end, session_id, calculation_mode)
     cache_rows: dict[str, dict[str, object]] = {}
@@ -15050,6 +15094,17 @@ def store_loyalty_recalculation_for_session(
             except BaseException:
                 pass
     st.session_state[settlement_loyalty_cache_key(session_id, period_start, calculation_mode)] = cache_rows
+    try:
+        save_devtest_finance_snapshots_for_rows(
+            recalculated,
+            period_start,
+            calculation_mode,
+            warehouse_label,
+            session_id,
+            updated_by,
+        )
+    except BaseException:
+        pass
     load_excel_courier_base_rates.clear()
     load_courier_settlement_summary.clear()
     load_courier_settlement_summary_row.clear()
@@ -23063,6 +23118,8 @@ def show_new_settlement_page() -> None:
                     period_end=balance_period_end,
                     session_id=import_session_id,
                     calculation_mode=selected_calculation_mode,
+                    warehouse_label=selected_warehouse_label,
+                    updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
                 )
             st.toast(f"Lojalitás újraszámítva: {selected_month} ({refreshed_count} futár)", icon="✅")
             st.rerun()
