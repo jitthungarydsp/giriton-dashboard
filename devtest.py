@@ -11053,6 +11053,56 @@ def _finalize_customer_rating_monthly_rows(
     ]]
 
 
+def _finalize_customer_rating_value_rows(
+    grouped: pd.DataFrame,
+    uploaded_file,
+    billing_month: date,
+    worksheet_name: str,
+) -> pd.DataFrame:
+    month_start = billing_month.replace(day=1)
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    rules = load_customer_rating_rules_for_month(month_start, next_month - timedelta(days=1))
+
+    result = grouped.copy()
+    result["courier_id"] = result.get("courier_id", pd.Series(dtype=str)).map(_courier_id_key)
+    result["driver_name"] = result.get("driver_name", pd.Series(dtype=str)).astype(str).str.strip()
+    result["rating_count"] = pd.to_numeric(result.get("rating_count"), errors="coerce").fillna(0).astype(int)
+    result["average_rating"] = pd.to_numeric(result.get("average_rating"), errors="coerce")
+    result = result.dropna(subset=["average_rating"])
+    result = result.loc[result["courier_id"].astype(str).str.len() > 0].copy()
+    if result.empty:
+        raise ValueError("Nem található feldolgozható havi ügyfélértékelés sor.")
+
+    result["route_type"] = "normal"
+    result["completed_routes"] = 1
+    result["bonus_per_route_huf"] = result["average_rating"].map(
+        lambda value: customer_rating_rule_amount(value, rules, "normal")
+    )
+    result["bonus_total_huf"] = result["bonus_per_route_huf"]
+    result["billing_month"] = month_start.isoformat()
+    result["worksheet_name"] = worksheet_name or "Ügyfélértékelés"
+    result["source_row_number"] = range(2, len(result) + 2)
+    result["source_spreadsheet_id"] = f"customer_rating_value_upload_{month_start:%Y_%m}"
+    result["row_data"] = result.apply(
+        lambda row: {
+            "rating_count": int(row["rating_count"]),
+            "average_rating": float(row["average_rating"]),
+            "source_file": getattr(uploaded_file, "name", "uploaded.xlsx"),
+            "source_format": "average_rating_value",
+        },
+        axis=1,
+    )
+    now = pd.Timestamp.utcnow().isoformat()
+    result["imported_at"] = now
+    result["updated_at"] = now
+    return result[[
+        "source_spreadsheet_id", "worksheet_name", "source_row_number", "billing_month",
+        "courier_id", "driver_name", "route_type", "rating_count", "average_rating",
+        "bonus_per_route_huf", "completed_routes", "bonus_total_huf", "row_data",
+        "imported_at", "updated_at",
+    ]]
+
+
 def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard_data: pd.DataFrame) -> pd.DataFrame:
     try:
         uploaded_file.seek(0)
