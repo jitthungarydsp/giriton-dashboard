@@ -11060,6 +11060,55 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
         pass
 
     excel_file = pd.ExcelFile(uploaded_file)
+    month_start = billing_month.replace(day=1)
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+    for rating_sheet in excel_file.sheet_names:
+        rating_raw = pd.read_excel(excel_file, sheet_name=rating_sheet)
+        rating_columns = {_normalized_field_key(column): column for column in rating_raw.columns}
+        rating_resolved = {
+            "courier_id": next((rating_columns[name] for name in ["couriername", "courierid", "driverid", "futarid"] if name in rating_columns), ""),
+            "first_delivery": next((rating_columns[name] for name in ["firstdelivery", "elsokiszallitas"] if name in rating_columns), ""),
+            "last_delivery": next((rating_columns[name] for name in ["lastdelivery", "utolsokiszallitas"] if name in rating_columns), ""),
+            "rating_count": next((rating_columns[name] for name in ["courierratingscount", "courierratingcount", "ertekelesdb", "ratingcount"] if name in rating_columns), ""),
+            "average_rating": next((rating_columns[name] for name in ["averagecourierrating", "averagerating", "atlagosertekeles", "ugyfelertekeles"] if name in rating_columns), ""),
+        }
+        if not all(rating_resolved.values()):
+            continue
+
+        rating_data = rating_raw.copy()
+        first_delivery = pd.to_datetime(rating_data[rating_resolved["first_delivery"]], errors="coerce").dt.date
+        last_delivery = pd.to_datetime(rating_data[rating_resolved["last_delivery"]], errors="coerce").dt.date
+        rating_data = rating_data.loc[
+            (first_delivery < next_month)
+            & (last_delivery >= month_start)
+        ].copy()
+        if rating_data.empty:
+            continue
+
+        name_by_id = pd.Series(dtype=object)
+        if not dashboard_data.empty and {"Courier ID", "Futár"}.issubset(dashboard_data.columns):
+            dashboard_lookup = dashboard_data.copy()
+            dashboard_lookup["_courier_id_key"] = dashboard_lookup["Courier ID"].map(_courier_id_key)
+            name_by_id = dashboard_lookup.dropna(subset=["_courier_id_key"]).drop_duplicates("_courier_id_key").set_index("_courier_id_key")["Futár"]
+
+        courier_ids = rating_data[rating_resolved["courier_id"]].map(_courier_id_key)
+        grouped = pd.DataFrame({
+            "courier_id": courier_ids,
+            "driver_name": courier_ids.map(name_by_id).fillna(rating_data[rating_resolved["courier_id"]].astype(str).str.strip()),
+            "rating_count": rating_data[rating_resolved["rating_count"]],
+            "average_rating": rating_data[rating_resolved["average_rating"]],
+        })
+        grouped = grouped.loc[grouped["courier_id"].astype(str).str.len() > 0].copy()
+        if grouped.empty:
+            continue
+        return _finalize_customer_rating_monthly_rows(
+            grouped,
+            uploaded_file,
+            billing_month,
+            dashboard_data,
+            rating_sheet,
+        )
 
     simple_aliases = {
         "billing_month": ["datum", "date", "honap", "month", "elszamolasihonap", "billingmonth"],
