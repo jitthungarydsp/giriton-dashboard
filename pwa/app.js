@@ -90,7 +90,6 @@ const state = {
   settlementDashboardDetail: null,
   settlementDashboardDetailCache: {},
   settlementDashboardSearchTimer: null,
-  settlementDashboardRefreshInFlight: false,
   financialEditCardKey: "",
   financialSnapshots: [],
   financialSnapshotsLoadedFor: "",
@@ -5189,21 +5188,6 @@ async function loadSettlementDashboard() {
     renderSettlementDashboard();
   } catch (error) {
     if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
-  }
-}
-
-async function refreshSettlementDashboardInBackground() {
-  if (state.settlementDashboardRefreshInFlight || !state.user || state.section !== "settlement-dashboard") return;
-  state.settlementDashboardRefreshInFlight = true;
-  const expandedCourierId = state.settlementDashboardExpandedCourierId || "";
-  state.settlementDashboardDetailCache = {};
-  try {
-    await loadSettlementDashboard();
-    if (expandedCourierId) await loadSettlementDashboardCourierDetail(expandedCourierId);
-  } catch (_) {
-    // Keep the last visible dashboard when a background refresh is unavailable.
-  } finally {
-    state.settlementDashboardRefreshInFlight = false;
   }
 }
 
@@ -10703,23 +10687,6 @@ setInterval(() => {
   if (document.hidden) return;
   withSilentLoading(() => currentSectionRefresh()).catch(() => {});
 }, 5 * 60 * 1000);
-
-setInterval(() => {
-  if (document.hidden || state.section !== "settlement-dashboard") return;
-  withSilentLoading(() => refreshSettlementDashboardInBackground()).catch(() => {});
-}, 30 * 1000);
-
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && state.section === "settlement-dashboard") {
-    withSilentLoading(() => refreshSettlementDashboardInBackground()).catch(() => {});
-  }
-});
-
-window.addEventListener("focus", () => {
-  if (state.section === "settlement-dashboard") {
-    withSilentLoading(() => refreshSettlementDashboardInBackground()).catch(() => {});
-  }
-});
 
 setInterval(() => {
   if (!state.user || state.section !== "tours" || document.hidden) return;
