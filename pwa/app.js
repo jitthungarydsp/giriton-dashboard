@@ -88,6 +88,7 @@ const state = {
   settlementDashboardExpandedCourierId: "",
   settlementDashboardExpandedTab: "settlement",
   settlementDashboardDetail: null,
+  settlementDashboardDetailCache: {},
   settlementDashboardSearchTimer: null,
   financialEditCardKey: "",
   financialSnapshots: [],
@@ -105,7 +106,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v217";
+const APP_VERSION = "v218";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5127,7 +5128,7 @@ function renderSettlementDashboard() {
     </div>
     <div class="settlement-dashboard-list">
       ${displayRows.length ? displayRows.map((row) => `
-        <button class="settlement-dashboard-row ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? "active" : ""}" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
+        <button class="settlement-dashboard-row ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? "active" : ""} ${(row.flags || []).some((flag) => normalizeText(flag.label || "") === "kiemelt figyeles") ? "highlighted" : ""}" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
           <div>
             <strong>${escapeHtml(row.courierName || "Futár")}</strong>
             <small>#${escapeHtml(row.courierId || "-")}${row.warehouse ? ` · ${escapeHtml(row.warehouse)}` : ""}</small>
@@ -5148,16 +5149,25 @@ function renderSettlementDashboard() {
 async function loadSettlementDashboardCourierDetail(courierId) {
   const cleanId = String(courierId || "").trim();
   if (!cleanId) return;
+  const month = state.settlementDashboardMonth || previousLocalMonth();
+  const cacheKey = `${month}:${cleanId}`;
   state.settlementDashboardExpandedCourierId = cleanId;
+  const cached = state.settlementDashboardDetailCache?.[cacheKey];
+  if (cached) {
+    state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow: cached, error: "" };
+    renderSettlementDashboard();
+    return;
+  }
   state.settlementDashboardDetail = { courierId: cleanId, loading: true, workflow: null, error: "" };
   renderSettlementDashboard();
   try {
     const params = new URLSearchParams({
-      month: state.settlementDashboardMonth || previousLocalMonth(),
+      month,
       courier: cleanId,
       _: String(Date.now()),
     });
     const workflow = await api(`/api/admin/settlement-dashboard/detail?${params}`, { silentLoading: true });
+    state.settlementDashboardDetailCache[cacheKey] = workflow;
     state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow, error: "" };
   } catch (error) {
     state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow: null, error: error.message };
@@ -10322,11 +10332,13 @@ $("#nav-coordinator").addEventListener("click", () => showSection("coordinator")
 $("#nav-registration-admin").addEventListener("click", () => showSection("registration-admin"));
 $("#settlement-dashboard-refresh")?.addEventListener("click", () => {
   state.settlementDashboard = null;
+  state.settlementDashboardDetailCache = {};
   loadSettlementDashboard();
 });
 $("#settlement-dashboard-month")?.addEventListener("change", (event) => {
   state.settlementDashboardMonth = event.currentTarget.value || previousLocalMonth();
   state.settlementDashboard = null;
+  state.settlementDashboardDetailCache = {};
   state.settlementDashboardStatusFilter = "";
   loadSettlementDashboard();
 });

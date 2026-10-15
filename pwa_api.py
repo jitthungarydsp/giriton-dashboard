@@ -18249,30 +18249,54 @@ def merge_dashboard_flags(*flag_groups: list[dict[str, str]]) -> list[dict[str, 
 
 
 def dashboard_monthly_flags_by_courier(month: date, courier_ids: list[str]) -> dict[str, list[dict[str, str]]]:
-    clean_ids = [str(item or "").strip() for item in courier_ids if str(item or "").strip()]
+    clean_ids = list(dict.fromkeys(
+        dashboard_courier_id_key(item)
+        for item in courier_ids
+        if dashboard_courier_id_key(item)
+    ))
     if not clean_ids:
         return {}
     month_start = month.replace(day=1)
     month_key = month_start.isoformat()
+    previous_month_key = (month_start - timedelta(days=1)).replace(day=1).isoformat()
     flags_by_courier: dict[str, list[dict[str, str]]] = {courier_id: [] for courier_id in clean_ids}
 
-    snapshot_rows = optional_supabase_rows_paged(
-        "courier_finance_snapshot",
-        schema="settlement",
-        params={
-            "select": "id,courier_id,version",
-            "period_start": f"eq.{month_key}",
-            "courier_id": f"in.({','.join(clean_ids)})",
-            "order": "courier_id.asc,version.desc",
-        },
-        timeout=30,
-        page_size=1000,
-        max_rows=50000,
-    )
+    snapshot_params = {
+        "select": "id,courier_id,version",
+        "period_start": f"eq.{month_key}",
+        "courier_id": f"in.({','.join(clean_ids)})",
+        "order": "courier_id.asc,version.desc",
+    }
+    attention_params = {
+        "select": "courier_id,action_key,status,status_note,updated_at,document_month",
+        "document_month": f"in.({previous_month_key},{month_key})",
+        "action_key": "eq.settlement_attention",
+        "order": "document_month.desc,updated_at.desc",
+    }
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        snapshot_future = executor.submit(
+            optional_supabase_rows_paged,
+            "courier_finance_snapshot",
+            schema="settlement",
+            params=snapshot_params,
+            timeout=30,
+            page_size=1000,
+            max_rows=50000,
+        )
+        attention_future = executor.submit(
+            optional_supabase_rows_paged,
+            "peopleforce_card_statuses",
+            params=attention_params,
+            timeout=30,
+            page_size=1000,
+            max_rows=50000,
+        )
+        snapshot_rows = snapshot_future.result()
+        attention_rows = attention_future.result()
     latest_snapshot_by_courier: dict[str, str] = {}
     snapshot_to_courier: dict[str, str] = {}
     for snapshot in snapshot_rows:
-        courier_id = str(snapshot.get("courier_id") or "").strip()
+        courier_id = dashboard_courier_id_key(snapshot.get("courier_id"))
         snapshot_id = str(snapshot.get("id") or "").strip()
         if courier_id and snapshot_id and courier_id not in latest_snapshot_by_courier:
             latest_snapshot_by_courier[courier_id] = snapshot_id
@@ -18314,24 +18338,11 @@ def dashboard_monthly_flags_by_courier(month: date, courier_ids: list[str]) -> d
             if loyalty_bonus > 0:
                 flags_by_courier.setdefault(courier_id, []).append({"label": f"Lojalitás {format_huf(loyalty_bonus)}", "tone": "info"})
 
-    previous_month_key = (month_start - timedelta(days=1)).replace(day=1).isoformat()
-    attention_rows = optional_supabase_rows_paged(
-        "peopleforce_card_statuses",
-        params={
-            "select": "courier_id,action_key,status,status_note,updated_at,document_month",
-            "document_month": f"in.({previous_month_key},{month_key})",
-            "action_key": "eq.settlement_attention",
-            "order": "document_month.desc,updated_at.desc",
-        },
-        timeout=30,
-        page_size=1000,
-        max_rows=50000,
-    )
     current_attention_by_courier: dict[str, str] = {}
     previous_attention_by_courier: dict[str, str] = {}
     clean_id_set = set(clean_ids)
     for row in attention_rows:
-        courier_id = str(row.get("courier_id") or "").strip()
+        courier_id = dashboard_courier_id_key(row.get("courier_id"))
         if courier_id not in clean_id_set:
             continue
         status = str(row.get("status") or "").strip().lower()
@@ -18800,8 +18811,11 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
             "updatedAt": str(profile.get("summaryUpdatedAt") or ""),
         })
     dashboard_courier_ids = [str(row.get("courierId") or "") for row in dashboard_rows]
-    profiles_by_courier = dashboard_profiles_by_courier(dashboard_courier_ids)
-    monthly_flags_by_courier = dashboard_monthly_flags_by_courier(month_start, dashboard_courier_ids)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        profiles_future = executor.submit(dashboard_profiles_by_courier, dashboard_courier_ids)
+        flags_future = executor.submit(dashboard_monthly_flags_by_courier, month_start, dashboard_courier_ids)
+        profiles_by_courier = profiles_future.result()
+        monthly_flags_by_courier = flags_future.result()
     for row in dashboard_rows:
         courier_id = str(row.get("courierId") or "")
         row["flags"] = merge_dashboard_flags(
@@ -21975,7 +21989,17 @@ def admin_settlement_dashboard_detail(
         "courierId": courier_id,
         "username": read_courier_display_name(courier_id) or courier_id,
     }
-    documents, _status_rows, complaints = read_workflow_rows(view_user, month_value)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        workflow_future = executor.submit(read_workflow_rows, view_user, month_value)
+        financial_future = executor.submit(
+            build_financial_breakdown,
+            view_user,
+            month_value,
+            allow_unpublished=True,
+            snapshot_only=True,
+        )
+        documents, _status_rows, complaints = workflow_future.result()
+        financial_breakdown = financial_future.result()
     documents = [row for row in documents if document_belongs_to_process(row, "")]
     complaints = [
         row for row in complaints
@@ -21997,12 +22021,6 @@ def admin_settlement_dashboard_detail(
         action: [row for row in complaints if base_action_key(str(row.get("document_type") or "")) == action]
         for action in complaint_actions
     }
-    financial_breakdown = build_financial_breakdown(
-        view_user,
-        month_value,
-        allow_unpublished=True,
-        snapshot_only=True,
-    )
     if not financial_breakdown.get("available"):
         financial_breakdown = build_financial_breakdown(
             view_user,

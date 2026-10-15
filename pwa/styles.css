@@ -444,6 +444,7 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-dashboard-list { display: grid; gap: 8px; }
 .settlement-dashboard-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(130px, .8fr) minmax(92px, auto); gap: 10px; align-items: center; width: 100%; min-height: 72px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); text-align: left; box-shadow: 0 7px 20px #3141340a; }
 .settlement-dashboard-row.active { border-color: #80c885; background: #f3fbf0; box-shadow: 0 10px 24px #2c7a3b18; }
+.settlement-dashboard-row.highlighted, .settlement-dashboard-row.highlighted.active { border: 2px solid #111827; box-shadow: 0 0 0 3px rgba(17,24,39,.12), 0 7px 20px #3141340a; }
 .settlement-dashboard-row strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
 .settlement-dashboard-row > strong { text-align: right; font-size: 15px; }
 .settlement-dashboard-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
