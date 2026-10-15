@@ -161,9 +161,9 @@ dashboard_rows as (
         coalesce(sa.tip_huf, sr.tip_huf, 0) as tip_huf,
         coalesce(sa.route_bonus_total_huf, sr.route_bonus_total_huf, 0) as route_bonus_total_huf,
         coalesce(
-            sr.payable_huf,
             sa.payable_huf,
             nullif(replace(regexp_replace(coalesce(ls.metadata ->> 'payable_total', ''), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric,
+            sr.payable_huf,
             0
         ) as payable_huf,
         sr.calculated_at,
