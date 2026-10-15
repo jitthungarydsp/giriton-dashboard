@@ -8242,6 +8242,114 @@ def load_driver_dashboard(session_id: str | None = None, calculation_mode: str =
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_excel_raw_route_amounts(session_id: str) -> pd.DataFrame:
+    """Read Excel route amounts as a recovery source for old DB summaries.
+
+    Older imported sessions can contain the original ``Fixed Rate`` and
+    ``Tip`` values in ``normalized_data`` while the calculated numeric
+    columns are still zero.  Keep the persisted calculation authoritative
+    when it exists, but make the original import available as a fallback.
+    """
+    columns = [
+        "Courier ID", "Futár", "Excel alapdíj", "Excel borravaló",
+        "Excel rendelések", "Excel túrák",
+    ]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select("normalized_data,is_route_primary,route_unique_id")
+            .eq("session_id", session_id)
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        return pd.DataFrame(columns=columns)
+
+    aggregates: dict[str, dict[str, object]] = {}
+    seen_routes: set[tuple[str, str]] = set()
+    for row in rows:
+        normalized = row.get("normalized_data") or {}
+        if isinstance(normalized, str):
+            try:
+                normalized = json.loads(normalized)
+            except json.JSONDecodeError:
+                normalized = {}
+        if not isinstance(normalized, dict):
+            continue
+
+        fields = {
+            _normalized_field_key(key): value
+            for key, value in normalized.items()
+        }
+        raw_name = str(
+            fields.get("driver")
+            or fields.get("drivername")
+            or fields.get("futar")
+            or fields.get("futarnev")
+            or "Ismeretlen futár"
+        ).strip() or "Ismeretlen futár"
+        embedded_id, clean_name = _split_imported_courier_identity(raw_name)
+        courier_id = _courier_id_key(
+            fields.get("courierid")
+            or fields.get("couriernumber")
+            or fields.get("usernumber")
+            or fields.get("userid")
+            or embedded_id
+        )
+        courier_name = clean_name or raw_name
+        key = courier_id or _courier_match_key(courier_name)
+        if not key:
+            continue
+
+        route_id = str(
+            row.get("route_unique_id")
+            or fields.get("routeuniqueid")
+            or fields.get("routeid")
+            or ""
+        ).strip()
+        route_key = (key, route_id)
+        if route_id and route_key in seen_routes:
+            continue
+        if route_id:
+            seen_routes.add(route_key)
+
+        item = aggregates.setdefault(
+            key,
+            {
+                "Courier ID": courier_id,
+                "Futár": courier_name,
+                "Excel alapdíj": 0.0,
+                "Excel borravaló": 0.0,
+                "Excel rendelések": 0.0,
+                "Excel túrák": 0,
+            },
+        )
+        if courier_id and not item.get("Courier ID"):
+            item["Courier ID"] = courier_id
+        item["Excel alapdíj"] = float(item["Excel alapdíj"] or 0) + parse_huf_value(
+            fields.get("fixedrate")
+            or fields.get("fixedratehuf")
+            or fields.get("alapdij")
+        )
+        item["Excel borravaló"] = float(item["Excel borravaló"] or 0) + parse_huf_value(
+            fields.get("tip")
+            or fields.get("tiphuf")
+            or fields.get("borravalo")
+        )
+        item["Excel rendelések"] = float(item["Excel rendelések"] or 0) + parse_huf_value(
+            fields.get("orders") or fields.get("rendelesek")
+        )
+        item["Excel túrák"] = int(item["Excel túrák"] or 0) + 1
+
+    return pd.DataFrame(aggregates.values(), columns=columns)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) -> pd.DataFrame:
     """Read persisted database-calculated courier base fees."""
     columns = [
@@ -8290,8 +8398,17 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
                     "settlement-paraméter és courier-settlement-summary migrációt."
                 )
                 return result
+    raw_amounts = load_excel_raw_route_amounts(session_id)
     if not rows:
-        return pd.DataFrame(columns=columns)
+        if raw_amounts.empty:
+            return pd.DataFrame(columns=columns)
+        result = pd.DataFrame({column: 0.0 for column in columns}, index=raw_amounts.index)
+        result["Courier ID"] = raw_amounts["Courier ID"]
+        result["Futár"] = raw_amounts["Futár"]
+        result["Nettó bevétel"] = raw_amounts["Excel alapdíj"]
+        result["Borravaló"] = raw_amounts["Excel borravaló"]
+        result["Számolt túrák"] = raw_amounts["Excel túrák"].astype(int)
+        return result[columns]
     result = pd.DataFrame(rows).rename(columns={
         "courier_id": "Courier ID",
         "driver_name": "Futár",
@@ -8316,6 +8433,27 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     result["Courier ID"] = result["Courier ID"].where(result["Courier ID"].map(_courier_id_key) != "", embedded_ids)
     for column in columns[2:]:
         result[column] = _numeric_series(result, column)
+
+    # A régi sessionökben a parameterizált újraszámítás a hiányzó alapdíj-
+    # szabály miatt 0-ra írhatta az összegeket. Ilyenkor az importált Excel
+    # eredeti értéke legyen a fallback, ne jelenjen meg tévesen 0 Ft.
+    if not raw_amounts.empty:
+        result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
+        result["_courier_lookup"] = result["Futár"].map(_courier_match_key)
+        raw = raw_amounts.copy()
+        raw["_courier_id_lookup"] = raw["Courier ID"].map(_courier_id_key)
+        raw["_courier_lookup"] = raw["Futár"].map(_courier_match_key)
+        raw_by_id = raw[raw["_courier_id_lookup"].ne("")].groupby("_courier_id_lookup").sum(numeric_only=True)
+        raw_by_name = raw[raw["_courier_lookup"].ne("")].groupby("_courier_lookup").sum(numeric_only=True)
+        raw_base_by_id = raw_by_id["Excel alapdíj"] if "Excel alapdíj" in raw_by_id else pd.Series(dtype=float)
+        raw_tip_by_id = raw_by_id["Excel borravaló"] if "Excel borravaló" in raw_by_id else pd.Series(dtype=float)
+        raw_base_by_name = raw_by_name["Excel alapdíj"] if "Excel alapdíj" in raw_by_name else pd.Series(dtype=float)
+        raw_tip_by_name = raw_by_name["Excel borravaló"] if "Excel borravaló" in raw_by_name else pd.Series(dtype=float)
+        raw_base = result["_courier_id_lookup"].map(raw_base_by_id).fillna(result["_courier_lookup"].map(raw_base_by_name)).fillna(0.0)
+        raw_tip = result["_courier_id_lookup"].map(raw_tip_by_id).fillna(result["_courier_lookup"].map(raw_tip_by_name)).fillna(0.0)
+        result["Nettó bevétel"] = result["Nettó bevétel"].where(result["Nettó bevétel"].ne(0), raw_base)
+        result["Borravaló"] = result["Borravaló"].where(result["Borravaló"].ne(0), raw_tip)
+        result = result.drop(columns=["_courier_id_lookup", "_courier_lookup"])
     stop_count_bonus = load_excel_stop_count_bonus_totals(session_id)
     if not stop_count_bonus.empty:
         result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
@@ -13791,6 +13929,20 @@ def load_courier_route_detail(
         day_type = {"highlighted": "Kiemelt nap", "normal": "Normál nap"}.get(day_type_key, "Nincs besorolás")
         delay_bonus = parse_huf_value(source.get("courier_delay_bonus_huf"))
         compliance_bonus = parse_huf_value(source.get("courier_compliance_bonus_huf"))
+        base_amount = parse_huf_value(source.get("courier_base_rate_huf"))
+        tip_amount = parse_huf_value(source.get("courier_tip_huf"))
+        if not base_amount:
+            base_amount = parse_huf_value(
+                normalized_fields.get("fixedrate")
+                or normalized_fields.get("fixedratehuf")
+                or normalized_fields.get("alapdij")
+            )
+        if not tip_amount:
+            tip_amount = parse_huf_value(
+                normalized_fields.get("tip")
+                or normalized_fields.get("tiphuf")
+                or normalized_fields.get("borravalo")
+            )
         parsed.append({
             "Route ID": str(source.get("route_unique_id") or "–"),
             "_warehouse_code": settlement_warehouse_label(
@@ -13801,8 +13953,8 @@ def load_courier_route_detail(
             "Túratípus": route_type,
             "Naptípus": day_type,
             "Rendelések": parse_huf_value(normalized.get("Orders") or normalized.get("orders")),
-            "Alapdíj": parse_huf_value(source.get("courier_base_rate_huf")),
-            "Borravaló": parse_huf_value(source.get("courier_tip_huf")),
+            "Alapdíj": base_amount,
+            "Borravaló": tip_amount,
             "Késedelmi díj": delay_bonus,
             "Túramegfelelés": compliance_bonus,
             "Bónuszok": delay_bonus + compliance_bonus,
@@ -15153,6 +15305,7 @@ def refresh_settlement_profile_data() -> None:
     load_excel_stop_count_bonus_totals.clear()
     load_excel_contractor_route_component_totals.clear()
     load_excel_courier_base_rates.clear()
+    load_excel_raw_route_amounts.clear()
     load_excel_base_rate_diagnostics.clear()
     load_active_base_rate_rules.clear()
     load_active_bonus_level_rules.clear()
@@ -15331,6 +15484,7 @@ def store_loyalty_recalculation_for_session(
     except BaseException:
         pass
     load_excel_courier_base_rates.clear()
+    load_excel_raw_route_amounts.clear()
     load_courier_settlement_summary.clear()
     load_courier_settlement_summary_row.clear()
     return len({key for key in cache_rows if key.startswith("id:")})
@@ -16052,7 +16206,9 @@ def render_courier_detail_page() -> None:
 
     def settlement_amount(summary_column: str, fallback_column: str | None = None) -> float:
         if summary_column in summary_row:
-            return parse_huf_value(summary_row.get(summary_column))
+            summary_value = parse_huf_value(summary_row.get(summary_column))
+            if summary_value or not fallback_column:
+                return summary_value
         if fallback_column:
             return parse_huf_value(row.get(fallback_column))
         return 0.0
@@ -16156,6 +16312,7 @@ def render_courier_detail_page() -> None:
                     ).eq("session_id", session_id).eq("courier_id", _courier_id_key(courier_id)).execute()
                     load_excel_stop_count_bonus_totals.clear()
                     load_excel_courier_base_rates.clear()
+                    load_excel_raw_route_amounts.clear()
                     load_courier_settlement_summary.clear()
                     load_courier_settlement_summary_row.clear()
                 except BaseException:
@@ -22647,6 +22804,18 @@ def rebuild_courier_settlement_summary_from_jit(session_id: str) -> int:
         company_base = parse_huf_value(row.get("company_base_rate_huf"))
         courier_base = parse_huf_value(row.get("courier_base_rate_huf"))
         tip = parse_huf_value(row.get("courier_tip_huf"))
+        if is_route_primary and not courier_base:
+            courier_base = parse_huf_value(
+                normalized_data.get("Fixed Rate")
+                or normalized_data.get("fixed_rate_huf")
+                or normalized_data.get("Alapdíj")
+            )
+        if is_route_primary and not tip:
+            tip = parse_huf_value(
+                normalized_data.get("Tip")
+                or normalized_data.get("tip_huf")
+                or normalized_data.get("Borravaló")
+            )
         delay_bonus = parse_huf_value(row.get("courier_delay_bonus_huf"))
         compliance_bonus = parse_huf_value(row.get("courier_compliance_bonus_huf"))
         other_bonus = parse_huf_value(row.get("courier_other_bonus_huf"))
@@ -22738,6 +22907,7 @@ def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, 
         load_latest_excel_jit_period_start.clear()
         load_excel_stop_count_bonus_totals.clear()
         load_excel_courier_base_rates.clear()
+        load_excel_raw_route_amounts.clear()
         load_excel_base_rate_diagnostics.clear()
         load_courier_route_detail.clear()
         load_imported_balance_components.clear()
@@ -22841,6 +23011,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 load_latest_excel_jit_period_start.clear()
                 load_excel_stop_count_bonus_totals.clear()
                 load_excel_courier_base_rates.clear()
+                load_excel_raw_route_amounts.clear()
                 load_excel_base_rate_diagnostics.clear()
                 load_courier_route_detail.clear()
                 load_imported_balance_components.clear()
@@ -23056,6 +23227,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             load_latest_excel_jit_period_start.clear()
             load_excel_stop_count_bonus_totals.clear()
             load_excel_courier_base_rates.clear()
+            load_excel_raw_route_amounts.clear()
             load_excel_base_rate_diagnostics.clear()
             load_courier_route_detail.clear()
             load_imported_balance_components.clear()

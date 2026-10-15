@@ -35,6 +35,7 @@ with raw as (
             else 'normal'
         end as route_type,
         coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Orders', j.normalized_data ->> 'orders', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as orders,
+        coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Fixed Rate', j.normalized_data ->> 'fixed_rate_huf', j.normalized_data ->> 'Alapdíj', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as excel_fixed_rate_huf,
         coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Tip', j.normalized_data ->> 'tip_huf', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as tip_huf,
         coalesce((
             select sum(case when item.value like '%,%'
@@ -199,7 +200,7 @@ set
         when resolved.route_rank <> 1 then 0
         when resolved.calculation_unit = 'per_order' then coalesce(resolved.courier_amount_huf, 0) * resolved.orders
         when resolved.calculation_unit = 'per_route' then coalesce(resolved.courier_amount_huf, 0)
-        else 0
+        else resolved.excel_fixed_rate_huf
     end,
     courier_tip_huf = case when resolved.route_rank = 1 then resolved.tip_huf else 0 end,
     courier_delay_bonus_huf = case when resolved.route_rank = 1 then resolved.delay_amount_huf else 0 end,
@@ -211,7 +212,9 @@ set
     base_rate_status = case
         when resolved.route_rank <> 1 then 'duplicate_route_id'
         when resolved.work_date is null then 'missing_excel_date'
+        when resolved.rate_id is null and resolved.excel_fixed_rate_huf > 0 then 'excel_fixed_rate_fallback'
         when resolved.rate_id is null then 'missing_base_rate'
+        when resolved.calculation_unit not in ('per_route', 'per_order') and resolved.excel_fixed_rate_huf > 0 then 'excel_fixed_rate_fallback'
         when resolved.calculation_unit not in ('per_route', 'per_order') then 'unsupported_unit'
         else 'calculated'
     end,
