@@ -23497,8 +23497,25 @@ def show_new_settlement_page() -> None:
                 help="Az aktuális devtest pénzügyi és TIG értékeket verziózottan elmenti DB-be.",
             ):
                 with st.spinner("Adatok mentése..."):
+                    snapshot_data = data
+                    if use_fast_overview:
+                        # The fast dashboard is only a list view and can carry
+                        # stale summary values.  Snapshot values must come
+                        # from the full devtest calculation pipeline.
+                        snapshot_data = build_settlement_overview_data(
+                            selected_calculation_mode,
+                            import_session_id,
+                            balance_period_start,
+                            balance_period_end,
+                            selected_warehouse_label,
+                            settlement_loyalty_cache_token(
+                                import_session_id,
+                                balance_period_start,
+                                selected_calculation_mode,
+                            ),
+                        )
                     result = save_devtest_finance_snapshots_for_rows(
-                        data,
+                        snapshot_data,
                         mobile_period_start,
                         calculation_mode,
                         warehouse,
