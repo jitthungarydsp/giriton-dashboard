@@ -18447,6 +18447,98 @@ def dashboard_latest_snapshot_payables(month: date, courier_ids: list[str]) -> d
     return payable_by_courier
 
 
+def dashboard_month_courier_roster(month: date) -> dict[str, dict[str, Any]]:
+    """Return the complete monthly roster used to fill missing snapshots."""
+    month_start = month.replace(day=1)
+    roster: dict[str, dict[str, Any]] = {}
+
+    master_rows = optional_supabase_rows_paged(
+        "courier_master",
+        params={
+            "select": "courier_id,courier_name,warehouse_name",
+            "order": "courier_name.asc,courier_id.asc",
+        },
+        timeout=30,
+        page_size=1000,
+        max_rows=50000,
+    )
+    for row in master_rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        if not courier_id:
+            continue
+        roster[courier_id] = {
+            "courierId": courier_id,
+            "courierName": str(row.get("courier_name") or f"Futár {courier_id}").strip(),
+            "warehouse": str(row.get("warehouse_name") or "").strip(),
+            "master": True,
+        }
+
+    config = read_mobile_settlement_period_config(month_start)
+    session_id = str(config.get("session_id") or "").strip()
+    if not session_id:
+        session_id = latest_excel_balance_session_for_month(month_start)
+    if session_id:
+        summary_rows = optional_supabase_rows_paged(
+            "courier_settlement_summary",
+            schema="settlement",
+            params={
+                "select": "courier_id,courier_name,driver_name,payable_huf,calculated_at,session_id",
+                "session_id": f"eq.{session_id}",
+                "order": "courier_name.asc,courier_id.asc",
+            },
+            timeout=45,
+            page_size=1000,
+            max_rows=50000,
+        )
+        for row in summary_rows:
+            courier_id = str(row.get("courier_id") or "").strip()
+            if not courier_id:
+                continue
+            profile = roster.setdefault(courier_id, {
+                "courierId": courier_id,
+                "courierName": f"Futár {courier_id}",
+                "warehouse": "",
+            })
+            summary_name = str(row.get("courier_name") or row.get("driver_name") or "").strip()
+            if summary_name:
+                profile["courierName"] = summary_name
+            profile["summaryPayableHuf"] = money_int(row.get("payable_huf"))
+            profile["summaryUpdatedAt"] = str(row.get("calculated_at") or "")
+            profile["summary"] = True
+        jit_rows = optional_supabase_rows_paged(
+            "jit_row",
+            schema="settlement",
+            params={
+                "select": "normalized_data,source_sheet,route_date",
+                "session_id": f"eq.{session_id}",
+                "and": f"(route_date.gte.{month_start.isoformat()},route_date.lt.{month_start.replace(day=28) + timedelta(days=4):%Y-%m-01})",
+            },
+            timeout=45,
+            page_size=1000,
+            max_rows=50000,
+        )
+        month_end_date = month_end(month_start)
+        for row in jit_rows:
+            route_date = date_from_row_value(row.get("route_date"))
+            if not route_date or not (month_start <= route_date <= month_end_date):
+                continue
+            courier_id, courier_name = settlement_import_courier_identity_from_jit_row(row)
+            courier_id = str(courier_id or "").strip().removesuffix(".0")
+            if not courier_id:
+                continue
+            profile = roster.setdefault(courier_id, {
+                "courierId": courier_id,
+                "courierName": courier_name or f"Futár {courier_id}",
+                "warehouse": "",
+            })
+            if courier_name and not str(profile.get("courierName") or "").strip():
+                profile["courierName"] = courier_name
+            if not str(profile.get("warehouse") or "").strip():
+                profile["warehouse"] = settlement_import_warehouse_from_row(row)
+            profile["jit"] = True
+    return roster
+
+
 def build_admin_settlement_totals(month: date) -> dict[str, Any]:
     """Build a minimal courier-total list directly from devtest snapshots.
 
@@ -18477,6 +18569,7 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
 
     courier_ids = list(latest_by_courier)
     payable_by_courier = dashboard_latest_snapshot_payables(month_start, courier_ids)
+    roster = dashboard_month_courier_roster(month_start)
     rows: list[dict[str, Any]] = []
     for courier_id, snapshot in latest_by_courier.items():
         metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
@@ -18496,14 +18589,37 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
             "updatedAt": str(snapshot.get("created_at") or ""),
             "snapshotVersion": money_int(snapshot.get("version")),
         })
+    for courier_id, profile in roster.items():
+        if courier_id in latest_by_courier:
+            continue
+        has_summary = bool(profile.get("summary"))
+        rows.append({
+            "courierId": courier_id,
+            "courierName": str(profile.get("courierName") or f"Futár {courier_id}").strip(),
+            "warehouse": str(profile.get("warehouse") or "").strip(),
+            "status": {
+                "label": "Elszámolás" if has_summary else "Elszámolás készül",
+                "detail": "Devtest összesítés" if has_summary else "Nincs mentett devtest snapshot",
+                "tone": "active" if has_summary else "muted",
+                "sort": 30 if has_summary else 10,
+            },
+            "totalPayableHuf": money_int(profile.get("summaryPayableHuf")) if has_summary else 0,
+            "sources": ["courier_settlement_summary"] if has_summary else ["courier_master"],
+            "updatedAt": str(profile.get("summaryUpdatedAt") or ""),
+            "snapshotVersion": 0,
+        })
     rows.sort(key=lambda row: (normalize_person_match_text(row.get("courierName")), str(row.get("courierId") or "")))
+    status_counts: dict[str, int] = {}
+    for row in rows:
+        label = str((row.get("status") or {}).get("label") or "Ismeretlen")
+        status_counts[label] = status_counts.get(label, 0) + 1
     return {
         "month": month_start.strftime("%Y-%m"),
         "rows": rows,
         "summary": {
             "couriers": len(rows),
             "totalPayableHuf": sum(money_int(row.get("totalPayableHuf")) for row in rows),
-            "statusCounts": {"Devtest snapshot": len(rows)} if rows else {},
+            "statusCounts": status_counts,
         },
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "source": "settlement.courier_finance_snapshot",
@@ -18561,10 +18677,12 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
         )
         return None
 
-    latest_snapshot_payables = dashboard_latest_snapshot_payables(
-        month_start,
-        [str(row.get("courier_id") or "") for row in rows],
-    )
+    roster = dashboard_month_courier_roster(month_start)
+    all_courier_ids = list({
+        str(row.get("courier_id") or "").strip()
+        for row in rows
+    } | set(roster))
+    latest_snapshot_payables = dashboard_latest_snapshot_payables(month_start, all_courier_ids)
     clean_query = normalize_text(query)
     dashboard_rows: list[dict[str, Any]] = []
     for row in rows:
@@ -18592,6 +18710,33 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
             "totalPayableHuf": total_huf,
             "sources": sources,
             "updatedAt": str(row.get("updated_at") or ""),
+        })
+    dashboard_row_ids = {str(row.get("courierId") or "").strip() for row in dashboard_rows}
+    for courier_id, profile in roster.items():
+        if courier_id in dashboard_row_ids:
+            continue
+        courier_name = str(profile.get("courierName") or f"Futár {courier_id}").strip()
+        warehouse = str(profile.get("warehouse") or "").strip()
+        if clean_query and clean_query not in normalize_text(f"{courier_id} {courier_name} {warehouse}"):
+            continue
+        has_summary = bool(profile.get("summary"))
+        snapshot_total = latest_snapshot_payables.get(courier_id)
+        total_huf = snapshot_total if snapshot_total is not None else (
+            money_int(profile.get("summaryPayableHuf")) if has_summary else 0
+        )
+        dashboard_rows.append({
+            "courierId": courier_id,
+            "courierName": courier_name,
+            "warehouse": warehouse,
+            "status": {
+                "label": "Elszámolás" if has_summary else "Elszámolás készül",
+                "detail": "Devtest összesítés" if has_summary else "Nincs mentett devtest snapshot",
+                "tone": "active" if has_summary else "muted",
+                "sort": 30 if has_summary else 10,
+            },
+            "totalPayableHuf": total_huf,
+            "sources": ["courier_settlement_summary"] if has_summary else ["courier_master"],
+            "updatedAt": str(profile.get("summaryUpdatedAt") or ""),
         })
     dashboard_courier_ids = [str(row.get("courierId") or "") for row in dashboard_rows]
     profiles_by_courier = dashboard_profiles_by_courier(dashboard_courier_ids)
