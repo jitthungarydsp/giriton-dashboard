@@ -4643,19 +4643,44 @@ def save_devtest_finance_snapshots_for_rows(
     warehouse_label: str | None,
     session_id: str | None,
     updated_by: str,
-) -> dict[str, int]:
-    if data.empty or str(calculation_mode or "") not in {"API", "Excel"}:
-        return {"processed": 0, "new_versions": 0, "unchanged": 0, "failed": 0}
+) -> dict[str, object]:
+    if str(calculation_mode or "") not in {"API", "Excel"}:
+        return {"attempted": 0, "processed": 0, "new_versions": 0, "unchanged": 0, "failed": 0, "errors": []}
+
+    # The fast dashboard can contain only the couriers with a persisted
+    # monthly row.  Snapshot creation must use the complete roster so the
+    # PWA never has to wait for a courier detail page to be opened first.
+    source_data = data.copy() if isinstance(data, pd.DataFrame) else pd.DataFrame()
+    try:
+        full_roster = augment_settlement_courier_master(
+            load_courier_master("Excel"),
+            session_id,
+        )
+    except Exception:
+        full_roster = pd.DataFrame()
+    if not full_roster.empty:
+        source_data = pd.concat([source_data, full_roster], ignore_index=True, sort=False)
+    if source_data.empty or "Courier ID" not in source_data.columns:
+        return {"attempted": 0, "processed": 0, "new_versions": 0, "unchanged": 0, "failed": 0, "errors": []}
+
+    # Prefer the current calculated row over the zero-valued roster fallback.
+    source_data = source_data.copy()
+    source_data["_snapshot_courier_key"] = source_data["Courier ID"].map(_courier_id_key)
+    source_data = source_data.loc[source_data["_snapshot_courier_key"].ne("")]
+    source_data = source_data.drop_duplicates("_snapshot_courier_key", keep="first")
     period_end = month_bounds(period_start)[1]
     profile_by_id = _export_courier_profile_lookup()
+    attempted = 0
     processed = 0
     new_versions = 0
     unchanged = 0
     failed = 0
-    for raw_item in data.to_dict("records"):
+    errors: list[str] = []
+    for raw_item in source_data.to_dict("records"):
         courier_id = _courier_id_key(raw_item.get("Courier ID"))
         if not courier_id:
             continue
+        attempted += 1
         courier_name = str(raw_item.get("Futár") or raw_item.get("FutĂˇr") or "").strip()
         try:
             item, route_detail = enrich_mobile_settlement_row_for_snapshot(
@@ -4802,10 +4827,22 @@ def save_devtest_finance_snapshots_for_rows(
                 unchanged += 1
             else:
                 failed += 1
-        except Exception:
+                errors.append(
+                    f"{courier_id} {courier_name}: snapshot mentés sikertelen: "
+                    f"{snapshot_result.get('reason') or 'ismeretlen hiba'}"
+                )
+        except Exception as exc:
             failed += 1
+            errors.append(f"{courier_id} {courier_name}: {type(exc).__name__}: {exc}")
     clear_devtest_finance_snapshot_cache()
-    return {"processed": processed, "new_versions": new_versions, "unchanged": unchanged, "failed": failed}
+    return {
+        "attempted": attempted,
+        "processed": processed,
+        "new_versions": new_versions,
+        "unchanged": unchanged,
+        "failed": failed,
+        "errors": errors,
+    }
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -23471,13 +23508,19 @@ def show_new_settlement_page() -> None:
                 if result.get("failed"):
                     st.warning(
                         "Mentés kész, de volt sikertelen sor: "
+                        f"{result.get('processed', 0)}/{result.get('attempted', 0)} futár feldolgozva, "
                         f"{result.get('new_versions', 0)} új verzió, "
                         f"{result.get('unchanged', 0)} változatlan, "
                         f"{result.get('failed', 0)} hiba."
                     )
+                    errors = result.get("errors") or []
+                    if errors:
+                        with st.expander("Sikertelen futárok részletei"):
+                            st.code("\n".join(str(item) for item in errors), language="text")
                 else:
                     st.success(
                         "Adatok mentve: "
+                        f"{result.get('processed', 0)}/{result.get('attempted', 0)} futár, "
                         f"{result.get('new_versions', 0)} új verzió, "
                         f"{result.get('unchanged', 0)} változatlan."
                     )
