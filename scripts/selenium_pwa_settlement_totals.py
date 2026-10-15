@@ -688,8 +688,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--timeout",
         type=int,
-        default=180,
-        help="Várakozási idő másodpercben; a PWA lassú frissítéséhez alapból 180",
+        default=90,
+        help="Várakozási idő másodpercben; a PWA lassú frissítéséhez alapból 90",
     )
     return parser.parse_args()
 
