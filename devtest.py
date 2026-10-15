@@ -23230,6 +23230,9 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                     f"{master_sync.get('upserted', 0)} sor."
                 )
             st.session_state["new_month_pending"] = selected_month
+            # A friss Excel az összes futár végső elszámolását érvényteleníti;
+            # a következő oldalbetöltésen induljon az exact snapshot batch.
+            st.session_state["devtest_exact_snapshot_batch_requested"] = True
             publish_excel_session_to_mobile_if_possible(
                 selected_month,
                 result["session_id"],
@@ -23608,7 +23611,6 @@ def show_new_settlement_page() -> None:
         st.session_state.pop("devtest_exact_snapshot_batch_requested", False)
         and not st.session_state.get("devtest_exact_snapshot_batch")
         and not st.session_state.get("selected_courier_id")
-        and use_fast_overview
         and not data.empty
         and import_session_id
     ):
@@ -23949,6 +23951,10 @@ def show_new_settlement_page() -> None:
                 save_customer_rating_upload(rating_preview, rating_month)
                 load_customer_rating_bonus_rows.clear()
                 load_driver_dashboard.clear()
+                # Az értékelési bónusz része a devtest végösszegének, ezért az
+                # érintett hónapra minden futárt újra kell számolni.
+                st.session_state["new_month_pending"] = month_option_label(rating_month)
+                st.session_state["devtest_exact_snapshot_batch_requested"] = True
                 st.success(f"Ügyfélértékelés mentve: {len(rating_preview)} futár, hónap: {rating_month:%Y-%m}.")
                 st.rerun()
             except Exception as exc:
