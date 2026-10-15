@@ -23601,6 +23601,29 @@ def show_new_settlement_page() -> None:
         data = apply_dsp_shift_attendance_audit(data, balance_period_start, balance_period_end)
     loading_panel.empty()
 
+    # Loading a new Excel session is the canonical recalculation event. Start
+    # the exact detail-page batch automatically once the source data is ready;
+    # the sidebar button remains available for a manual repeat later.
+    if (
+        st.session_state.pop("devtest_exact_snapshot_batch_requested", False)
+        and not st.session_state.get("devtest_exact_snapshot_batch")
+        and not st.session_state.get("selected_courier_id")
+        and use_fast_overview
+        and not data.empty
+        and import_session_id
+    ):
+        queued_count = start_devtest_exact_snapshot_batch(
+            data,
+            period_start=balance_period_start,
+            calculation_mode=selected_calculation_mode,
+            warehouse_label=selected_warehouse_label,
+            session_id=import_session_id,
+            updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+            current_data_context=current_data_context,
+        )
+        if queued_count:
+            st.rerun()
+
     with st.sidebar:
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
         calculation_mode = selected_calculation_mode
@@ -23741,6 +23764,7 @@ def show_new_settlement_page() -> None:
             st.caption("Kiválasztott mobil forrás: nincs, mert a Számítás módja Összes.")
         st.divider()
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
+            st.session_state["devtest_exact_snapshot_batch_requested"] = True
             refresh_settlement_profile_data()
             current_period_start = parse_month_option(selected_month)
             state_excel_session_id = st.session_state.get("settlement_excel_session_id")
