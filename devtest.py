@@ -17708,7 +17708,9 @@ def render_courier_detail_page() -> None:
                         valid_to_values = jitt_items.get("valid_to", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
                         effective_values = jitt_items.get("effective_date", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
                         jitt_items["Időszak"] = [
-                            f"{start} - {end}" if start and end and end.lower() != "nat" else (start or effective or "-")
+                            f"{start} - {end}"
+                            if str(start).strip() and str(end).strip() and str(end).strip().casefold() != "nat"
+                            else (str(start).strip() or str(effective).strip() or "-")
                             for start, end, effective in zip(valid_from_values, valid_to_values, effective_values)
                         ]
                         jitt_items["Megjegyzés"] = jitt_items.get("note", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
