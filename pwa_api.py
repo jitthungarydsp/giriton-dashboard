@@ -18649,21 +18649,27 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
         snapshot_name = str(snapshot.get("courier_name") or "").strip()
         profile = roster.get(courier_id) or roster_by_name.get(dashboard_courier_name_key(snapshot_name)) or {}
         has_summary = bool(profile.get("summary"))
-        total_huf = money_int(profile.get("summaryPayableHuf")) if has_summary else 0
+        metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+        has_snapshot_total = "payable_total" in metadata
+        total_huf = (
+            money_int(metadata.get("payable_total"))
+            if has_snapshot_total
+            else money_int(profile.get("summaryPayableHuf")) if has_summary else 0
+        )
         rows.append({
             "courierId": courier_id,
             "courierName": snapshot_name or str(profile.get("courierName") or f"Futár {courier_id}").strip(),
             "warehouse": str(snapshot.get("warehouse_label") or "").strip(),
             "status": {
-                "label": "Devtest összesítés" if has_summary else "Nincs devtest összesítés",
-                "detail": "devtest.py mentett összeg" if has_summary else "Nincs mentett devtest összesítés",
-                "tone": "active" if has_summary else "muted",
-                "sort": 30 if has_summary else 10,
+                "label": "Devtest összesítés" if (has_snapshot_total or has_summary) else "Nincs devtest összesítés",
+                "detail": "devtest.py mentett összeg" if (has_snapshot_total or has_summary) else "Nincs mentett devtest összesítés",
+                "tone": "active" if (has_snapshot_total or has_summary) else "muted",
+                "sort": 30 if (has_snapshot_total or has_summary) else 10,
             },
             "totalPayableHuf": total_huf,
-            "sources": ["devtest.py"] if has_summary else [],
-            "updatedAt": str(profile.get("summaryUpdatedAt") or ""),
-            "snapshotVersion": 0,
+            "sources": ["devtest.py"] if (has_snapshot_total or has_summary) else [],
+            "updatedAt": str(snapshot.get("created_at") or profile.get("summaryUpdatedAt") or ""),
+            "snapshotVersion": money_int(snapshot.get("version")),
         })
     for courier_id, profile in roster.items():
         if courier_id in latest_by_courier:
@@ -21924,6 +21930,25 @@ def admin_settlement_dashboard(
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
     try:
+        # The devtest finance snapshot is the canonical amount shown in the
+        # courier detail page. Use the same source for the list so the amount
+        # cannot change merely because the courier row was opened.
+        snapshot_dashboard = build_admin_settlement_totals(month_value)
+        if any(money_int(row.get("snapshotVersion")) > 0 for row in snapshot_dashboard.get("rows") or []):
+            if q:
+                clean_query = normalize_text(q)
+                filtered_rows = [
+                    row for row in snapshot_dashboard.get("rows") or []
+                    if clean_query in normalize_text(
+                        f"{row.get('courierId')} {row.get('courierName')} {row.get('warehouse')}"
+                    )
+                ]
+                snapshot_dashboard["rows"] = filtered_rows
+                snapshot_dashboard["summary"]["couriers"] = len(filtered_rows)
+                snapshot_dashboard["summary"]["totalPayableHuf"] = sum(
+                    money_int(row.get("totalPayableHuf")) for row in filtered_rows
+                )
+            return snapshot_dashboard
         dashboard = build_admin_settlement_dashboard(month_value, q)
         # An empty fast-view response is still a successful query, but it is
         # not useful when devtest snapshots exist for the selected month.
