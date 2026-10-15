@@ -6797,7 +6797,12 @@ async function loadVehicleAssignments(options = {}) {
     target.innerHTML = `<div class="empty-card">Autó-hozzárendelések betöltése...</div>`;
   }
   try {
-    const payload = await api(withPreviewCourier("/api/vehicles/assignments?days=60"));
+    const selectedDate = String(state.vehicleDateFilter || localDate()).trim();
+    const today = localDate();
+    const endpoint = selectedDate === today
+      ? "/api/vehicles/today-assignments"
+      : "/api/vehicles/assignments?days=60";
+    const payload = await api(withPreviewCourier(endpoint));
     state.vehicleAssignments = payload.items || [];
     renderVehicleAssignments();
   } catch (error) {
@@ -7110,9 +7115,9 @@ document.querySelectorAll("[data-vehicle-warehouse]").forEach((button) => {
   });
 });
 
-$("#vehicle-dashboard-date")?.addEventListener("change", (event) => {
+$("#vehicle-dashboard-date")?.addEventListener("change", async (event) => {
   state.vehicleDateFilter = event.currentTarget.value || localDate();
-  renderVehicleAssignments();
+  await loadVehicleAssignments();
 });
 
 $("#vehicle-dashboard-refresh")?.addEventListener("click", () => loadVehicleSection());

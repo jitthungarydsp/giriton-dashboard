@@ -1,0 +1,1012 @@
+<html lang="hu"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#17231c">
+    <meta name="description" content="Jitt futár mobilalkalmazás">
+    <link rel="manifest" href="/manifest.webmanifest?v=209">
+    <link rel="icon" href="/icon.svg?v=209" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon.svg?v=209">
+    <link rel="stylesheet" href="/styles.css?v=209">
+    <title>Jitt</title>
+  </head>
+  <body>
+    <div id="global-loading-panel" class="global-loading-panel hidden" role="status" aria-live="polite" aria-hidden="true">
+      <div class="global-loading-card">
+        <span class="global-loading-spinner" aria-hidden="true"></span>
+        <strong id="global-loading-text">Adatok betöltése...</strong>
+        <small>Kérlek várj, amíg minden adat megérkezik.</small>
+      </div>
+    </div>
+
+    <main id="login-view" class="login-shell hidden">
+      <section class="login-card">
+        <div class="brand-mark">G</div>
+        <p class="eyebrow">Kifli FUTÁR</p>
+        <h1>Jó újra látni.</h1>
+        <p class="muted">Lépj be a jelenlegi futáros felhasználóneveddel és jelszavaddal.</p>
+        <form id="login-form">
+          <label>Felhasználónév<input id="username" autocomplete="username" required=""></label>
+          <label>Jelszó<input id="password" type="password" autocomplete="current-password" required=""></label>
+          <p id="login-error" class="error" role="alert"></p>
+          <button class="primary" type="submit">Belépés</button>
+        </form>
+        <div class="auth-links">
+          <button id="show-password-reset" type="button">Elfelejtettem a jelszavam</button>
+          <button id="show-register" type="button">Regisztráció</button>
+        </div>
+
+        <form id="password-reset-form" class="hidden">
+          <h2>Jelszó visszaállítás</h2>
+          <label>Futár ID<input id="reset-courier-id" name="courier_id" inputmode="numeric" required=""></label>
+          <label>E-mail cím<input id="reset-email" name="email" type="email" autocomplete="email" required=""></label>
+          <p id="password-reset-message" class="error" role="alert"></p>
+          <button class="primary" type="submit">Új jelszó küldése</button>
+          <button class="secondary" data-auth-back="" type="button">Vissza a belépéshez</button>
+        </form>
+
+        <form id="register-form" class="hidden">
+          <h2>Regisztráció</h2>
+          <label>Futár ID<input id="register-courier-id" name="courier_id" inputmode="numeric" required=""></label>
+          <label>Név<input id="register-name" name="courier_name" autocomplete="name" required=""></label>
+          <label>Telefonszám<input id="register-phone" name="phone_number" inputmode="tel" autocomplete="tel" required=""></label>
+          <label>E-mail cím<input id="register-email" name="email" type="email" autocomplete="email" required=""></label>
+          <p id="register-message" class="error" role="alert"></p>
+          <button class="primary" type="submit">Regisztráció elküldése</button>
+          <button class="secondary" data-auth-back="" type="button">Vissza a belépéshez</button>
+        </form>
+      </section>
+    </main>
+
+    <main id="app-view" class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Kifli FUTÁR</p>
+          <h1 id="welcome">Szia, admin!</h1>
+        </div>
+        <button id="logout" class="icon-button" aria-label="Kilépés">↗</button>
+      </header>
+
+      <section id="admin-preview-bar" class="admin-preview-bar">
+        <label>
+          Admin előnézet
+          <input id="admin-preview-courier" list="courier-master-list" placeholder="Futár név vagy ID">
+        </label>
+        <datalist id="courier-master-list"><option value="6498" label="Abonyi György · #6498"></option><option value="6642" label="Ádám Erik · #6642"></option><option value="1234" label="admin · #1234"></option><option value="6956" label="Árva Tamás · #6956"></option><option value="12345" label="Bagoly Zoltán · #12345"></option><option value="6909" label="Bajorhegyi Ádám · #6909"></option><option value="6959" label="Bárándi Bendegúz · #6959"></option><option value="7185" label="Baranyai István · #7185"></option><option value="7056" label="Baranyi Szabolcs · #7056"></option><option value="8226" label="Baráth 8226 Dominik · #8226"></option><option value="7747" label="Bari Anett · #7747"></option><option value="7295" label="bence@bence.hu · #7295"></option><option value="7267" label="Bodonyi Gellért · #7267"></option><option value="6528" label="Bognár András · #6528"></option><option value="8031" label="Boskó 8031 György · #8031"></option><option value="7226" label="Bubán Szimonetta · #7226"></option><option value="1001" label="BUD1Cordinator · #1001"></option><option value="1002" label="BUD2Cordinator · #1002"></option><option value="7538" label="Cserna Levente Zoltán · #7538"></option><option value="6572" label="Deme 6572 Tamás · #6572"></option><option value="8263" label="Ember Gábor · #8263"></option><option value="7687" label="Fábián Alexandra · #7687"></option><option value="7842" label="Fabó Marcell · #7842"></option><option value="7814" label="Farkas Zsolt · #7814"></option><option value="8292" label="Fekete 8292 Bálint · #8292"></option><option value="7938" label="Futár 7938 · #7938"></option><option value="7927" label="Gál 7927 Dominik · #7927"></option><option value="7239" label="Gémes Zoltán · #7239"></option><option value="7977" label="Grózner 7977 Bálint · #7977"></option><option value="7644" label="Gurzó Balázs · #7644"></option><option value="8332" label="Hegedüs 8332 Dávid · #8332"></option><option value="7895" label="Herkovics Andrea · #7895"></option><option value="6206" label="Hervai Olivér · #6206"></option><option value="7829" label="Hohmann András Ármin · #7829"></option><option value="7815" label="Homonnai Imre · #7815"></option><option value="7147" label="Horváth István · #7147"></option><option value="6730" label="Jamal Nasir · #6730"></option><option value="7440" label="Jamal Wasil · #7440"></option><option value="7979" label="Jenei Tibor · #7979"></option><option value="7688" label="Kancsár Zoltán · #7688"></option><option value="7767" label="Kanyó Krisztián · #7767"></option><option value="6856" label="Király Dániel Dávid · #6856"></option><option value="7245" label="Kiss 7245 Csaba · #7245"></option><option value="6544" label="Kiss Koppány Zalán · #6544"></option><option value="8185" label="Komjáti 8185 Ákos · #8185"></option><option value="8122" label="Koncsik Tamás · #8122"></option><option value="7665" label="Koncsik Zoltán · #7665"></option><option value="7221" label="Kristóf Attila · #7221"></option><option value="7926" label="Kurucz 7926 Márton · #7926"></option><option value="8001" label="Lulaj 8001 Brendon · #8001"></option><option value="6686" label="Magyar Csilla · #6686"></option><option value="6476" label="Meleg Dominika · #6476"></option><option value="7018" label="Mocsáry Attila · #7018"></option><option value="7724" label="Molnár Ákos · #7724"></option><option value="5709" label="Nádasi Martin Nicolas · #5709"></option><option value="7244" label="Nagy 7244 Attila · #7244"></option><option value="7725" label="Nagy 7725 István · #7725"></option><option value="7956" label="Nagy 7956 Gergely · #7956"></option><option value="8532" label="Nagy 8532 Norbert · #8532"></option><option value="6596" label="Nagy Kristóf · #6596"></option><option value="8013" label="Nagy Zoltán · #8013"></option><option value="7743" label="Német Bence · #7743"></option><option value="7901" label="Pálinkás Balázs · #7901"></option><option value="7486" label="Papp 7486 Nikolett · #7486"></option><option value="5836" label="Pardi Ottó · #5836"></option><option value="8706" label="Péchy Tamás László · #8706"></option><option value="7296" label="Petrik Róbert · #7296"></option><option value="5774" label="Prantner Péter Ákos · #5774"></option><option value="7072" label="Rábl Norbert · #7072"></option><option value="2875" label="Rácz Csaba · #2875"></option><option value="7624" label="Révbíró Gábor · #7624"></option><option value="7150" label="Rezsnyák Bence László · #7150"></option><option value="8264" label="Rusvai 8264 Marcell · #8264"></option><option value="7938" label="Sabján 7938 Iván · #7938"></option><option value="7843" label="Siklósi Máté · #7843"></option><option value="7103" label="Stumpf András István · #7103"></option><option value="8266" label="Szikszai 8266 Ferenc · #8266"></option><option value="6825" label="Szolnoki Tibor · #6825"></option><option value="8054" label="Szombati 8054 Márk · #8054"></option><option value="8223" label="Takács 8223 Attila · #8223"></option><option value="7632" label="Tinger József · #7632"></option><option value="7722" label="Tóth 7722 Gábor · #7722"></option><option value="7753" label="Tuza Ádám · #7753"></option><option value="6801" label="Vajda Erik · #6801"></option><option value="6855" label="Vándor Balázs · #6855"></option><option value="7817" label="Varecza Roland · #7817"></option><option value="7939" label="Varga 7939 Patrik Ádám · #7939"></option><option value="6403" label="Varga Románó · #6403"></option><option value="6729" label="Zorányi Tamás Bence · #6729"></option></datalist>
+        <div class="admin-preview-actions">
+          <button id="admin-preview-open" class="secondary" type="button">Megnyitás</button>
+          <button id="admin-preview-clear" class="text-button" type="button">Saját profil</button>
+        </div>
+        <p id="admin-preview-status"></p>
+      </section>
+
+      <div id="home-content" class="hidden">
+        <section class="hero-card">
+          <div>
+            <p class="eyebrow">KÖVETKEZŐ MŰSZAK</p>
+            <h2 id="next-shift">Nincs aktuális műszak</h2>
+            <p id="next-shift-detail" class="hero-detail">A következő öt napban nincs foglalás.</p>
+          </div>
+          <span id="next-status" class="status-pill">Szabad</span>
+        </section>
+
+        <section id="work-offer-card" class="work-offer-card">
+          <div class="work-offer-top">
+            <div>
+              <p class="eyebrow">DOLGOZNÁL?</p>
+              <h2>Szabad műszakok</h2>
+              <p>A kiválasztott nap, raktáradhoz tartozó MűszakPro műszakjait mutatjuk.</p>
+            </div>
+            <button id="open-muszakpro-refresh" class="secondary" type="button">Mutasd</button>
+          </div>
+          <section id="open-muszakpro-list" class="open-shift-list hidden" aria-live="polite"></section>
+        </section>
+
+        <section class="section-heading">
+          <div><p class="eyebrow">TERVEZÉS</p><h2>Műszakjaim</h2></div>
+          <button id="refresh" class="text-button">Frissítés</button>
+        </section>
+
+        <nav id="day-tabs" class="day-tabs" aria-label="Műszaknapok"><button class="day-tab active"><span>Ma</span><strong>14</strong></button><button class="day-tab"><span>Cs</span><strong>15</strong></button><button class="day-tab"><span>P</span><strong>16</strong></button><button class="day-tab"><span>Szo</span><strong>17</strong></button><button class="day-tab"><span>V</span><strong>18</strong></button></nav>
+        <section id="warning-list" aria-live="polite"><div class="warning-card">Courier Hub műszakadat még nincs ehhez az időszakhoz.</div><div class="warning-card">Az új Attendance/MűszakPro műszaknézet jelenleg nem érhető el, régi forrásból próbálom.</div><div class="warning-card">A Giriton adatok jelenleg nem érhetők el.</div><div class="warning-card">A MűszakPro adatok jelenleg nem érhetők el.</div></section>
+        <section id="queue-status-panel" class="hidden" aria-live="polite"></section>
+        <section id="shift-list" class="shift-list" aria-live="polite"><div class="empty-card">Erre a napra nincs megjeleníthető műszak.</div></section>
+        <p id="updated-at" class="updated-at">Utolsó lekérés: 2026. 10. 14. 22:26:01</p>
+      </div>
+
+      <div id="settlement-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">HAVI FOLYAMAT</p>
+            <h2>Elszámolás és számla</h2>
+            <p class="muted">Minden lépés csak az előző sikeres lezárása után válik aktívvá.</p>
+          </div>
+          <div class="workflow-controls route-report-filters">
+            <label class="month-picker">Hónap<select id="workflow-month"></select></label>
+            <label class="month-picker">Folyamat<select id="workflow-process"><option value="" selected="">Havi folyamat</option></select></label>
+            <label id="workflow-preview-wrapper" class="month-picker">Futár<input id="workflow-preview-courier" placeholder="Név vagy ID"></label>
+            <button id="workflow-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
+        </section>
+
+        <section id="workflow-message" aria-live="polite"></section>
+        <ol id="workflow-steps" class="workflow-steps"></ol>
+        <section id="workflow-admin-actions" class="process-card hidden"></section>
+
+        <section id="settlement-panel" class="process-card"></section>
+        <section id="tig-panel" class="process-card"></section>
+
+        <section id="invoice-submit-panel" class="process-card">
+          <div class="process-title"><span class="step-code">5</span><div><h3>Számlafeltöltés</h3><p>A TIG elfogadása után válik aktívvá. A dokumentum mindenképpen beérkezik hozzánk.</p></div></div>
+          <form id="invoice-submit-form" class="process-form two-column">
+            <label>Számlaszám<input id="invoice-number" name="invoice_number" required=""></label>
+            <label>Számlák bruttó összege összesen (Ft)<input id="gross-amount" name="gross_amount" type="number" min="1" step="1" required=""></label>
+            <label>TIG / elszámolás azonosító<input id="tig-reference" name="tig_reference"></label>
+            <label>Megjegyzés<input id="invoice-note" name="note"></label>
+            <label class="full-width checkbox-line"><input id="skip-invoice-number-match" name="skip_invoice_number_match" type="checkbox" value="true"> Számlaszám egyezés ellenőrzés kihagyása</label>
+            <label class="full-width"><span id="invoice-submit-file-label">Számla feltöltése (üresen az 5. lépésben ellenőrzött fájlt küldi be)</span><input id="invoice-submit-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg"></label>
+            <label id="cash-invoice-submit-wrapper" class="full-width hidden"><span id="cash-invoice-submit-label">KP számla feltöltése</span><input id="cash-invoice-submit-file" name="cash_invoice_file" type="file" accept="application/pdf,image/png,image/jpeg"></label>
+            <button class="primary full-width" type="submit">Számlák ellenőrzése és feltöltése</button>
+          </form>
+          <button id="invoice-submit-help" class="secondary full-width" type="button">Elakadtam, segítséget kérek</button>
+          <div id="invoice-submit-info"></div>
+          <div id="invoice-submit-result"></div>
+          <div id="invoice-document-list"></div>
+        </section>
+
+        <section id="invoice-check-panel" class="process-card">
+          <div class="process-title"><span class="step-code">6</span><div><h3>Számlaellenőrzés</h3><p>A feltöltött számlát automatikusan ellenőrizzük, hibánál manuális ágra kerül.</p></div></div>
+          <div id="invoice-check-info"></div>
+          <div id="invoice-check-result"></div>
+        </section>
+
+        <p id="workflow-updated-at" class="updated-at"></p>
+      </div>
+
+      <div id="statistics-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">STATISZTIKA</p>
+            <h2>Havi teljesítmény</h2>
+            <p class="muted">Körök, címek és teljesítmény mutatók. Forint összegeket itt még nem mutatunk.</p>
+          </div>
+          <div class="workflow-controls">
+            <label class="month-picker">Hónap<input id="statistics-month" type="month"></label>
+            <label class="month-picker">Nap<select id="statistics-day" disabled=""><option value="">Összes nap</option></select></label>
+            <label id="statistics-preview-wrapper" class="month-picker">Futár<input id="statistics-preview-courier" placeholder="Név vagy ID"></label>
+            <button id="statistics-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
+        </section>
+
+        <section id="statistics-message" aria-live="polite"></section>
+        <section id="statistics-grid" class="statistics-grid"></section>
+        <section id="statistics-quality"></section>
+        <section id="statistics-breakdown" class="process-card"></section>
+      </div>
+
+      <div id="phonebook-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">SEGÍTSÉG</p>
+            <h2>Telefonszámok</h2>
+            <p class="muted">Fontos kapcsolatok egy érintéses hívással.</p>
+          </div>
+        </section>
+
+        <section id="phonebook-list" class="phonebook-list" aria-label="Hívható telefonszámok"></section>
+      </div>
+
+      <div id="atm-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">ATM</p>
+            <h2>ATM befizetés</h2>
+            <p class="muted">Rögzítsd az ATM befizetés összegét és a bizonylat képét.</p>
+          </div>
+          <button id="atm-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+
+        <section class="process-card atm-balance-card">
+          <div class="process-title">
+            <span class="step-code">Ft</span>
+            <div>
+              <h3>Vezetett egyenleg</h3>
+              <p>Az eddig beküldött ATM befizetések összege.</p>
+            </div>
+          </div>
+          <strong id="atm-balance-paid">0 Ft</strong>
+          <small id="atm-balance-count">0 befizetés</small>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">ATM</span>
+            <div>
+              <h3>Befizetés rögzítése</h3>
+              <p>Add meg az összeget, és készíts vagy tölts fel egy bizonylatképet.</p>
+            </div>
+          </div>
+          <form id="atm-form" class="process-form two-column">
+            <label>Összeg (Ft)<input id="atm-amount" name="amount_huf" inputmode="numeric" autocomplete="off" required=""></label>
+            <label>Bizonylat azonosító<input id="atm-invoice-number" name="invoice_number" autocomplete="off"></label>
+            <label class="full-width">Megjegyzés<textarea id="atm-note" name="note" rows="3"></textarea></label>
+            <label class="full-width">Bizonylat fotó<input id="atm-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" capture="environment" required=""></label>
+            <button class="primary full-width" type="submit">ATM befizetés beküldése</button>
+          </form>
+          <p id="atm-message" class="updated-at" aria-live="polite"></p>
+        </section>
+
+        <section id="atm-list" class="process-card"></section>
+      </div>
+
+      <div id="salary-advance-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">FIZETÉS ELŐLEG</p>
+            <h2>Fizetés előleg</h2>
+            <p class="muted">Itt tudsz előleg igényt indítani. Jóváhagyás után külön folyamatként jelenik meg az elszámolásban.</p>
+          </div>
+          <button id="salary-advance-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">Ft</span>
+            <div>
+              <h3>Előleg kalkulátor</h3>
+              <p>Add meg a kezdő hónapot, az összeget és a havi bontást.</p>
+            </div>
+          </div>
+          <form id="salary-advance-form" class="process-form two-column">
+            <label>Kezdés időpontja<input id="salary-advance-start-date" name="start_date" type="month" required=""></label>
+            <label>Összeg (Ft)<input id="salary-advance-amount" name="requested_amount_huf" inputmode="numeric" autocomplete="off" placeholder="300000" required=""></label>
+            <label>Hány hónapra<input id="salary-advance-months" name="installment_months" type="number" min="1" max="60" step="1" value="1" required=""></label>
+            <label>Havi levonás<input id="salary-advance-monthly" disabled=""></label>
+            <label class="full-width">Megjegyzés<textarea id="salary-advance-note" name="note" rows="3"></textarea></label>
+            <button class="primary full-width" type="submit">Igény elindítása</button>
+          </form>
+          <p id="salary-advance-message" class="updated-at" aria-live="polite"></p>
+        </section>
+
+        <section id="salary-advance-list" class="process-card"></section>
+      </div>
+
+      <div id="expense-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">TANKOLÁS</p>
+            <h2>Tankolás és egyéb számlák</h2>
+            <p class="muted">Ez külön kifizetési folyamat, nincs hatással a havi elszámolásra.</p>
+          </div>
+          <button id="expense-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">T</span>
+            <div>
+              <h3>Számla feltöltése</h3>
+              <p>Rögzítsd a rendszámot, a kilométeróra állást és a számla összegét.</p>
+            </div>
+          </div>
+          <form id="expense-form" class="process-form two-column">
+            <label>Típus<select id="expense-type" name="request_type"><option value="fuel">Tankolás</option><option value="other">Egyéb számla</option></select></label>
+            <label>Rendszám<input id="expense-license-plate" name="license_plate" autocomplete="off" required=""></label>
+            <label>Kilométeróra állás<input id="expense-odometer" name="odometer_km" type="number" min="1" step="1" required=""></label>
+            <label>Összeg (Ft)<input id="expense-amount" name="amount_huf" inputmode="numeric" autocomplete="off" required=""></label>
+            <label>Számlaszám<input id="expense-invoice-number" name="invoice_number" autocomplete="off"></label>
+            <label class="full-width">Megjegyzés<textarea id="expense-note" name="note" rows="3"></textarea></label>
+            <label class="full-width">Számla feltöltése<input id="expense-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" required=""></label>
+            <button class="primary full-width" type="submit">Költségszámla beküldése</button>
+          </form>
+          <p id="expense-message" class="updated-at" aria-live="polite"></p>
+        </section>
+
+        <section id="expense-list" class="process-card"></section>
+      </div>
+
+      <div id="documents-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">DOKUMENTUMOK</p>
+            <h2>Futár dokumentumai</h2>
+            <p class="muted">Hónapokra bontva látod az elszámolást, TIG-et, feltöltött számlákat és egyéb dokumentumokat.</p>
+          </div>
+        </section>
+        <section id="documents-list" class="process-card"></section>
+      </div>
+
+      <div id="profile-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">PROFIL</p>
+            <h2>Számlázási adatok</h2>
+            <p class="muted">Ezek az adatok kerülnek a TIG-re és a számlaellenőrzéshez is ezeket használjuk. A bankszámlaszámot itt tudod frissíteni.</p>
+          </div>
+        </section>
+
+        <section class="process-card">
+          <form id="billing-profile-form" class="process-form two-column">
+            <label>
+              Futár ID
+              <input id="profile-courier-id" name="courier_id" inputmode="numeric" title="A futár ID csak addig írható, amíg üres.">
+            </label>
+
+            <label>
+              Futár neve
+              <input id="profile-courier-name" name="courier_name">
+            </label>
+
+            <label class="full-width">
+              Telefonszám
+              <input id="profile-phone-number" name="phone_number" inputmode="tel">
+            </label>
+
+            <label class="full-width">
+              Preferált raktár
+              <select id="profile-warehouse" name="warehouse_name">
+                <option value="">Nincs megadva</option>
+                <option value="BUD1">BUD1</option>
+                <option value="BUD2">BUD2</option>
+                <option value="BUD">Budapest</option>
+              </select>
+            </label>
+
+            <label class="full-width">
+              Vállalkozás neve
+              <input id="billing-company-name" name="company_name" autocomplete="organization" required="">
+            </label>
+
+            <label class="full-width">
+              Vállalkozás székhelye
+              <input id="billing-company-address" name="company_address" autocomplete="street-address" required="">
+            </label>
+
+            <label>
+              Adószám
+              <input id="billing-tax-number" name="tax_number" inputmode="numeric" required="">
+            </label>
+
+            <label>
+              Bankszámlaszám
+              <input id="billing-bank-account" name="bank_account_number" inputmode="numeric">
+            </label>
+
+            <label class="full-width">
+              Számlázási e-mail
+              <input id="billing-email" name="billing_email" type="email" autocomplete="email">
+            </label>
+
+            <button class="primary full-width" type="submit">Számlázási adatok mentése</button>
+          </form>
+
+          <p id="billing-profile-message" class="updated-at" aria-live="polite"></p>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">PW</span>
+            <div>
+              <h3>Jelszó módosítása</h3>
+              <p>A belépéshez használt jelszavadat itt tudod lecserélni.</p>
+            </div>
+          </div>
+          <form id="password-change-form" class="process-form">
+            <label>Jelenlegi jelszó<input id="current-password" name="current_password" type="password" autocomplete="current-password" required=""></label>
+            <label>Új jelszó<input id="new-password" name="new_password" type="password" autocomplete="new-password" minlength="8" required=""></label>
+            <label>Új jelszó újra<input id="new-password-confirm" name="new_password_confirm" type="password" autocomplete="new-password" minlength="8" required=""></label>
+            <button class="primary" type="submit">Jelszó módosítása</button>
+          </form>
+          <p id="password-change-message" class="updated-at" aria-live="polite"></p>
+        </section>
+      </div>
+
+      <div id="device-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">TELEFON</p>
+            <h2>Telefon ellenőrzés</h2>
+            <p class="muted">Rögzítsd a telefon sorszámát és tölts fel képeket az aktuális állapotról.</p>
+          </div>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">TEL</span>
+            <div>
+              <h3>Telefon állapot</h3>
+              <p>Rögzítsd a telefon sorszámát és tölts fel képeket az aktuális állapotról.</p>
+            </div>
+          </div>
+          <form id="device-condition-form" class="process-form two-column">
+            <label>Telefon sorszám<input id="device-serial-number" name="serial_number" required=""></label>
+            <label>IMEI / azonosító<input id="device-imei" name="imei" inputmode="numeric"></label>
+            <label>Esemény
+              <select id="device-event-type" name="event_type">
+                <option value="inspection">Ellenőrzés</option>
+                <option value="handover">Átadás</option>
+                <option value="return">Visszavétel</option>
+                <option value="damage_report">Sérülés jelzés</option>
+              </select>
+            </label>
+            <label>Állapot
+              <select id="device-condition-status" name="condition_status">
+                <option value="ok">Rendben</option>
+                <option value="scratched">Karcos</option>
+                <option value="cracked">Törött</option>
+                <option value="broken">Hibás</option>
+                <option value="missing_accessory">Hiányzó tartozék</option>
+                <option value="other">Egyéb</option>
+              </select>
+            </label>
+            <label class="full-width">Megjegyzés<textarea id="device-condition-note" name="note" rows="3"></textarea></label>
+            <label class="full-width">Fotók<input id="device-condition-photos" name="photos" type="file" accept="image/png,image/jpeg,image/webp" multiple="" required=""></label>
+            <button class="primary full-width" type="submit">Telefon állapot rögzítése</button>
+          </form>
+          <p id="device-condition-message" class="updated-at" aria-live="polite"></p>
+          <section id="device-condition-history" class="device-history"></section>
+        </section>
+      </div>
+
+      <div id="vehicle-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">AUTÓ</p>
+            <h2>Autóbeosztás</h2>
+            <p class="muted">A mai autók, a kijelölt futárok és az autó állapotai egy helyen.</p>
+          </div>
+          <div class="vehicle-header-actions">
+            <button id="vehicle-dashboard-refresh" class="secondary" type="button">Frissítés</button>
+            <button id="vehicle-admin-open" class="secondary hidden" type="button">Autó-adminisztráció</button>
+          </div>
+        </section>
+
+        <section class="process-card vehicle-dashboard-card">
+          <div class="vehicle-filter-row">
+            <div class="vehicle-warehouse-tabs" role="tablist" aria-label="Raktár szűrés">
+              <button type="button" class="active" data-vehicle-warehouse="">Összes</button>
+              <button type="button" data-vehicle-warehouse="BUD1">BUD1</button>
+              <button type="button" data-vehicle-warehouse="BUD2">BUD2</button>
+            </div>
+            <label class="month-picker vehicle-date-picker">Dátum<input id="vehicle-dashboard-date" type="date"></label>
+          </div>
+          <div class="vehicle-view-tabs" role="tablist" aria-label="Autó nézet">
+            <button type="button" class="active" data-vehicle-tab="today">Mai autóbeosztás</button>
+            <button type="button" data-vehicle-tab="free">Szabad autók</button>
+            <button type="button" data-vehicle-tab="search">Keresés</button>
+          </div>
+          <section id="vehicle-assignment-history" class="vehicle-assignment-list">
+            <div class="empty-card">Mai autóbeosztás betöltése...</div>
+          </section>
+          <section id="vehicle-free-panel" class="vehicle-free-panel hidden"></section>
+        </section>
+
+        <section id="vehicle-hr-panel" class="process-card hidden">
+          <div class="process-title">
+            <span class="step-code">HR</span>
+            <div>
+              <h3>Autóhasználat kereső</h3>
+              <p>Rendszám vagy kolléga neve alapján megmutatja, ki használta az autót.</p>
+            </div>
+          </div>
+          <form id="vehicle-hr-search-form" class="process-form two-column">
+            <label>Futár kiválasztása
+              <select id="vehicle-hr-courier"><option value="">Válassz futárt</option><option value="6498">Abonyi György · #6498</option><option value="6642">Ádám Erik · #6642</option><option value="1234">admin · #1234</option><option value="6956">Árva Tamás · #6956</option><option value="12345">Bagoly Zoltán · #12345</option><option value="6909">Bajorhegyi Ádám · #6909</option><option value="6959">Bárándi Bendegúz · #6959</option><option value="7185">Baranyai István · #7185</option><option value="7056">Baranyi Szabolcs · #7056</option><option value="8226">Baráth 8226 Dominik · #8226</option><option value="7747">Bari Anett · #7747</option><option value="7295">bence@bence.hu · #7295</option><option value="7267">Bodonyi Gellért · #7267</option><option value="6528">Bognár András · #6528</option><option value="8031">Boskó 8031 György · #8031</option><option value="7226">Bubán Szimonetta · #7226</option><option value="1001">BUD1Cordinator · #1001</option><option value="1002">BUD2Cordinator · #1002</option><option value="7538">Cserna Levente Zoltán · #7538</option><option value="6572">Deme 6572 Tamás · #6572</option><option value="8263">Ember Gábor · #8263</option><option value="7687">Fábián Alexandra · #7687</option><option value="7842">Fabó Marcell · #7842</option><option value="7814">Farkas Zsolt · #7814</option><option value="8292">Fekete 8292 Bálint · #8292</option><option value="7938">Futár 7938 · #7938</option><option value="7927">Gál 7927 Dominik · #7927</option><option value="7239">Gémes Zoltán · #7239</option><option value="7977">Grózner 7977 Bálint · #7977</option><option value="7644">Gurzó Balázs · #7644</option><option value="8332">Hegedüs 8332 Dávid · #8332</option><option value="7895">Herkovics Andrea · #7895</option><option value="6206">Hervai Olivér · #6206</option><option value="7829">Hohmann András Ármin · #7829</option><option value="7815">Homonnai Imre · #7815</option><option value="7147">Horváth István · #7147</option><option value="6730">Jamal Nasir · #6730</option><option value="7440">Jamal Wasil · #7440</option><option value="7979">Jenei Tibor · #7979</option><option value="7688">Kancsár Zoltán · #7688</option><option value="7767">Kanyó Krisztián · #7767</option><option value="6856">Király Dániel Dávid · #6856</option><option value="7245">Kiss 7245 Csaba · #7245</option><option value="6544">Kiss Koppány Zalán · #6544</option><option value="8185">Komjáti 8185 Ákos · #8185</option><option value="8122">Koncsik Tamás · #8122</option><option value="7665">Koncsik Zoltán · #7665</option><option value="7221">Kristóf Attila · #7221</option><option value="7926">Kurucz 7926 Márton · #7926</option><option value="8001">Lulaj 8001 Brendon · #8001</option><option value="6686">Magyar Csilla · #6686</option><option value="6476">Meleg Dominika · #6476</option><option value="7018">Mocsáry Attila · #7018</option><option value="7724">Molnár Ákos · #7724</option><option value="5709">Nádasi Martin Nicolas · #5709</option><option value="7244">Nagy 7244 Attila · #7244</option><option value="7725">Nagy 7725 István · #7725</option><option value="7956">Nagy 7956 Gergely · #7956</option><option value="8532">Nagy 8532 Norbert · #8532</option><option value="6596">Nagy Kristóf · #6596</option><option value="8013">Nagy Zoltán · #8013</option><option value="7743">Német Bence · #7743</option><option value="7901">Pálinkás Balázs · #7901</option><option value="7486">Papp 7486 Nikolett · #7486</option><option value="5836">Pardi Ottó · #5836</option><option value="8706">Péchy Tamás László · #8706</option><option value="7296">Petrik Róbert · #7296</option><option value="5774">Prantner Péter Ákos · #5774</option><option value="7072">Rábl Norbert · #7072</option><option value="2875">Rácz Csaba · #2875</option><option value="7624">Révbíró Gábor · #7624</option><option value="7150">Rezsnyák Bence László · #7150</option><option value="8264">Rusvai 8264 Marcell · #8264</option><option value="7938">Sabján 7938 Iván · #7938</option><option value="7843">Siklósi Máté · #7843</option><option value="7103">Stumpf András István · #7103</option><option value="8266">Szikszai 8266 Ferenc · #8266</option><option value="6825">Szolnoki Tibor · #6825</option><option value="8054">Szombati 8054 Márk · #8054</option><option value="8223">Takács 8223 Attila · #8223</option><option value="7632">Tinger József · #7632</option><option value="7722">Tóth 7722 Gábor · #7722</option><option value="7753">Tuza Ádám · #7753</option><option value="6801">Vajda Erik · #6801</option><option value="6855">Vándor Balázs · #6855</option><option value="7817">Varecza Roland · #7817</option><option value="7939">Varga 7939 Patrik Ádám · #7939</option><option value="6403">Varga Románó · #6403</option><option value="6729">Zorányi Tamás Bence · #6729</option></select>
+            </label>
+            <label>Rendszám keresése<input id="vehicle-hr-plate" autocomplete="off" placeholder="pl. ABC123"></label>
+            <label>Hónap<input id="vehicle-hr-month" type="month"></label>
+            <button class="primary" type="submit">Keresés</button>
+          </form>
+          <section id="vehicle-hr-search-results" class="vehicle-assignment-list">
+            <div class="empty-card">Válassz futárt vagy adj meg rendszámot.</div>
+          </section>
+        </section>
+      </div>
+
+      <div id="vehicle-config-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">AUTÓ</p>
+            <h2>Autó konfigurálása</h2>
+            <p class="muted">Autó törzsadatok, matrica, szervízablak, állapot és dedikált futár beállítása.</p>
+          </div>
+          <button id="vehicle-config-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">CAR</span>
+            <div>
+              <h3>Új autó / módosítás</h3>
+              <p>A rendszám alapján meglévő autót frissít, új rendszámnál új rekordot hoz létre.</p>
+            </div>
+          </div>
+          <form id="vehicle-config-form" class="process-form two-column">
+            <label>JITT_CAR_ID<input id="vehicle-config-jitt-id" autocomplete="off" placeholder="Automatikusan generálódik" readonly=""></label>
+            <label>Rendszám<input id="vehicle-config-license-plate" required="" autocomplete="off"></label>
+            <label>Autó márkája<input id="vehicle-config-brand" autocomplete="off" placeholder="pl. Ford"></label>
+            <label>Autó típusa<input id="vehicle-config-model" autocomplete="off" placeholder="pl. Transit"></label>
+            <label>Saját vagy bérelt
+              <select id="vehicle-config-ownership">
+                <option value="own">Saját</option>
+                <option value="rented">Bérelt</option>
+              </select>
+            </label>
+            <label id="vehicle-config-rental-company-wrap" class="hidden">Bérlő cég neve<input id="vehicle-config-rental-company" autocomplete="off"></label>
+            <label>Raktár
+              <select id="vehicle-config-warehouse" required="">
+                <option value="BUD1">BUD1</option>
+                <option value="BUD2">BUD2</option>
+              </select>
+            </label>
+            <label>Autópálya matrica
+              <select id="vehicle-config-toll-type">
+                <option value="none">Nincs</option>
+                <option value="has">Van</option>
+                <option value="county">Megyei</option>
+                <option value="national">Országos</option>
+              </select>
+            </label>
+            <label id="vehicle-config-counties-wrap" class="full-width hidden">Megyei matrica
+              <select id="vehicle-config-toll-counties" multiple="" size="5"></select>
+            </label>
+            <label>Matrica érvényesség kezdete<input id="vehicle-config-toll-from" type="date"></label>
+            <label>Matrica érvényesség vége<input id="vehicle-config-toll-to" type="date"></label>
+            <label>Szervíz kezdete<input id="vehicle-config-service-from" type="date"></label>
+            <label>Szervíz vége<input id="vehicle-config-service-to" type="date"></label>
+            <label>Szervíz helye<input id="vehicle-config-service-location" autocomplete="off"></label>
+            <label>Állapot
+              <select id="vehicle-config-status">
+                <option value="assignable">Futárhoz kiosztható</option>
+                <option value="service">Szervízben</option>
+                <option value="garage_master">Garázsmesternél</option>
+                <option value="other">Egyéb</option>
+                <option value="retired">Kivezetve</option>
+                <option value="out_of_order">Üzemen kívül</option>
+              </select>
+            </label>
+            <label>Autó állapota
+              <select id="vehicle-config-condition-status">
+                <option value="ok">Rendben</option>
+                <option value="attention">Figyelmet igényel</option>
+                <option value="faulty">Hibás</option>
+              </select>
+            </label>
+            <label class="full-width">Állapot leírás<textarea id="vehicle-config-condition-description" rows="3"></textarea></label>
+            <label>Minimum napi kivitt körök száma<input id="vehicle-config-min-rounds" type="number" min="0" step="1"></label>
+            <label class="vehicle-config-active"><input id="vehicle-config-enforce-min-rounds" type="checkbox"> Minimum körök figyelembe vétele</label>
+            <label>Egyedi dedikálás
+              <select id="vehicle-config-dedicated-courier"><option value="">Nincs dedikált futár</option><option value="6498" data-name="Abonyi György">Abonyi György · #6498</option><option value="6642" data-name="Ádám Erik">Ádám Erik · #6642</option><option value="1234" data-name="admin">admin · #1234</option><option value="6956" data-name="Árva Tamás">Árva Tamás · #6956</option><option value="12345" data-name="Bagoly Zoltán">Bagoly Zoltán · #12345</option><option value="6909" data-name="Bajorhegyi Ádám">Bajorhegyi Ádám · #6909</option><option value="6959" data-name="Bárándi Bendegúz">Bárándi Bendegúz · #6959</option><option value="7185" data-name="Baranyai István">Baranyai István · #7185</option><option value="7056" data-name="Baranyi Szabolcs">Baranyi Szabolcs · #7056</option><option value="8226" data-name="Baráth 8226 Dominik">Baráth 8226 Dominik · #8226</option><option value="7747" data-name="Bari Anett">Bari Anett · #7747</option><option value="7295" data-name="bence@bence.hu">bence@bence.hu · #7295</option><option value="7267" data-name="Bodonyi Gellért">Bodonyi Gellért · #7267</option><option value="6528" data-name="Bognár András">Bognár András · #6528</option><option value="8031" data-name="Boskó 8031 György">Boskó 8031 György · #8031</option><option value="7226" data-name="Bubán Szimonetta">Bubán Szimonetta · #7226</option><option value="1001" data-name="BUD1Cordinator">BUD1Cordinator · #1001</option><option value="1002" data-name="BUD2Cordinator">BUD2Cordinator · #1002</option><option value="7538" data-name="Cserna Levente Zoltán">Cserna Levente Zoltán · #7538</option><option value="6572" data-name="Deme 6572 Tamás">Deme 6572 Tamás · #6572</option><option value="8263" data-name="Ember Gábor">Ember Gábor · #8263</option><option value="7687" data-name="Fábián Alexandra">Fábián Alexandra · #7687</option><option value="7842" data-name="Fabó Marcell">Fabó Marcell · #7842</option><option value="7814" data-name="Farkas Zsolt">Farkas Zsolt · #7814</option><option value="8292" data-name="Fekete 8292 Bálint">Fekete 8292 Bálint · #8292</option><option value="7938" data-name="Futár 7938">Futár 7938 · #7938</option><option value="7927" data-name="Gál 7927 Dominik">Gál 7927 Dominik · #7927</option><option value="7239" data-name="Gémes Zoltán">Gémes Zoltán · #7239</option><option value="7977" data-name="Grózner 7977 Bálint">Grózner 7977 Bálint · #7977</option><option value="7644" data-name="Gurzó Balázs">Gurzó Balázs · #7644</option><option value="8332" data-name="Hegedüs 8332 Dávid">Hegedüs 8332 Dávid · #8332</option><option value="7895" data-name="Herkovics Andrea">Herkovics Andrea · #7895</option><option value="6206" data-name="Hervai Olivér">Hervai Olivér · #6206</option><option value="7829" data-name="Hohmann András Ármin">Hohmann András Ármin · #7829</option><option value="7815" data-name="Homonnai Imre">Homonnai Imre · #7815</option><option value="7147" data-name="Horváth István">Horváth István · #7147</option><option value="6730" data-name="Jamal Nasir">Jamal Nasir · #6730</option><option value="7440" data-name="Jamal Wasil">Jamal Wasil · #7440</option><option value="7979" data-name="Jenei Tibor">Jenei Tibor · #7979</option><option value="7688" data-name="Kancsár Zoltán">Kancsár Zoltán · #7688</option><option value="7767" data-name="Kanyó Krisztián">Kanyó Krisztián · #7767</option><option value="6856" data-name="Király Dániel Dávid">Király Dániel Dávid · #6856</option><option value="7245" data-name="Kiss 7245 Csaba">Kiss 7245 Csaba · #7245</option><option value="6544" data-name="Kiss Koppány Zalán">Kiss Koppány Zalán · #6544</option><option value="8185" data-name="Komjáti 8185 Ákos">Komjáti 8185 Ákos · #8185</option><option value="8122" data-name="Koncsik Tamás">Koncsik Tamás · #8122</option><option value="7665" data-name="Koncsik Zoltán">Koncsik Zoltán · #7665</option><option value="7221" data-name="Kristóf Attila">Kristóf Attila · #7221</option><option value="7926" data-name="Kurucz 7926 Márton">Kurucz 7926 Márton · #7926</option><option value="8001" data-name="Lulaj 8001 Brendon">Lulaj 8001 Brendon · #8001</option><option value="6686" data-name="Magyar Csilla">Magyar Csilla · #6686</option><option value="6476" data-name="Meleg Dominika">Meleg Dominika · #6476</option><option value="7018" data-name="Mocsáry Attila">Mocsáry Attila · #7018</option><option value="7724" data-name="Molnár Ákos">Molnár Ákos · #7724</option><option value="5709" data-name="Nádasi Martin Nicolas">Nádasi Martin Nicolas · #5709</option><option value="7244" data-name="Nagy 7244 Attila">Nagy 7244 Attila · #7244</option><option value="7725" data-name="Nagy 7725 István">Nagy 7725 István · #7725</option><option value="7956" data-name="Nagy 7956 Gergely">Nagy 7956 Gergely · #7956</option><option value="8532" data-name="Nagy 8532 Norbert">Nagy 8532 Norbert · #8532</option><option value="6596" data-name="Nagy Kristóf">Nagy Kristóf · #6596</option><option value="8013" data-name="Nagy Zoltán">Nagy Zoltán · #8013</option><option value="7743" data-name="Német Bence">Német Bence · #7743</option><option value="7901" data-name="Pálinkás Balázs">Pálinkás Balázs · #7901</option><option value="7486" data-name="Papp 7486 Nikolett">Papp 7486 Nikolett · #7486</option><option value="5836" data-name="Pardi Ottó">Pardi Ottó · #5836</option><option value="8706" data-name="Péchy Tamás László">Péchy Tamás László · #8706</option><option value="7296" data-name="Petrik Róbert">Petrik Róbert · #7296</option><option value="5774" data-name="Prantner Péter Ákos">Prantner Péter Ákos · #5774</option><option value="7072" data-name="Rábl Norbert">Rábl Norbert · #7072</option><option value="2875" data-name="Rácz Csaba">Rácz Csaba · #2875</option><option value="7624" data-name="Révbíró Gábor">Révbíró Gábor · #7624</option><option value="7150" data-name="Rezsnyák Bence László">Rezsnyák Bence László · #7150</option><option value="8264" data-name="Rusvai 8264 Marcell">Rusvai 8264 Marcell · #8264</option><option value="7938" data-name="Sabján 7938 Iván">Sabján 7938 Iván · #7938</option><option value="7843" data-name="Siklósi Máté">Siklósi Máté · #7843</option><option value="7103" data-name="Stumpf András István">Stumpf András István · #7103</option><option value="8266" data-name="Szikszai 8266 Ferenc">Szikszai 8266 Ferenc · #8266</option><option value="6825" data-name="Szolnoki Tibor">Szolnoki Tibor · #6825</option><option value="8054" data-name="Szombati 8054 Márk">Szombati 8054 Márk · #8054</option><option value="8223" data-name="Takács 8223 Attila">Takács 8223 Attila · #8223</option><option value="7632" data-name="Tinger József">Tinger József · #7632</option><option value="7722" data-name="Tóth 7722 Gábor">Tóth 7722 Gábor · #7722</option><option value="7753" data-name="Tuza Ádám">Tuza Ádám · #7753</option><option value="6801" data-name="Vajda Erik">Vajda Erik · #6801</option><option value="6855" data-name="Vándor Balázs">Vándor Balázs · #6855</option><option value="7817" data-name="Varecza Roland">Varecza Roland · #7817</option><option value="7939" data-name="Varga 7939 Patrik Ádám">Varga 7939 Patrik Ádám · #7939</option><option value="6403" data-name="Varga Románó">Varga Románó · #6403</option><option value="6729" data-name="Zorányi Tamás Bence">Zorányi Tamás Bence · #6729</option></select>
+            </label>
+            <label class="vehicle-config-active"><input id="vehicle-config-active" type="checkbox" checked=""> Aktív autó</label>
+            <button class="primary" type="submit">Autó konfiguráció mentése</button>
+          </form>
+          <p id="vehicle-config-message" class="updated-at" aria-live="polite"></p>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">LISTA</span>
+            <div>
+              <h3>Autó konfigurációk</h3>
+              <p>Az aktív és korábban felvett autók törzsadatai.</p>
+            </div>
+          </div>
+          <section id="vehicle-config-list" class="vehicle-config-list">
+            <div class="empty-card">Autó konfigurációk betöltése...</div>
+          </section>
+        </section>
+      </div>
+
+      <div id="tours-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">TÚRÁIM</p>
+            <h2>Túráim</h2>
+            <p class="muted">Aktuális túra, címek és jelzés a koordinációnak.</p>
+          </div>
+        </section>
+      </div>
+
+      <div id="route-details-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">TÚRA RÉSZLETEZŐ</p>
+            <h2>Túra részletező</h2>
+            <p class="muted">Riportkérés felugró ablakból: időszak, raktár, futár és megjelenített statisztikák.</p>
+          </div>
+          <button id="route-report-open" class="primary" type="button">Új riport</button>
+        </section>
+        <section id="route-details-message" aria-live="polite"></section>
+        <section id="route-shift-report-panel" class="process-card"></section>
+        <section id="route-statistics-panel" class="process-card"></section>
+        <section id="route-details-panel" class="process-card"></section>
+      </div>
+
+      <div id="game-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">JÁTÉK</p>
+            <h2>Napi Futár Kihívás</h2>
+            <p class="muted">Napi szókereső és rövid kérdések. A pontok a havi ranglistába kerülnek.</p>
+          </div>
+          <button id="game-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+        <section class="game-card">
+          <div id="game-panel" aria-live="polite"></div>
+        </section>
+      </div>
+
+      <div id="coordinator-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">KOORDINÁTOR</p>
+            <h2>Bónusz / Málusz</h2>
+            <p class="muted">Gyors, naplózott rögzítés. Ezek a tételek még nem részei az elszámolásnak.</p>
+          </div>
+          <button id="coordinator-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+        <section class="process-card">
+          <form id="coordinator-adjustment-form" class="process-form">
+            <label>Futár<select id="coordinator-courier" required=""></select></label>
+            <label>Típus<select id="coordinator-kind"><option value="bonus">Bónusz (+)</option><option value="malus">Málusz (-)</option></select></label>
+            <label>Tétel<select id="coordinator-item" required=""></select></label>
+            <label>Összeg (Ft)<input id="coordinator-amount" type="number" min="1" step="500" required=""></label>
+            <label>Dátum<input id="coordinator-date" type="date" required=""></label>
+            <label>Megjegyzés<textarea id="coordinator-note" rows="3" placeholder="A rögzítés oka"></textarea></label>
+            <button class="primary" type="submit">Új felvétel rögzítése</button>
+          </form>
+          <p id="coordinator-message" class="updated-at" aria-live="polite"></p>
+        </section>
+        <section id="coordinator-entry-list" class="process-card"></section>
+      </div>
+
+      <div id="coordinator-live-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">LIVE MAP</p>
+            <h2>Élő futár nézet</h2>
+            <p class="muted">Aktív futárok, túrahaladás, autó, következő cím és sorba állás egy helyen.</p>
+          </div>
+          <button id="coordinator-live-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+        <section id="coordinator-live-panel" class="ops-panel"></section>
+      </div>
+
+      <div id="departure-helper-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">INDULÁS</p>
+            <h2>Indulás segítő</h2>
+            <p class="muted">Rámpán lévő és várakozó futárok a Courier Hub indulási adatai alapján.</p>
+          </div>
+          <button id="departure-helper-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+        <section id="departure-helper-panel" class="ops-panel"></section>
+      </div>
+
+      <div id="today-workers-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">MŰSZAK</p>
+            <h2>Ki jön ma dolgozni?</h2>
+            <p class="muted">Mai műszakok live státusszal, sorba állással és autó adatokkal.</p>
+          </div>
+          <button id="today-workers-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+        <section id="today-workers-panel" class="ops-panel"></section>
+      </div>
+
+      <div id="coordinator-schedule-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">BEOSZTÁS</p>
+            <h2>Havi beosztás</h2>
+            <p class="muted">Napra bontva látszik, ki jön dolgozni, és mi a Giriton / MűszakPro állapot.</p>
+          </div>
+          <div class="workflow-controls">
+            <label class="month-picker">Hónap<input id="coordinator-schedule-month" type="month"></label>
+            <label id="coordinator-schedule-warehouse-wrap" class="month-picker">Raktár
+              <select id="coordinator-schedule-warehouse">
+                <option value="">Válassz raktárat</option>
+                <option value="BUD1">BUD1</option>
+                <option value="BUD2">BUD2</option>
+              </select>
+            </label>
+            <button id="coordinator-schedule-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
+        </section>
+        <section id="coordinator-schedule-panel" class="ops-panel"></section>
+      </div>
+
+      <div id="registration-admin-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">ADMIN</p>
+            <h2>PWA admin kérelmek</h2>
+            <p class="muted">Futár regisztrációk és jelszó-visszaállítások jóváhagyásra jelölése. Az e-mailes feldolgozást a devtest job végzi.</p>
+          </div>
+          <button id="registration-admin-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+        <section id="registration-admin-list" class="process-card"></section>
+        <section id="password-reset-admin-list" class="process-card"></section>
+      </div>
+
+      <div id="settlement-dashboard-content" class="">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">ADMIN</p>
+            <h2>Elszámolási dashboard</h2>
+            <p class="muted">Havi elszámolási folyamatok, státuszok és gyors futárnézet.</p>
+          </div>
+          <div class="workflow-controls">
+            <label class="month-picker">Hónap<input id="settlement-dashboard-month" type="month"></label>
+            <label class="month-picker">Futár<input id="settlement-dashboard-search" placeholder="Futár név vagy ID" autocomplete="off"></label>
+            <button id="settlement-dashboard-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
+        </section>
+        <section id="settlement-dashboard-panel" class="ops-panel">
+    <section class="settlement-dashboard-hero">
+      <div>
+        <span>Aktív elszámolási hónap</span>
+        <strong>2026. szeptember</strong>
+        <small>Frissítve: 10. 14. 22:26</small>
+      </div>
+      <div class="settlement-dashboard-hero-total">
+        <span>Kifizetendő összesen</span>
+        <strong>0 Ft</strong>
+        <small>0 futár</small>
+      </div>
+    </section>
+    <div class="ops-summary">
+    
+      <div>
+        <span>Futár</span>
+        <strong>0</strong>
+        <small>elszámolással</small>
+      </div>
+    
+      <div>
+        <span>Elfogadásra vár</span>
+        <strong>0</strong>
+        <small>futár oldalon</small>
+      </div>
+    
+      <div>
+        <span>Reklamáció</span>
+        <strong>0</strong>
+        <small>nyitott ügy</small>
+      </div>
+    
+      <div>
+        <span>Kifizetve</span>
+        <strong>0</strong>
+        <small>lezárt</small>
+      </div>
+    
+      <div>
+        <span>TIG-re vár</span>
+        <strong>0</strong>
+        <small>futár teendő</small>
+      </div>
+    
+      <div>
+        <span>Számlára vár</span>
+        <strong>0</strong>
+        <small>következő lépés</small>
+      </div>
+    
+  </div>
+    <div class="settlement-dashboard-filter-panel">
+    <div class="settlement-dashboard-filter-title">
+      <strong>Áttekintés</strong>
+      <small>Nincs felső státuszszűrés: minden futár megjelenik.</small>
+    </div>
+    <div class="settlement-dashboard-filter-grid">
+      <button class="settlement-dashboard-filter " type="button" data-settlement-status-filter="Elszámolás készül">
+          <span class="filter-dot"></span>
+          <strong>Elszámolás készül</strong>
+          <small>0 db</small>
+        </button><button class="settlement-dashboard-filter " type="button" data-settlement-status-filter="Elszámolás">
+          <span class="filter-dot"></span>
+          <strong>Elszámolás</strong>
+          <small>0 db</small>
+        </button><button class="settlement-dashboard-filter " type="button" data-settlement-status-filter="Elszámolás elfogadásra vár">
+          <span class="filter-dot"></span>
+          <strong>Elszámolás elfogadásra vár</strong>
+          <small>0 db</small>
+        </button><button class="settlement-dashboard-filter " type="button" data-settlement-status-filter="TIG elfogadásra vár">
+          <span class="filter-dot"></span>
+          <strong>TIG elfogadásra vár</strong>
+          <small>0 db</small>
+        </button><button class="settlement-dashboard-filter " type="button" data-settlement-status-filter="Számlafeltöltésre vár">
+          <span class="filter-dot"></span>
+          <strong>Számlafeltöltésre vár</strong>
+          <small>0 db</small>
+        </button><button class="settlement-dashboard-filter " type="button" data-settlement-status-filter="Számla ellenőrzésre vár">
+          <span class="filter-dot"></span>
+          <strong>Számla ellenőrzésre vár</strong>
+          <small>0 db</small>
+        </button><button class="settlement-dashboard-filter " type="button" data-settlement-status-filter="Reklamáció">
+          <span class="filter-dot"></span>
+          <strong>Reklamáció</strong>
+          <small>0 db</small>
+        </button><button class="settlement-dashboard-filter " type="button" data-settlement-status-filter="Kifizetve">
+          <span class="filter-dot"></span>
+          <strong>Kifizetve</strong>
+          <small>0 db</small>
+        </button>
+    </div>
+  </div>
+    <div class="settlement-dashboard-toolbar">
+      <strong>Futár elszámolások</strong>
+      <span>0 sor</span>
+    </div>
+    <div class="settlement-dashboard-list">
+      <div class="empty-card">Nincs futár a kiválasztott hónapban.</div>
+    </div>
+  </section>
+      </div>
+
+      <div id="settlement-import-config-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">ADMIN</p>
+            <h2>Elszámolás feltöltés és konfigurátor</h2>
+            <p class="muted">Excel betöltése, validálása és fejlécnézet a későbbi kártya-konfigurációhoz.</p>
+          </div>
+        </section>
+        <section id="settlement-import-config-panel" class="process-card"></section>
+      </div>
+
+      <nav class="bottom-nav" aria-label="Főmenü">
+        <button id="nav-home" class=""><span>⌂</span>Kezdőlap</button>
+        <button id="nav-settlement"><span>▣</span>Elszámolásom</button>
+        <button id="nav-statistics"><span>∑</span>Statisztika</button>
+        <button id="nav-phonebook"><span>☎</span>Telefonszámok</button>
+        <button id="nav-atm"><span>ATM</span>ATM</button>
+        <button id="nav-salary-advance"><span>Ft</span>Előleg</button>
+        <button id="nav-expense" class="hidden"><span>T</span>Tankolás</button>
+        <button id="nav-documents"><span>◇</span>Korábbi elszámolásaim</button>
+        <button id="nav-profile"><span>☻</span>Profil</button>
+        <button id="nav-device"><span>□</span>Telefon</button>
+        <button id="nav-vehicle"><span>A</span>Autó</button>
+        <button id="nav-vehicle-config" class=""><span>AC</span>Autó konfigurálása</button>
+        <button id="nav-tours"><span>🚚</span>Túráim</button>
+        <button id="nav-route-details" class=""><span>⇲</span>Túra részletező</button>
+        <button id="nav-settlement-dashboard" class="active"><span>ED</span>Elszámolási dashboard</button>
+        <button id="nav-settlement-import-config" class=""><span>EF</span>Elszámolás feltöltés</button>
+        <button id="nav-game"><span>★</span>Játék</button>
+        <button id="nav-coordinator-live" class=""><span>◎</span>Live map</button>
+        <button id="nav-departure-helper" class=""><span>⇥</span>Indulás segítő</button>
+        <button id="nav-today-workers" class=""><span>☷</span>Ki jön ma?</button>
+        <button id="nav-coordinator-schedule" class=""><span>15</span>Beosztás</button>
+        <button id="nav-coordinator" class=""><span>±</span>Bónusz / Málusz</button>
+        <button id="nav-registration-admin" class=""><span>✓</span>Futárok jóváhagyása</button>
+        <button disabled=""><span>☻</span>Bejelentés</button>
+      </nav>
+
+      <dialog id="route-report-dialog" class="route-report-dialog">
+        <section class="route-report-dialog-card">
+          <div class="route-report-dialog-head">
+            <div>
+              <span>Riport varázsló</span>
+              <strong>Túra részletező beállítása</strong>
+              <small>Válaszd ki az időszakot, szűrést és a megjelenő statisztikákat.</small>
+            </div>
+            <button type="button" class="icon-button" data-route-report-close="" aria-label="Bezárás">×</button>
+          </div>
+          <div class="route-report-step">
+            <span>1</span>
+            <div>
+              <strong>Időszak</strong>
+              <div class="route-report-form-grid">
+                <label class="month-picker">Hónap<input id="route-details-month" type="month"></label>
+                <label class="month-picker">Kezdő dátum<input id="route-stats-start" type="date"></label>
+                <label class="month-picker">Záró dátum<input id="route-stats-end" type="date"></label>
+              </div>
+            </div>
+          </div>
+          <div class="route-report-step">
+            <span>2</span>
+            <div>
+              <strong>Raktár és futár</strong>
+              <div class="route-report-form-grid">
+                <label class="month-picker">Raktár
+                  <select id="route-stats-warehouse">
+                    <option value="all">Összes raktár</option>
+                    <option value="BUD1">BUD1</option>
+                    <option value="BUD2">BUD2</option>
+                  </select>
+                </label>
+                <label class="month-picker">Futár<select id="route-details-courier"><option value="">Összes futár (Excel export)</option><option value="6498">Abonyi György · #6498</option><option value="6642">Ádám Erik · #6642</option><option value="1234">admin · #1234</option><option value="6956">Árva Tamás · #6956</option><option value="12345">Bagoly Zoltán · #12345</option><option value="6909">Bajorhegyi Ádám · #6909</option><option value="6959">Bárándi Bendegúz · #6959</option><option value="7185">Baranyai István · #7185</option><option value="7056">Baranyi Szabolcs · #7056</option><option value="8226">Baráth 8226 Dominik · #8226</option><option value="7747">Bari Anett · #7747</option><option value="7295">bence@bence.hu · #7295</option><option value="7267">Bodonyi Gellért · #7267</option><option value="6528">Bognár András · #6528</option><option value="8031">Boskó 8031 György · #8031</option><option value="7226">Bubán Szimonetta · #7226</option><option value="1001">BUD1Cordinator · #1001</option><option value="1002">BUD2Cordinator · #1002</option><option value="7538">Cserna Levente Zoltán · #7538</option><option value="6572">Deme 6572 Tamás · #6572</option><option value="8263">Ember Gábor · #8263</option><option value="7687">Fábián Alexandra · #7687</option><option value="7842">Fabó Marcell · #7842</option><option value="7814">Farkas Zsolt · #7814</option><option value="8292">Fekete 8292 Bálint · #8292</option><option value="7938">Futár 7938 · #7938</option><option value="7927">Gál 7927 Dominik · #7927</option><option value="7239">Gémes Zoltán · #7239</option><option value="7977">Grózner 7977 Bálint · #7977</option><option value="7644">Gurzó Balázs · #7644</option><option value="8332">Hegedüs 8332 Dávid · #8332</option><option value="7895">Herkovics Andrea · #7895</option><option value="6206">Hervai Olivér · #6206</option><option value="7829">Hohmann András Ármin · #7829</option><option value="7815">Homonnai Imre · #7815</option><option value="7147">Horváth István · #7147</option><option value="6730">Jamal Nasir · #6730</option><option value="7440">Jamal Wasil · #7440</option><option value="7979">Jenei Tibor · #7979</option><option value="7688">Kancsár Zoltán · #7688</option><option value="7767">Kanyó Krisztián · #7767</option><option value="6856">Király Dániel Dávid · #6856</option><option value="7245">Kiss 7245 Csaba · #7245</option><option value="6544">Kiss Koppány Zalán · #6544</option><option value="8185">Komjáti 8185 Ákos · #8185</option><option value="8122">Koncsik Tamás · #8122</option><option value="7665">Koncsik Zoltán · #7665</option><option value="7221">Kristóf Attila · #7221</option><option value="7926">Kurucz 7926 Márton · #7926</option><option value="8001">Lulaj 8001 Brendon · #8001</option><option value="6686">Magyar Csilla · #6686</option><option value="6476">Meleg Dominika · #6476</option><option value="7018">Mocsáry Attila · #7018</option><option value="7724">Molnár Ákos · #7724</option><option value="5709">Nádasi Martin Nicolas · #5709</option><option value="7244">Nagy 7244 Attila · #7244</option><option value="7725">Nagy 7725 István · #7725</option><option value="7956">Nagy 7956 Gergely · #7956</option><option value="8532">Nagy 8532 Norbert · #8532</option><option value="6596">Nagy Kristóf · #6596</option><option value="8013">Nagy Zoltán · #8013</option><option value="7743">Német Bence · #7743</option><option value="7901">Pálinkás Balázs · #7901</option><option value="7486">Papp 7486 Nikolett · #7486</option><option value="5836">Pardi Ottó · #5836</option><option value="8706">Péchy Tamás László · #8706</option><option value="7296">Petrik Róbert · #7296</option><option value="5774">Prantner Péter Ákos · #5774</option><option value="7072">Rábl Norbert · #7072</option><option value="2875">Rácz Csaba · #2875</option><option value="7624">Révbíró Gábor · #7624</option><option value="7150">Rezsnyák Bence László · #7150</option><option value="8264">Rusvai 8264 Marcell · #8264</option><option value="7938">Sabján 7938 Iván · #7938</option><option value="7843">Siklósi Máté · #7843</option><option value="7103">Stumpf András István · #7103</option><option value="8266">Szikszai 8266 Ferenc · #8266</option><option value="6825">Szolnoki Tibor · #6825</option><option value="8054">Szombati 8054 Márk · #8054</option><option value="8223">Takács 8223 Attila · #8223</option><option value="7632">Tinger József · #7632</option><option value="7722">Tóth 7722 Gábor · #7722</option><option value="7753">Tuza Ádám · #7753</option><option value="6801">Vajda Erik · #6801</option><option value="6855">Vándor Balázs · #6855</option><option value="7817">Varecza Roland · #7817</option><option value="7939">Varga 7939 Patrik Ádám · #7939</option><option value="6403">Varga Románó · #6403</option><option value="6729">Zorányi Tamás Bence · #6729</option></select></label>
+                <label class="month-picker">Név / ID<input id="route-details-query" placeholder="Futár név vagy ID" autocomplete="off"></label>
+                <label class="month-picker">Route ID<input id="route-details-route-id" placeholder="Route ID" autocomplete="off"></label>
+                <label class="month-picker">Túratípus
+                  <select id="route-details-type">
+                    <option value="all">Összes</option>
+                    <option value="city">Normal / City</option>
+                    <option value="express">Express</option>
+                    <option value="regional">Régiós</option>
+                  </select>
+                </label>
+              </div>
+              <label class="checkbox-line route-report-checkbox"><input id="route-report-auto-excel" type="checkbox"> Automatikus Excel letöltés</label>
+            </div>
+          </div>
+          <div class="route-report-step">
+            <span>3</span>
+            <div>
+              <strong>Mit szeretnél látni?</strong>
+              <p class="muted">A Route ID fixen benne van. A többi mezőt kattintással vagy drag/drop-pal tudod átrakni.</p>
+              <label class="checkbox-line route-report-checkbox"><input id="route-report-include-summary" type="checkbox" checked=""> Szükséges szumma / összesítő kártyák</label>
+              <div class="route-report-field-builder">
+                <section>
+                  <small>Elérhető mezők</small>
+                  <div id="route-report-available-fields" class="route-report-dropzone" data-route-report-zone="available"></div>
+                </section>
+                <section>
+                  <small>Riportban látható</small>
+                  <div id="route-report-selected-fields" class="route-report-dropzone active" data-route-report-zone="selected"></div>
+                </section>
+              </div>
+            </div>
+          </div>
+          <div class="route-report-dialog-actions">
+            <button type="button" class="secondary" data-route-report-close="">Mégsem</button>
+            <button id="route-details-load" class="primary" type="button">Statisztika kérése</button>
+          </div>
+        </section>
+      </dialog>
+    </main>
+    <script src="/app.js?v=208" defer=""></script>
+  
+
+<dialog id="vehicle-detail-dialog" class="worker-shift-dialog vehicle-detail-dialog">
+    <div class="worker-shift-dialog-card vehicle-detail-dialog-card">
+      <div class="worker-shift-dialog-head">
+        <div>
+          <span>Autó részletei</span>
+          <strong data-vehicle-detail-title="">Autó</strong>
+          <small data-vehicle-detail-subtitle=""></small>
+        </div>
+        <button type="button" class="icon-button" data-vehicle-detail-close="" aria-label="Bezárás">×</button>
+      </div>
+      <div data-vehicle-detail-body=""></div>
+      <div class="vehicle-detail-actions">
+        <button class="primary" type="button" data-vehicle-condition-open="">Felvétel / leadás rögzítése</button>
+      </div>
+      <section class="vehicle-condition-dialog-section hidden" data-vehicle-condition-wrap="">
+        <div class="vehicle-dialog-section-head">
+          <div><span>ÁLLAPOTELLENŐRZÉS</span><strong>Autó felvétel / leadás</strong></div>
+          <button class="secondary" type="button" data-vehicle-condition-close="">Vissza</button>
+        </div>
+        <form id="vehicle-condition-form" class="process-form two-column">
+          <label>Rendszám<input id="vehicle-license-plate" name="serial_number" autocomplete="off" required=""></label>
+          <label>Folyamat
+            <select id="vehicle-event-type" name="event_type">
+              <option value="handover">Felvétel</option>
+              <option value="return">Leadás</option>
+            </select>
+          </label>
+          <label>Autón látható sérülések száma
+            <input id="vehicle-damage-count" name="damage_count" type="number" min="0" max="20" step="1" value="0" required="">
+          </label>
+          <div class="vehicle-damage-help">Hibáról készíts fényképet, így az előző állapottal is összehasonlítható.</div>
+          <div id="vehicle-damage-photo-fields" class="vehicle-damage-fields full-width"></div>
+          <fieldset class="vehicle-checklist full-width">
+            <legend>Állapot kérdőív</legend>
+            <label>Olajszint<select name="oil_level_status" required=""><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+            <label>Hűtővíz szintje<select name="coolant_level_status" required=""><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+            <label>Guminyomás<select name="tire_pressure_status" required=""><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+            <label>Motorvédő lemez<select name="engine_cover_status" required=""><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+            <label>Lökhárító<select name="bumper_damage_status" required=""><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+            <label>Világító berendezések<select name="lights_status" required=""><option value="ok">OK</option><option value="not_ok">NEM OK</option></select></label>
+          </fieldset>
+          <label class="full-width">Megjegyzés<textarea id="vehicle-condition-note" name="note" rows="3" placeholder="Kiegészítő megjegyzés, ha szükséges"></textarea></label>
+          <button class="primary full-width" type="submit">Autó állapot rögzítése</button>
+        </form>
+        <p id="vehicle-condition-message" class="updated-at" aria-live="polite"></p>
+        <section id="vehicle-condition-history" class="device-history"></section>
+      </section>
+    </div>
+  </dialog></body></html>

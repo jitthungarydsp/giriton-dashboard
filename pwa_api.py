@@ -2416,21 +2416,33 @@ def read_live_monitoring_vehicle_assignment_rows(
     *,
     limit: int = 3000,
     window_hours: int = 24,
+    work_date: date | None = None,
+    active_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Read today's vehicle assignment from the Courier Hub live dashboard snapshot."""
+    query_params = {
+        "select": (
+            "warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,status,status_code,"
+            "departure_status,shift_status,vehicle_plate,planned_start_at,actual_start_at,"
+            "planned_departure_at,fetched_at,courier_json"
+        ),
+        "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
+        "status_code": "eq.200",
+        "order": "fetched_at.desc,planned_start_at.asc.nullslast",
+        "limit": str(int(limit)),
+    }
+    if active_only:
+        query_params["status"] = "not.eq.IDLE"
+    if work_date:
+        start_local = datetime.combine(work_date, time.min, tzinfo=LOCAL_TIMEZONE)
+        end_local = start_local + timedelta(days=1)
+        query_params["and"] = (
+            f"(fetched_at.gte.{start_local.astimezone(timezone.utc).isoformat()},"
+            f"fetched_at.lt.{end_local.astimezone(timezone.utc).isoformat()})"
+        )
     rows = optional_supabase_rows(
         "courier_hub_live_monitoring_courier_snapshot_latest",
-        params={
-            "select": (
-                "warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,status_code,"
-                "departure_status,shift_status,vehicle_plate,planned_start_at,actual_start_at,"
-                "planned_departure_at,fetched_at,courier_json"
-            ),
-            "dsp_id": f"eq.{COURIER_HUB_DSP_ID}",
-            "status_code": "eq.200",
-            "order": "fetched_at.desc,planned_start_at.asc.nullslast",
-            "limit": str(int(limit)),
-        },
+        params=query_params,
         timeout=20,
     )
     now = datetime.now(LOCAL_TIMEZONE)
@@ -2439,8 +2451,14 @@ def read_live_monitoring_vehicle_assignment_rows(
     assignments: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     for row in rows:
+        status = str(row.get("status") or "").strip().upper()
+        if active_only and status == "IDLE":
+            continue
         fetched_at = local_datetime(row.get("fetched_at"))
-        if fetched_at and fetched_at < min_fetched_at:
+        if work_date:
+            if not fetched_at or fetched_at.date() != work_date:
+                continue
+        elif fetched_at and fetched_at < min_fetched_at:
             continue
         plate = str(row.get("vehicle_plate") or "").strip()
         if not plate:
@@ -2456,6 +2474,7 @@ def read_live_monitoring_vehicle_assignment_rows(
         assignments.append({
             "source_name": "Courier Hub live-monitoring dashboard",
             "work_date": fetched_at.date().isoformat() if fetched_at else today,
+            "courier_id": courier_id,
             "driver_name": driver_name or f"Futár {courier_id}".strip(),
             "warehouse_code": warehouse_code,
             "shift_start": local_iso_time(row.get("planned_start_at") or row.get("actual_start_at")),
@@ -2470,6 +2489,24 @@ def read_live_monitoring_vehicle_assignment_rows(
             "fetched_at": str(row.get("fetched_at") or "").strip(),
         })
     return assignments
+
+
+def read_today_vehicle_assignment_rows_fast(
+    *,
+    courier_id: int | None = None,
+    limit: int = 3000,
+) -> list[dict[str, Any]]:
+    """Read today's non-IDLE car assignments with one DB-backed snapshot query."""
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    rows = read_live_monitoring_vehicle_assignment_rows(
+        limit=limit,
+        work_date=today,
+        active_only=True,
+    )
+    if courier_id is not None:
+        wanted_id = str(int(courier_id))
+        rows = [row for row in rows if str(row.get("courier_id") or "") == wanted_id]
+    return rows
 
 
 def read_vehicle_assignment_rows(
@@ -20222,6 +20259,27 @@ def list_vehicle_assignments(
         reverse=True,
     )
     return {"from": start.isoformat(), "to": today.isoformat(), "items": [safe_vehicle_assignment(row) for row in rows]}
+
+
+@app.get("/api/vehicles/today-assignments")
+def list_today_vehicle_assignments(
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    """Return today's active vehicle assignments from the persisted live snapshot."""
+    user = require_user(giriton_pwa_session)
+    is_manager = can_manage_vehicle_history(user)
+    view_user, _preview = workflow_view_user(user, courier)
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    requested_courier_id = user_courier_id(view_user)
+    rows = read_today_vehicle_assignment_rows_fast(
+        courier_id=None if is_manager and not str(courier or "").strip() else requested_courier_id,
+    )
+    return {
+        "from": today.isoformat(),
+        "to": today.isoformat(),
+        "items": [safe_vehicle_assignment(row) for row in rows],
+    }
 
 
 @app.get("/api/vehicles/assignments/search")

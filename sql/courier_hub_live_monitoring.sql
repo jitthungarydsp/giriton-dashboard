@@ -121,3 +121,7 @@ create index if not exists idx_ch_live_courier_snapshots_courier_route
 
 create index if not exists idx_ch_live_courier_snapshot_latest_route
     on public.courier_hub_live_monitoring_courier_snapshot_latest (route_id);
+
+create index if not exists idx_ch_live_courier_snapshot_latest_today_active
+    on public.courier_hub_live_monitoring_courier_snapshot_latest (dsp_id, fetched_at desc)
+    where vehicle_plate is not null and status is distinct from 'IDLE';
