@@ -4643,6 +4643,8 @@ def save_devtest_finance_snapshots_for_rows(
     warehouse_label: str | None,
     session_id: str | None,
     updated_by: str,
+    fast_snapshot: bool = False,
+    progress_callback: object | None = None,
 ) -> dict[str, object]:
     if str(calculation_mode or "") not in {"API", "Excel"}:
         return {"attempted": 0, "processed": 0, "new_versions": 0, "unchanged": 0, "failed": 0, "errors": []}
@@ -4683,52 +4685,63 @@ def save_devtest_finance_snapshots_for_rows(
         attempted += 1
         courier_name = str(raw_item.get("Futár") or raw_item.get("FutĂˇr") or "").strip()
         try:
-            item, route_detail = enrich_mobile_settlement_row_for_snapshot(
-                raw_item,
-                courier_id=courier_id,
-                courier_name=courier_name,
-                session_id=session_id,
-                calculation_mode=calculation_mode,
-                period_start=period_start,
-                period_end=period_end,
-                warehouse_label=warehouse_label,
-            )
-            item = apply_loyalty_bonus(
-                pd.DataFrame([item]),
-                period_start,
-                period_end,
-                session_id,
-                calculation_mode,
-            ).iloc[0].to_dict()
-            component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
-            item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
-            finance_rows = append_jitt_bonus_malus_mobile_rows(
-                mobile_breakdown_rows_from_settlement_row(item),
-                item,
-                period_start,
-                period_end,
-            )
-            finance_rows = append_kiflis_bonus_malus_mobile_rows(finance_rows, item, component_session_id)
-            try:
-                finance_rows = append_periodic_correction_mobile_rows(
-                    finance_rows,
-                    row=item,
-                    route_detail=route_detail,
+            if fast_snapshot:
+                # build_settlement_overview_data already ran the complete
+                # devtest calculation. Do not repeat route, summary,
+                # adjustment and imported-component queries for every courier.
+                item = dict(raw_item)
+                route_detail = pd.DataFrame()
+                finance_rows = recalculate_mobile_breakdown_totals(
+                    mobile_breakdown_rows_from_settlement_row(item)
+                )
+                component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
+            else:
+                item, route_detail = enrich_mobile_settlement_row_for_snapshot(
+                    raw_item,
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    session_id=session_id,
+                    calculation_mode=calculation_mode,
                     period_start=period_start,
                     period_end=period_end,
+                    warehouse_label=warehouse_label,
                 )
-            except Exception:
-                pass
-            finance_rows = apply_mobile_loyalty_amount_from_finance_source(
-                finance_rows,
-                item,
-                courier_id=courier_id,
-                courier_name=courier_name,
-                session_id=session_id,
-                period_start=period_start,
-                calculation_mode=calculation_mode,
-            )
-            finance_rows = recalculate_mobile_breakdown_totals(finance_rows)
+                item = apply_loyalty_bonus(
+                    pd.DataFrame([item]),
+                    period_start,
+                    period_end,
+                    session_id,
+                    calculation_mode,
+                ).iloc[0].to_dict()
+                component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
+                item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
+                finance_rows = append_jitt_bonus_malus_mobile_rows(
+                    mobile_breakdown_rows_from_settlement_row(item),
+                    item,
+                    period_start,
+                    period_end,
+                )
+                finance_rows = append_kiflis_bonus_malus_mobile_rows(finance_rows, item, component_session_id)
+                try:
+                    finance_rows = append_periodic_correction_mobile_rows(
+                        finance_rows,
+                        row=item,
+                        route_detail=route_detail,
+                        period_start=period_start,
+                        period_end=period_end,
+                    )
+                except Exception:
+                    pass
+                finance_rows = apply_mobile_loyalty_amount_from_finance_source(
+                    finance_rows,
+                    item,
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    session_id=session_id,
+                    period_start=period_start,
+                    calculation_mode=calculation_mode,
+                )
+                finance_rows = recalculate_mobile_breakdown_totals(finance_rows)
             profile_row = profile_by_id.get(courier_id, {})
             tig_payable_total = parse_huf_value(item.get("Kifizetendő")) or _mobile_breakdown_amount(finance_rows, "payable")
             tig_tip_total = parse_huf_value(item.get("Borravaló")) or _mobile_breakdown_amount(finance_rows, "tip")
@@ -4750,9 +4763,14 @@ def save_devtest_finance_snapshots_for_rows(
                 },
             )
             tig_rows = tig_editor_rows_from_breakdown(tig_breakdown).to_dict("records")
-            summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
-            profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
-            reserve_month = load_target_reserve_monthly(courier_id, period_start, period_end)
+            if fast_snapshot:
+                summary_row = {}
+                profile_adjustments = pd.DataFrame()
+                reserve_month = {}
+            else:
+                summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
+                profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
+                reserve_month = load_target_reserve_monthly(courier_id, period_start, period_end)
             snapshot_drilldowns = build_finance_snapshot_drilldown_payload(finance_rows, route_detail)
             snapshot_result = save_devtest_finance_snapshot_version(
                 courier_id=courier_id,
@@ -4834,6 +4852,11 @@ def save_devtest_finance_snapshots_for_rows(
         except Exception as exc:
             failed += 1
             errors.append(f"{courier_id} {courier_name}: {type(exc).__name__}: {exc}")
+        if callable(progress_callback):
+            try:
+                progress_callback(attempted, len(source_data), courier_id, courier_name)
+            except Exception:
+                pass
     clear_devtest_finance_snapshot_cache()
     return {
         "attempted": attempted,
@@ -23514,6 +23537,15 @@ def show_new_settlement_page() -> None:
                                 selected_calculation_mode,
                             ),
                         )
+                    save_progress = st.progress(0, text="Mentés előkészítése...")
+
+                    def update_save_progress(current: int, total: int, courier_id: str, courier_name: str) -> None:
+                        ratio = min(max(current / max(total, 1), 0.0), 1.0)
+                        save_progress.progress(
+                            ratio,
+                            text=f"Futár mentése: {current}/{total} | {courier_id} {courier_name}".strip(),
+                        )
+
                     result = save_devtest_finance_snapshots_for_rows(
                         snapshot_data,
                         mobile_period_start,
@@ -23521,7 +23553,10 @@ def show_new_settlement_page() -> None:
                         warehouse,
                         mobile_source_session_id,
                         str(st.session_state.get("user", {}).get("username") or "unknown"),
+                        fast_snapshot=use_fast_overview,
+                        progress_callback=update_save_progress,
                     )
+                    save_progress.progress(1.0, text="Mentés befejezve.")
                 if result.get("failed"):
                     st.warning(
                         "Mentés kész, de volt sikertelen sor: "
