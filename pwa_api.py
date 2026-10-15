@@ -18600,12 +18600,12 @@ def dashboard_month_courier_roster(month: date) -> dict[str, dict[str, Any]]:
 
 
 def build_admin_settlement_totals(month: date) -> dict[str, Any]:
-    """Build a minimal courier-total list directly from devtest snapshots.
+    """Build a minimal courier-total list directly from devtest summaries.
 
     This endpoint intentionally avoids the workflow/status joins used by the
-    visual dashboard. The export robot only needs the same devtest final
-    amount for each courier, and this path remains usable when a workflow
-    table or the fast view is temporarily unavailable.
+    visual dashboard. The export robot only needs the same final amount as
+    devtest.py; finance snapshots are used only to keep the courier roster
+    complete and never provide the displayed amount.
     """
     month_start = month.replace(day=1)
     month_key = month_start.isoformat()
@@ -18627,8 +18627,6 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
         if courier_id and courier_id not in latest_by_courier:
             latest_by_courier[courier_id] = snapshot
 
-    courier_ids = list(latest_by_courier)
-    payable_by_courier = dashboard_latest_snapshot_payables(month_start, courier_ids)
     roster = dashboard_month_courier_roster(month_start)
     roster_by_name = {
         dashboard_courier_name_key(profile.get("courierName")): profile
@@ -18637,28 +18635,24 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
     }
     rows: list[dict[str, Any]] = []
     for courier_id, snapshot in latest_by_courier.items():
-        metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
         snapshot_name = str(snapshot.get("courier_name") or "").strip()
         profile = roster.get(courier_id) or roster_by_name.get(dashboard_courier_name_key(snapshot_name)) or {}
-        total_huf = (
-            money_int(profile.get("summaryPayableHuf"))
-            if profile.get("summary")
-            else payable_by_courier.get(courier_id, money_int(metadata.get("payable_total")))
-        )
+        has_summary = bool(profile.get("summary"))
+        total_huf = money_int(profile.get("summaryPayableHuf")) if has_summary else 0
         rows.append({
             "courierId": courier_id,
             "courierName": snapshot_name or str(profile.get("courierName") or f"Futár {courier_id}").strip(),
             "warehouse": str(snapshot.get("warehouse_label") or "").strip(),
             "status": {
-                "label": "Devtest snapshot",
-                "detail": f"v{money_int(snapshot.get('version'))}",
-                "tone": "active",
-                "sort": 30,
+                "label": "Devtest összesítés" if has_summary else "Nincs devtest összesítés",
+                "detail": "devtest.py mentett összeg" if has_summary else "Nincs mentett devtest összesítés",
+                "tone": "active" if has_summary else "muted",
+                "sort": 30 if has_summary else 10,
             },
             "totalPayableHuf": total_huf,
-            "sources": ["devtest_finance_snapshot"],
-            "updatedAt": str(snapshot.get("created_at") or ""),
-            "snapshotVersion": money_int(snapshot.get("version")),
+            "sources": ["devtest.py"] if has_summary else [],
+            "updatedAt": str(profile.get("summaryUpdatedAt") or ""),
+            "snapshotVersion": 0,
         })
     for courier_id, profile in roster.items():
         if courier_id in latest_by_courier:
@@ -18669,13 +18663,13 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
             "courierName": str(profile.get("courierName") or f"Futár {courier_id}").strip(),
             "warehouse": str(profile.get("warehouse") or "").strip(),
             "status": {
-                "label": "Elszámolás" if has_summary else "Elszámolás készül",
-                "detail": "Devtest összesítés" if has_summary else "Nincs mentett devtest snapshot",
+                "label": "Devtest összesítés" if has_summary else "Nincs devtest összesítés",
+                "detail": "devtest.py mentett összeg" if has_summary else "Nincs mentett devtest összesítés",
                 "tone": "active" if has_summary else "muted",
                 "sort": 30 if has_summary else 10,
             },
             "totalPayableHuf": money_int(profile.get("summaryPayableHuf")) if has_summary else 0,
-            "sources": ["courier_settlement_summary"] if has_summary else ["courier_master"],
+            "sources": ["devtest.py"] if has_summary else [],
             "updatedAt": str(profile.get("summaryUpdatedAt") or ""),
             "snapshotVersion": 0,
         })
@@ -18693,7 +18687,7 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
             "statusCounts": status_counts,
         },
         "updatedAt": datetime.now(timezone.utc).isoformat(),
-        "source": "settlement.courier_finance_snapshot",
+        "source": "devtest.py",
     }
 
 
@@ -18749,12 +18743,6 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
         return None
 
     roster = dashboard_month_courier_roster(month_start)
-    all_courier_ids = list({
-        dashboard_courier_id_key(row.get("courier_id"))
-        for row in rows
-        if dashboard_courier_id_key(row.get("courier_id"))
-    } | set(roster))
-    latest_snapshot_payables = dashboard_latest_snapshot_payables(month_start, all_courier_ids)
     roster_by_name = {
         dashboard_courier_name_key(profile.get("courierName")): profile
         for profile in roster.values()
@@ -18768,31 +18756,24 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
         warehouse = str(row.get("warehouse") or "").strip()
         if clean_query and clean_query not in normalize_text(f"{courier_id} {courier_name} {warehouse}"):
             continue
-        raw_sources = row.get("sources") or []
-        if isinstance(raw_sources, str):
-            sources = [item.strip().strip('"') for item in raw_sources.strip("{}").split(",") if item.strip()]
-        else:
-            sources = list(raw_sources)
         roster_profile = roster.get(courier_id) or roster_by_name.get(dashboard_courier_name_key(courier_name)) or {}
         summary_total_huf = money_int(roster_profile.get("summaryPayableHuf")) if roster_profile.get("summary") else 0
-        total_huf = (
-            summary_total_huf
-            if roster_profile.get("summary")
-            else latest_snapshot_payables.get(courier_id, money_int(row.get("payable_huf")))
-        )
+        has_summary = bool(roster_profile.get("summary"))
+        total_huf = summary_total_huf if has_summary else 0
+        source_status = {
+            "label": "Devtest összesítés" if has_summary else "Nincs devtest összesítés",
+            "detail": "devtest.py mentett összeg" if has_summary else "Nincs mentett devtest összesítés",
+            "tone": "active" if has_summary else "muted",
+            "sort": 30 if has_summary else 10,
+        }
         dashboard_rows.append({
             "courierId": courier_id,
             "courierName": courier_name,
             "warehouse": warehouse,
-            "status": {
-                "label": str(row.get("dashboard_status_label") or "Elszámolás készül"),
-                "detail": str(row.get("dashboard_status_detail") or "Várakozás"),
-                "tone": str(row.get("dashboard_status_tone") or "muted"),
-                "sort": safe_int(row.get("dashboard_status_sort")),
-            },
+            "status": source_status,
             "totalPayableHuf": total_huf,
-            "sources": sources,
-            "updatedAt": str(row.get("updated_at") or ""),
+            "sources": ["devtest.py"] if has_summary else [],
+            "updatedAt": str(roster_profile.get("summaryUpdatedAt") or ""),
         })
     dashboard_row_ids = {dashboard_courier_id_key(row.get("courierId")) for row in dashboard_rows}
     for courier_id, profile in roster.items():
@@ -18803,22 +18784,19 @@ def build_admin_settlement_dashboard_from_fast_view(month: date, query: str = ""
         if clean_query and clean_query not in normalize_text(f"{courier_id} {courier_name} {warehouse}"):
             continue
         has_summary = bool(profile.get("summary"))
-        snapshot_total = latest_snapshot_payables.get(dashboard_courier_id_key(courier_id))
-        total_huf = snapshot_total if snapshot_total is not None else (
-            money_int(profile.get("summaryPayableHuf")) if has_summary else 0
-        )
+        total_huf = money_int(profile.get("summaryPayableHuf")) if has_summary else 0
         dashboard_rows.append({
             "courierId": courier_id,
             "courierName": courier_name,
             "warehouse": warehouse,
             "status": {
-                "label": "Elszámolás" if has_summary else "Elszámolás készül",
-                "detail": "Devtest összesítés" if has_summary else "Nincs mentett devtest snapshot",
+                "label": "Devtest összesítés" if has_summary else "Nincs devtest összesítés",
+                "detail": "devtest.py mentett összeg" if has_summary else "Nincs mentett devtest összesítés",
                 "tone": "active" if has_summary else "muted",
                 "sort": 30 if has_summary else 10,
             },
             "totalPayableHuf": total_huf,
-            "sources": ["courier_settlement_summary"] if has_summary else ["courier_master"],
+            "sources": ["devtest.py"] if has_summary else [],
             "updatedAt": str(profile.get("summaryUpdatedAt") or ""),
         })
     dashboard_courier_ids = [str(row.get("courierId") or "") for row in dashboard_rows]
@@ -18928,10 +18906,6 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
         candidate["courierName"] = str(summary_row.get("driver_name") or candidate.get("courierName") or "").strip()
         candidate.setdefault("sources", set()).add("summary")
 
-    latest_snapshot_payables = dashboard_latest_snapshot_payables(
-        month_start,
-        list(candidates.keys()),
-    )
     monthly_flags_by_courier = dashboard_monthly_flags_by_courier(month_start, list(candidates.keys()))
     rows: list[dict[str, Any]] = []
     clean_query = normalize_text(query)
@@ -18948,11 +18922,7 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
             states=statuses_by_courier.get(courier_id, {}),
             open_complaints=open_complaints_by_courier.get(courier_id, 0),
         )
-        total_huf = (
-            settlement_summary_payable_value(summary_row)
-            if summary_row
-            else latest_snapshot_payables.get(courier_id, 0)
-        )
+        total_huf = settlement_summary_payable_value(summary_row) if summary_row else 0
         updated_at = str(summary_row.get("calculated_at") or "")
         rows.append({
             "courierId": courier_id,
