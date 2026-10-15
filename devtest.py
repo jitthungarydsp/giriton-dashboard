@@ -4694,6 +4694,16 @@ def save_devtest_finance_snapshots_for_rows(
                 finance_rows = recalculate_mobile_breakdown_totals(
                     mobile_breakdown_rows_from_settlement_row(item)
                 )
+                # The overview row is the authoritative devtest result. The
+                # compact mobile reconstruction can omit a small component,
+                # so it must never overwrite the displayed final amount.
+                if "Kifizetendő" in item:
+                    _set_mobile_breakdown_row_amount(
+                        finance_rows,
+                        "payable",
+                        parse_huf_value(item.get("Kifizetendő")),
+                        item_label="Teljes összeg",
+                    )
                 component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
             else:
                 item, route_detail = enrich_mobile_settlement_row_for_snapshot(
