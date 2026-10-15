@@ -4878,6 +4878,67 @@ def save_devtest_finance_snapshots_for_rows(
     }
 
 
+def start_devtest_exact_snapshot_batch(
+    data: pd.DataFrame,
+    *,
+    period_start: date,
+    calculation_mode: str,
+    warehouse_label: str | None,
+    session_id: str | None,
+    updated_by: str,
+    current_data_context: str,
+) -> int:
+    """Queue every courier through the same detail calculation as a manual click.
+
+    The list calculation is intentionally not used here: the detail page has
+    the authoritative devtest calculation and saves its exact snapshot when it
+    is opened.  The queue makes that existing path run once per courier.
+    """
+    source_data = data.copy() if isinstance(data, pd.DataFrame) else pd.DataFrame()
+    try:
+        full_roster = augment_settlement_courier_master(
+            load_courier_master("Excel"),
+            session_id,
+        )
+    except Exception:
+        full_roster = pd.DataFrame()
+    if not full_roster.empty:
+        source_data = pd.concat([source_data, full_roster], ignore_index=True, sort=False)
+    if source_data.empty or "Courier ID" not in source_data.columns:
+        return 0
+
+    source_data = source_data.copy()
+    source_data["_snapshot_courier_key"] = source_data["Courier ID"].map(_courier_id_key)
+    source_data = source_data.loc[source_data["_snapshot_courier_key"].ne("")]
+    source_data = source_data.drop_duplicates("_snapshot_courier_key", keep="first")
+    source_data = source_data.drop(columns=["_snapshot_courier_key"], errors="ignore")
+    courier_ids = [
+        _courier_id_key(value)
+        for value in source_data["Courier ID"].tolist()
+        if _courier_id_key(value)
+    ]
+    if not courier_ids:
+        return 0
+
+    st.session_state["current_filtered_data"] = source_data.reset_index(drop=True)
+    st.session_state["current_filtered_context"] = current_data_context
+    st.session_state["devtest_exact_snapshot_batch"] = {
+        "period_start": period_start.isoformat(),
+        "calculation_mode": calculation_mode,
+        "warehouse_label": warehouse_label,
+        "session_id": session_id,
+        "updated_by": updated_by,
+        "courier_ids": courier_ids,
+        "index": 0,
+        "processed": 0,
+        "failed": [],
+    }
+    first_courier_id = courier_ids[0]
+    st.session_state["selected_courier_id"] = first_courier_id
+    st.session_state[f"courier_menu_target_{first_courier_id}"] = "Pénzügy"
+    return len(courier_ids)
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     response = (
@@ -17994,6 +18055,13 @@ def render_courier_detail_page() -> None:
                 ]
             mobile_default_rows = mobile_default_rows.reset_index()
 
+        # The devtest header uses the final reserve-aware payable amount. Keep
+        # the mobile/PWA payable card on that same canonical value; the older
+        # mobile subtotal could differ when the reserve month was finalized.
+        payable_row_mask = mobile_default_rows["item_key"].astype(str).eq("payable")
+        mobile_default_rows.loc[payable_row_mask, "item_label"] = "Teljes összeg"
+        mobile_default_rows.loc[payable_row_mask, "amount_value"] = payable_total
+
         def current_mobile_snapshot_row() -> dict[str, object]:
             snapshot_row = row.to_dict() if hasattr(row, "to_dict") else dict(row)
             snapshot_row.update({
@@ -18139,6 +18207,43 @@ def render_courier_detail_page() -> None:
             st.caption(f"PWA snapshot automatikusan frissítve. Verzió: {auto_snapshot_result.get('version')}")
         elif auto_snapshot_result.get("reason"):
             st.caption(f"PWA snapshot automatikus frissítése nem futott le: {auto_snapshot_result.get('reason')}")
+
+        # The batch action deliberately advances only after the exact detail
+        # snapshot above has been written.  This is the same path as opening
+        # each courier manually, without requiring 114 separate clicks.
+        exact_batch = st.session_state.get("devtest_exact_snapshot_batch")
+        if isinstance(exact_batch, dict):
+            batch_ids = [str(value) for value in exact_batch.get("courier_ids") or []]
+            batch_index = int(exact_batch.get("index") or 0)
+            batch_period = str(exact_batch.get("period_start") or "")
+            if batch_index < len(batch_ids) and _courier_id_key(batch_ids[batch_index]) == _courier_id_key(courier_id):
+                if auto_snapshot_result.get("saved") or auto_snapshot_result.get("unchanged"):
+                    exact_batch["processed"] = int(exact_batch.get("processed") or 0) + 1
+                else:
+                    failed_rows = list(exact_batch.get("failed") or [])
+                    failed_rows.append(
+                        f"{courier_id} {courier_name}: "
+                        f"{auto_snapshot_result.get('reason') or 'snapshot mentés sikertelen'}"
+                    )
+                    exact_batch["failed"] = failed_rows
+                batch_index += 1
+                exact_batch["index"] = batch_index
+                if batch_index < len(batch_ids):
+                    next_courier_id = batch_ids[batch_index]
+                    st.session_state["devtest_exact_snapshot_batch"] = exact_batch
+                    st.session_state["selected_courier_id"] = next_courier_id
+                    st.session_state[f"courier_menu_target_{next_courier_id}"] = "Pénzügy"
+                    st.rerun()
+                else:
+                    st.session_state.pop("devtest_exact_snapshot_batch", None)
+                    st.session_state["devtest_exact_snapshot_batch_result"] = {
+                        "processed": int(exact_batch.get("processed") or 0),
+                        "attempted": len(batch_ids),
+                        "failed": list(exact_batch.get("failed") or []),
+                        "period_start": batch_period,
+                    }
+                    st.session_state.pop("selected_courier_id", None)
+                    st.rerun()
         if st.button(
             "Pénzügyi snapshot frissítése",
             use_container_width=True,
@@ -23324,6 +23429,20 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
 def show_new_settlement_page() -> None:
     apply_design()
     render_empty_right_menu()
+    exact_batch_result = st.session_state.pop("devtest_exact_snapshot_batch_result", None)
+    if isinstance(exact_batch_result, dict):
+        failed_rows = list(exact_batch_result.get("failed") or [])
+        processed = int(exact_batch_result.get("processed") or 0)
+        attempted = int(exact_batch_result.get("attempted") or 0)
+        if failed_rows:
+            st.warning(
+                f"Pontos devtest snapshot mentés kész: {processed}/{attempted} futár, "
+                f"{len(failed_rows)} hiba."
+            )
+            with st.expander("Sikertelen futárok részletei"):
+                st.code("\n".join(failed_rows), language="text")
+        else:
+            st.success(f"Pontos devtest snapshot mentés kész: {processed}/{attempted} futár.")
     if st.session_state.pop("settlement_force_profile_refresh", False):
         refresh_settlement_profile_data()
     requested_calculation_mode = st.session_state.pop("courier_requested_calculation_mode", None)
@@ -23529,6 +23648,37 @@ def show_new_settlement_page() -> None:
                 key=f"save_devtest_finance_snapshots_{mobile_period_start:%Y%m}_{calculation_mode}",
                 help="Az aktuális devtest pénzügyi és TIG értékeket verziózottan elmenti DB-be.",
             ):
+                if use_fast_overview:
+                    # Do not persist the fast list values.  Queue the exact
+                    # detail-page calculation so PWA and devtest share one
+                    # authoritative result for every courier.
+                    exact_snapshot_data = build_settlement_overview_data(
+                        selected_calculation_mode,
+                        import_session_id,
+                        balance_period_start,
+                        balance_period_end,
+                        selected_warehouse_label,
+                        settlement_loyalty_cache_token(
+                            import_session_id,
+                            balance_period_start,
+                            selected_calculation_mode,
+                        ),
+                    )
+                    queued_count = start_devtest_exact_snapshot_batch(
+                        exact_snapshot_data,
+                        period_start=mobile_period_start,
+                        calculation_mode=calculation_mode,
+                        warehouse_label=warehouse,
+                        session_id=mobile_source_session_id,
+                        updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+                        current_data_context=current_data_context,
+                    )
+                    if queued_count:
+                        st.toast(
+                            f"Pontos devtest snapshot mentés indul: {queued_count} futár.",
+                            icon="✅",
+                        )
+                        st.rerun()
                 with st.spinner("Adatok mentése..."):
                     snapshot_data = data
                     if use_fast_overview:
