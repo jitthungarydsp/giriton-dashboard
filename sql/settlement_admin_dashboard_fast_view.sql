@@ -71,22 +71,10 @@ snapshot_candidates as (
         'snapshot'::text as source
     from latest_snapshots
 ),
-master_candidates as (
-    select distinct
-        c.period_start,
-        cm.courier_id::text as courier_id,
-        cm.courier_name::text as courier_name,
-        'master'::text as source
-    from config c
-    cross join public.courier_master cm
-    where nullif(cm.courier_id::text, '') is not null
-),
 all_candidates as (
     select period_start, courier_id, courier_name, source from snapshot_candidates
     union all
     select period_start, courier_id, courier_name, 'summary'::text as source from summary_rows
-    union all
-    select period_start, courier_id, courier_name, source from master_candidates
 ),
 candidate_rows as (
     select
@@ -173,9 +161,9 @@ dashboard_rows as (
         coalesce(sa.tip_huf, sr.tip_huf, 0) as tip_huf,
         coalesce(sa.route_bonus_total_huf, sr.route_bonus_total_huf, 0) as route_bonus_total_huf,
         coalesce(
+            sr.payable_huf,
             sa.payable_huf,
             nullif(replace(regexp_replace(coalesce(ls.metadata ->> 'payable_total', ''), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric,
-            sr.payable_huf,
             0
         ) as payable_huf,
         sr.calculated_at,
