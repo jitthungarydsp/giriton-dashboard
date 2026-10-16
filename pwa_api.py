@@ -50,6 +50,7 @@ from resources.pwa_users_db import (
 from resources.security import hash_password, verify_password
 from resources.users import generate_password
 from resources.settlement_pdf import build_tig_breakdown, build_tig_pdf
+from resources.settlement_workflow_status import settlement_dashboard_status
 
 try:
     from cryptography.hazmat.primitives import serialization
@@ -18386,33 +18387,18 @@ def workflow_dashboard_status(workflow: dict[str, Any]) -> dict[str, Any]:
             "tone": "attention",
             "sort": 20,
         }
-    if workflow_done(states, "invoice_payment") or bool((steps.get("invoice_payment") or {}).get("done")):
-        return {"label": "Kifizetve", "detail": "Folyamat lezárva", "tone": "done", "sort": 90}
-    if workflow_open(states, "invoice_payment"):
-        return {"label": "Kifizetésre vár", "detail": "Admin kifizetésre vár", "tone": "waiting", "sort": 80}
-    if workflow_open(states, "invoice_check") or (
-        bool((steps.get("invoice_submit") or {}).get("done"))
-        and not bool((steps.get("invoice_check") or {}).get("done"))
-    ):
-        return {"label": "Számla ellenőrzésre vár", "detail": "Számla beérkezett", "tone": "warning", "sort": 70}
-    if workflow_open(states, "invoice_submit") or (
-        bool((steps.get("tig") or {}).get("done"))
-        and not bool((steps.get("invoice_submit") or {}).get("done"))
-    ):
-        return {"label": "Számlafeltöltésre vár", "detail": "Futár teendő", "tone": "waiting", "sort": 60}
-    if (
-        bool((steps.get("settlement") or {}).get("done"))
-        and not bool((steps.get("tig_document") or {}).get("done"))
-        and not bool((steps.get("tig") or {}).get("done"))
-    ):
-        return {"label": "TIG-re vár", "detail": "TIG elkészülésére vár", "tone": "waiting", "sort": 45}
-    if bool((steps.get("tig_document") or {}).get("done")) and not bool((steps.get("tig") or {}).get("done")):
-        return {"label": "TIG elfogadásra vár", "detail": "Futár teendő", "tone": "waiting", "sort": 50}
-    if bool((steps.get("settlement_document") or {}).get("done")) and not bool((steps.get("settlement") or {}).get("done")):
-        return {"label": "Elszámolás elfogadásra vár", "detail": "Futár teendő", "tone": "waiting", "sort": 40}
-    if bool((steps.get("settlement_document") or {}).get("done")):
-        return {"label": "Elszámolás", "detail": "Folyamatban", "tone": "active", "sort": 30}
-    return {"label": "Elszámolás készül", "detail": "Várakozás", "tone": "muted", "sort": 10}
+    return settlement_dashboard_status(
+        settlement_ready=bool((steps.get("settlement_document") or {}).get("done")),
+        settlement_done=bool((steps.get("settlement") or {}).get("done")),
+        tig_ready=bool((steps.get("tig_document") or {}).get("done")),
+        tig_done=bool((steps.get("tig") or {}).get("done")),
+        invoice_submit_open=workflow_open(states, "invoice_submit"),
+        invoice_submit_done=bool((steps.get("invoice_submit") or {}).get("done")),
+        invoice_check_open=workflow_open(states, "invoice_check"),
+        invoice_check_done=bool((steps.get("invoice_check") or {}).get("done")),
+        invoice_payment_open=workflow_open(states, "invoice_payment"),
+        invoice_payment_done=workflow_done(states, "invoice_payment") or bool((steps.get("invoice_payment") or {}).get("done")),
+    )
 
 
 def workflow_dashboard_candidate_rows(month: date) -> dict[str, dict[str, Any]]:
@@ -18541,37 +18527,19 @@ def _dashboard_status_from_bulk(
     states: dict[str, dict],
     open_complaints: int,
 ) -> dict[str, Any]:
-    settlement_ready = has_summary or has_settlement_document
-    settlement_done = workflow_done(states, "settlement")
-    tig_ready = has_tig_document
-    tig_done = workflow_done(states, "tig")
-    invoice_submit_done = workflow_done(states, "invoice_submit")
-    invoice_check_done = workflow_done(states, "invoice_check")
-
-    if open_complaints:
-        return {
-            "label": "Reklamáció",
-            "detail": f"{open_complaints} nyitott reklamáció",
-            "tone": "attention",
-            "sort": 20,
-        }
-    if workflow_done(states, "invoice_payment"):
-        return {"label": "Kifizetve", "detail": "Folyamat lezárva", "tone": "done", "sort": 90}
-    if workflow_open(states, "invoice_payment"):
-        return {"label": "Kifizetésre vár", "detail": "Admin kifizetésre vár", "tone": "waiting", "sort": 80}
-    if workflow_open(states, "invoice_check") or (invoice_submit_done and not invoice_check_done):
-        return {"label": "Számla ellenőrzésre vár", "detail": "Számla beérkezett", "tone": "warning", "sort": 70}
-    if workflow_open(states, "invoice_submit") or (tig_done and not invoice_submit_done):
-        return {"label": "Számlafeltöltésre vár", "detail": "Futár teendő", "tone": "waiting", "sort": 60}
-    if settlement_done and not tig_ready and not tig_done:
-        return {"label": "TIG-re vár", "detail": "TIG elkészülésére vár", "tone": "waiting", "sort": 45}
-    if tig_ready and not tig_done:
-        return {"label": "TIG elfogadásra vár", "detail": "Futár teendő", "tone": "waiting", "sort": 50}
-    if settlement_ready and not settlement_done:
-        return {"label": "Elszámolás elfogadásra vár", "detail": "Futár teendő", "tone": "waiting", "sort": 40}
-    if settlement_ready:
-        return {"label": "Elszámolás", "detail": "Folyamatban", "tone": "active", "sort": 30}
-    return {"label": "Elszámolás készül", "detail": "Várakozás", "tone": "muted", "sort": 10}
+    return settlement_dashboard_status(
+        settlement_ready=has_summary or has_settlement_document or workflow_action_visible(states, "settlement"),
+        settlement_done=workflow_done(states, "settlement"),
+        tig_ready=has_tig_document,
+        tig_done=workflow_done(states, "tig"),
+        invoice_submit_open=workflow_open(states, "invoice_submit"),
+        invoice_submit_done=workflow_done(states, "invoice_submit"),
+        invoice_check_open=workflow_open(states, "invoice_check"),
+        invoice_check_done=workflow_done(states, "invoice_check"),
+        invoice_payment_open=workflow_open(states, "invoice_payment"),
+        invoice_payment_done=workflow_done(states, "invoice_payment"),
+        open_complaints=open_complaints,
+    )
 
 
 def dashboard_vat_payer_flag(vat_status: Any) -> bool:

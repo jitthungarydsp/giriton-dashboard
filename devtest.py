@@ -61,6 +61,7 @@ from resources.peopleforce_documents import (
     upload_peopleforce_document_bytes,
 )
 from resources.profile_route_metrics import resolve_profile_route_metrics
+from resources.settlement_workflow_status import settlement_dashboard_status_from_row
 from page.settlement_parameter_catalog import render_parameter_catalog
 
 APP_BUILD_MARKER = "2026-09-11-recursion-reset"
@@ -6961,20 +6962,20 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
     def workflow_status(courier_key: str) -> str:
         document_types = document_types_by_courier.get(courier_key, set())
         action_statuses = status_by_courier.get(courier_key, {})
-        if action_statuses.get("invoice_submit") == "open":
-            return "Számlafeltöltésre vár"
         if courier_key in invoice_attention_couriers:
             return "Számlaellenőrzésre vár"
         if courier_key in complaint_couriers:
             return "Bejelentések"
 
         has_settlement = "settlement" in document_types or action_statuses.get("settlement") in {"open", "done"}
-        has_tig = "tig" in document_types or action_statuses.get("tig") in {"open", "done"}
+        has_tig = "tig" in document_types or action_statuses.get("tig") == "done"
 
         if not has_settlement:
             return "Elszámolásra vár"
         if action_statuses.get("settlement") != "done":
             return "Elszámolás elfogadásra vár"
+        if action_statuses.get("invoice_submit") == "open":
+            return "Számlafeltöltésre vár"
         if action_statuses.get("invoice_payment") == "done":
             return "Kifizetve"
         if action_statuses.get("invoice_payment") == "open":
@@ -10889,7 +10890,7 @@ def build_fast_settlement_overview_data(
             + parse_huf_value(row.get("route_bonus_total_huf"))
         )
         status_label = (
-            _streamlit_status_from_dashboard_label(row.get("dashboard_status_label"))
+            _streamlit_status_from_dashboard_label(settlement_dashboard_status_from_row(row)["label"])
             if used_dashboard_view
             else "Elszámolásra vár"
         )
