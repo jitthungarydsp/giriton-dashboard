@@ -16349,6 +16349,16 @@ def render_courier_detail_page() -> None:
         )
         return
     if selected_menu_hint == "Pénzügy" and not exact_snapshot_batch_active:
+        courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg", "Céltartalék"]
+        courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Számla összevetés", "Reklamációk", "E-mail küldése", "Profil"])
+        if st.session_state.get(menu_key) not in courier_menu_items:
+            st.session_state[menu_key] = "Pénzügy"
+        selected_snapshot_menu = st.radio(
+            "Futármenü", courier_menu_items,
+            horizontal=True, label_visibility="collapsed", key=menu_key,
+        )
+        if selected_snapshot_menu != "Pénzügy":
+            st.rerun()
         finance_snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
         st.markdown(
             f"<div class=\"section-title\">Pénzügy - {html.escape(courier_name)}</div>",
