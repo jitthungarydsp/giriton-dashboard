@@ -3489,10 +3489,58 @@ def load_latest_devtest_finance_snapshot(courier_id: str, period_start: date) ->
         return {}
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_latest_devtest_finance_snapshot_payables(period_start: date) -> dict[str, float]:
+    period = period_start.replace(day=1).isoformat()
+    try:
+        snapshot_rows = (
+            get_db().schema("settlement").table("courier_finance_snapshot")
+            .select("id,courier_id,version")
+            .eq("period_start", period)
+            .order("version", desc=True)
+            .limit(5000)
+            .execute().data or []
+        )
+        latest_by_courier: dict[str, dict[str, object]] = {}
+        for snapshot in snapshot_rows:
+            courier_key = _courier_id_key(snapshot.get("courier_id"))
+            if courier_key:
+                latest_by_courier.setdefault(courier_key, snapshot)
+        snapshot_ids = [
+            str(snapshot.get("id") or "")
+            for snapshot in latest_by_courier.values()
+            if str(snapshot.get("id") or "")
+        ]
+        if not snapshot_ids:
+            return {}
+        item_rows = (
+            get_db().schema("settlement").table("courier_finance_snapshot_item")
+            .select("snapshot_id,amount_value")
+            .in_("snapshot_id", snapshot_ids)
+            .eq("section", "finance")
+            .eq("item_key", "payable")
+            .execute().data or []
+        )
+        payable_by_snapshot = {
+            str(item.get("snapshot_id") or ""): parse_huf_value(item.get("amount_value"))
+            for item in item_rows
+        }
+        return {
+            courier_key: payable_by_snapshot.get(str(snapshot.get("id") or ""), 0.0)
+            for courier_key, snapshot in latest_by_courier.items()
+            if str(snapshot.get("id") or "") in payable_by_snapshot
+        }
+    except BaseException:
+        return {}
+
+
 def clear_devtest_finance_snapshot_cache() -> None:
     clear = getattr(load_latest_devtest_finance_snapshot, "clear", None)
     if callable(clear):
         clear()
+    clear_bulk = getattr(load_latest_devtest_finance_snapshot_payables, "clear", None)
+    if callable(clear_bulk):
+        clear_bulk()
 
 
 def load_devtest_finance_snapshot_versions(courier_id: str, period_start: date) -> list[dict[str, object]]:
@@ -15704,15 +15752,16 @@ def render_table(df: pd.DataFrame) -> None:
     except BaseException:
         list_period_start = None
     list_warehouse = st.session_state.get("new_warehouse", "Összes")
-    excel_payable_totals = load_excel_month_payable_totals(
-        list_period_start,
-        st.session_state.get("settlement_excel_session_id"),
+    snapshot_payable_totals = (
+        load_latest_devtest_finance_snapshot_payables(list_period_start)
+        if list_period_start
+        else {}
     )
 
     st.markdown(
         """
         <div class="courier-list-header">
-        <div>Futár</div><div>Vállalkozói díj összesen</div><div>Excel végösszeg</div><div>Státusz</div>
+        <div>Futár</div><div>Vállalkozói díj összesen</div><div>Snapshot végösszeg</div><div>Státusz</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -15853,17 +15902,15 @@ def render_table(df: pd.DataFrame) -> None:
                 cols[0].caption(no_show_audit_text)
 
             courier_key = _courier_id_key(row.get("Courier ID"))
-            excel_payable_total = lookup_session_payable_total(excel_payable_totals, courier_key, row.get("Futár"))
-            if str(row.get("Számítás módja") or "").strip().casefold() == "excel":
-                excel_payable_total = parse_huf_value(row.get("Kifizetendő")) or excel_payable_total
-            if list_period_start:
-                finance_sync = st.session_state.get(f"finance_payment_sync_{courier_key}_{list_period_start:%Y%m}") or {}
-                synced_payable = parse_huf_value(finance_sync.get("payable_huf"))
-                if synced_payable:
-                    excel_payable_total = synced_payable
+            snapshot_payable_total = snapshot_payable_totals.get(courier_key)
             contractor_total = parse_huf_value(row.get("Alvállalkozói összeg"))
             cols[1].markdown(f"**{format_huf(contractor_total)}**")
-            cols[2].markdown(f"**{format_huf(excel_payable_total)}**")
+            snapshot_payable_text = (
+                format_huf(snapshot_payable_total)
+                if snapshot_payable_total is not None
+                else "-"
+            )
+            cols[2].markdown(f"**{snapshot_payable_text}**")
 
             badge, led = status_meta(str(row["Státusz"]))
             advance_status = str(row.get("Fizetés előleg státusz") or "").strip()
