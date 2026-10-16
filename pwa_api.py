@@ -18879,7 +18879,11 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
         if courier_id and courier_id not in latest_by_courier:
             latest_by_courier[courier_id] = snapshot
 
-    roster = dashboard_month_courier_roster(month_start)
+    try:
+        roster = dashboard_month_courier_roster(month_start)
+    except Exception as exc:
+        print(f"Admin settlement roster skipped: {type(exc).__name__}: {exc}")
+        roster = {}
     roster_by_name = {
         dashboard_courier_name_key(profile.get("courierName")): profile
         for profile in roster.values()
@@ -18931,10 +18935,14 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
             "updatedAt": str(profile.get("summaryUpdatedAt") or ""),
             "snapshotVersion": 0,
         })
-    flags_by_courier = dashboard_monthly_flags_by_courier(
-        month_start,
-        [str(row.get("courierId") or "") for row in rows],
-    )
+    try:
+        flags_by_courier = dashboard_monthly_flags_by_courier(
+            month_start,
+            [str(row.get("courierId") or "") for row in rows],
+        )
+    except Exception as exc:
+        print(f"Admin settlement flags skipped: {type(exc).__name__}: {exc}")
+        flags_by_courier = {}
     for row in rows:
         row["flags"] = flags_by_courier.get(str(row.get("courierId") or ""), [])
     rows.sort(key=lambda row: (normalize_person_match_text(row.get("courierName")), str(row.get("courierId") or "")))
@@ -22219,8 +22227,25 @@ def admin_settlement_dashboard(
             return snapshot_dashboard
         return dashboard
     except Exception as exc:
-        print(f"Admin settlement dashboard fallback: {exc}")
-        snapshot_dashboard = build_admin_settlement_totals(month_value)
+        print(f"Admin settlement dashboard fallback: {type(exc).__name__}: {exc}")
+        try:
+            snapshot_dashboard = build_admin_settlement_totals(month_value)
+        except Exception as fallback_exc:
+            print(
+                "Admin settlement snapshot fallback failed: "
+                f"{type(fallback_exc).__name__}: {fallback_exc}"
+            )
+            return {
+                "month": month_value.strftime("%Y-%m"),
+                "rows": [],
+                "summary": {
+                    "couriers": 0,
+                    "totalPayableHuf": 0,
+                    "statusCounts": {},
+                },
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+                "source": "error-fallback",
+            }
         if q:
             clean_query = normalize_text(q)
             snapshot_dashboard["rows"] = [
