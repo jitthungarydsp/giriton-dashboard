@@ -18388,6 +18388,8 @@ def workflow_dashboard_status(workflow: dict[str, Any]) -> dict[str, Any]:
         }
     if workflow_done(states, "invoice_payment") or bool((steps.get("invoice_payment") or {}).get("done")):
         return {"label": "Kifizetve", "detail": "Folyamat lezárva", "tone": "done", "sort": 90}
+    if workflow_open(states, "invoice_payment"):
+        return {"label": "Kifizetésre vár", "detail": "Admin kifizetésre vár", "tone": "waiting", "sort": 80}
     if workflow_open(states, "invoice_check") or (
         bool((steps.get("invoice_submit") or {}).get("done"))
         and not bool((steps.get("invoice_check") or {}).get("done"))
@@ -18549,6 +18551,8 @@ def _dashboard_status_from_bulk(
         }
     if workflow_done(states, "invoice_payment"):
         return {"label": "Kifizetve", "detail": "Folyamat lezárva", "tone": "done", "sort": 90}
+    if workflow_open(states, "invoice_payment"):
+        return {"label": "Kifizetésre vár", "detail": "Admin kifizetésre vár", "tone": "waiting", "sort": 80}
     if workflow_open(states, "invoice_check") or (invoice_submit_done and not invoice_check_done):
         return {"label": "Számla ellenőrzésre vár", "detail": "Számla beérkezett", "tone": "warning", "sort": 70}
     if workflow_open(states, "invoice_submit") or (tig_done and not invoice_submit_done):

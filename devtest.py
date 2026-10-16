@@ -6977,6 +6977,8 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
             return "Elszámolás elfogadásra vár"
         if action_statuses.get("invoice_payment") == "done":
             return "Kifizetve"
+        if action_statuses.get("invoice_payment") == "open":
+            return "Kifizetésre vár"
         if not has_tig:
             return "TIG-re vár"
         if action_statuses.get("tig") != "done":
