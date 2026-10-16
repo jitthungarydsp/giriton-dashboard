@@ -243,7 +243,7 @@ select
         when open_complaints > 0 then 'Reklamáció'
         when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 'Elszámolás elfogadásra vár'
         when invoice_payment_done then 'Kifizetve'
-        when invoice_payment_open then 'Kifizetésre vár'
+        when invoice_payment_open or (invoice_check_done and not invoice_check_open and not invoice_submit_open) then 'Kifizetésre vár'
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 'Számla ellenőrzésre vár'
         when invoice_submit_open or (tig_done and not invoice_submit_done) then 'Számlafeltöltésre vár'
         when settlement_done and not has_tig_document and not tig_done then 'TIG-re vár'
@@ -255,7 +255,7 @@ select
         when open_complaints > 0 then open_complaints::text || ' nyitott reklamáció'
         when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 'Futár teendő'
         when invoice_payment_done then 'Folyamat lezárva'
-        when invoice_payment_open then 'Admin kifizetésre vár'
+        when invoice_payment_open or (invoice_check_done and not invoice_check_open and not invoice_submit_open) then 'Admin kifizetésre vár'
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 'Számla beérkezett'
         when invoice_submit_open or (tig_done and not invoice_submit_done) then 'Futár teendő'
         when settlement_done and not has_tig_document and not tig_done then 'TIG elkészülésére vár'
@@ -267,7 +267,7 @@ select
         when open_complaints > 0 then 'attention'
         when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 'waiting'
         when invoice_payment_done then 'done'
-        when invoice_payment_open then 'waiting'
+        when invoice_payment_open or (invoice_check_done and not invoice_check_open and not invoice_submit_open) then 'waiting'
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 'warning'
         when invoice_submit_open or (tig_done and not invoice_submit_done) then 'waiting'
         when settlement_done and not has_tig_document and not tig_done then 'waiting'
@@ -279,14 +279,16 @@ select
         when open_complaints > 0 then 20
         when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 40
         when invoice_payment_done then 90
-        when invoice_payment_open then 80
+        when invoice_payment_open or (invoice_check_done and not invoice_check_open and not invoice_submit_open) then 80
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 70
         when invoice_submit_open or (tig_done and not invoice_submit_done) then 60
         when settlement_done and not has_tig_document and not tig_done then 45
         when settlement_done and has_tig_document and not tig_done then 50
         when has_settlement_document or settlement_started or session_id is not null then 30
         else 10
-    end as dashboard_status_sort
+    end as dashboard_status_sort,
+    -- Append new fields to preserve existing view column positions.
+    invoice_payment_open
 from dashboard_rows;
 
 grant select on settlement.vw_admin_settlement_dashboard_fast to service_role;

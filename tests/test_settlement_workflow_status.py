@@ -52,6 +52,26 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         self.assertEqual(settlement_dashboard_status(**flags, open_complaints=2)["label"], "Reklamáció")
         self.assertEqual(settlement_dashboard_status(**flags, invoice_payment_done=True)["label"], "Kifizetve")
 
+    def test_payment_waiting_survives_older_view_without_payment_flag(self):
+        row = dict(session_id="monthly", settlement_done=True, has_tig_document=True,
+                   tig_done=True, invoice_submit_done=True,
+                   dashboard_status_label="Kifizetésre vár")
+        self.assertEqual(settlement_dashboard_status_from_row(row)["label"], "Kifizetésre vár")
+        row["invoice_payment_open"] = False
+        self.assertNotEqual(settlement_dashboard_status_from_row(row)["label"], "Kifizetésre vár")
+        row["invoice_payment_open"] = True
+        self.assertEqual(settlement_dashboard_status_from_row(row)["label"], "Kifizetésre vár")
+        row["settlement_done"] = False
+        self.assertEqual(settlement_dashboard_status_from_row(row)["label"], "Elszámolás elfogadásra vár")
+
+    def test_approved_invoice_waits_for_payment_without_separate_payment_action(self):
+        flags = dict(settlement_ready=True, settlement_done=True, tig_ready=True,
+                     tig_done=True, invoice_submit_done=True, invoice_check_done=True)
+        self.assertEqual(settlement_dashboard_status(**flags)["label"], "Kifizetésre vár")
+        self.assertEqual(settlement_dashboard_status(**flags, invoice_payment_done=True)["label"], "Kifizetve")
+        self.assertEqual(settlement_dashboard_status(**flags, invoice_check_open=True)["label"], "Számla ellenőrzésre vár")
+        self.assertEqual(settlement_dashboard_status(**flags, invoice_submit_open=True)["label"], "Számlafeltöltésre vár")
+
     def test_pwa_full_and_bulk_follow_same_prerequisite(self):
         ns = load_functions("pwa_api.py", {
             "workflow_status", "workflow_done", "workflow_open", "workflow_action_visible",
@@ -92,6 +112,8 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
 
     def test_sql_view_checks_settlement_before_downstream_actions(self):
         sql = (ROOT / "sql/settlement_admin_dashboard_fast_view.sql").read_text(encoding="utf-8")
+        self.assertIn("end as dashboard_status_sort,", sql)
+        self.assertIn("    invoice_payment_open\nfrom dashboard_rows", sql)
         for block in sql.split("    case\n")[1:]:
             self.assertLess(block.index("and not settlement_done then"), block.index("when invoice_payment_done"))
             self.assertNotIn("has_tig_document or tig_started", block)

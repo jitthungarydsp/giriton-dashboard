@@ -17,7 +17,7 @@ def settlement_dashboard_status(
         return status("Elszámolás elfogadásra vár", "Futár teendő", "waiting", 40)
     if invoice_payment_done:
         return status("Kifizetve", "Folyamat lezárva", "done", 90)
-    if invoice_payment_open:
+    if invoice_payment_open or (invoice_check_done and not invoice_check_open and not invoice_submit_open):
         return status("Kifizetésre vár", "Admin kifizetésre vár", "waiting", 80)
     if invoice_check_open or (invoice_submit_done and not invoice_check_done):
         return status("Számla ellenőrzésre vár", "Számla beérkezett", "warning", 70)
@@ -39,9 +39,14 @@ def settlement_dashboard_status_from_row(row):
         settlement_done=bool(row.get("settlement_done")),
         tig_ready=bool(row.get("has_tig_document")),
         tig_done=bool(row.get("tig_done")),
+        # Older deployed views omit this flag, but already calculate its label.
+        # Use that label only until the flag is included in the view response.
+        invoice_payment_open=bool(row.get(
+            "invoice_payment_open", row.get("dashboard_status_label") == "Kifizetésre vár",
+        )),
         **{key: bool(row.get(key)) for key in (
             "invoice_submit_open", "invoice_submit_done", "invoice_check_open",
-            "invoice_check_done", "invoice_payment_open", "invoice_payment_done",
+            "invoice_check_done", "invoice_payment_done",
         )},
         open_complaints=int(row.get("open_complaints") or 0),
     )
