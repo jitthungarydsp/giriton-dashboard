@@ -18305,6 +18305,7 @@ def render_courier_detail_page() -> None:
                     if selected_rating.empty and courier_name_lookup:
                         selected_rating = rating_rows.loc[rating_rows["_courier_name_lookup"].eq(courier_name_lookup)].copy()
                     if not selected_rating.empty:
+                        selected_rating = combine_customer_rating_rows(selected_rating)
                         selected_rating = recalculate_customer_rating_rows(
                             selected_rating,
                             route_total,
