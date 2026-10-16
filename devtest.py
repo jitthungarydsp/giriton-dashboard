@@ -11549,14 +11549,14 @@ def apply_periodic_fee_corrections(
 def load_customer_rating_bonus_rows(period_start: date, period_end: date) -> pd.DataFrame:
     try:
         rows = (get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE)
-                .select("billing_month,worksheet_name,courier_id,driver_name,route_type,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number")
+                .select("billing_month,source_spreadsheet_id,worksheet_name,courier_id,driver_name,route_type,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number,row_data")
                 .eq("billing_month", period_start.replace(day=1).isoformat())
                 .order("driver_name").execute().data or [])
         return pd.DataFrame(rows)
     except BaseException:
         try:
             rows = (get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE)
-                    .select("billing_month,worksheet_name,courier_id,driver_name,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number")
+                    .select("billing_month,source_spreadsheet_id,worksheet_name,courier_id,driver_name,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number,row_data")
                     .eq("billing_month", period_start.replace(day=1).isoformat())
                     .order("driver_name").execute().data or [])
             return pd.DataFrame(rows)
@@ -11672,6 +11672,7 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
     rating_rows["bonus_total_huf"] = pd.to_numeric(rating_rows.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
     rating_rows["completed_routes"] = pd.to_numeric(rating_rows.get("completed_routes", 0), errors="coerce").fillna(0).astype(int)
     rating_rows["bonus_per_route_huf"] = pd.to_numeric(rating_rows.get("bonus_per_route_huf", 0), errors="coerce").fillna(0.0)
+    rating_rows = combine_customer_rating_rows(rating_rows)
     routes_by_id, routes_by_name = _customer_rating_dashboard_routes(result)
     if not rating_rows.empty and (not routes_by_id.empty or not routes_by_name.empty):
         rules = load_customer_rating_rules_for_month(period_start, period_end)
@@ -11764,6 +11765,36 @@ def recalculate_customer_rating_rows(
     return rows
 
 
+def combine_customer_rating_rows(rows: pd.DataFrame) -> pd.DataFrame:
+    """Combine multiple uploaded rating tables before applying one courier's route total."""
+    if rows.empty:
+        return rows.copy()
+
+    result = rows.copy()
+    result["courier_id"] = result.get("courier_id", pd.Series(dtype=str)).map(_courier_id_key)
+    result["driver_key"] = result.get("driver_key", result.get("driver_name", pd.Series(dtype=str))).map(_courier_match_key)
+    result["rating_count"] = pd.to_numeric(result.get("rating_count", 0), errors="coerce").fillna(0).astype(int)
+    result["average_rating"] = pd.to_numeric(result.get("average_rating", 0), errors="coerce").fillna(0.0)
+    result["_weighted_rating"] = result["average_rating"] * result["rating_count"]
+    grouped = (
+        result.groupby(["courier_id", "driver_key"], dropna=False, as_index=False)
+        .agg(
+            driver_name=("driver_name", "first"),
+            rating_count=("rating_count", "sum"),
+            _weighted_rating=("_weighted_rating", "sum"),
+        )
+    )
+    grouped["average_rating"] = grouped.apply(
+        lambda row: row["_weighted_rating"] / row["rating_count"] if row["rating_count"] else 0.0,
+        axis=1,
+    )
+    grouped["route_type"] = "normal"
+    grouped["completed_routes"] = 0
+    grouped["bonus_per_route_huf"] = 0.0
+    grouped["bonus_total_huf"] = 0.0
+    return grouped.drop(columns=["_weighted_rating"])
+
+
 def resolve_customer_rating_bonus_total(courier_id: object, courier_name: object, route_total: int, period_start: date, period_end: date) -> float:
     rating_rows = load_customer_rating_bonus_rows(period_start, period_end)
     if rating_rows.empty:
@@ -11779,8 +11810,22 @@ def resolve_customer_rating_bonus_total(courier_id: object, courier_name: object
     if selected.empty:
         return 0.0
 
+    selected = combine_customer_rating_rows(selected)
     selected = recalculate_customer_rating_rows(selected, int(route_total or 0), period_start, period_end)
     return float(selected["bonus_total_huf"].sum())
+
+
+def customer_rating_source_id(uploaded_file, billing_month: date) -> str:
+    """Return a stable ID so adding the same file twice replaces only that file."""
+    try:
+        current_position = uploaded_file.tell()
+        uploaded_file.seek(0)
+        file_bytes = uploaded_file.read()
+        uploaded_file.seek(current_position)
+    except Exception:
+        file_bytes = b""
+    digest = hashlib.sha256(file_bytes).hexdigest()[:20]
+    return f"customer_rating_upload_{billing_month.replace(day=1):%Y_%m}_{digest}"
 
 
 def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_data: pd.DataFrame) -> pd.DataFrame:
@@ -11854,13 +11899,15 @@ def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_da
     grouped["billing_month"] = month_start.isoformat()
     grouped["worksheet_name"] = data[warehouse_column].astype(str).str.strip().mode().iloc[0] if warehouse_column else "Ügyfélértékelés"
     grouped["source_row_number"] = range(2, len(grouped) + 2)
-    grouped["source_spreadsheet_id"] = f"customer_rating_upload_{month_start:%Y_%m}"
+    source_id = customer_rating_source_id(uploaded_file, month_start)
+    grouped["source_spreadsheet_id"] = source_id
     grouped["row_data"] = grouped.apply(
         lambda row: {
             "rating_count": int(row["rating_count"]),
             "average_rating": float(row["average_rating"]),
             "route_type": str(row["route_type"]),
             "source_file": getattr(uploaded_file, "name", "uploaded.xlsx"),
+            "source_id": source_id,
         },
         axis=1,
     )
@@ -11949,7 +11996,8 @@ def _finalize_customer_rating_monthly_rows(
     result["billing_month"] = month_start.isoformat()
     result["worksheet_name"] = worksheet_name or "Feltoltes_havi"
     result["source_row_number"] = range(2, len(result) + 2)
-    result["source_spreadsheet_id"] = f"customer_rating_monthly_upload_{month_start:%Y_%m}"
+    source_id = customer_rating_source_id(uploaded_file, month_start)
+    result["source_spreadsheet_id"] = source_id
     result["row_data"] = result.apply(
         lambda row: {
             "rating_count": int(row["rating_count"]),
@@ -11957,6 +12005,7 @@ def _finalize_customer_rating_monthly_rows(
             "route_type": str(row["route_type"]),
             "source_file": getattr(uploaded_file, "name", "uploaded.xlsx"),
             "source_format": "monthly_upload",
+            "source_id": source_id,
         },
         axis=1,
     )
@@ -12000,13 +12049,15 @@ def _finalize_customer_rating_value_rows(
     result["billing_month"] = month_start.isoformat()
     result["worksheet_name"] = worksheet_name or "Ügyfélértékelés"
     result["source_row_number"] = range(2, len(result) + 2)
-    result["source_spreadsheet_id"] = f"customer_rating_value_upload_{month_start:%Y_%m}"
+    source_id = customer_rating_source_id(uploaded_file, month_start)
+    result["source_spreadsheet_id"] = source_id
     result["row_data"] = result.apply(
         lambda row: {
             "rating_count": int(row["rating_count"]),
             "average_rating": float(row["average_rating"]),
             "source_file": getattr(uploaded_file, "name", "uploaded.xlsx"),
             "source_format": "average_rating_value",
+            "source_id": source_id,
         },
         axis=1,
     )
@@ -12243,7 +12294,6 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
 
 def save_customer_rating_upload(rows: pd.DataFrame, billing_month: date) -> None:
     month_text = billing_month.replace(day=1).isoformat()
-    get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE).delete().eq("billing_month", month_text).execute()
     payload = rows.copy()
     if "courier_id" in payload.columns:
         payload["courier_id"] = payload["courier_id"].map(_courier_id_key).replace("", None)
@@ -12255,8 +12305,44 @@ def save_customer_rating_upload(rows: pd.DataFrame, billing_month: date) -> None
     payload["completed_routes"] = pd.to_numeric(payload["completed_routes"], errors="coerce").fillna(0).astype(int)
     payload = payload.astype(object).where(pd.notna(payload), None)
     records = [_json_clean_value(record) for record in payload.to_dict("records")]
+
+    # A month can contain multiple rating files. Replace only a file with the
+    # same content, leaving previously uploaded sources in place.
+    source_ids = {
+        str(record.get("source_spreadsheet_id") or "").strip()
+        for record in records
+        if str(record.get("source_spreadsheet_id") or "").strip()
+    }
+    source_files = {
+        str((record.get("row_data") or {}).get("source_file") or "").strip()
+        for record in records
+        if str((record.get("row_data") or {}).get("source_file") or "").strip()
+    }
+    table = get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE)
+    try:
+        existing_rows = table.select("source_spreadsheet_id,row_data").eq("billing_month", month_text).execute().data or []
+    except BaseException:
+        existing_rows = []
+    for existing in existing_rows:
+        existing_source_id = str(existing.get("source_spreadsheet_id") or "").strip()
+        existing_row_data = existing.get("row_data") or {}
+        if isinstance(existing_row_data, str):
+            try:
+                existing_row_data = json.loads(existing_row_data)
+            except json.JSONDecodeError:
+                existing_row_data = {}
+        existing_source_file = str(existing_row_data.get("source_file") or "").strip() if isinstance(existing_row_data, dict) else ""
+        if existing_source_id in source_ids or (
+            existing_source_file in source_files
+            and existing_source_id.startswith("customer_rating_")
+            and not re.search(r"_[0-9a-f]{20}$", existing_source_id)
+        ):
+            source_ids.add(existing_source_id)
+    for source_id in source_ids:
+        if source_id:
+            table.delete().eq("billing_month", month_text).eq("source_spreadsheet_id", source_id).execute()
     for start in range(0, len(records), 500):
-        get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE).insert(records[start:start + 500]).execute()
+        table.insert(records[start:start + 500]).execute()
     load_customer_rating_bonus_rows.clear()
 
 
@@ -24432,7 +24518,7 @@ def show_new_settlement_page() -> None:
 
         st.divider()
         st.markdown("### Ügyfélértékelés feltöltése")
-        st.caption("Havi order rating Excel. A bónusz a futár profil Pénzügy fülén is megjelenik.")
+        st.caption("Havi order rating Excel. Több tábla is hozzáadható ugyanahhoz a hónaphoz; a korábban mentett tábla megmarad.")
         rating_month = st.date_input(
             "Értékelési hónap",
             value=balance_period_start,
@@ -24478,7 +24564,7 @@ def show_new_settlement_page() -> None:
                 st.error(f"Az ügyfélértékelés Excel nem olvasható: {exc}")
 
         if st.button(
-            "Ügyfélértékelés mentése",
+            "Ügyfélértékelés hozzáadása / mentése",
             type="primary",
             use_container_width=True,
             disabled=uploaded_rating_excel is None or rating_preview.empty,
@@ -24492,7 +24578,7 @@ def show_new_settlement_page() -> None:
                 # érintett hónapra minden futárt újra kell számolni.
                 st.session_state["new_month_pending"] = month_option_label(rating_month)
                 st.session_state["devtest_exact_snapshot_batch_requested"] = True
-                st.success(f"Ügyfélértékelés mentve: {len(rating_preview)} futár, hónap: {rating_month:%Y-%m}.")
+                st.success(f"Ügyfélértékelés hozzáadva: {len(rating_preview)} futár, hónap: {rating_month:%Y-%m}. A korábbi táblák megmaradtak, az azonos fájl cserélődött.")
                 st.rerun()
             except Exception as exc:
                 st.error(f"Az ügyfélértékelés mentése sikertelen: {exc}")
