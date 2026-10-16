@@ -324,6 +324,64 @@ def update_adjustment(row_id: str, payload: dict[str, Any]) -> None:
     raise_for_response(response, "courier_settlement_adjustment update")
 
 
+def sync_courier_from_sheet(
+    courier_id: str,
+    courier_name: str,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    *,
+    sheet_id: str = DEFAULT_SHEET_ID,
+    gid: int = DEFAULT_GID,
+) -> dict[str, int]:
+    """Refresh only one courier's Google Sheet adjustments for the selected month."""
+    target_id = str(courier_id or "").strip()
+    target_name = normalize_text(courier_name)
+    if not target_id or not target_name:
+        raise ValueError("A futár azonosítója és neve kötelező a Google Sheet frissítéséhez.")
+
+    source_rows = [
+        row
+        for row in rows_from_sheet(sheet_id, gid)
+        if normalize_text(row.get("courier_name")) == target_name
+        and (period_start is None or row["effective_date"] >= period_start)
+        and (period_end is None or row["effective_date"] <= period_end)
+    ]
+    couriers = read_courier_master()
+    courier = next(
+        (value for value in couriers.values() if str(value.get("courier_id") or "").strip() == target_id),
+        None,
+    ) or {"courier_id": target_id, "courier_name": courier_name}
+
+    existing = existing_adjustments()
+    closed = closed_months()
+    inserted = 0
+    updated = 0
+    protected_closed = 0
+
+    for row in source_rows:
+        key = source_key(sheet_id, gid, row)
+        payload = adjustment_payload(row, courier, key)
+        if payload_month_key(payload) in closed:
+            protected_closed += 1
+            continue
+        current = existing.get(key)
+        if current and current.get("id"):
+            if current.get("deleted_at") or current.get("is_active") is False:
+                continue
+            update_adjustment(str(current["id"]), payload)
+            updated += 1
+        else:
+            insert_adjustment(payload)
+            inserted += 1
+
+    return {
+        "sheet_rows": len(source_rows),
+        "inserted": inserted,
+        "updated": updated,
+        "protected_closed": protected_closed,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")

@@ -15508,6 +15508,23 @@ def refresh_settlement_profile_data() -> None:
     load_courier_master.clear()
 
 
+def refresh_google_bonus_malus_for_courier(
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+    period_end: date,
+) -> dict[str, int]:
+    """Pull the selected courier/month from the configured Google Sheet."""
+    from scripts.import_google_bonus_malus_adjustments import sync_courier_from_sheet
+
+    return sync_courier_from_sheet(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+
 def refresh_loyalty_calculation_data() -> None:
     clear_settlement_overview_data_cache()
     load_active_base_rate_rules.clear()
@@ -16191,7 +16208,7 @@ def render_courier_detail_page() -> None:
     nav_index = nav_ids.index(courier_id) if courier_id in nav_ids else -1
     previous_courier_id = nav_ids[nav_index - 1] if nav_index > 0 else ""
     next_courier_id = nav_ids[nav_index + 1] if nav_index >= 0 and nav_index < len(nav_ids) - 1 else ""
-    back_col, prev_col, next_col, refresh_col, stay_refresh_col, action_spacer = st.columns([0.18, 0.08, 0.08, 0.16, 0.26, 0.24], gap="small", vertical_alignment="top")
+    back_col, prev_col, next_col, refresh_col, bonus_refresh_col, stay_refresh_col, action_spacer = st.columns([0.16, 0.07, 0.07, 0.13, 0.16, 0.23, 0.18], gap="small", vertical_alignment="top")
     with back_col:
         if st.button("Vissza a listához", key=f"back_from_courier_detail_{courier_id}", use_container_width=True):
             st.session_state.pop("selected_courier_id", None)
@@ -16209,21 +16226,28 @@ def render_courier_detail_page() -> None:
             st.rerun()
     with refresh_col:
         if st.button("Frissítés", key=f"refresh_courier_detail_{courier_id}", help="Adatok újratöltése", use_container_width=True):
-            st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
-            st.session_state.pop("current_filtered_data", None)
-            st.session_state.pop("current_filtered_context", None)
-            refresh_settlement_profile_data()
-            st.session_state["selected_courier_id"] = courier_id
+            st.session_state[f"courier_rebuild_request_{courier_id}"] = {"target_menu": "Pénzügy"}
+            st.rerun()
+    with bonus_refresh_col:
+        if st.button(
+            "MALUS/BONUS frissítés",
+            key=f"refresh_google_bonus_malus_{courier_id}",
+            help="A kiválasztott futár és hónap Google Sheet adatait újraolvassa, majd újramenti az elszámolást.",
+            use_container_width=True,
+        ):
+            st.session_state[f"courier_rebuild_request_{courier_id}"] = {
+                "target_menu": "Pénzügy",
+                "refresh_google_bonus_malus": True,
+            }
             st.rerun()
     with stay_refresh_col:
         if st.button("Frissítés és marad ezen a futáron", key=f"refresh_stay_courier_detail_{courier_id}", help="Adatok újratöltése, ugyanazon a futáron és fülön maradva", use_container_width=True):
             current_menu = str(st.session_state.get(f"courier_menu_{courier_id}") or "Pénzügy")
-            st.session_state[f"courier_menu_target_{courier_id}"] = current_menu
-            st.session_state.pop("current_filtered_data", None)
-            st.session_state.pop("current_filtered_context", None)
-            refresh_settlement_profile_data()
-            st.session_state["selected_courier_id"] = courier_id
+            st.session_state[f"courier_rebuild_request_{courier_id}"] = {"target_menu": current_menu}
             st.rerun()
+    refresh_notice = st.session_state.pop("courier_refresh_notice", None)
+    if refresh_notice:
+        st.success(str(refresh_notice))
 
     def rerun_courier_profile(menu_name: str | None = None) -> None:
         st.session_state["selected_courier_id"] = courier_id
@@ -16311,6 +16335,36 @@ def render_courier_detail_page() -> None:
     preflight_month_key = period_start.strftime("%Y%m") if period_start else "current"
     finance_preflight_key = f"courier_finance_preflight_{courier_id}_{preflight_month_key}"
     finance_preflight_target_key = f"courier_after_finance_menu_{courier_id}_{preflight_month_key}"
+    rebuild_request_key = f"courier_rebuild_request_{courier_id}"
+    rebuild_request = st.session_state.pop(rebuild_request_key, None)
+    if isinstance(rebuild_request, dict):
+        try:
+            if rebuild_request.get("refresh_google_bonus_malus"):
+                with st.spinner("Google Sheet MALUS/BONUS adatainak frissítése..."):
+                    refresh_result = refresh_google_bonus_malus_for_courier(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        period_start=period_start,
+                        period_end=period_end,
+                    )
+                st.session_state["courier_refresh_notice"] = (
+                    f"MALUS/BONUS frissítve: {refresh_result.get('inserted', 0)} új, "
+                    f"{refresh_result.get('updated', 0)} módosított sor."
+                )
+            saved_filtered_data = st.session_state.get("current_filtered_data")
+            saved_filtered_context = st.session_state.get("current_filtered_context")
+            refresh_settlement_profile_data()
+            if isinstance(saved_filtered_data, pd.DataFrame) and not saved_filtered_data.empty:
+                st.session_state["current_filtered_data"] = saved_filtered_data
+            if saved_filtered_context is not None:
+                st.session_state["current_filtered_context"] = saved_filtered_context
+            st.session_state["selected_courier_id"] = courier_id
+            st.session_state[menu_key] = "Pénzügy"
+            st.session_state[finance_preflight_key] = True
+            st.session_state[finance_preflight_target_key] = str(rebuild_request.get("target_menu") or "Pénzügy")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"A futár frissítése nem sikerült: {exc}")
     finance_preflight_active = bool(st.session_state.get(finance_preflight_key))
     finance_preflight_target = str(st.session_state.get(finance_preflight_target_key) or "Pénzügy")
     if finance_preflight_active:
@@ -16321,7 +16375,6 @@ def render_courier_detail_page() -> None:
             if finance_preflight_target
             else st.session_state.get(menu_key, "Pénzügy")
         )
-        finance_preflight_active = False
     menu_target = st.session_state.pop(menu_target_key, None)
     if menu_target:
         st.session_state[menu_key] = menu_target
@@ -16338,7 +16391,7 @@ def render_courier_detail_page() -> None:
             menu_target_key=menu_target_key,
         )
         return
-    if selected_menu_hint == "Pénzügy" and not exact_snapshot_batch_active:
+    if selected_menu_hint == "Pénzügy" and not exact_snapshot_batch_active and not finance_preflight_active:
         courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg", "Céltartalék"]
         courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Számla összevetés", "Reklamációk", "E-mail küldése", "Profil"])
         if st.session_state.get(menu_key) not in courier_menu_items:
@@ -18282,6 +18335,7 @@ def render_courier_detail_page() -> None:
             )
         if finance_preflight_active:
             snapshot_result = save_current_finance_snapshot("devtest.render_courier_detail_page.preflight")
+            clear_devtest_finance_snapshot_cache()
             if snapshot_result.get("reason"):
                 st.caption("Pénzügyi verzió mentése még nincs aktív. Futtasd a courier_finance_snapshot SQL-t.")
             target_menu_after_finance = (
