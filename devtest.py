@@ -61,7 +61,7 @@ from resources.peopleforce_documents import (
     upload_peopleforce_document_bytes,
 )
 from resources.profile_route_metrics import resolve_profile_route_metrics
-from resources.settlement_workflow_status import settlement_dashboard_status_from_row
+from resources.settlement_workflow_status import settlement_dashboard_status, settlement_dashboard_status_from_row
 from page.settlement_parameter_catalog import render_parameter_catalog
 
 APP_BUILD_MARKER = "2026-09-11-recursion-reset"
@@ -6844,6 +6844,9 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
 
     month_start = document_month.replace(day=1)
     courier_ids = result["Courier ID"].map(_courier_id_key)
+    summary_ready_ids = set(courier_ids[
+        result.get("_settlement_ready", pd.Series(False, index=result.index)).fillna(False).astype(bool)
+    ])
     result["Státusz"] = "Elszámolásra vár"
 
     try:
@@ -6933,6 +6936,8 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
                 na_position="last",
             )
         for item in complaint_records.to_dict("records"):
+            if process_id_from_action_key(item.get("document_type")):
+                continue
             status = str(item.get("status") or "").strip().casefold()
             has_admin_answer = bool(str(item.get("admin_response") or "").strip() or str(item.get("responded_at") or "").strip())
             courier_key = _courier_id_key(item.get("courier_id"))
@@ -6951,7 +6956,7 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
                     "badge": badge_class,
                     "led": led_class,
                 }
-            if status in {"resolved", "closed"} or has_admin_answer:
+            if status in {"resolved", "closed", "deleted"} or has_admin_answer:
                 continue
             if courier_key:
                 if invoice_check_complaint:
@@ -6962,37 +6967,22 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
     def workflow_status(courier_key: str) -> str:
         document_types = document_types_by_courier.get(courier_key, set())
         action_statuses = status_by_courier.get(courier_key, {})
-        if courier_key in invoice_attention_couriers:
-            return "Számlaellenőrzésre vár"
-        if courier_key in complaint_couriers:
-            return "Bejelentések"
-
-        has_settlement = "settlement" in document_types or action_statuses.get("settlement") in {"open", "done"}
+        has_settlement = courier_key in summary_ready_ids or "settlement" in document_types or action_statuses.get("settlement") in {"open", "done"}
         has_tig = "tig" in document_types or action_statuses.get("tig") == "done"
-
-        if not has_settlement:
-            return "Elszámolásra vár"
-        if action_statuses.get("settlement") != "done":
-            return "Elszámolás elfogadásra vár"
-        if action_statuses.get("invoice_submit") == "open":
-            return "Számlafeltöltésre vár"
-        if action_statuses.get("invoice_payment") == "done":
-            return "Kifizetve"
-        if action_statuses.get("invoice_payment") == "open":
-            return "Kifizetésre vár"
-        if not has_tig:
-            return "TIG-re vár"
-        if action_statuses.get("tig") != "done":
-            return "TIG elfogadásra vár"
-        if action_statuses.get("invoice_check") == "open":
-            return "Számlaellenőrzésre vár"
-        if action_statuses.get("invoice_check") == "done":
-            return "Kifizetésre vár"
-        if action_statuses.get("invoice_submit") == "done" or "invoice" in document_types:
-            return "Számlaellenőrzésre vár"
-        if action_statuses.get("tig") == "done":
-            return "Számlafeltöltésre vár"
-        return "TIG-re vár"
+        status = settlement_dashboard_status(
+            settlement_ready=has_settlement,
+            settlement_done=action_statuses.get("settlement") == "done",
+            tig_ready=has_tig,
+            tig_done=action_statuses.get("tig") == "done",
+            invoice_submit_open=action_statuses.get("invoice_submit") == "open",
+            invoice_submit_done=action_statuses.get("invoice_submit") == "done" or "invoice" in document_types,
+            invoice_check_open=courier_key in invoice_attention_couriers or action_statuses.get("invoice_check") == "open",
+            invoice_check_done=action_statuses.get("invoice_check") == "done",
+            invoice_payment_open=action_statuses.get("invoice_payment") == "open",
+            invoice_payment_done=action_statuses.get("invoice_payment") == "done",
+            open_complaints=int(courier_key in complaint_couriers),
+        )
+        return _streamlit_status_from_dashboard_label(status["label"])
 
     result["Státusz"] = courier_ids.map(workflow_status)
     result["Számlaellenőrzés reklamáció"] = courier_ids.map(
@@ -10918,6 +10908,7 @@ def build_fast_settlement_overview_data(
             "Előző havi összeg": 0.0,
             "KPI": 0.0,
             "Státusz": status_label,
+            "_settlement_ready": bool(row.get("has_settlement_document") or row.get("settlement_started") or row.get("session_id")),
         })
 
     data = pd.DataFrame(output_rows)
@@ -10930,12 +10921,9 @@ def build_fast_settlement_overview_data(
         session_id,
         "Excel",
     )
-    if not used_dashboard_view:
-        data = apply_peopleforce_workflow_status(data, period_start)
-    else:
-        # The fast snapshot already contains the settlement totals, but the
-        # manual courier highlight still comes from the live status table.
-        data = apply_settlement_attention_flags(data, period_start)
+    # Keep persisted financial totals, but classify workflow and complaint types
+    # from the live monthly records instead of an older SQL view's labels.
+    data = apply_peopleforce_workflow_status(data, period_start)
     data = apply_monthly_closure_status(data, period_start, period_end)
     if used_dashboard_view and "Kifizetve" not in data.columns:
         data["Kifizetve"] = data["Státusz"].astype(str).str.casefold().eq("kifizetve")

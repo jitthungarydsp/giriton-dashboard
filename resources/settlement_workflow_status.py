@@ -17,11 +17,13 @@ def settlement_dashboard_status(
         return status("Elszámolás elfogadásra vár", "Futár teendő", "waiting", 40)
     if invoice_payment_done:
         return status("Kifizetve", "Folyamat lezárva", "done", 90)
-    if invoice_payment_open or (invoice_check_done and not invoice_check_open and not invoice_submit_open):
-        return status("Kifizetésre vár", "Admin kifizetésre vár", "waiting", 80)
+    if invoice_submit_open:
+        return status("Számlafeltöltésre vár", "Futár teendő", "waiting", 60)
     if invoice_check_open or (invoice_submit_done and not invoice_check_done):
         return status("Számla ellenőrzésre vár", "Számla beérkezett", "warning", 70)
-    if invoice_submit_open or (tig_done and not invoice_submit_done):
+    if invoice_payment_open or (invoice_check_done and not invoice_check_open and not invoice_submit_open):
+        return status("Kifizetésre vár", "Admin kifizetésre vár", "waiting", 80)
+    if tig_done and not invoice_submit_done:
         return status("Számlafeltöltésre vár", "Futár teendő", "waiting", 60)
     if settlement_done and not tig_ready and not tig_done:
         return status("TIG-re vár", "TIG elkészülésére vár", "waiting", 45)

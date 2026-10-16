@@ -18382,7 +18382,15 @@ def workflow_dashboard_open_complaints(workflow: dict[str, Any]) -> list[dict[st
 def workflow_dashboard_status(workflow: dict[str, Any]) -> dict[str, Any]:
     steps = {str(step.get("key") or ""): step for step in workflow.get("steps") or []}
     states = workflow.get("states") or {}
-    open_complaints = workflow_dashboard_open_complaints(workflow)
+    all_open_complaints = workflow_dashboard_open_complaints(workflow)
+    invoice_check_attention = any(
+        base_action_key(complaint.get("document_type")) == "invoice_check"
+        for complaint in all_open_complaints
+    )
+    open_complaints = [
+        complaint for complaint in all_open_complaints
+        if base_action_key(complaint.get("document_type")) != "invoice_check"
+    ]
     if open_complaints:
         return {
             "label": "Reklamáció",
@@ -18397,7 +18405,7 @@ def workflow_dashboard_status(workflow: dict[str, Any]) -> dict[str, Any]:
         tig_done=bool((steps.get("tig") or {}).get("done")),
         invoice_submit_open=workflow_open(states, "invoice_submit"),
         invoice_submit_done=bool((steps.get("invoice_submit") or {}).get("done")),
-        invoice_check_open=workflow_open(states, "invoice_check"),
+        invoice_check_open=invoice_check_attention or workflow_open(states, "invoice_check"),
         invoice_check_done=bool((steps.get("invoice_check") or {}).get("done")),
         invoice_payment_open=workflow_open(states, "invoice_payment"),
         invoice_payment_done=workflow_done(states, "invoice_payment") or bool((steps.get("invoice_payment") or {}).get("done")),
@@ -19266,6 +19274,10 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
         complaint_status = str(complaint.get("status") or "").strip().lower()
         has_admin_answer = bool(str(complaint.get("admin_response") or "").strip() or str(complaint.get("responded_at") or "").strip())
         if complaint_status not in {"resolved", "closed", "deleted"} and not has_admin_answer:
+            if base_action_key(complaint.get("document_type")) == "invoice_check":
+                courier_states = statuses_by_courier.setdefault(courier_id, {})
+                courier_states["invoice_check"] = {**courier_states.get("invoice_check", {}), "status": "open"}
+                continue
             open_complaints_by_courier[courier_id] = open_complaints_by_courier.get(courier_id, 0) + 1
 
     for courier_id, summary_row in summary_by_courier.items():

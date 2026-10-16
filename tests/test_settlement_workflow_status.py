@@ -1,6 +1,6 @@
 import ast
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
 
     def test_payment_waiting_survives_older_view_without_payment_flag(self):
         row = dict(session_id="monthly", settlement_done=True, has_tig_document=True,
-                   tig_done=True, invoice_submit_done=True,
+                   tig_done=True, invoice_submit_done=False,
                    dashboard_status_label="Kifizetésre vár")
         self.assertEqual(settlement_dashboard_status_from_row(row)["label"], "Kifizetésre vár")
         row["invoice_payment_open"] = False
@@ -63,6 +63,12 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         self.assertEqual(settlement_dashboard_status_from_row(row)["label"], "Kifizetésre vár")
         row["settlement_done"] = False
         self.assertEqual(settlement_dashboard_status_from_row(row)["label"], "Elszámolás elfogadásra vár")
+
+    def test_old_payment_label_cannot_hide_pending_invoice_review(self):
+        row = dict(session_id="monthly", settlement_done=True, tig_done=True,
+                   invoice_submit_done=True, invoice_check_open=True,
+                   dashboard_status_label="Kifizetésre vár")
+        self.assertEqual(settlement_dashboard_status_from_row(row)["label"], "Számla ellenőrzésre vár")
 
     def test_approved_invoice_waits_for_payment_without_separate_payment_action(self):
         flags = dict(settlement_ready=True, settlement_done=True, tig_ready=True,
@@ -76,7 +82,8 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         ns = load_functions("pwa_api.py", {
             "workflow_status", "workflow_done", "workflow_open", "workflow_action_visible",
             "workflow_dashboard_open_complaints", "workflow_dashboard_status", "_dashboard_status_from_bulk",
-        }, {"Any": Any, "settlement_dashboard_status": settlement_dashboard_status})
+            "base_action_key",
+        }, {"Any": Any, "re": __import__("re"), "settlement_dashboard_status": settlement_dashboard_status})
         states = {"settlement": {"status": "open"}, "tig": {"status": "open"},
                   "invoice_payment": {"status": "open"}}
         workflow = {"states": states, "steps": [
@@ -90,6 +97,13 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         )
         self.assertEqual(full, bulk)
         self.assertEqual(full["label"], "Elszámolás elfogadásra vár")
+        workflow["steps"][1]["done"] = True
+        workflow["steps"][3]["done"] = True
+        workflow["steps"].append({"key": "invoice_submit", "done": True})
+        workflow["complaints"] = {"invoice_check": [
+            {"document_type": "invoice_check", "status": "new", "message": "Automatikus hiba"},
+        ]}
+        self.assertEqual(ns["workflow_dashboard_status"](workflow)["label"], "Számla ellenőrzésre vár")
 
     def test_streamlit_fast_list_recomputes_stale_database_label(self):
         row = dict(courier_id="7688", courier_name="Teszt Futár", payable_huf=100,
@@ -102,13 +116,61 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
             "parse_huf_value": lambda value: float(value or 0),
             "load_courier_master": lambda *_: pd.DataFrame(),
             "augment_settlement_courier_master": lambda value, *_: value,
+            "timedelta": timedelta,
+            "settlement_dashboard_status": settlement_dashboard_status,
+            "read_peopleforce_documents_for_month": lambda *_: pd.DataFrame(),
+            "read_peopleforce_card_statuses_for_month": lambda *_: pd.DataFrame(),
+            "read_peopleforce_complaints_for_month": lambda *_: pd.DataFrame(),
         }
         for name in ("apply_loyalty_bonus", "apply_settlement_attention_flags", "apply_monthly_closure_status",
                      "apply_salary_advance_request_status", "apply_expense_request_status", "apply_effective_payment_total_column"):
             ns[name] = lambda value, *_: value
-        load_functions("devtest.py", {"build_fast_settlement_overview_data", "_streamlit_status_from_dashboard_label"}, ns)
+        load_functions("devtest.py", {"build_fast_settlement_overview_data", "_streamlit_status_from_dashboard_label", "apply_peopleforce_workflow_status"}, ns)
         result = ns["build_fast_settlement_overview_data"](None, date(2026, 9, 1), date(2026, 9, 30), None)
         self.assertEqual(result.iloc[0]["Státusz"], "Elszámolás elfogadásra vár")
+
+    def test_pending_invoice_check_is_not_payment_waiting(self):
+        flags = dict(settlement_ready=True, settlement_done=True, tig_ready=True,
+                     tig_done=True, invoice_submit_done=True, invoice_payment_open=True)
+        self.assertEqual(settlement_dashboard_status(**flags, invoice_check_open=True)["label"], "Számla ellenőrzésre vár")
+        self.assertEqual(settlement_dashboard_status(**flags)["label"], "Számla ellenőrzésre vár")
+        self.assertEqual(settlement_dashboard_status(**flags, invoice_check_done=True)["label"], "Kifizetésre vár")
+        self.assertEqual(settlement_dashboard_status(**flags, invoice_submit_open=True)["label"], "Számlafeltöltésre vár")
+
+    def test_monthly_admin_distinguishes_invoice_check_from_complaints(self):
+        statuses = pd.DataFrame([
+            dict(courier_id="8185", action_key=action, status=value,
+                 document_month="2026-09-01", updated_at="2026-10-16")
+            for action, value in [("settlement", "done"), ("tig", "done"),
+                                  ("invoice_submit", "done"), ("invoice_check", "open"),
+                                  ("invoice_payment", "open")]
+        ])
+        ns = {
+            "pd": pd, "date": date, "timedelta": timedelta,
+            "settlement_dashboard_status": settlement_dashboard_status,
+            "_courier_id_key": lambda value: str(value or ""),
+            "read_peopleforce_documents_for_month": lambda *_: pd.DataFrame(),
+            "read_peopleforce_card_statuses_for_month": lambda month: statuses if month.month == 9 else pd.DataFrame(),
+            "read_peopleforce_complaints_for_month": lambda *_: pd.DataFrame([
+                dict(courier_id="8185", document_type="invoice_check", status="new", message="Automatikus hiba"),
+                dict(courier_id="8185", document_type="process:advance:settlement", status="new", message="Előleg reklamáció"),
+            ]),
+            "process_id_from_action_key": lambda value: str(value or "").split(":")[1] if str(value or "").startswith("process:") else "",
+            "base_action_key": lambda value: str(value or "").split(":")[-1],
+            "complaint_status_meta": lambda *_: ("Új", "complaint-status-new", "led-orange"),
+            "SETTLEMENT_ATTENTION_ACTION_KEY": "settlement_attention",
+        }
+        load_functions("devtest.py", {"apply_peopleforce_workflow_status", "_streamlit_status_from_dashboard_label"}, ns)
+        data = pd.DataFrame([{"Courier ID": "8185", "Státusz": "Bejelentések", "_settlement_ready": True}])
+        result = ns["apply_peopleforce_workflow_status"](data, date(2026, 9, 1))
+        self.assertEqual(result.iloc[0]["Státusz"], "Számlaellenőrzésre vár")
+        self.assertTrue(result.iloc[0]["Számlaellenőrzés reklamáció"])
+        self.assertEqual(result.iloc[0]["Bejelentés státusz"], "Nincs bejelentés")
+        ns["read_peopleforce_complaints_for_month"] = lambda *_: pd.DataFrame([
+            dict(courier_id="8185", document_type="settlement", status="new", message="Valódi reklamáció"),
+        ])
+        result = ns["apply_peopleforce_workflow_status"](data, date(2026, 9, 1))
+        self.assertEqual(result.iloc[0]["Státusz"], "Bejelentések")
 
     def test_sql_view_checks_settlement_before_downstream_actions(self):
         sql = (ROOT / "sql/settlement_admin_dashboard_fast_view.sql").read_text(encoding="utf-8")
