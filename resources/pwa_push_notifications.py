@@ -22,6 +22,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PUSH_SUBSCRIPTION_TABLE = "pwa_push_subscriptions"
 PUSH_DELIVERY_TABLE = "pwa_push_delivery_log"
 LOCAL_VAPID_PRIVATE_FILE = PROJECT_ROOT / "vapid_private.pem"
+# Push notifications are currently disabled; the PWA does not use them.
+PUSH_NOTIFICATIONS_ENABLED = False
 
 
 def load_setting(name: str) -> str:
@@ -301,6 +303,9 @@ def send_push_to_courier(
     work_date: date | str | None = None,
     data: dict[str, Any] | None = None,
 ) -> str:
+    if not PUSH_NOTIFICATIONS_ENABLED:
+        return "disabled"
+
     try:
         vapid_private_key = load_vapid_private_key_for_webpush()
     except Exception as exc:
