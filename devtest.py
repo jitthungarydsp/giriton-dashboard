@@ -13861,20 +13861,8 @@ def status_meta(status: str) -> tuple[str,str]:
 
 def courier_detail_menu_for_status(status: object) -> str:
     normalized = str(status or "").strip().casefold()
-    if not normalized:
-        return "Pénzügy"
-    if "fizetés előleg" in normalized:
-        return "Fizetés előleg"
-    if normalized in {"kifizetésre vár", "kifizetve"}:
-        return "Kifizetés"
     if "bejelentés" in normalized or "reklam" in normalized:
         return "Reklamációk"
-    if (
-        "elszámolás" in normalized
-        or "tig" in normalized
-        or "számla" in normalized
-    ):
-        return "Dokumentumok"
     return "Pénzügy"
 
 
@@ -15862,15 +15850,17 @@ def render_table(df: pd.DataFrame) -> None:
             ):
                 st.session_state["selected_courier_id"] = str(row["Courier ID"])
                 courier_id_value = str(row["Courier ID"])
-                target_menu = (
-                    "Profil"
-                    if bool(st.session_state.get("current_filtered_data_fast"))
-                    else "Reklamációk"
-                    if active_status_filter == "Bejelentések"
-                    else "Fizetés előleg"
-                    if active_status_filter in {"Új fizetés előleg", "Kifizetésre vár (Fizetés előleg)", "Kifizetve (Fizetés előleg)"}
-                    else courier_detail_menu_for_status(row.get("Státusz"))
+                row_complaint_label = str(row.get("Bejelentés státusz") or "").strip()
+                row_invoice_complaint = row.get("Számlaellenőrzés reklamáció", False)
+                has_open_complaint = (
+                    active_status_filter == "Bejelentések"
+                    or (
+                        not pd.isna(row_invoice_complaint)
+                        and bool(row_invoice_complaint)
+                    )
+                    or row_complaint_label not in {"", "Nincs bejelentés"}
                 )
+                target_menu = "Reklamációk" if has_open_complaint else "Pénzügy"
                 month_key = list_period_start.strftime("%Y%m") if list_period_start else "current"
                 st.session_state.pop(f"courier_after_finance_menu_{courier_id_value}_{month_key}", None)
                 st.session_state.pop(f"courier_finance_preflight_{courier_id_value}_{month_key}", None)
