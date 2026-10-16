@@ -10716,11 +10716,18 @@ def admin_recalculate_finance_rows(rows: list[dict[str, Any]]) -> tuple[list[dic
     correction_keys = {"correction", "correction_income", "correction_deduction"}
     component_keys = {"monthly_bonus", "monthly_malus", "manual_bonus", "manual_malus"}
     aggregate_keys = {"kiflis_bonus_malus", "bonus_malus"}
+    # Zero-valued component rows are only editor placeholders. They must not
+    # suppress an amount entered directly into the aggregate row.
     has_correction_components = any(
         str(row.get("key") or "") in {"correction_income", "correction_deduction"}
+        and money_int(row.get("amountHuf")) != 0
         for row in rows
     )
-    has_bonus_components = any(str(row.get("key") or "") in component_keys for row in rows)
+    has_bonus_components = any(
+        str(row.get("key") or "") in component_keys
+        and money_int(row.get("amountHuf")) != 0
+        for row in rows
+    )
     income_total = 0
     deduction_total = 0
     correction_total = 0
