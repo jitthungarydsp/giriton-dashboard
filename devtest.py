@@ -16301,6 +16301,20 @@ def render_courier_detail_page() -> None:
             menu_target_key=menu_target_key,
         )
         return
+    if selected_menu_hint == "Pénzügy" and not exact_snapshot_batch_active:
+        finance_snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
+        st.markdown(
+            f"<div class=\"section-title\">Pénzügy - {html.escape(courier_name)}</div>",
+            unsafe_allow_html=True,
+        )
+        if finance_snapshot:
+            render_devtest_finance_snapshot_view(finance_snapshot)
+        else:
+            st.warning(
+                "Ehhez a futárhoz nincs mentett pénzügyi snapshot. "
+                "Előbb töltsd be az Excelt vagy az ügyfélértékelést."
+            )
+        return
     heavy_finance_menus = {"Pénzügy", "Kifizetés", "Fizetés előleg", "Bónusz", "Málusz"}
     quality_menus = {"Pénzügy", "Útvonalak"}
     needs_finance_adjustments = selected_menu_hint in heavy_finance_menus
