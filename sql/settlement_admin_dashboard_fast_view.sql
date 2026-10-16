@@ -127,6 +127,7 @@ status_pivot as (
         bool_or(action_key = 'invoice_submit' and status = 'done') as invoice_submit_done,
         bool_or(action_key = 'invoice_check' and status = 'open') as invoice_check_open,
         bool_or(action_key = 'invoice_check' and status = 'done') as invoice_check_done,
+        bool_or(action_key = 'invoice_payment' and status = 'open') as invoice_payment_open,
         bool_or(action_key = 'invoice_payment' and status = 'done') as invoice_payment_done,
         max(updated_at) as last_status_at
     from latest_statuses
@@ -186,7 +187,8 @@ dashboard_rows as (
             coalesce(sp.last_status_at, '-infinity'::timestamptz),
             coalesce(cp.last_complaint_at, '-infinity'::timestamptz),
             coalesce(cfg.config_updated_at, '-infinity'::timestamptz)
-        ) as updated_at
+        ) as updated_at,
+        coalesce(sp.invoice_payment_open, false) as invoice_payment_open
     from candidate_rows cr
     left join config cfg
         on cfg.period_start = cr.period_start
@@ -209,13 +211,42 @@ dashboard_rows as (
        and cp.courier_id = cr.courier_id
 )
 select
-    *,
+    period_start,
+    session_id,
+    calculation_mode,
+    warehouse_label,
+    visibility_mode,
+    courier_id,
+    courier_name,
+    warehouse,
+    sources,
+    company_base_rate_huf,
+    courier_base_rate_huf,
+    tip_huf,
+    route_bonus_total_huf,
+    payable_huf,
+    calculated_at,
+    has_settlement_document,
+    has_tig_document,
+    settlement_started,
+    settlement_done,
+    tig_started,
+    tig_done,
+    invoice_submit_open,
+    invoice_submit_done,
+    invoice_check_open,
+    invoice_check_done,
+    invoice_payment_done,
+    open_complaints,
+    updated_at,
     case
         when open_complaints > 0 then 'Reklamáció'
         when invoice_payment_done then 'Kifizetve'
+        when invoice_payment_open then 'Kifizetésre vár'
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 'Számla ellenőrzésre vár'
         when invoice_submit_open or (tig_done and not invoice_submit_done) then 'Számlafeltöltésre vár'
-        when (has_tig_document or tig_started or settlement_done) and not tig_done then 'TIG elfogadásra vár'
+        when settlement_done and not (has_tig_document or tig_started) then 'TIG-re vár'
+        when settlement_done and (has_tig_document or tig_started) and not tig_done then 'TIG elfogadásra vár'
         when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 'Elszámolás elfogadásra vár'
         when has_settlement_document or settlement_started or session_id is not null then 'Elszámolás'
         else 'Elszámolás készül'
@@ -223,9 +254,11 @@ select
     case
         when open_complaints > 0 then open_complaints::text || ' nyitott reklamáció'
         when invoice_payment_done then 'Folyamat lezárva'
+        when invoice_payment_open then 'Admin kifizetésre vár'
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 'Számla beérkezett'
         when invoice_submit_open or (tig_done and not invoice_submit_done) then 'Futár teendő'
-        when (has_tig_document or tig_started or settlement_done) and not tig_done then 'Futár teendő'
+        when settlement_done and not (has_tig_document or tig_started) then 'TIG elkészülésére vár'
+        when settlement_done and (has_tig_document or tig_started) and not tig_done then 'Futár teendő'
         when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 'Futár teendő'
         when has_settlement_document or settlement_started or session_id is not null then 'Folyamatban'
         else 'Várakozás'
@@ -233,9 +266,11 @@ select
     case
         when open_complaints > 0 then 'attention'
         when invoice_payment_done then 'done'
+        when invoice_payment_open then 'waiting'
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 'warning'
         when invoice_submit_open or (tig_done and not invoice_submit_done) then 'waiting'
-        when (has_tig_document or tig_started or settlement_done) and not tig_done then 'waiting'
+        when settlement_done and not (has_tig_document or tig_started) then 'waiting'
+        when settlement_done and (has_tig_document or tig_started) and not tig_done then 'waiting'
         when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 'waiting'
         when has_settlement_document or settlement_started or session_id is not null then 'active'
         else 'muted'
@@ -243,9 +278,11 @@ select
     case
         when open_complaints > 0 then 20
         when invoice_payment_done then 90
+        when invoice_payment_open then 80
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 70
         when invoice_submit_open or (tig_done and not invoice_submit_done) then 60
-        when (has_tig_document or tig_started or settlement_done) and not tig_done then 50
+        when settlement_done and not (has_tig_document or tig_started) then 45
+        when settlement_done and (has_tig_document or tig_started) and not tig_done then 50
         when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 40
         when has_settlement_document or settlement_started or session_id is not null then 30
         else 10

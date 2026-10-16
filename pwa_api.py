@@ -18400,6 +18400,12 @@ def workflow_dashboard_status(workflow: dict[str, Any]) -> dict[str, Any]:
         and not bool((steps.get("invoice_submit") or {}).get("done"))
     ):
         return {"label": "Számlafeltöltésre vár", "detail": "Futár teendő", "tone": "waiting", "sort": 60}
+    if (
+        bool((steps.get("settlement") or {}).get("done"))
+        and not bool((steps.get("tig_document") or {}).get("done"))
+        and not bool((steps.get("tig") or {}).get("done"))
+    ):
+        return {"label": "TIG-re vár", "detail": "TIG elkészülésére vár", "tone": "waiting", "sort": 45}
     if bool((steps.get("tig_document") or {}).get("done")) and not bool((steps.get("tig") or {}).get("done")):
         return {"label": "TIG elfogadásra vár", "detail": "Futár teendő", "tone": "waiting", "sort": 50}
     if bool((steps.get("settlement_document") or {}).get("done")) and not bool((steps.get("settlement") or {}).get("done")):
@@ -18537,7 +18543,7 @@ def _dashboard_status_from_bulk(
 ) -> dict[str, Any]:
     settlement_ready = has_summary or has_settlement_document
     settlement_done = workflow_done(states, "settlement")
-    tig_ready = has_tig_document or settlement_done
+    tig_ready = has_tig_document
     tig_done = workflow_done(states, "tig")
     invoice_submit_done = workflow_done(states, "invoice_submit")
     invoice_check_done = workflow_done(states, "invoice_check")
@@ -18557,6 +18563,8 @@ def _dashboard_status_from_bulk(
         return {"label": "Számla ellenőrzésre vár", "detail": "Számla beérkezett", "tone": "warning", "sort": 70}
     if workflow_open(states, "invoice_submit") or (tig_done and not invoice_submit_done):
         return {"label": "Számlafeltöltésre vár", "detail": "Futár teendő", "tone": "waiting", "sort": 60}
+    if settlement_done and not tig_ready and not tig_done:
+        return {"label": "TIG-re vár", "detail": "TIG elkészülésére vár", "tone": "waiting", "sort": 45}
     if tig_ready and not tig_done:
         return {"label": "TIG elfogadásra vár", "detail": "Futár teendő", "tone": "waiting", "sort": 50}
     if settlement_ready and not settlement_done:

@@ -4934,6 +4934,7 @@ function settlementDashboardStatusOptions(statusCounts = {}) {
     "Elszámolás készül",
     "Elszámolás",
     "Elszámolás elfogadásra vár",
+    "TIG-re vár",
     "TIG elfogadásra vár",
     "Számlafeltöltésre vár",
     "Számla ellenőrzésre vár",
@@ -5259,7 +5260,8 @@ function renderSettlementDashboard() {
       ["Elfogadásra vár", statusCounts["Elszámolás elfogadásra vár"] || 0, "futár oldalon"],
       ["Reklamáció", statusCounts["Reklamáció"] || 0, "nyitott ügy"],
       ["Kifizetve", statusCounts["Kifizetve"] || 0, "lezárt"],
-      ["TIG-re vár", statusCounts["TIG elfogadásra vár"] || 0, "futár teendő"],
+      ["TIG-re vár", statusCounts["TIG-re vár"] || 0, "TIG elkészülésére vár"],
+      ["TIG elfogadásra vár", statusCounts["TIG elfogadásra vár"] || 0, "futár teendő"],
       ["Számlára vár", (statusCounts["Számlafeltöltésre vár"] || 0) + (statusCounts["Számla ellenőrzésre vár"] || 0), "következő lépés"],
     ])}
     ${renderSettlementStatusFilters(statusCounts)}
