@@ -87,6 +87,7 @@ const state = {
   settlementDashboardStatusFilter: "",
   settlementDashboardExpandedCourierId: "",
   settlementDashboardExpandedTab: "settlement",
+  settlementDashboardEditCourierId: "",
   settlementDashboardDetail: null,
   settlementDashboardDetailCache: {},
   settlementDashboardSearchTimer: null,
@@ -5013,6 +5014,127 @@ function settlementDashboardBreakdownPreview(workflow = {}) {
   </div>`;
 }
 
+function settlementDashboardEditorRows(workflow = {}) {
+  return Array.isArray(workflow.editableFinanceRows) ? workflow.editableFinanceRows : [];
+}
+
+function settlementDashboardFinanceEditor(workflow = {}) {
+  const rows = settlementDashboardEditorRows(workflow);
+  return `<div class="settlement-dashboard-editor">
+    <div class="settlement-dashboard-editor-head">
+      <div>
+        <strong>Pénzügyi értékek szerkesztése</strong>
+        <small>Az ideiglenes mentés után a Frissítés újraszámolja a végösszeget.</small>
+      </div>
+      <span class="settlement-dashboard-editor-badge">${escapeHtml(formatCount(rows.length))} sor</span>
+    </div>
+    <div class="settlement-dashboard-editor-rows">
+      ${rows.map((row, index) => `
+        <div class="settlement-dashboard-editor-row" data-dashboard-editor-row data-key="${escapeHtml(row.key || `new_${index + 1}`)}">
+          <input type="text" data-editor-field="label" value="${escapeHtml(row.label || "")}" placeholder="Megnevezés" aria-label="Megnevezés">
+          <input type="number" data-editor-field="amountHuf" value="${escapeHtml(String(row.amountHuf ?? 0))}" step="1" aria-label="Összeg">
+          <select data-editor-field="amountKind" aria-label="Típus">
+            <option value="huf" ${String(row.amountKind || "huf") === "huf" ? "selected" : ""}>Ft</option>
+            <option value="count" ${String(row.amountKind || "") === "count" ? "selected" : ""}>db</option>
+          </select>
+          <input type="text" data-editor-field="note" value="${escapeHtml(row.note || "")}" placeholder="Megjegyzés" aria-label="Megjegyzés">
+          <button class="icon-button settlement-dashboard-editor-delete" type="button" data-dashboard-editor-delete title="Sor törlése" aria-label="Sor törlése">×</button>
+        </div>
+      `).join("")}
+    </div>
+    <div class="settlement-dashboard-editor-actions">
+      <button class="secondary" type="button" data-dashboard-editor-add>+ Új sor</button>
+      <button class="secondary" type="button" data-dashboard-editor-draft>Ideiglenes mentés</button>
+      <button class="primary" type="button" data-dashboard-editor-refresh>Frissítés és újraszámítás</button>
+      <button class="secondary" type="button" data-dashboard-editor-google>Bonus/Malus frissítése</button>
+      <button class="primary" type="button" data-dashboard-editor-snapshot>Mentés új snapshotba</button>
+    </div>
+    <small class="settlement-dashboard-editor-help">A végleges mentés után ezek az értékek jelennek meg a futár elszámolásában és a devtest.py nézetben is.</small>
+  </div>`;
+}
+
+function readSettlementDashboardEditorRows() {
+  return [...document.querySelectorAll("#settlement-dashboard-panel [data-dashboard-editor-row]")].map((row, index) => ({
+    key: row.dataset.key || `new_${index + 1}`,
+    label: row.querySelector('[data-editor-field="label"]')?.value || "",
+    amountHuf: Number(row.querySelector('[data-editor-field="amountHuf"]')?.value || 0),
+    amountKind: row.querySelector('[data-editor-field="amountKind"]')?.value || "huf",
+    note: row.querySelector('[data-editor-field="note"]')?.value || "",
+  }));
+}
+
+async function settlementDashboardEditorRequest(endpoint, button) {
+  const courierId = state.settlementDashboardExpandedCourierId || "";
+  if (!courierId) return;
+  const month = state.settlementDashboardMonth || previousLocalMonth();
+  const previousText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Mentés...";
+  }
+  try {
+    const payload = await api(endpoint, {
+      method: "POST",
+      body: JSON.stringify({ month, courierId, rows: readSettlementDashboardEditorRows() }),
+      loadingMessage: "Pénzügyi értékek mentése...",
+    });
+    const current = state.settlementDashboardDetail || {};
+    const workflow = current.workflow || {};
+    state.settlementDashboardDetail = {
+      ...current,
+      workflow: {
+        ...workflow,
+        financialBreakdown: payload.financialBreakdown || workflow.financialBreakdown,
+        editableFinanceRows: payload.rows || workflow.editableFinanceRows,
+      },
+      error: "",
+    };
+    state.settlementDashboardDetailCache[`${month}:${courierId}`] = state.settlementDashboardDetail.workflow;
+    if (endpoint.endsWith("/save-snapshot")) {
+      state.settlementDashboardEditCourierId = "";
+      await loadSettlementDashboard();
+    } else {
+      renderSettlementDashboard();
+    }
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
+  }
+}
+
+async function refreshSettlementDashboardGoogle(button) {
+  const courierId = state.settlementDashboardExpandedCourierId || "";
+  if (!courierId) return;
+  const previousText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Sheet betöltése...";
+  }
+  try {
+    const month = state.settlementDashboardMonth || previousLocalMonth();
+    await api("/api/admin/settlement-finance-editor/google-refresh", {
+      method: "POST",
+      body: JSON.stringify({ month, courierId, rows: [] }),
+      loadingMessage: "Bonus/Malus frissítése...",
+    });
+    delete state.settlementDashboardDetailCache[`${month}:${courierId}`];
+    await loadSettlementDashboardCourierDetail(courierId);
+    state.settlementDashboardEditCourierId = courierId;
+    renderSettlementDashboard();
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
+  }
+}
+
 function settlementDashboardComplaintManager(complaints = []) {
   if (!complaints.length) return `<div class="empty-card">Nincs reklamáció ehhez a futárhoz.</div>`;
   return `<div class="settlement-dashboard-complaints">
@@ -5062,7 +5184,7 @@ function renderSettlementDashboardExpanded(row) {
     ${settlementDashboardDetailTabs()}
     ${detail.loading ? `<div class="empty-card">Futár részletek betöltése...</div>` : ""}
     ${detail.error ? `<div class="notice error">${escapeHtml(detail.error)}</div>` : ""}
-    ${!detail.loading && !detail.error && currentTab === "settlement" ? settlementDashboardBreakdownPreview(workflow) : ""}
+    ${!detail.loading && !detail.error && currentTab === "settlement" ? (state.settlementDashboardEditCourierId === String(row.courierId || "") ? settlementDashboardFinanceEditor(workflow) : settlementDashboardBreakdownPreview(workflow)) : ""}
     ${!detail.loading && !detail.error && currentTab === "complaints" ? `
       <div class="settlement-dashboard-tab-panel">
         <strong>Reklamációk</strong>
@@ -5128,7 +5250,8 @@ function renderSettlementDashboard() {
     </div>
     <div class="settlement-dashboard-list">
       ${displayRows.length ? displayRows.map((row) => `
-        <button class="settlement-dashboard-row ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? "active" : ""} ${(row.flags || []).some((flag) => normalizeText(flag.label || "") === "kiemelt figyeles") ? "highlighted" : ""}" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
+        <div class="settlement-dashboard-row ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? "active" : ""} ${(row.flags || []).some((flag) => normalizeText(flag.label || "") === "kiemelt figyeles") ? "highlighted" : ""}">
+          <button class="settlement-dashboard-row-main" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
           <div>
             <strong>${escapeHtml(row.courierName || "Futár")}</strong>
             <small>#${escapeHtml(row.courierId || "-")}${row.warehouse ? ` · ${escapeHtml(row.warehouse)}` : ""}</small>
@@ -5139,7 +5262,9 @@ function renderSettlementDashboard() {
             <small>${escapeHtml(row.status?.detail || "")}</small>
           </div>
           <strong>${escapeHtml(formatHuf(row.totalPayableHuf || 0))}</strong>
-        </button>
+          </button>
+          <button class="icon-button settlement-dashboard-edit" type="button" data-settlement-dashboard-edit="${escapeHtml(row.courierId || "")}" title="Futár értékeinek szerkesztése" aria-label="Futár értékeinek szerkesztése">✎</button>
+        </div>
         ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? renderSettlementDashboardExpanded(row) : ""}
       `).join("") : `<div class="empty-card">${activeStatusFilter ? "Nincs futár ebben a státuszban." : "Nincs futár a kiválasztott hónapban."}</div>`}
     </div>
@@ -10495,6 +10620,57 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
   }
 });
 $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
+  const editButton = event.target.closest("[data-settlement-dashboard-edit]");
+  if (editButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    const courierId = editButton.dataset.settlementDashboardEdit || "";
+    state.settlementDashboardEditCourierId = courierId;
+    state.settlementDashboardExpandedTab = "settlement";
+    if (state.settlementDashboardExpandedCourierId === courierId && state.settlementDashboardDetail?.workflow) {
+      renderSettlementDashboard();
+    } else {
+      loadSettlementDashboardCourierDetail(courierId).then(() => {
+        state.settlementDashboardEditCourierId = courierId;
+        renderSettlementDashboard();
+      });
+    }
+    return;
+  }
+  const addEditorRow = event.target.closest("[data-dashboard-editor-add]");
+  if (addEditorRow) {
+    const rows = readSettlementDashboardEditorRows();
+    rows.push({ key: `new_${Date.now()}`, label: "", amountHuf: 0, amountKind: "huf", note: "" });
+    const workflow = state.settlementDashboardDetail?.workflow || {};
+    state.settlementDashboardDetail.workflow = { ...workflow, editableFinanceRows: rows };
+    renderSettlementDashboard();
+    return;
+  }
+  const deleteEditorRow = event.target.closest("[data-dashboard-editor-delete]");
+  if (deleteEditorRow) {
+    deleteEditorRow.closest("[data-dashboard-editor-row]")?.remove();
+    return;
+  }
+  const draftEditor = event.target.closest("[data-dashboard-editor-draft]");
+  if (draftEditor) {
+    settlementDashboardEditorRequest("/api/admin/settlement-finance-editor/draft", draftEditor);
+    return;
+  }
+  const refreshEditor = event.target.closest("[data-dashboard-editor-refresh]");
+  if (refreshEditor) {
+    settlementDashboardEditorRequest("/api/admin/settlement-finance-editor/refresh", refreshEditor);
+    return;
+  }
+  const googleEditor = event.target.closest("[data-dashboard-editor-google]");
+  if (googleEditor) {
+    refreshSettlementDashboardGoogle(googleEditor);
+    return;
+  }
+  const snapshotEditor = event.target.closest("[data-dashboard-editor-snapshot]");
+  if (snapshotEditor) {
+    settlementDashboardEditorRequest("/api/admin/settlement-finance-editor/save-snapshot", snapshotEditor);
+    return;
+  }
   const filter = event.target.closest("[data-settlement-status-filter]");
   if (filter) {
     const label = filter.dataset.settlementStatusFilter || "";
@@ -10543,6 +10719,7 @@ $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
   const courierId = row.dataset.courierId || "";
   if (state.settlementDashboardExpandedCourierId === courierId) {
     state.settlementDashboardExpandedCourierId = "";
+    state.settlementDashboardEditCourierId = "";
     state.settlementDashboardDetail = null;
     renderSettlementDashboard();
     return;

@@ -187,6 +187,21 @@ class SettlementCardOverrideRequest(BaseModel):
     items: list[SettlementCardOverrideItem] = Field(default_factory=list)
 
 
+class SettlementFinanceEditRow(BaseModel):
+    key: str = ""
+    label: str = ""
+    amountHuf: int = 0
+    amountKind: str = "huf"
+    note: str = ""
+    deleted: bool = False
+
+
+class SettlementFinanceEditRequest(BaseModel):
+    month: str
+    courierId: str
+    rows: list[SettlementFinanceEditRow] = Field(default_factory=list)
+
+
 class SettlementSnapshotRestoreRequest(BaseModel):
     month: str
     courierId: str
@@ -10640,6 +10655,232 @@ def list_courier_finance_snapshots(courier_id: str, month: date) -> list[dict[st
             "correctionHuf": money_int(metadata.get("correction_total")),
         })
     return result
+
+
+def admin_finance_rows_from_snapshot(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(snapshot_items_by_section(snapshot or {}, "finance"), start=1):
+        key = str(item.get("item_key") or "").strip()
+        if not key:
+            continue
+        amount_kind = str(item.get("amount_kind") or "huf").strip() or "huf"
+        if amount_kind not in {"huf", "count"}:
+            amount_kind = "huf"
+        rows.append({
+            "key": key,
+            "label": str(item.get("item_label") or key),
+            "amountHuf": money_int(item.get("amount_value")),
+            "amountKind": amount_kind,
+            "note": str(item.get("note") or ""),
+            "deleted": False,
+            "displayOrder": money_int(item.get("display_order")) or index,
+        })
+    return rows
+
+
+def admin_merge_finance_edit_rows(
+    snapshot: dict[str, Any] | None,
+    rows: list[SettlementFinanceEditRow] | list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(rows, start=1):
+        if isinstance(raw, SettlementFinanceEditRow):
+            row = raw.model_dump()
+        else:
+            row = dict(raw)
+        key = str(row.get("key") or "").strip()
+        label = str(row.get("label") or "").strip()
+        if not key:
+            key = f"admin_{index}_{normalized_field_key(label) or 'tetel'}"
+        if not label or bool(row.get("deleted")) or key in seen:
+            continue
+        amount_kind = str(row.get("amountKind") or "huf").strip() or "huf"
+        if amount_kind not in {"huf", "count"}:
+            amount_kind = "huf"
+        seen.add(key)
+        merged.append({
+            "key": key,
+            "label": label,
+            "amountHuf": money_int(row.get("amountHuf")),
+            "amountKind": amount_kind,
+            "note": str(row.get("note") or "").strip(),
+            "deleted": False,
+            "displayOrder": money_int(row.get("displayOrder")) or index,
+        })
+    return merged
+
+
+def admin_recalculate_finance_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    total_keys = {"income", "deductions", "correction", "payable"}
+    correction_keys = {"correction", "correction_income", "correction_deduction"}
+    component_keys = {"monthly_bonus", "monthly_malus", "manual_bonus", "manual_malus"}
+    aggregate_keys = {"kiflis_bonus_malus", "bonus_malus"}
+    has_correction_components = any(
+        str(row.get("key") or "") in {"correction_income", "correction_deduction"}
+        for row in rows
+    )
+    has_bonus_components = any(str(row.get("key") or "") in component_keys for row in rows)
+    income_total = 0
+    deduction_total = 0
+    correction_total = 0
+    for row in rows:
+        key = str(row.get("key") or "")
+        if str(row.get("amountKind") or "huf") != "huf" or key in total_keys:
+            continue
+        if key in aggregate_keys and has_bonus_components:
+            continue
+        if key == "correction" and has_correction_components:
+            continue
+        amount = money_int(row.get("amountHuf"))
+        if key in correction_keys:
+            correction_total += amount
+        elif amount >= 0:
+            income_total += amount
+        else:
+            deduction_total += amount
+    totals = {
+        "income_total": income_total,
+        "deduction_total": deduction_total,
+        "correction_total": correction_total,
+        "payable_total": income_total + deduction_total + correction_total,
+    }
+    total_rows = {
+        "income": ("Jóváírások összesen", income_total),
+        "deductions": ("Levonások összesen", deduction_total),
+        "correction": ("Korrekciók összesen", correction_total),
+        "payable": ("Teljes összeg", totals["payable_total"]),
+    }
+    by_key = {str(row.get("key") or ""): row for row in rows}
+    for key, (label, amount) in total_rows.items():
+        if key in by_key:
+            by_key[key]["label"] = str(by_key[key].get("label") or label)
+            by_key[key]["amountHuf"] = amount
+            by_key[key]["amountKind"] = "huf"
+        else:
+            rows.append({
+                "key": key,
+                "label": label,
+                "amountHuf": amount,
+                "amountKind": "huf",
+                "note": "Admin által újraszámítva",
+                "deleted": False,
+                "displayOrder": len(rows) + 1,
+            })
+    return rows, totals
+
+
+def admin_snapshot_dict_from_finance_rows(
+    snapshot: dict[str, Any],
+    month: date,
+    courier_id: str,
+    rows: list[dict[str, Any]],
+    *,
+    recalculate: bool,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    clean_rows = [dict(row) for row in rows]
+    totals = {
+        "income_total": money_int((snapshot.get("metadata") or {}).get("income_total")),
+        "deduction_total": money_int((snapshot.get("metadata") or {}).get("deduction_total")),
+        "correction_total": money_int((snapshot.get("metadata") or {}).get("correction_total")),
+        "payable_total": money_int((snapshot.get("metadata") or {}).get("payable_total")),
+    }
+    if recalculate:
+        clean_rows, totals = admin_recalculate_finance_rows(clean_rows)
+    finance_items = []
+    for index, row in enumerate(clean_rows, start=1):
+        finance_items.append({
+            "section": "finance",
+            "item_key": str(row.get("key") or ""),
+            "item_label": str(row.get("label") or row.get("key") or "Tétel"),
+            "amount_value": money_int(row.get("amountHuf")),
+            "amount_kind": str(row.get("amountKind") or "huf"),
+            "note": str(row.get("note") or ""),
+            "display_order": money_int(row.get("displayOrder")) or index,
+        })
+    metadata = dict(snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {})
+    metadata.update({
+        "income_total": totals["income_total"],
+        "deduction_total": totals["deduction_total"],
+        "correction_total": totals["correction_total"],
+        "payable_total": totals["payable_total"],
+    })
+    preview = dict(snapshot)
+    preview["period_start"] = month.replace(day=1).isoformat()
+    preview["courier_id"] = courier_id
+    preview["metadata"] = metadata
+    preview["items"] = [
+        item for item in snapshot.get("items") or []
+        if str(item.get("section") or "") != "finance"
+    ] + finance_items
+    return preview, totals
+
+
+def admin_save_finance_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    month: date,
+    courier_id: str,
+    courier_name: str,
+    rows: list[dict[str, Any]],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    preview, totals = admin_snapshot_dict_from_finance_rows(
+        snapshot, month, courier_id, rows, recalculate=True
+    )
+    period = month.replace(day=1).isoformat()
+    items = preview.get("items") or []
+    sources = [
+        source for source in snapshot.get("sources") or []
+        if isinstance(source, dict) and str(source.get("source_key") or "")
+    ]
+    canonical = {
+        "period_start": period,
+        "courier_id": courier_id,
+        "calculation_mode": str(snapshot.get("calculation_mode") or "admin_editor"),
+        "warehouse_label": str(snapshot.get("warehouse_label") or ""),
+        "session_id": str(snapshot.get("session_id") or ""),
+        "metadata": preview.get("metadata") or {},
+        "sources": sorted(sources, key=lambda row: str(row.get("source_key") or "")),
+        "items": sorted(items, key=lambda row: (str(row.get("section") or ""), str(row.get("item_key") or ""), money_int(row.get("display_order")))),
+    }
+    fingerprint = hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+    client = settlement_supabase_client().schema("settlement")
+    latest_rows = client.table("courier_finance_snapshot").select("id,version,fingerprint").eq(
+        "period_start", period
+    ).eq("courier_id", courier_id).order("version", desc=True).limit(1).execute().data or []
+    latest = latest_rows[0] if latest_rows else {}
+    if str(latest.get("fingerprint") or "") == fingerprint:
+        return {"saved": False, "unchanged": True, "snapshotId": str(latest.get("id") or ""), "version": money_int(latest.get("version")), "totals": totals}
+    version = money_int(latest.get("version")) + 1
+    updated_by = str(user.get("username") or user.get("courierId") or "admin")
+    payload = {
+        "period_start": period,
+        "courier_id": courier_id,
+        "courier_name": courier_name,
+        "version": version,
+        "source": "pwa_admin_editor",
+        "calculation_mode": str(snapshot.get("calculation_mode") or "admin_editor"),
+        "warehouse_label": str(snapshot.get("warehouse_label") or ""),
+        "session_id": str(snapshot.get("session_id") or ""),
+        "fingerprint": fingerprint,
+        "metadata": preview.get("metadata") or {},
+        "previous_snapshot_id": str(latest.get("id") or "") or None,
+        "previous_fingerprint": str(latest.get("fingerprint") or "") or None,
+        "changed_from_previous": True,
+        "created_by": updated_by,
+    }
+    inserted = client.table("courier_finance_snapshot").insert(payload).execute().data or []
+    snapshot_id = str((inserted[0] if inserted else {}).get("id") or "")
+    if not snapshot_id:
+        raise RuntimeError("Az új pénzügyi snapshot azonosítója hiányzik.")
+    item_payloads = [{"snapshot_id": snapshot_id, **item} for item in items]
+    if item_payloads:
+        client.table("courier_finance_snapshot_item").insert(item_payloads).execute()
+    source_payloads = [{"snapshot_id": snapshot_id, **source} for source in sources]
+    if source_payloads:
+        client.table("courier_finance_snapshot_source").insert(source_payloads).execute()
+    return {"saved": True, "snapshotId": snapshot_id, "version": version, "totals": totals}
 
 
 def snapshot_items_by_section(snapshot: dict[str, Any], section: str) -> list[dict[str, Any]]:
@@ -22020,6 +22261,23 @@ def admin_settlement_dashboard_detail(
         "courierId": courier_id,
         "username": read_courier_display_name(courier_id) or courier_id,
     }
+    latest_snapshot = read_latest_courier_finance_snapshot(courier_id, month_value, include_sources=True)
+    draft_rows = read_mobile_breakdown_overrides(courier_id, month_value)
+    editable_rows = admin_finance_rows_from_snapshot(latest_snapshot)
+    if draft_rows:
+        editable_rows = admin_merge_finance_edit_rows(
+            latest_snapshot,
+            [
+                {
+                    "key": key,
+                    "label": value.get("item_label") or key,
+                    "amountHuf": value.get("amount_value"),
+                    "amountKind": value.get("amount_kind") or "huf",
+                    "note": value.get("note") or "",
+                }
+                for key, value in draft_rows.items()
+            ],
+        )
     with ThreadPoolExecutor(max_workers=2) as executor:
         workflow_future = executor.submit(read_workflow_rows, view_user, month_value)
         financial_future = executor.submit(
@@ -22059,6 +22317,19 @@ def admin_settlement_dashboard_detail(
             allow_unpublished=True,
             snapshot_only=False,
         )
+    if latest_snapshot and draft_rows:
+        preview_snapshot, _totals = admin_snapshot_dict_from_finance_rows(
+            latest_snapshot,
+            month_value,
+            courier_id,
+            editable_rows,
+            recalculate=False,
+        )
+        preview_breakdown = build_financial_breakdown_from_snapshot(
+            view_user, month_value, preview_snapshot, include_quality_notes=False
+        )
+        if preview_breakdown:
+            financial_breakdown = preview_breakdown
     return {
         "month": month_value.strftime("%Y-%m"),
         "process": "",
@@ -22071,6 +22342,7 @@ def admin_settlement_dashboard_detail(
         "states": {},
         "documents": document_groups,
         "financialBreakdown": financial_breakdown,
+        "editableFinanceRows": editable_rows,
         "tigBreakdown": {
             "available": False,
             "month": month_value.strftime("%Y-%m"),
@@ -22087,6 +22359,156 @@ def admin_settlement_dashboard_detail(
         "visibilityMode": "admin",
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def admin_save_finance_editor_rows(
+    payload: SettlementFinanceEditRequest,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    month_value = parse_month(payload.month)
+    courier_id = str(payload.courierId or "").strip()
+    if not courier_id:
+        raise HTTPException(status_code=422, detail="Hiányzik a futár azonosítója.")
+    snapshot = read_latest_courier_finance_snapshot(courier_id, month_value, include_sources=True)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="A futárhoz nincs szerkeszthető pénzügyi snapshot.")
+    rows = admin_merge_finance_edit_rows(snapshot, payload.rows)
+    now_value = datetime.now(timezone.utc).isoformat()
+    updated_by = str(user.get("username") or user.get("courierId") or "admin")
+    db_rows = [
+        {
+            "period_start": month_value.replace(day=1).isoformat(),
+            "courier_id": courier_id,
+            "item_key": row["key"],
+            "item_label": row["label"],
+            "amount_value": row["amountHuf"],
+            "amount_kind": row["amountKind"],
+            "note": row["note"] or "Ideiglenes admin szerkesztés",
+            "updated_by": updated_by,
+            "updated_at": now_value,
+        }
+        for row in rows
+    ]
+    try:
+        client = settlement_supabase_client().schema("settlement")
+        client.table("mobile_settlement_breakdown_overrides").delete().eq(
+            "period_start", month_value.replace(day=1).isoformat()
+        ).eq("courier_id", courier_id).execute()
+        if db_rows:
+            client.table("mobile_settlement_breakdown_overrides").upsert(
+                db_rows, on_conflict="period_start,courier_id,item_key"
+            ).execute()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ideiglenes pénzügyi mentési hiba: {exc}") from exc
+    preview_snapshot, totals = admin_snapshot_dict_from_finance_rows(
+        snapshot, month_value, courier_id, rows, recalculate=False
+    )
+    view_user = {"courierId": courier_id, "username": read_courier_display_name(courier_id) or courier_id}
+    breakdown = build_financial_breakdown_from_snapshot(view_user, month_value, preview_snapshot, include_quality_notes=False) or {}
+    return {"ok": True, "month": month_value.strftime("%Y-%m"), "courierId": courier_id, "rows": rows, "totals": totals, "financialBreakdown": breakdown}
+
+
+@app.post("/api/admin/settlement-finance-editor/draft")
+def admin_settlement_finance_editor_draft(
+    payload: SettlementFinanceEditRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    return admin_save_finance_editor_rows(payload, user)
+
+
+@app.post("/api/admin/settlement-finance-editor/refresh")
+def admin_settlement_finance_editor_refresh(
+    payload: SettlementFinanceEditRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    draft = admin_save_finance_editor_rows(payload, user)
+    month_value = parse_month(payload.month)
+    snapshot = read_latest_courier_finance_snapshot(str(payload.courierId), month_value, include_sources=True)
+    preview_snapshot, totals = admin_snapshot_dict_from_finance_rows(
+        snapshot, month_value, str(payload.courierId), draft.get("rows") or [], recalculate=True
+    )
+    refreshed_rows = admin_finance_rows_from_snapshot(preview_snapshot)
+    admin_save_finance_editor_rows(
+        SettlementFinanceEditRequest(
+            month=month_value.strftime("%Y-%m"),
+            courierId=str(payload.courierId),
+            rows=[SettlementFinanceEditRow(**row) for row in refreshed_rows],
+        ),
+        user,
+    )
+    view_user = {"courierId": str(payload.courierId), "username": read_courier_display_name(str(payload.courierId)) or str(payload.courierId)}
+    breakdown = build_financial_breakdown_from_snapshot(view_user, month_value, preview_snapshot, include_quality_notes=False) or {}
+    return {**draft, "rows": refreshed_rows, "totals": totals, "financialBreakdown": breakdown}
+
+
+@app.post("/api/admin/settlement-finance-editor/save-snapshot")
+def admin_settlement_finance_editor_snapshot(
+    payload: SettlementFinanceEditRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(payload.month)
+    courier_id = str(payload.courierId or "").strip()
+    snapshot = read_latest_courier_finance_snapshot(courier_id, month_value, include_sources=True)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="A futárhoz nincs menthető pénzügyi snapshot.")
+    rows = admin_merge_finance_edit_rows(snapshot, payload.rows)
+    courier_name = read_courier_display_name(courier_id) or courier_id
+    try:
+        saved = admin_save_finance_snapshot(
+            snapshot=snapshot, month=month_value, courier_id=courier_id,
+            courier_name=courier_name, rows=rows, user=user,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Snapshot mentési hiba: {exc}") from exc
+    client = settlement_supabase_client().schema("settlement")
+    client.table("mobile_settlement_breakdown_overrides").delete().eq(
+        "period_start", month_value.replace(day=1).isoformat()
+    ).eq("courier_id", courier_id).execute()
+    latest = read_latest_courier_finance_snapshot(courier_id, month_value, include_sources=True)
+    view_user = {"courierId": courier_id, "username": courier_name}
+    breakdown = build_financial_breakdown_from_snapshot(view_user, month_value, latest, include_quality_notes=False) or {}
+    return {"ok": True, **saved, "rows": admin_finance_rows_from_snapshot(latest), "financialBreakdown": breakdown}
+
+
+@app.post("/api/admin/settlement-finance-editor/google-refresh")
+def admin_settlement_finance_editor_google_refresh(
+    payload: SettlementFinanceEditRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(payload.month)
+    courier_id = str(payload.courierId or "").strip()
+    courier_name = read_courier_display_name(courier_id) or courier_id
+    try:
+        from scripts.import_google_bonus_malus_adjustments import sync_courier_from_sheet
+        result = sync_courier_from_sheet(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            period_start=month_value,
+            period_end=month_end(month_value),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Google Sheet frissítési hiba: {exc}") from exc
+    snapshot = read_latest_courier_finance_snapshot(courier_id, month_value, include_sources=True)
+    rows = admin_finance_rows_from_snapshot(snapshot)
+    totals = manual_adjustment_totals(read_courier_manual_adjustments(courier_id, month_value, month_end(month_value)))
+    by_key = {str(row.get("key") or ""): row for row in rows}
+    for key, label, amount in (
+        ("manual_bonus", "JITT bónusz", totals.get("bonus", 0)),
+        ("manual_malus", "JITT malus", -totals.get("malus", 0)),
+    ):
+        if key in by_key:
+            by_key[key]["amountHuf"] = amount
+        else:
+            rows.append({"key": key, "label": label, "amountHuf": amount, "amountKind": "huf", "note": "Google Sheet frissítve"})
+    draft = admin_save_finance_editor_rows(
+        SettlementFinanceEditRequest(month=month_value.strftime("%Y-%m"), courierId=courier_id, rows=rows),
+        user,
+    )
+    return {**draft, "ok": True, "result": result}
 
 
 @app.get("/api/admin/settlement-finance-snapshots")
