@@ -1747,6 +1747,9 @@ def render_empty_right_menu(
     courier_id: str = "",
 ) -> None:
     row = courier_row if isinstance(courier_row, (pd.Series, dict)) else {}
+    panel_snapshot = load_reliable_devtest_finance_snapshot(courier_id, period_start) if courier_id and period_start else {}
+    if panel_snapshot:
+        row = finance_snapshot_display_row(row, panel_snapshot)
     profile = profile or {}
     monthly_closure = monthly_closure or {}
     has_courier_row = bool(isinstance(row, pd.Series) or (isinstance(row, dict) and row))
@@ -1780,6 +1783,9 @@ def render_empty_right_menu(
         ("-", "ATM levonás", abs(parse_huf_value(row.get("Importált ATM levonás")))),
         ("-", "Korrekció -", correction_deduction),
         ("-", "Fizetés előleg", abs(parse_huf_value(row.get("Fizetés előleg")))),
+        ("-", "Egyéb költség", abs(parse_huf_value(row.get("Egyéb költség")))),
+        ("-", "Céltartalék", abs(parse_huf_value(row.get("Céltartalék 10%")))),
+        ("-", "Biztosítás", abs(parse_huf_value(row.get("Biztosítási díj")))),
         ("=", "Kifizetendő", payable_value),
     ]
     payable_row_html = "".join(
@@ -1793,6 +1799,16 @@ def render_empty_right_menu(
         for operation, label, amount in payable_rows
         if amount or operation == "="
     )
+    ledger_total = sum(amount if operation == "+" else -amount for operation, _, amount in payable_rows if operation != "=")
+    ledger_note_html = ""
+    if abs(round(ledger_total - payable_value)) > 1:
+        ledger_note_html = (
+            '<p class="right-empty-menu-caption">'
+            f"A mentett tételek és a végösszeg eltérése: {html.escape(format_huf(ledger_total - payable_value))}. "
+            "Pénzügyi ellenőrzés szükséges.</p>"
+        )
+    if panel_snapshot:
+        ledger_note_html += f'<p class="right-empty-menu-caption">Mentett verzió: {html.escape(str(panel_snapshot.get("version") or "-"))}</p>'
     route_count = int(parse_huf_value(row.get("Útvonalak") or row.get("Kör") or row.get("Túrák")))
     counted_routes = int(parse_huf_value(row.get("Számolt túrák") or route_count))
     uncounted_routes = int(parse_huf_value(row.get("Nem számolt túrák")))
@@ -1876,7 +1892,7 @@ def render_empty_right_menu(
             invoice_records = invoice_documents.to_dict("records") if not invoice_documents.empty else []
             transfer_invoice = next((item for item in invoice_records if not is_cash_invoice_document(item)), {})
             cash_invoice = next((item for item in invoice_records if is_cash_invoice_document(item)), {})
-            panel_tig_breakdown = admin_tig_breakdown_for_payment(courier_id, period_start)
+            panel_tig_breakdown = _snapshot_source_payload(panel_snapshot, "tig_breakdown") if panel_snapshot else {}
             panel_has_saved_tig_breakdown = bool(panel_tig_breakdown)
             if not panel_tig_breakdown:
                 panel_tig_breakdown = build_tig_breakdown(
@@ -1904,9 +1920,6 @@ def render_empty_right_menu(
             cash_expected = panel_invoice_amounts["cash_gross"]
             transfer_uploaded = invoice_amount_from_document(transfer_invoice) if transfer_invoice else 0.0
             cash_uploaded = invoice_amount_from_document(cash_invoice) if cash_invoice else 0.0
-            if not panel_has_saved_tig_breakdown:
-                transfer_expected = int(round(transfer_uploaded or transfer_expected))
-                cash_expected = int(round(cash_uploaded or cash_expected))
 
             def invoice_short_status(
                 uploaded: float,
@@ -1977,6 +1990,9 @@ def render_empty_right_menu(
                     )
             invoice_compare_bad = transfer_bad or cash_bad
             invoice_compare_status = "Eltérés vagy hiányzó számla." if invoice_compare_bad else "Számlák egyeznek."
+            if not panel_has_saved_tig_breakdown:
+                invoice_compare_bad = True
+                invoice_compare_status = "Nincs mentett TIG-verzió; az egyezés nem igazolt."
             invoice_compare_rows_html = (
                 '<div class="right-invoice-row"><span>Átutalásos</span>'
                 f"<strong>{html.escape(transfer_status)}</strong></div>"
@@ -2010,6 +2026,7 @@ def render_empty_right_menu(
                     <thead><tr><th>Műv.</th><th>Tétel</th><th>Összeg</th></tr></thead>
                     <tbody>{payable_row_html}</tbody>
                 </table>
+                {ledger_note_html}
             </div>
             <div class="right-empty-menu-card">
                 <div class="right-empty-menu-title">Túrák / körök</div>
@@ -3762,6 +3779,32 @@ def _snapshot_source_payload(snapshot: dict[str, object], source_key: str):
         if str(source.get("source_key") or "") == source_key:
             return source.get("payload")
     return {}
+
+
+def finance_snapshot_display_row(row, snapshot: dict[str, object]) -> dict[str, object]:
+    """Use one persisted version for the amount and every sidebar ledger item."""
+    result = dict(row)
+    columns = {
+        "payable": "Kifizetendő", "base": "Alapdíj", "tip": "Borravaló",
+        "delay_bonus": "Késedelmi díj", "compliance_bonus": "Túramegfelelés",
+        "address_bonus_kifli": "Cím bónusz (Kifli)", "monthly_bonus": "Importált bónusz",
+        "bonus_malus": "JITT bónusz", "monthly_malus": "Importált málusz",
+        "loyalty_bonus": "Lojalitás", "customer_rating": "Ügyfélértékelés",
+        "correction_income": "Korrekció +", "correction_deduction": "Korrekció -",
+        "atm_effect": "Importált ATM levonás", "salary_advance": "Fizetés előleg",
+        "reserve": "Céltartalék 10%", "insurance_fee": "Biztosítási díj",
+        "other_expense": "Egyéb költség", "orders": "Rendelések", "routes": "Útvonalak",
+        "highlighted_routes": "Kiemelt túrák", "normal_routes": "Normál túrák",
+    }
+    for key, column in columns.items():
+        result[column] = _snapshot_amount(snapshot, key)
+    result["Számolt túrák"] = result["Útvonalak"]
+    result["Nettó bevétel"] = result["Alapdíj"]
+    result["Korrekció"] = result["Korrekció +"] - result["Korrekció -"]
+    bonus_malus = result["JITT bónusz"]
+    result["JITT bónusz"] = max(bonus_malus, 0)
+    result["JITT malus"] = abs(min(bonus_malus, 0))
+    return result
 
 
 def _drilldown_rows_for_label(drilldowns: dict[str, object], detail_label: str) -> list[dict[str, object]]:
@@ -7325,6 +7368,10 @@ def invoice_amount_from_document(document: dict[str, object]) -> float:
 
 
 def admin_tig_breakdown_for_payment(courier_id: str, period_start: date) -> dict[str, object]:
+    snapshot = load_reliable_devtest_finance_snapshot(courier_id, period_start)
+    if snapshot:
+        snapshot_tig = _snapshot_source_payload(snapshot, "tig_breakdown")
+        return snapshot_tig if isinstance(snapshot_tig, dict) else {}
     session_tig_breakdown = (
         st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
     ).get("tig_breakdown") or {}
@@ -17410,6 +17457,8 @@ def render_courier_detail_page() -> None:
         or current_table_payable_total
         or payable_total
     )
+    if selected_menu_hint != "Pénzügy" and existing_finance_snapshot:
+        displayed_payable_total = _snapshot_amount(existing_finance_snapshot, "payable")
     overview_payable_total = displayed_payable_total
     overview_tig_payable_total = displayed_payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
@@ -19434,6 +19483,8 @@ def render_courier_detail_page() -> None:
             or current_table_monthly_amount
             or displayed_payable_total
         )
+        if not closure_done and existing_finance_snapshot:
+            monthly_payment_amount = _snapshot_amount(existing_finance_snapshot, "payable")
         monthly_tig_breakdown = admin_tig_breakdown_for_payment(courier_id, payment_month)
         monthly_has_saved_tig_breakdown = bool(monthly_tig_breakdown)
         monthly_invoice_amounts = admin_tig_invoice_amounts(monthly_tig_breakdown, monthly_payment_amount)

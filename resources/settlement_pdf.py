@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 import unicodedata
+from resources.pwa_invoice_validation import KP_INVOICE_THRESHOLD_HUF
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -727,7 +728,7 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
     ))
     story.append(Spacer(1, 5 * mm))
 
-    if cash_breakdown_rows:
+    if cash_breakdown_rows and sum(_int_money(row.get("grossHuf")) for row in cash_breakdown_rows) > KP_INVOICE_THRESHOLD_HUF:
         cash_total = sum(_int_money(row.get("grossHuf")) for row in cash_breakdown_rows)
         story.append(_table(
             [[
