@@ -16138,6 +16138,10 @@ def render_fast_courier_profile(
 
 def render_courier_detail_page() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
+    exact_snapshot_batch_active = isinstance(
+        st.session_state.get("devtest_exact_snapshot_batch"),
+        dict,
+    )
     st.markdown('<div class="section-title">Futár részletei</div>', unsafe_allow_html=True)
     nav_data = st.session_state.get("current_filtered_data")
     nav_ids: list[str] = []
@@ -18106,10 +18110,11 @@ def render_courier_detail_page() -> None:
                 mobile_default_rows.to_dict("records"),
                 route_detail,
             )
-            for detail_label in sorted(detail_labels):
-                detail_frame = finance_detail_frame(detail_label)
-                if isinstance(detail_frame, pd.DataFrame) and not detail_frame.empty:
-                    card_drilldowns[detail_label] = detail_frame.to_dict("records")
+            if not exact_snapshot_batch_active:
+                for detail_label in sorted(detail_labels):
+                    detail_frame = finance_detail_frame(detail_label)
+                    if isinstance(detail_frame, pd.DataFrame) and not detail_frame.empty:
+                        card_drilldowns[detail_label] = detail_frame.to_dict("records")
             return save_devtest_finance_snapshot_version(
                 courier_id=courier_id,
                 courier_name=courier_name,
