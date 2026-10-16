@@ -107,7 +107,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v219";
+const APP_VERSION = "v220";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -4149,10 +4149,23 @@ function complaintCanWithdraw(complaint) {
     && !hasAdminAnswer;
 }
 
+function complaintMessageHtml(message) {
+  let text = String(message || "");
+  const heading = "Automatikus számlaellenőrzési hiba:";
+  if (text.includes(heading)) {
+    // Previously saved errors used pipes instead of line breaks.
+    const index = text.indexOf(heading);
+    const introduction = text.slice(0, index).trim();
+    const errors = text.slice(index + heading.length).trim().replace(/\s*\|\s*/g, "\n\n");
+    text = [introduction, heading, errors].filter(Boolean).join("\n\n");
+  }
+  return escapeHtml(text);
+}
+
 function complaintList(complaints) {
   if (!complaints.length) return "";
   return `<div class="complaint-list">${complaints.map((complaint) => `
-    <div class="complaint-row"><div><strong>${escapeHtml(complaint.message)}</strong><small>${escapeHtml(complaint.status)} · ${new Date(complaint.created_at).toLocaleString("hu-HU")}</small>${complaint.admin_response ? `<div class="notice">Admin válasza: ${escapeHtml(complaint.admin_response)}${complaint.responded_by || complaint.responded_at ? `<small>${escapeHtml(complaint.responded_by || "admin")} · ${complaint.responded_at ? new Date(complaint.responded_at).toLocaleString("hu-HU") : ""}</small>` : ""}</div>` : ""}</div>${complaintCanWithdraw(complaint) ? `<button class="secondary complaint-withdraw" type="button" data-complaint-id="${escapeHtml(complaint.id)}">Visszavonás</button>` : ""}</div>
+    <div class="complaint-row"><div><strong class="complaint-message">${complaintMessageHtml(complaint.message)}</strong><small>${escapeHtml(complaint.status)} · ${new Date(complaint.created_at).toLocaleString("hu-HU")}</small>${complaint.admin_response ? `<div class="notice">Admin válasza: ${escapeHtml(complaint.admin_response)}${complaint.responded_by || complaint.responded_at ? `<small>${escapeHtml(complaint.responded_by || "admin")} · ${complaint.responded_at ? new Date(complaint.responded_at).toLocaleString("hu-HU") : ""}</small>` : ""}</div>` : ""}</div>${complaintCanWithdraw(complaint) ? `<button class="secondary complaint-withdraw" type="button" data-complaint-id="${escapeHtml(complaint.id)}">Visszavonás</button>` : ""}</div>
   `).join("")}</div>`;
 }
 
@@ -5158,7 +5171,7 @@ function settlementDashboardComplaintManager(complaints = []) {
     ${complaints.map((complaint) => `
       <article class="settlement-dashboard-complaint" data-dashboard-complaint-id="${escapeHtml(complaint.id || "")}">
         <div>
-          <strong>${escapeHtml(complaint.message || "Reklamáció")}</strong>
+          <strong class="complaint-message">${complaintMessageHtml(complaint.message || "Reklamáció")}</strong>
           <small>${escapeHtml(complaint.document_type || complaint.documentType || "")} · ${escapeHtml(complaint.status || "new")} · ${complaint.created_at ? escapeHtml(new Date(complaint.created_at).toLocaleString("hu-HU")) : ""}</small>
         </div>
         <label>Státusz

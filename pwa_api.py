@@ -12553,7 +12553,10 @@ def workflow_invoice_requirements(
             "cashGrossHuf": max(cash_gross, 0),
             "totalGrossHuf": max(cash_gross, 0),
         }
-    transfer_gross = max(total_gross - cash_gross, 0) if cash_gross else total_gross
+    # Monthly TIG finalTotalHuf already contains only transfer service + tip.
+    # The cash_service row is invoiced separately and must not be subtracted again.
+    transfer_gross = total_gross
+    total_gross = transfer_gross + max(cash_gross, 0)
     return {
         "requiresCashInvoice": cash_gross > 0,
         "cashOnlyInvoice": False,
@@ -23845,8 +23848,8 @@ async def submit_invoice(
             for check in result.get("checks", [])
             if check.get("status") == "error"
         ]
-        failure_note = "Automatikus számlaellenőrzési hiba: " + (
-            " | ".join(error_details) if error_details else "Ismeretlen ellenőrzési hiba."
+        failure_note = "Automatikus számlaellenőrzési hiba:\n\n" + (
+            "\n\n".join(error_details) if error_details else "Ismeretlen ellenőrzési hiba."
         )
         upsert_workflow_status(user, month_value, "invoice_check", "open", failure_note[:1500], process_id)
         supabase_rest(
@@ -23858,7 +23861,7 @@ async def submit_invoice(
                 "document_type": process_action_key("invoice_check", process_id),
                 "document_month": month_value.isoformat(),
                 "message": (
-                    "A számla automatikus ellenőrzése hibára futott, manuális ellenőrzés szükséges. "
+                    "A számla automatikus ellenőrzése hibára futott, manuális ellenőrzés szükséges.\n\n"
                     + failure_note
                 )[:1800],
                 "status": "new",
