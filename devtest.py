@@ -18874,11 +18874,15 @@ def render_courier_detail_page() -> None:
                 mobile_default_rows.to_dict("records"),
                 route_detail,
             )
-            if not exact_snapshot_batch_active:
-                for detail_label in sorted(detail_labels):
-                    detail_frame = finance_detail_frame(detail_label)
-                    if isinstance(detail_frame, pd.DataFrame) and not detail_frame.empty:
-                        card_drilldowns[detail_label] = detail_frame.to_dict("records")
+            # These three cards are also needed by the PWA detail view during
+            # the exact batch run; they are already calculated on this page.
+            detail_labels_to_save = set(detail_labels)
+            if exact_snapshot_batch_active:
+                detail_labels_to_save &= {"Alapdíj", "Lojalitás", "Korrekció"}
+            for detail_label in sorted(detail_labels_to_save):
+                detail_frame = finance_detail_frame(detail_label)
+                if isinstance(detail_frame, pd.DataFrame) and not detail_frame.empty:
+                    card_drilldowns[detail_label] = detail_frame.to_dict("records")
             return save_devtest_finance_snapshot_version(
                 courier_id=courier_id,
                 courier_name=courier_name,

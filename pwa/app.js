@@ -4340,7 +4340,7 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
       ${displayCards.map((card) => {
         const editing = state.financialEditCardKey === String(card.key || "");
         return `
-        <details class="financial-card ${editing ? "editing" : ""} ${escapeHtml(card.tone || "")} financial-card-${escapeHtml(card.key || "item")}" ${editing || ["base", "tip", "compliance_bonus", "bonus_malus", "atm_effect"].includes(card.key) ? "open" : ""}>
+        <details class="financial-card ${editing ? "editing" : ""} ${escapeHtml(card.tone || "")} financial-card-${escapeHtml(card.key || "item")}" ${editing || ["base", "tip", "compliance_bonus", "bonus_malus", "atm_effect", "loyalty_bonus", "corrections"].includes(card.key) ? "open" : ""}>
           <summary>
             <div class="financial-card-title">
               <span>${escapeHtml(card.label)}</span>

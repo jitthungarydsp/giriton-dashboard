@@ -10956,15 +10956,24 @@ def snapshot_detail_item(card_key: str, index: int, row: dict[str, Any]) -> dict
         for key in ("Számítás", "Szamitas", "Megjegyzés", "Megjegyzes", "Forrás", "Forras")
         if str(row.get(key) or "").strip()
     ]
-    if row.get("Darab") not in (None, "") and row.get("Egységösszeg") not in (None, ""):
+    if (
+        row.get("Darab") not in (None, "")
+        and row.get("Egységösszeg") not in (None, "")
+        and money_int(row.get("Egységösszeg"))
+    ):
         unit_note = f"{money_int(row.get('Darab'))} db x {money_int(row.get('Egységösszeg'))} Ft"
         if not any(" x " in part and "Ft" in part for part in note_parts):
             note_parts.insert(0, unit_note)
+    amount_kind = str(row.get("amount_kind") or row.get("amountKind") or "huf").strip() or "huf"
+    amount = amount_from_snapshot_detail_row(row)
+    if card_key == "loyalty_bonus" and str(label).casefold() in {"kifutott kör", "kifutott kor", "előre foglalt műszak"}:
+        amount_kind = "count"
+        amount = money_int(row.get("Darab"))
     return {
         "key": f"{card_key}_detail_{index}",
         "label": label,
-        "amountHuf": amount_from_snapshot_detail_row(row),
-        "amountKind": "huf",
+        "amountHuf": amount,
+        "amountKind": amount_kind,
         "source": "settlement.courier_finance_snapshot_source",
         "note": " | ".join(dict.fromkeys(part for part in note_parts if part)),
     }
@@ -10983,9 +10992,10 @@ def compact_snapshot_detail_items(card_key: str, label: str, detail_rows: list[d
     if not detail_rows:
         return []
     if snapshot_detail_rows_are_compact(detail_rows):
+        keep_zero_items = card_key in {"performance", "insurance", "loyalty_bonus", "corrections"}
         return [
             item for index, row in enumerate(detail_rows, start=1)
-            if (item := snapshot_detail_item(card_key, index, row)).get("amountHuf") or card_key in {"performance", "insurance"}
+            if (item := snapshot_detail_item(card_key, index, row)).get("amountHuf") or keep_zero_items
         ]
 
     grouped: dict[tuple[str, int], int] = {}
@@ -11084,6 +11094,8 @@ def snapshot_card_detail_items(snapshot: dict[str, Any], label: str, card_key: s
         return []
     if label == "Alapdíj":
         route_rows = drilldowns.get("Körök / túrák")
+        if not isinstance(route_rows, list):
+            route_rows = snapshot_source_payload(snapshot, "route_detail")
         if isinstance(route_rows, list):
             category_rows = base_fee_category_snapshot_rows(route_rows)
             if category_rows:
@@ -11101,6 +11113,31 @@ def snapshot_card_detail_items(snapshot: dict[str, Any], label: str, card_key: s
         if isinstance(rows, list) and rows:
             detail_rows = [row for row in rows if isinstance(row, dict)]
             break
+    if not detail_rows and label == "Korrekció":
+        adjustments = snapshot_source_payload(snapshot, "manual_adjustments")
+        correction_labels = {
+            "correction": "Korrekció",
+            "manual_correction": "Kézi korrekció +",
+            "correction_income": "Korrekció +",
+            "correction_deduction": "Korrekció -",
+            "manual_correction_deduction": "Kézi korrekció -",
+            "other_expense": "Egyéb kiadás",
+        }
+        if isinstance(adjustments, list):
+            for row in adjustments:
+                if not isinstance(row, dict):
+                    continue
+                adjustment_type = str(row.get("adjustment_type") or "").strip()
+                if adjustment_type not in correction_labels:
+                    continue
+                amount = money_int(row.get("amount_huf"))
+                if adjustment_type in {"correction_deduction", "manual_correction_deduction", "other_expense"}:
+                    amount = -abs(amount)
+                detail_rows.append({
+                    "Tétel": correction_labels[adjustment_type],
+                    "Összeg": amount,
+                    "Megjegyzés": str(row.get("note") or "").strip(),
+                })
     return compact_snapshot_detail_items(card_key, label, detail_rows)
 
 
