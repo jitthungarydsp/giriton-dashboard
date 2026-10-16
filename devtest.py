@@ -11672,7 +11672,6 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
     rating_rows["bonus_total_huf"] = pd.to_numeric(rating_rows.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
     rating_rows["completed_routes"] = pd.to_numeric(rating_rows.get("completed_routes", 0), errors="coerce").fillna(0).astype(int)
     rating_rows["bonus_per_route_huf"] = pd.to_numeric(rating_rows.get("bonus_per_route_huf", 0), errors="coerce").fillna(0.0)
-    rating_rows = combine_customer_rating_rows(rating_rows)
     routes_by_id, routes_by_name = _customer_rating_dashboard_routes(result)
     if not rating_rows.empty and (not routes_by_id.empty or not routes_by_name.empty):
         rules = load_customer_rating_rules_for_month(period_start, period_end)
@@ -11687,7 +11686,13 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
             elif driver_key and driver_key in routes_by_name.index:
                 dashboard_routes = int(routes_by_name.loc[driver_key] or 0)
             if dashboard_routes > 0 and not group.empty:
-                group = recalculate_customer_rating_rows(group, dashboard_routes, period_start, period_end, rules)
+                group = recalculate_customer_rating_source_rows(
+                    group,
+                    dashboard_routes,
+                    period_start,
+                    period_end,
+                    rules,
+                )
             adjusted_rows.extend(group.to_dict("records"))
         rating_rows = pd.DataFrame(adjusted_rows) if adjusted_rows else rating_rows
     by_id = rating_rows.groupby("courier_id")["bonus_total_huf"].sum()
@@ -11765,34 +11770,33 @@ def recalculate_customer_rating_rows(
     return rows
 
 
-def combine_customer_rating_rows(rows: pd.DataFrame) -> pd.DataFrame:
-    """Combine multiple uploaded rating tables before applying one courier's route total."""
+def recalculate_customer_rating_source_rows(
+    rows: pd.DataFrame,
+    fallback_route_total: int,
+    period_start: date,
+    period_end: date,
+    rules: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Calculate every uploaded rating source separately, then keep all rows."""
     if rows.empty:
         return rows.copy()
 
     result = rows.copy()
-    result["courier_id"] = result.get("courier_id", pd.Series(dtype=str)).map(_courier_id_key)
-    result["driver_key"] = result.get("driver_key", result.get("driver_name", pd.Series(dtype=str))).map(_courier_match_key)
     result["rating_count"] = pd.to_numeric(result.get("rating_count", 0), errors="coerce").fillna(0).astype(int)
     result["average_rating"] = pd.to_numeric(result.get("average_rating", 0), errors="coerce").fillna(0.0)
-    result["_weighted_rating"] = result["average_rating"] * result["rating_count"]
-    grouped = (
-        result.groupby(["courier_id", "driver_key"], dropna=False, as_index=False)
-        .agg(
-            driver_name=("driver_name", "first"),
-            rating_count=("rating_count", "sum"),
-            _weighted_rating=("_weighted_rating", "sum"),
-        )
-    )
-    grouped["average_rating"] = grouped.apply(
-        lambda row: row["_weighted_rating"] / row["rating_count"] if row["rating_count"] else 0.0,
-        axis=1,
-    )
-    grouped["route_type"] = "normal"
-    grouped["completed_routes"] = 0
-    grouped["bonus_per_route_huf"] = 0.0
-    grouped["bonus_total_huf"] = 0.0
-    return grouped.drop(columns=["_weighted_rating"])
+    source_column = result.get("source_spreadsheet_id", pd.Series("", index=result.index)).fillna("").astype(str).str.strip()
+    if "worksheet_name" in result.columns:
+        source_column = source_column.where(source_column.ne(""), result["worksheet_name"].fillna("").astype(str).str.strip())
+    result["_rating_source_key"] = source_column.where(source_column.ne(""), "legacy")
+    source_count = int(result["_rating_source_key"].nunique(dropna=False))
+    recalculated: list[pd.DataFrame] = []
+    for _, source_rows in result.groupby("_rating_source_key", dropna=False, sort=False):
+        source_rows = source_rows.drop(columns=["_rating_source_key"])
+        source_route_total = int(pd.to_numeric(source_rows.get("completed_routes", 0), errors="coerce").fillna(0).sum())
+        if source_route_total <= 0 and source_count == 1:
+            source_route_total = int(fallback_route_total or 0)
+        recalculated.append(recalculate_customer_rating_rows(source_rows, source_route_total, period_start, period_end, rules))
+    return pd.concat(recalculated, ignore_index=True) if recalculated else result.drop(columns=["_rating_source_key"])
 
 
 def resolve_customer_rating_bonus_total(courier_id: object, courier_name: object, route_total: int, period_start: date, period_end: date) -> float:
@@ -11810,8 +11814,12 @@ def resolve_customer_rating_bonus_total(courier_id: object, courier_name: object
     if selected.empty:
         return 0.0
 
-    selected = combine_customer_rating_rows(selected)
-    selected = recalculate_customer_rating_rows(selected, int(route_total or 0), period_start, period_end)
+    selected = recalculate_customer_rating_source_rows(
+        selected,
+        int(route_total or 0),
+        period_start,
+        period_end,
+    )
     return float(selected["bonus_total_huf"].sum())
 
 
@@ -18305,8 +18313,7 @@ def render_courier_detail_page() -> None:
                     if selected_rating.empty and courier_name_lookup:
                         selected_rating = rating_rows.loc[rating_rows["_courier_name_lookup"].eq(courier_name_lookup)].copy()
                     if not selected_rating.empty:
-                        selected_rating = combine_customer_rating_rows(selected_rating)
-                        selected_rating = recalculate_customer_rating_rows(
+                        selected_rating = recalculate_customer_rating_source_rows(
                             selected_rating,
                             route_total,
                             period_start,
