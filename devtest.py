@@ -24210,22 +24210,20 @@ def show_new_settlement_page() -> None:
     if st.session_state.get("new_calculation_mode") != "Excel":
         st.session_state["new_calculation_mode"] = "Excel"
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "Excel")
+    # For the current settlement run only September remains selectable.
+    active_settlement_months = [month_option_label(date(2026, 9, 1))]
     current_month_label = st.session_state.get("new_month")
-    if not current_month_label:
-        latest_default_month_label = default_settlement_month_label()
-        st.session_state["new_month"] = latest_default_month_label
-        st.session_state["new_month_auto_default"] = latest_default_month_label
-    elif "new_month_auto_default" not in st.session_state:
-        st.session_state["new_month_auto_default"] = current_month_label
-    selected_month_label = st.session_state.get("new_month") or default_settlement_month_label()
+    if current_month_label not in active_settlement_months:
+        current_month_label = active_settlement_months[0]
+        st.session_state["new_month"] = current_month_label
+    st.session_state["new_month_auto_default"] = current_month_label
+    selected_month_label = current_month_label
     selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
 
     with st.sidebar:
         st.markdown("## Elszámolás")
         st.caption("Szűrés és műveletek")
-        sidebar_month_options = month_options()
-        if selected_month_label not in sidebar_month_options:
-            sidebar_month_options.insert(0, selected_month_label)
+        sidebar_month_options = list(active_settlement_months)
         selected_month_label = st.selectbox(
             "Elszámolási hónap",
             sidebar_month_options,
