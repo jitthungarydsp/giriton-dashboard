@@ -3900,7 +3900,12 @@ def render_devtest_finance_snapshot_view(
             isinstance(row, dict) and "Túratípus" in row and "Naptípus" in row
             for row in detail_rows
         )
-        if detail_label in {"Alapdíj", "Késedelmi díj", "Túramegfelelés"} and not has_route_breakdown:
+        has_compact_breakdown = any(
+            isinstance(row, dict)
+            and any(key in row for key in ("Darab", "Egységösszeg", "Számítás", "Szamitas"))
+            for row in detail_rows
+        )
+        if detail_label in {"Alapdíj", "Késedelmi díj", "Túramegfelelés"} and not has_route_breakdown and not has_compact_breakdown:
             detail_rows = _compact_amount_drilldown(detail_label, detail_rows)
         display_detail = pd.DataFrame(detail_rows)
         if display_detail.empty:
