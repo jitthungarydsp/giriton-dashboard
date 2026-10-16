@@ -7,6 +7,7 @@ from typing import Any
 
 
 MAX_INVOICE_BYTES = 10 * 1024 * 1024
+KP_INVOICE_THRESHOLD_HUF = 1000
 ALLOWED_INVOICE_EXTENSIONS = {"pdf", "jpg", "jpeg", "png"}
 
 

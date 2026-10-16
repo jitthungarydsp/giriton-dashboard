@@ -36,7 +36,7 @@ from resources.email_templates_db import (
     read_email_templates,
     send_courier_template_email,
 )
-from resources.pwa_invoice_validation import extract_expected_amount, parse_invoice_pdf, validate_invoice
+from resources.pwa_invoice_validation import KP_INVOICE_THRESHOLD_HUF, extract_expected_amount, parse_invoice_pdf, validate_invoice
 from resources.pwa_users_db import reset_pwa_user_password, upsert_pwa_user_with_password
 from resources.security import hash_password
 from resources.users import load_users, normalize_courier_id
@@ -1915,9 +1915,9 @@ def render_empty_right_menu(
                 *,
                 missing_required: bool = True,
             ) -> tuple[str, bool]:
+                if not missing_required:
+                    return "nem szükséges", False
                 if expected and not document:
-                    if not missing_required:
-                        return "nem szükséges", False
                     return f"hiányzik: {format_huf(expected)}", True
                 if document and abs(round(uploaded - expected)) > 1:
                     return f"Eltérés összege: {format_huf(round(uploaded - expected))}", True
@@ -12904,7 +12904,7 @@ def cash_invoice_required_from_atm_effect(row: pd.Series | dict[str, object], ex
             _export_row_value(row, {"Kézi ATM levonás", "Kezi ATM levonas", "JITT ATM levonás", "JITT ATM levonas"})
         )
         atm_effect = -(abs(imported_atm) + abs(manual_atm))
-    return atm_effect < 0 and int(round(abs(parse_huf_value(expected_amount)))) >= 1000
+    return atm_effect < 0 and int(round(abs(parse_huf_value(expected_amount)))) > KP_INVOICE_THRESHOLD_HUF
 
 
 ACCOUNTING_INVOICE_COMPANY_SUFFIX_RE = re.compile(

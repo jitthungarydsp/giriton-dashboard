@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from resources.email_sender import send_login_credentials, send_message, smtp_config, validate_email
 from resources.email_templates_db import send_courier_template_email
-from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
+from resources.pwa_invoice_validation import KP_INVOICE_THRESHOLD_HUF, MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
 from resources.settlement_excel_import import (
     get_import_preview as get_excel_import_preview,
     get_supabase_client as get_settlement_supabase_client,
@@ -12558,7 +12558,7 @@ def workflow_invoice_requirements(
     transfer_gross = total_gross
     total_gross = transfer_gross + max(cash_gross, 0)
     return {
-        "requiresCashInvoice": cash_gross > 0,
+        "requiresCashInvoice": cash_gross > KP_INVOICE_THRESHOLD_HUF,
         "cashOnlyInvoice": False,
         "transferGrossHuf": max(transfer_gross, 0),
         "cashGrossHuf": max(cash_gross, 0),
@@ -12785,7 +12785,7 @@ def build_kp_invoice_tig_breakdown(
     financial_breakdown = build_financial_breakdown(user, month, allow_unpublished=True, snapshot_only=snapshot_only)
     monthly_tig = build_workflow_tig_breakdown(user, month, financial_breakdown, snapshot_only=snapshot_only)
     cash_amount = money_int(monthly_tig.get("cashGrossHuf")) or workflow_cash_amount_from_financial_breakdown(financial_breakdown)
-    if cash_amount < 1000:
+    if cash_amount <= KP_INVOICE_THRESHOLD_HUF:
         return {
             "available": False,
             "month": month.strftime("%Y-%m"),
@@ -17459,7 +17459,6 @@ def apply_invoice_validation_override(result: dict[str, Any], enabled: bool) -> 
 
 def combine_invoice_validation_results(
     results: list[tuple[str, dict[str, Any]]],
-    expected_gross_amount: int,
     declared_gross_amount: int,
     invoice_number: str,
     skip_invoice_number_match: bool = False,
@@ -17495,22 +17494,16 @@ def combine_invoice_validation_results(
             }
         )
 
+    main_gross_total = int((results[0][1].get("parsed") or {}).get("grossTotal") or 0)
     if declared_gross_amount:
         checks.append(
             {
-                "status": "ok" if gross_total == declared_gross_amount else "error",
-                "title": "Két számla megadott bruttó összege",
-                "detail": f"Számlák összesen: {gross_total:,} Ft; megadva: {declared_gross_amount:,} Ft.".replace(",", " "),
+                "status": "ok" if main_gross_total == declared_gross_amount else "error",
+                "title": "Átutalásos számla megadott bruttó összege",
+                "detail": f"Átutalásos számla: {main_gross_total:,} Ft; megadva: {declared_gross_amount:,} Ft.".replace(",", " "),
             }
         )
-    if expected_gross_amount:
-        checks.append(
-            {
-                "status": "ok" if gross_total == expected_gross_amount else "error",
-                "title": "Két számla TIG szerinti végösszege",
-                "detail": f"Számlák összesen: {gross_total:,} Ft; TIG: {expected_gross_amount:,} Ft.".replace(",", " "),
-            }
-        )
+    # Each document's TIG amount is validated by its own validate_invoice call.
 
     errors = sum(check.get("status") == "error" for check in checks)
     warnings = sum(check.get("status") == "warn" for check in checks)
@@ -17523,7 +17516,8 @@ def combine_invoice_validation_results(
         "checks": checks,
         "parsed": {
             "invoiceNumber": main_invoice_number,
-            "grossTotal": gross_total,
+            "grossTotal": main_gross_total,
+            "combinedGrossTotal": gross_total,
             "documents": parsed_documents,
         },
     }
@@ -23702,8 +23696,11 @@ async def submit_invoice(
     if kp_only_invoice_process:
         expected_amount = money_int(invoice_requirements.get("totalGrossHuf")) or expected_cash_amount
     expected_transfer_amount = money_int(invoice_requirements.get("transferGrossHuf")) or expected_amount
-    expected_total_invoice_amount = money_int(invoice_requirements.get("totalGrossHuf")) or expected_transfer_amount
     cash_invoice_required = bool(invoice_requirements.get("requiresCashInvoice")) and not kp_only_invoice_process
+    if not kp_only_invoice_process and expected_cash_amount <= KP_INVOICE_THRESHOLD_HUF:
+        # Do not request or validate a small cash invoice, including files left
+        # selected by an older client that still showed the upload control.
+        cash_content = b""
     if cash_invoice_required and not cash_content:
         raise HTTPException(
             status_code=422,
@@ -23756,7 +23753,6 @@ async def submit_invoice(
         )
         result = combine_invoice_validation_results(
             [("Átutalásos számla", main_result), ("KP számla", cash_result)],
-            expected_gross_amount=expected_total_invoice_amount,
             declared_gross_amount=gross_amount,
             invoice_number=invoice_number,
             skip_invoice_number_match=skip_invoice_number_match,
@@ -23791,11 +23787,7 @@ async def submit_invoice(
             "content": content,
             "title": main_title,
             "payment_type": main_payment_type,
-            "gross_amount": main_gross_amount or (
-                gross_amount
-                if kp_only_invoice_process
-                else (gross_amount - cash_gross_amount if cash_gross_amount else gross_amount)
-            ),
+            "gross_amount": main_gross_amount or gross_amount,
         }
     ]
     if cash_content and cash_invoice_file is not None:

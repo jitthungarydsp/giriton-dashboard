@@ -3790,15 +3790,18 @@ function invoiceUploadBlockedByExistingDocument() {
 function renderInvoiceRequirements(invoiceLocked = false) {
   const requirements = state.workflow?.invoiceRequirements || {};
   const cashOnlyInvoice = Boolean(requirements.cashOnlyInvoice);
-  const requiresCashInvoice = Boolean(requirements.requiresCashInvoice);
   const cashAmount = Number(requirements.cashGrossHuf || 0);
+  const requiresCashInvoice = Boolean(requirements.requiresCashInvoice) && cashAmount > 1000;
   const transferAmount = Number(requirements.transferGrossHuf || 0);
   const totalAmount = Number(requirements.totalGrossHuf || 0);
   const cashWrapper = $("#cash-invoice-submit-wrapper");
   const cashInput = $("#cash-invoice-submit-file");
   const cashLabel = $("#cash-invoice-submit-label");
   if (cashWrapper) cashWrapper.classList.toggle("hidden", !requiresCashInvoice);
-  if (cashInput) cashInput.required = requiresCashInvoice && !invoiceLocked;
+  if (cashInput) {
+    cashInput.required = requiresCashInvoice && !invoiceLocked;
+    if (!requiresCashInvoice) cashInput.value = "";
+  }
   if (cashLabel) {
     cashLabel.textContent = requiresCashInvoice
       ? `KP számla feltöltése (kötelező, ${formatHuf(cashAmount)})`
@@ -3811,8 +3814,11 @@ function renderInvoiceRequirements(invoiceLocked = false) {
     mainInvoiceLabel.textContent = "Számla feltöltése (üresen az 5. lépésben ellenőrzött fájlt küldi be)";
   }
   const grossInput = $("#gross-amount");
-  if (grossInput && totalAmount) {
-    grossInput.placeholder = formatHuf(totalAmount);
+  const grossLabel = $("#gross-amount-label");
+  if (grossLabel) grossLabel.textContent = cashOnlyInvoice ? "KP-számla bruttó összege (Ft)" : "Átutalásos számla bruttó összege (Ft)";
+  const expectedMainAmount = cashOnlyInvoice ? totalAmount || cashAmount : transferAmount;
+  if (grossInput && expectedMainAmount) {
+    grossInput.placeholder = formatHuf(expectedMainAmount);
   }
   return { requiresCashInvoice, cashAmount, transferAmount, totalAmount };
 }
@@ -4611,7 +4617,7 @@ function renderTigBreakdown() {
     </section>
     <div class="tig-party-grid">${buyerBlock}${sellerBlock}</div>
     ${transferRows.length ? renderTigRows(transferRows) : ""}
-    ${cashRows.length ? `
+    ${cashRows.length && cashTotalHuf > 1000 ? `
       <section class="tig-cash-invoice">
         <div class="tig-cash-heading">
           <span>Külön KP számla szükséges</span>
@@ -7546,7 +7552,8 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
   const hasCashInvoiceFile =
     selectedCashInvoiceFile instanceof File && Boolean(selectedCashInvoiceFile.name);
   const invoiceRequirements = state.workflow?.invoiceRequirements || {};
-  const cashInvoiceRequired = Boolean(invoiceRequirements.requiresCashInvoice);
+  const cashInvoiceRequired = Boolean(invoiceRequirements.requiresCashInvoice)
+    && Number(invoiceRequirements.cashGrossHuf || 0) > 1000;
   const cashOnlyInvoice = Boolean(invoiceRequirements.cashOnlyInvoice);
   if (cashInvoiceRequired && !hasCashInvoiceFile) {
     showWorkflowMessage(`Ehhez a TIG-hez külön KP számla is kell (${formatHuf(invoiceRequirements.cashGrossHuf || 0)}). Töltsd fel a KP számlát is.`, true);
