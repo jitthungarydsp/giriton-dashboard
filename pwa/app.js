@@ -107,7 +107,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v220";
+const APP_VERSION = "v221";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -4894,8 +4894,10 @@ async function loadWorkflow(options = {}) {
     renderWorkflow();
     showWorkflowMessage("Folyamat betöltése…");
   }
+  let loadingStage = "Elérhető hónapok lekérése";
   try {
     await ensureWorkflowMonths();
+    loadingStage = "Futár havi folyamatának lekérése";
     state.workflow = await api(`/api/workflow?${workflowQuery()}`);
     state.workflowProcesses = state.workflow.processes || [{ id: "", label: "Havi folyamat" }];
     if (!state.workflowProcesses.some((process) => process.id === state.workflowProcess)) {
@@ -4910,7 +4912,10 @@ async function loadWorkflow(options = {}) {
     if (!background || !state.workflow) {
       state.workflow = waitingWorkflow();
       renderWorkflow();
-      showWorkflowMessage("Az elszámolás adatai jelenleg nem érhetők el. A folyamat várakozó állapotban marad; próbáld meg később frissíteni.", true);
+      const errorMessage = isAdminPreviewMode()
+        ? `Az admin előnézet betöltése sikertelen. Lépés: ${loadingStage}. Hiba: ${error?.message || "Ismeretlen betöltési hiba."} A megjelenített zárolások ideiglenesek, a mentett folyamat státuszai nem változtak.`
+        : "Az elszámolás adatai jelenleg nem érhetők el. A folyamat várakozó állapotban marad; próbáld meg később frissíteni.";
+      showWorkflowMessage(errorMessage, true);
     }
   } finally {
     state.workflowLoading = false;
