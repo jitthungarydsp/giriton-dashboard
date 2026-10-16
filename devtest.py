@@ -11547,21 +11547,50 @@ def apply_periodic_fee_corrections(
 
 @st.cache_data(show_spinner=False, ttl=60)
 def load_customer_rating_bonus_rows(period_start: date, period_end: date) -> pd.DataFrame:
+    def first_uploaded_source(data: pd.DataFrame) -> pd.DataFrame:
+        if data.empty or "source_spreadsheet_id" not in data.columns:
+            return data
+
+        source_ids = data["source_spreadsheet_id"].fillna("").astype(str).str.strip()
+        if source_ids.eq("").all():
+            return data
+
+        if "imported_at" in data.columns:
+            imported_at = pd.to_datetime(data["imported_at"], errors="coerce", utc=True)
+            source_order = (
+                pd.DataFrame({"source_id": source_ids, "imported_at": imported_at})
+                .groupby("source_id", dropna=False)["imported_at"]
+                .min()
+                .sort_values(na_position="last")
+            )
+            first_source = str(source_order.index[0])
+        else:
+            first_source = str(source_ids.iloc[0])
+
+        return data.loc[source_ids.eq(first_source)].copy()
+
     try:
         rows = (get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE)
-                .select("billing_month,source_spreadsheet_id,worksheet_name,courier_id,driver_name,route_type,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number,row_data")
+                .select("billing_month,source_spreadsheet_id,worksheet_name,imported_at,courier_id,driver_name,route_type,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number,row_data")
                 .eq("billing_month", period_start.replace(day=1).isoformat())
                 .order("driver_name").execute().data or [])
-        return pd.DataFrame(rows)
+        return first_uploaded_source(pd.DataFrame(rows))
     except BaseException:
         try:
             rows = (get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE)
-                    .select("billing_month,source_spreadsheet_id,worksheet_name,courier_id,driver_name,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number,row_data")
+                    .select("billing_month,source_spreadsheet_id,worksheet_name,imported_at,courier_id,driver_name,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number,row_data")
                     .eq("billing_month", period_start.replace(day=1).isoformat())
                     .order("driver_name").execute().data or [])
-            return pd.DataFrame(rows)
+            return first_uploaded_source(pd.DataFrame(rows))
         except BaseException:
-            return pd.DataFrame()
+            try:
+                rows = (get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE)
+                        .select("billing_month,source_spreadsheet_id,worksheet_name,courier_id,driver_name,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number,row_data")
+                        .eq("billing_month", period_start.replace(day=1).isoformat())
+                        .order("driver_name").execute().data or [])
+                return first_uploaded_source(pd.DataFrame(rows))
+            except BaseException:
+                return pd.DataFrame()
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -11793,6 +11822,15 @@ def recalculate_customer_rating_source_rows(
     for _, source_rows in result.groupby("_rating_source_key", dropna=False, sort=False):
         source_rows = source_rows.drop(columns=["_rating_source_key"])
         source_route_total = int(pd.to_numeric(source_rows.get("completed_routes", 0), errors="coerce").fillna(0).sum())
+        source_formats = source_rows.get("row_data", pd.Series("", index=source_rows.index)).map(
+            lambda value: (
+                value.get("source_format", "")
+                if isinstance(value, dict)
+                else str(value or "")
+            )
+        )
+        if source_formats.astype(str).str.contains("average_rating_value", case=False, na=False).any():
+            source_route_total = int(fallback_route_total or 0)
         if source_route_total <= 0 and source_count == 1:
             source_route_total = int(fallback_route_total or 0)
         recalculated.append(recalculate_customer_rating_rows(source_rows, source_route_total, period_start, period_end, rules))
@@ -12033,6 +12071,7 @@ def _finalize_customer_rating_value_rows(
     uploaded_file,
     billing_month: date,
     worksheet_name: str,
+    dashboard_data: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     month_start = billing_month.replace(day=1)
     next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
@@ -12049,11 +12088,21 @@ def _finalize_customer_rating_value_rows(
         raise ValueError("Nem található feldolgozható havi ügyfélértékelés sor.")
 
     result["route_type"] = "normal"
-    result["completed_routes"] = 1
+    # Value-based uploads do not contain the monthly route count. Use the
+    # dashboard count for every uploaded source; only fall back to one when
+    # the courier is missing from the dashboard.
+    route_dashboard = dashboard_data if dashboard_data is not None else pd.DataFrame()
+    routes_by_id, routes_by_name = _customer_rating_dashboard_routes(route_dashboard)
+    result["name_key"] = result["driver_name"].map(_courier_match_key)
+    dashboard_routes = result["courier_id"].map(routes_by_id)
+    dashboard_routes = dashboard_routes.fillna(result["name_key"].map(routes_by_name))
+    existing_routes = pd.to_numeric(result.get("completed_routes", 0), errors="coerce").fillna(0)
+    result["completed_routes"] = dashboard_routes.where(dashboard_routes.gt(0), existing_routes)
+    result["completed_routes"] = pd.to_numeric(result["completed_routes"], errors="coerce").fillna(1).astype(int)
     result["bonus_per_route_huf"] = result["average_rating"].map(
         lambda value: customer_rating_rule_amount(value, rules, "normal")
     )
-    result["bonus_total_huf"] = result["bonus_per_route_huf"]
+    result["bonus_total_huf"] = result["bonus_per_route_huf"] * result["completed_routes"]
     result["billing_month"] = month_start.isoformat()
     result["worksheet_name"] = worksheet_name or "Ügyfélértékelés"
     result["source_row_number"] = range(2, len(result) + 2)
@@ -12139,6 +12188,7 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
             uploaded_file,
             billing_month,
             "CSV ügyfélértékelés",
+            dashboard_data,
         )
 
     excel_file = pd.ExcelFile(uploaded_file)
@@ -12189,6 +12239,7 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
             uploaded_file,
             billing_month,
             rating_sheet,
+            dashboard_data,
         )
 
     simple_aliases = {
