@@ -3302,6 +3302,53 @@ def _finance_snapshot_source_row_count(payload) -> int:
     return 0
 
 
+def build_base_fee_category_drilldown(route_detail: pd.DataFrame | None) -> pd.DataFrame:
+    """Group base-fee rows by route family and normal/highlighted day type."""
+    columns = ["Tétel", "Darab", "Egységösszeg", "Összeg", "Számítás"]
+    if not isinstance(route_detail, pd.DataFrame) or route_detail.empty or "Alapdíj" not in route_detail.columns:
+        return pd.DataFrame(columns=columns)
+
+    detail = route_detail.copy()
+    detail["_amount"] = detail["Alapdíj"].map(parse_huf_value)
+    detail = detail[detail["_amount"].ne(0)].copy()
+    if detail.empty:
+        return pd.DataFrame(columns=columns)
+
+    route_type = detail.get("Túratípus", pd.Series("", index=detail.index)).astype(str).str.casefold()
+    day_type = detail.get("Naptípus", pd.Series("", index=detail.index)).astype(str).str.casefold()
+    detail["Tétel"] = "Normál city"
+    regional = route_type.str.contains("region", na=False) | route_type.str.contains("regio", na=False)
+    express = route_type.str.contains("express", na=False)
+    highlighted = day_type.str.contains("kiemelt", na=False) | day_type.str.contains("highlight", na=False)
+    detail.loc[regional & highlighted, "Tétel"] = "Kiemelt regionális"
+    detail.loc[regional & ~highlighted, "Tétel"] = "Normál regionális"
+    detail.loc[~regional & express & highlighted, "Tétel"] = "Kiemelt express"
+    detail.loc[~regional & express & ~highlighted, "Tétel"] = "Normál express"
+    detail.loc[~regional & ~express & highlighted, "Tétel"] = "Kiemelt city"
+
+    grouped = (
+        detail.groupby(["Tétel", "_amount"], dropna=False)
+        .size()
+        .reset_index(name="Darab")
+    )
+    grouped["Egységösszeg"] = grouped["_amount"]
+    grouped["Összeg"] = grouped["Darab"] * grouped["Egységösszeg"]
+    grouped["Számítás"] = grouped.apply(
+        lambda item: f"{int(item['Darab'])} x {format_huf(item['Egységösszeg'])}",
+        axis=1,
+    )
+    order_map = {
+        "Normál city": 1,
+        "Kiemelt city": 2,
+        "Normál regionális": 3,
+        "Kiemelt regionális": 4,
+        "Normál express": 5,
+        "Kiemelt express": 6,
+    }
+    grouped["_order"] = grouped["Tétel"].map(order_map).fillna(99)
+    return grouped.sort_values(["_order", "Egységösszeg"])[columns]
+
+
 def build_finance_snapshot_drilldown_payload(
     finance_rows: list[dict[str, object]],
     route_detail: pd.DataFrame | None,
@@ -3323,6 +3370,11 @@ def build_finance_snapshot_drilldown_payload(
             ("Borravaló", "Borravaló"),
         ]:
             if column not in route_detail.columns:
+                continue
+            if label == "Alapdíj":
+                detail = build_base_fee_category_drilldown(route_detail)
+                if not detail.empty:
+                    payload[label] = detail.to_dict("records")
                 continue
             if label in level_rule_tables:
                 detail = build_amount_drilldown(
@@ -18294,54 +18346,9 @@ def render_courier_detail_page() -> None:
                     {"Tétel": "Cím / rendelés", "Darab": order_total, "Forrás": route_source_label, "Session": settlement_session_label},
                 ])
             if detail_label == "Alapdíj":
-                if not route_detail.empty and "Alapdíj" in route_detail.columns:
-                    base_detail = route_detail.copy()
-                    base_detail["_amount"] = base_detail["Alapdíj"].map(parse_huf_value)
-                    base_detail = base_detail[base_detail["_amount"].ne(0)].copy()
-                    if not base_detail.empty:
-                        base_detail["_route_type"] = base_detail.get("Túratípus", pd.Series("", index=base_detail.index)).astype(str).str.casefold()
-                        base_detail["_day_type"] = base_detail.get("Naptípus", pd.Series("", index=base_detail.index)).astype(str).str.casefold()
-
-                        def base_fee_label(item: pd.Series) -> str:
-                            is_express = "express" in str(item.get("_route_type") or "")
-                            is_regional = "region" in str(item.get("_route_type") or "") or "regionális" in str(item.get("_route_type") or "")
-                            is_highlighted = "kiemelt" in str(item.get("_day_type") or "")
-                            if is_regional and is_highlighted:
-                                return "Kiemelt regionális"
-                            if is_regional:
-                                return "Normál regionális"
-                            if is_express and is_highlighted:
-                                return "Kiemelt express"
-                            if is_express:
-                                return "Normál express"
-                            if is_highlighted:
-                                return "Kiemelt city"
-                            return "Normál city"
-
-                        base_detail["Tétel"] = base_detail.apply(base_fee_label, axis=1)
-                        grouped = (
-                            base_detail.groupby(["Tétel", "_amount"], dropna=False)
-                            .size()
-                            .reset_index(name="Darab")
-                        )
-                        grouped["Egységösszeg"] = grouped["_amount"]
-                        grouped["Összeg"] = grouped["Darab"] * grouped["Egységösszeg"]
-                        grouped["Számítás"] = grouped.apply(
-                            lambda item: f"{int(item['Darab'])} x {format_huf(item['Egységösszeg'])}",
-                            axis=1,
-                        )
-                        order_map = {
-                            "Normál city": 1,
-                            "Kiemelt city": 2,
-                            "Normál regionális": 3,
-                            "Kiemelt regionális": 4,
-                            "Normál express": 5,
-                            "Kiemelt express": 6,
-                        }
-                        grouped["_order"] = grouped["Tétel"].map(order_map).fillna(99)
-                        return grouped.sort_values(["_order", "Egységösszeg"])[
-                            ["Tétel", "Darab", "Egységösszeg", "Összeg", "Számítás"]
-                        ]
+                base_detail = build_base_fee_category_drilldown(route_detail)
+                if not base_detail.empty:
+                    return base_detail
                 return pd.DataFrame([{
                     "Tétel": "Alapdíj",
                     "Darab": route_total,

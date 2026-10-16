@@ -10957,8 +10957,8 @@ def snapshot_detail_item(card_key: str, index: int, row: dict[str, Any]) -> dict
         if str(row.get(key) or "").strip()
     ]
     if row.get("Darab") not in (None, "") and row.get("Egységösszeg") not in (None, ""):
-        unit_note = f"{money_int(row.get('Darab'))} x {money_int(row.get('Egységösszeg'))} Ft"
-        if unit_note not in note_parts:
+        unit_note = f"{money_int(row.get('Darab'))} db x {money_int(row.get('Egységösszeg'))} Ft"
+        if not any(" x " in part and "Ft" in part for part in note_parts):
             note_parts.insert(0, unit_note)
     return {
         "key": f"{card_key}_detail_{index}",
@@ -11022,10 +11022,72 @@ def compact_snapshot_detail_items(card_key: str, label: str, detail_rows: list[d
     ]
 
 
+def base_fee_category_snapshot_rows(route_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rebuild the base-fee route categories for snapshots created by older code."""
+    grouped: dict[tuple[str, int], int] = {}
+    order = {
+        "Normál city": 1,
+        "Kiemelt city": 2,
+        "Normál regionális": 3,
+        "Kiemelt regionális": 4,
+        "Normál express": 5,
+        "Kiemelt express": 6,
+    }
+    for row in route_rows:
+        if not isinstance(row, dict):
+            continue
+        amount = next(
+            (
+                money_int(row.get(key))
+                for key in ("Alapdíj", "Alapdij", "base", "amount_value", "_amount")
+                if row.get(key) not in (None, "")
+            ),
+        )
+        if not amount:
+            continue
+        route_type = str(row.get("Túratípus") or row.get("Turatipus") or "").strip().casefold()
+        day_type = str(row.get("Naptípus") or row.get("Naptipus") or "").strip().casefold()
+        is_regional = "region" in route_type or "regio" in route_type
+        is_express = "express" in route_type
+        is_highlighted = "kiemelt" in day_type or "highlight" in day_type
+        if is_regional and is_highlighted:
+            category = "Kiemelt regionális"
+        elif is_regional:
+            category = "Normál regionális"
+        elif is_express and is_highlighted:
+            category = "Kiemelt express"
+        elif is_express:
+            category = "Normál express"
+        elif is_highlighted:
+            category = "Kiemelt city"
+        else:
+            category = "Normál city"
+        key = (category, amount)
+        grouped[key] = grouped.get(key, 0) + 1
+    return [
+        {
+            "Tétel": category,
+            "Darab": count,
+            "Egységösszeg": amount,
+            "Összeg": count * amount,
+            "Számítás": f"{count} x {format_snapshot_unit_amount(amount)} Ft",
+        }
+        for (category, amount), count in sorted(
+            grouped.items(), key=lambda item: (order.get(item[0][0], 99), item[0][1])
+        )
+    ]
+
+
 def snapshot_card_detail_items(snapshot: dict[str, Any], label: str, card_key: str) -> list[dict[str, Any]]:
     drilldowns = snapshot_source_payload(snapshot, "card_drilldowns")
     if not isinstance(drilldowns, dict):
         return []
+    if label == "Alapdíj":
+        route_rows = drilldowns.get("Körök / túrák")
+        if isinstance(route_rows, list):
+            category_rows = base_fee_category_snapshot_rows(route_rows)
+            if category_rows:
+                return compact_snapshot_detail_items(card_key, label, category_rows)
     candidates = [label]
     mojibake_map = {
         "Kiflis levonások / bónuszok": "Kiflis levonĂˇsok / bĂłnuszok",
