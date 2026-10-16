@@ -5298,22 +5298,61 @@ def start_devtest_exact_snapshot_batch(
 
 @st.cache_data(show_spinner=False, ttl=60)
 def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
-    response = (
-        get_db()
-        .schema("public")
-        .table("courier_master")
-        .select("*")
-        .order("courier_name")
-        .execute()
-    )
-
-    rows = response.data or []
     columns = [
         "Courier ID", "Futár", "Branch", "Számítás módja",
         "Raktár", "Vállalkozás", "Státusz", "Nettó bevétel", "Bónusz",
         "Borravaló", "Alvállalkozói összeg", "Levonás", "Kifizetendő",
         "Előző havi összeg", "KPI", "Munkakezdés", "FA státusz", "Jogviszony",
     ]
+
+    # Newer PostgREST/client combinations can return an error body that the
+    # SDK cannot decode as APIError. Prefer the raw REST reader, whose HTTP
+    # error handling is stable, and keep the SDK queries as fallbacks.
+    rows = None
+    try:
+        from resources.courier_master_db import read_courier_master
+
+        raw_master = read_courier_master()
+        rows = raw_master.to_dict("records") if isinstance(raw_master, pd.DataFrame) else []
+    except BaseException:
+        pass
+
+    if rows is None:
+        try:
+            rows = (
+                get_db()
+                .schema("public")
+                .table("courier_master")
+                .select("*")
+                .order("courier_name")
+                .execute()
+                .data
+                or []
+            )
+        except BaseException:
+            pass
+
+    if rows is None:
+        try:
+            rows = (
+                get_db()
+                .schema("public")
+                .table("courier_master")
+                .select("*")
+                .execute()
+                .data
+                or []
+            )
+        except BaseException:
+            pass
+
+    if rows is None:
+        result = pd.DataFrame(columns=columns)
+        result.attrs["configuration_error"] = (
+            "A futártörzs (public.courier_master) nem olvasható. "
+            "Ellenőrizd a Supabase kapcsolatot és a tábla API-hozzáférését."
+        )
+        return result
 
     if not rows:
         return pd.DataFrame(columns=columns)
@@ -23967,9 +24006,6 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                     f"{master_sync.get('upserted', 0)} sor."
                 )
             st.session_state["new_month_pending"] = selected_month
-            # A friss Excel az összes futár végső elszámolását érvényteleníti;
-            # a következő oldalbetöltésen induljon az exact snapshot batch.
-            st.session_state["devtest_exact_snapshot_batch_requested"] = True
             publish_excel_session_to_mobile_if_possible(
                 selected_month,
                 result["session_id"],
@@ -24169,6 +24205,12 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
 def show_new_settlement_page() -> None:
     apply_design()
     render_empty_right_menu()
+    # Cancel the legacy courier-by-courier snapshot queue. It changed the
+    # selected courier and reran the whole Streamlit page for every row.
+    st.session_state.pop("devtest_exact_snapshot_batch_requested", None)
+    if isinstance(st.session_state.get("devtest_exact_snapshot_batch"), dict):
+        st.session_state.pop("devtest_exact_snapshot_batch", None)
+        st.session_state.pop("selected_courier_id", None)
     exact_batch_result = st.session_state.pop("devtest_exact_snapshot_batch_result", None)
     if isinstance(exact_batch_result, dict):
         failed_rows = list(exact_batch_result.get("failed") or [])
@@ -24341,28 +24383,6 @@ def show_new_settlement_page() -> None:
         data = apply_dsp_shift_attendance_audit(data, balance_period_start, balance_period_end)
     loading_panel.empty()
 
-    # Loading a new Excel session is the canonical recalculation event. Start
-    # the exact detail-page batch automatically once the source data is ready;
-    # the sidebar button remains available for a manual repeat later.
-    if (
-        st.session_state.pop("devtest_exact_snapshot_batch_requested", False)
-        and not st.session_state.get("devtest_exact_snapshot_batch")
-        and not st.session_state.get("selected_courier_id")
-        and not data.empty
-        and import_session_id
-    ):
-        queued_count = start_devtest_exact_snapshot_batch(
-            data,
-            period_start=balance_period_start,
-            calculation_mode=selected_calculation_mode,
-            warehouse_label=selected_warehouse_label,
-            session_id=import_session_id,
-            updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
-            current_data_context=current_data_context,
-        )
-        if queued_count:
-            st.rerun()
-
     with st.sidebar:
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
         calculation_mode = selected_calculation_mode
@@ -24410,37 +24430,6 @@ def show_new_settlement_page() -> None:
                 key=f"save_devtest_finance_snapshots_{mobile_period_start:%Y%m}_{calculation_mode}",
                 help="Az aktuális devtest pénzügyi és TIG értékeket verziózottan elmenti DB-be.",
             ):
-                if use_fast_overview:
-                    # Do not persist the fast list values.  Queue the exact
-                    # detail-page calculation so PWA and devtest share one
-                    # authoritative result for every courier.
-                    exact_snapshot_data = build_settlement_overview_data(
-                        selected_calculation_mode,
-                        import_session_id,
-                        balance_period_start,
-                        balance_period_end,
-                        selected_warehouse_label,
-                        settlement_loyalty_cache_token(
-                            import_session_id,
-                            balance_period_start,
-                            selected_calculation_mode,
-                        ),
-                    )
-                    queued_count = start_devtest_exact_snapshot_batch(
-                        exact_snapshot_data,
-                        period_start=mobile_period_start,
-                        calculation_mode=calculation_mode,
-                        warehouse_label=warehouse,
-                        session_id=mobile_source_session_id,
-                        updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
-                        current_data_context=current_data_context,
-                    )
-                    if queued_count:
-                        st.toast(
-                            f"Pontos devtest snapshot mentés indul: {queued_count} futár.",
-                            icon="✅",
-                        )
-                        st.rerun()
                 with st.spinner("Adatok mentése..."):
                     snapshot_data = data
                     if use_fast_overview:
@@ -24503,7 +24492,6 @@ def show_new_settlement_page() -> None:
             st.caption("Kiválasztott mobil forrás: nincs, mert a Számítás módja Összes.")
         st.divider()
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
-            st.session_state["devtest_exact_snapshot_batch_requested"] = True
             refresh_settlement_profile_data()
             current_period_start = parse_month_option(selected_month)
             state_excel_session_id = st.session_state.get("settlement_excel_session_id")
@@ -24691,7 +24679,6 @@ def show_new_settlement_page() -> None:
                 # Az értékelési bónusz része a devtest végösszegének, ezért az
                 # érintett hónapra minden futárt újra kell számolni.
                 st.session_state["new_month_pending"] = month_option_label(rating_month)
-                st.session_state["devtest_exact_snapshot_batch_requested"] = True
                 st.success(f"Ügyfélértékelés hozzáadva: {len(rating_preview)} futár, hónap: {rating_month:%Y-%m}. A korábbi táblák megmaradtak, az azonos fájl cserélődött.")
                 st.rerun()
             except Exception as exc:
