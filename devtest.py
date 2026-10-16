@@ -3785,6 +3785,7 @@ def render_devtest_finance_snapshot_view(
     *,
     courier_id: str | None = None,
     period_start: date | None = None,
+    session_id: str | None = None,
 ) -> None:
     metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
     version = int(parse_huf_value(snapshot.get("version")))
@@ -4003,6 +4004,156 @@ def render_devtest_finance_snapshot_view(
                 st.rerun()
             else:
                 st.error("A manuális értékek mentése sikertelen. Ellenőrizd a mobile_settlement_breakdown_overrides táblát.")
+
+    if courier_id and period_start:
+        period_end = month_bounds(period_start)[1]
+        adjustments = load_courier_adjustments(courier_id, period_start, period_end)
+        adjustments = deduplicate_adjustments_for_calculation(adjustments)
+        adjustment_type_labels = {
+            "bonus": "Bónusz",
+            "malus": "Malus",
+            "atm_deduction": "ATM levonás",
+            "other_expense": "Egyéb kiadás",
+            "customer_rating": "Ügyfélértékelés",
+            "correction_income": "Korrekció +",
+            "correction_deduction": "Korrekció -",
+            "manual_correction": "Kézi korrekció +",
+            "manual_correction_deduction": "Kézi korrekció -",
+        }
+        adjustment_type_values = {label: key for key, label in adjustment_type_labels.items()}
+        editor_columns = ["id", "Típus", "Összeg", "Megjegyzés", "Érvényes ettől", "Érvényes eddig", "Törlés"]
+        if adjustments.empty:
+            adjustment_editor = pd.DataFrame(
+                [
+                    {"id": "", "Típus": "Bónusz", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "Ügyfélértékelés", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "Malus", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "Korrekció +", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "Korrekció -", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "ATM levonás", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "Egyéb kiadás", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                ],
+                columns=editor_columns,
+            )
+        else:
+            adjustment_editor = adjustments.copy()
+            adjustment_editor["Típus"] = adjustment_editor["adjustment_type"].map(adjustment_type_labels).fillna(adjustment_editor["adjustment_type"])
+            adjustment_editor["Összeg"] = pd.to_numeric(adjustment_editor["amount_huf"], errors="coerce").fillna(0.0)
+            adjustment_editor["Megjegyzés"] = adjustment_editor.get("note", pd.Series("", index=adjustment_editor.index)).fillna("")
+            adjustment_editor["Érvényes ettől"] = pd.to_datetime(adjustment_editor.get("valid_from"), errors="coerce").dt.date
+            adjustment_editor["Érvényes eddig"] = pd.to_datetime(adjustment_editor.get("valid_to"), errors="coerce").dt.date
+            adjustment_editor["Törlés"] = False
+            adjustment_editor = adjustment_editor[editor_columns]
+
+        monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
+        closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
+        st.markdown("#### Kézi tételek")
+        st.caption("Itt lehet új tételt hozzáadni, meglévőt módosítani, vagy a Törlés oszlopban kijelölni.")
+        edited_adjustments = st.data_editor(
+            adjustment_editor,
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed" if closure_done else "dynamic",
+            key=f"snapshot_adjustment_editor_{courier_id}_{period_start:%Y%m}",
+            disabled=editor_columns if closure_done else ["id"],
+            column_order=["Típus", "Összeg", "Megjegyzés", "Érvényes ettől", "Érvényes eddig", "Törlés"],
+            column_config={
+                "id": st.column_config.TextColumn("ID", width="small"),
+                "Típus": st.column_config.SelectboxColumn("Típus", options=list(adjustment_type_values.keys()), required=True),
+                "Összeg": st.column_config.NumberColumn("Összeg (Ft)", min_value=0, step=100, format="%d"),
+                "Megjegyzés": st.column_config.TextColumn("Megjegyzés"),
+                "Érvényes ettől": st.column_config.DateColumn("Érvényes ettől"),
+                "Érvényes eddig": st.column_config.DateColumn("Érvényes eddig"),
+                "Törlés": st.column_config.CheckboxColumn("Törlés"),
+            },
+        )
+        if closure_done:
+            st.info("Ez a hónap már le van zárva, ezért a kézi tételek csak olvashatók.")
+        save_adjustments, reset_adjustments = st.columns([0.55, 0.45])
+        save_adjustments_clicked = save_adjustments.button(
+            "Kézi tételek mentése",
+            type="primary",
+            use_container_width=True,
+            disabled=closure_done,
+            key=f"snapshot_save_adjustments_{courier_id}_{period_start:%Y%m}",
+        )
+        reset_adjustments_clicked = reset_adjustments.button(
+            "Kézi tételek törlése",
+            use_container_width=True,
+            disabled=closure_done,
+            key=f"snapshot_reset_adjustments_{courier_id}_{period_start:%Y%m}",
+        )
+
+        def editor_date(value: object, fallback: date | None = None) -> date | None:
+            if value is None or value == "":
+                return fallback
+            parsed = pd.to_datetime(value, errors="coerce")
+            return fallback if pd.isna(parsed) else parsed.date()
+
+        if save_adjustments_clicked:
+            try:
+                original_by_id = {str(item.get("id")): item for _, item in adjustments.iterrows()} if not adjustments.empty else {}
+                saved_changes = 0
+                for _, edited in edited_adjustments.iterrows():
+                    adjustment_id = str(edited.get("id") or "").strip()
+                    adjustment_type = adjustment_type_values.get(str(edited.get("Típus") or "").strip())
+                    amount = parse_huf_value(edited.get("Összeg"))
+                    note = str(edited.get("Megjegyzés") or "").strip()
+                    valid_from = editor_date(edited.get("Érvényes ettől"), period_start) or period_start
+                    valid_to = editor_date(edited.get("Érvényes eddig"), None)
+                    marked_for_delete = bool(edited.get("Törlés"))
+                    if not adjustment_type:
+                        continue
+                    if valid_to and valid_to < valid_from:
+                        st.error("A záródátum nem lehet korábbi a kezdődátumnál.")
+                        break
+                    if adjustment_id:
+                        original = original_by_id.get(adjustment_id)
+                        if original is None:
+                            continue
+                        original_from = editor_date(original.get("valid_from"), period_start)
+                        original_to = editor_date(original.get("valid_to"), None)
+                        if marked_for_delete:
+                            delete_courier_adjustment(
+                                session_id, courier_id, adjustment_id,
+                                str(original.get("adjustment_type")), parse_huf_value(original.get("amount_huf")),
+                                note, valid_from=original_from, valid_to=original_to,
+                            )
+                            saved_changes += 1
+                        elif (
+                            str(original.get("adjustment_type")) != adjustment_type
+                            or parse_huf_value(original.get("amount_huf")) != amount
+                            or str(original.get("note") or "") != note
+                            or original_from != valid_from
+                            or original_to != valid_to
+                        ):
+                            update_courier_adjustment(
+                                session_id, courier_id, adjustment_id, adjustment_type, amount, note,
+                                valid_from, valid_to, original.to_dict(),
+                            )
+                            saved_changes += 1
+                    elif amount > 0 and not marked_for_delete:
+                        save_courier_adjustment(session_id, courier_id, adjustment_type, amount, note, valid_from, valid_to)
+                        saved_changes += 1
+                if saved_changes:
+                    refresh_settlement_profile_data()
+                    clear_devtest_finance_snapshot_cache()
+                    st.success(f"{saved_changes} kézi tétel mentve.")
+                    st.rerun()
+                else:
+                    st.info("Nem volt mentendő változás.")
+            except Exception as exc:
+                st.error(f"A kézi tételek nem menthetők. Részlet: {exc}")
+
+        if reset_adjustments_clicked:
+            try:
+                reset_courier_adjustments(session_id, courier_id, period_start, period_end)
+                refresh_settlement_profile_data()
+                clear_devtest_finance_snapshot_cache()
+                st.success("A kézi tételek törölve.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A kézi tételek törlése sikertelen. Részlet: {exc}")
 
     st.markdown("#### Mentett pénzügyi értékek")
     st.dataframe(finance_frame, hide_index=True, use_container_width=True)
@@ -16605,6 +16756,7 @@ def render_courier_detail_page() -> None:
                 finance_snapshot,
                 courier_id=courier_id,
                 period_start=period_start,
+                session_id=session_id,
             )
         else:
             st.warning(
