@@ -18690,6 +18690,12 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
             "updatedAt": str(profile.get("summaryUpdatedAt") or ""),
             "snapshotVersion": 0,
         })
+    flags_by_courier = dashboard_monthly_flags_by_courier(
+        month_start,
+        [str(row.get("courierId") or "") for row in rows],
+    )
+    for row in rows:
+        row["flags"] = flags_by_courier.get(str(row.get("courierId") or ""), [])
     rows.sort(key=lambda row: (normalize_person_match_text(row.get("courierName")), str(row.get("courierId") or "")))
     status_counts: dict[str, int] = {}
     for row in rows:
