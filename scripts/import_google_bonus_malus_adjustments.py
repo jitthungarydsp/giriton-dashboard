@@ -228,7 +228,7 @@ def existing_adjustments() -> dict[str, dict[str, Any]]:
         f"{supabase_url()}/rest/v1/courier_settlement_adjustment",
         headers=supabase_headers(),
         params={
-            "select": "id,source_key,is_active,deleted_at,deleted_by,updated_at",
+            "select": "id,courier_id,source_key,valid_from,valid_to,is_active,deleted_at,deleted_by,updated_at",
             "source_key": f"like.{SOURCE_PREFIX}:%",
             "limit": "10000",
         },
@@ -240,6 +240,23 @@ def existing_adjustments() -> dict[str, dict[str, Any]]:
         for row in response.json() or []
         if str(row.get("source_key") or "")
     }
+
+
+def deactivate_adjustment(row_id: str) -> None:
+    now = datetime.utcnow().isoformat()
+    response = requests.patch(
+        f"{supabase_url()}/rest/v1/courier_settlement_adjustment",
+        headers=supabase_headers("return=minimal"),
+        params={"id": f"eq.{row_id}"},
+        json={
+            "is_active": False,
+            "deleted_at": now,
+            "deleted_by": "google-sheet-refresh",
+            "updated_at": now,
+        },
+        timeout=60,
+    )
+    raise_for_response(response, "courier_settlement_adjustment deactivate")
 
 
 def closed_months() -> set[tuple[str, str]]:
@@ -356,7 +373,10 @@ def sync_courier_from_sheet(
     closed = closed_months()
     inserted = 0
     updated = 0
+    deactivated = 0
     protected_closed = 0
+
+    source_keys = {source_key(sheet_id, gid, row) for row in source_rows}
 
     for row in source_rows:
         key = source_key(sheet_id, gid, row)
@@ -374,10 +394,36 @@ def sync_courier_from_sheet(
             insert_adjustment(payload)
             inserted += 1
 
+    if period_start is not None and period_end is not None:
+        source_prefix = f"{SOURCE_PREFIX}:{sheet_id}:{gid}:"
+        for current in existing.values():
+            current_id = str(current.get("id") or "").strip()
+            current_key = str(current.get("source_key") or "")
+            if not current_id or not current_key.startswith(source_prefix):
+                continue
+            if str(current.get("courier_id") or "").strip() != target_id:
+                continue
+            try:
+                current_date = date.fromisoformat(str(current.get("valid_from") or "")[:10])
+            except ValueError:
+                continue
+            if not (period_start <= current_date <= period_end):
+                continue
+            if current_key in source_keys:
+                continue
+            if current.get("deleted_at") or current.get("is_active") is False:
+                continue
+            if (target_id, current_date.replace(day=1).isoformat()) in closed:
+                protected_closed += 1
+                continue
+            deactivate_adjustment(current_id)
+            deactivated += 1
+
     return {
         "sheet_rows": len(source_rows),
         "inserted": inserted,
         "updated": updated,
+        "deactivated": deactivated,
         "protected_closed": protected_closed,
     }
 

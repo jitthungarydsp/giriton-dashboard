@@ -15771,6 +15771,7 @@ def format_adjustment_log_period(row: pd.Series) -> str:
 def refresh_settlement_profile_data() -> None:
     st.session_state.pop("current_filtered_data", None)
     clear_settlement_overview_data_cache()
+    clear_devtest_finance_snapshot_cache()
     for key in list(st.session_state.keys()):
         if str(key).startswith("finance_payment_sync_"):
             st.session_state.pop(key, None)
@@ -16646,9 +16647,13 @@ def render_courier_detail_page() -> None:
     finance_preflight_target_key = f"courier_after_finance_menu_{courier_id}_{preflight_month_key}"
     rebuild_request_key = f"courier_rebuild_request_{courier_id}"
     rebuild_request = st.session_state.pop(rebuild_request_key, None)
+    google_refresh_requested = bool(
+        isinstance(rebuild_request, dict)
+        and rebuild_request.get("refresh_google_bonus_malus")
+    )
     if isinstance(rebuild_request, dict):
         try:
-            if rebuild_request.get("refresh_google_bonus_malus"):
+            if google_refresh_requested:
                 with st.spinner("Google Sheet MALUS/BONUS adatainak frissítése..."):
                     refresh_result = refresh_google_bonus_malus_for_courier(
                         courier_id=courier_id,
@@ -16657,16 +16662,21 @@ def render_courier_detail_page() -> None:
                         period_end=period_end,
                     )
                 st.session_state["courier_refresh_notice"] = (
-                    f"MALUS/BONUS frissítve: {refresh_result.get('inserted', 0)} új, "
-                    f"{refresh_result.get('updated', 0)} módosított sor."
+                    f"MALUS/BONUS frissítve a {period_start:%Y-%m} hónapra: "
+                    f"{refresh_result.get('sheet_rows', 0)} Sheet-sor, "
+                    f"{refresh_result.get('inserted', 0)} új, "
+                    f"{refresh_result.get('updated', 0)} módosított, "
+                    f"{refresh_result.get('deactivated', 0)} régi sor kikapcsolva."
                 )
             saved_filtered_data = st.session_state.get("current_filtered_data")
             saved_filtered_context = st.session_state.get("current_filtered_context")
             refresh_settlement_profile_data()
-            if isinstance(saved_filtered_data, pd.DataFrame) and not saved_filtered_data.empty:
+            if not google_refresh_requested and isinstance(saved_filtered_data, pd.DataFrame) and not saved_filtered_data.empty:
                 st.session_state["current_filtered_data"] = saved_filtered_data
-            if saved_filtered_context is not None:
+            if not google_refresh_requested and saved_filtered_context is not None:
                 st.session_state["current_filtered_context"] = saved_filtered_context
+            if google_refresh_requested:
+                st.session_state[f"force_fresh_google_adjustments_{courier_id}_{period_start:%Y%m}"] = True
             st.session_state["selected_courier_id"] = courier_id
             st.session_state[menu_key] = "Pénzügy"
             st.session_state[finance_preflight_key] = True
@@ -16684,6 +16694,16 @@ def render_courier_detail_page() -> None:
             if finance_preflight_target
             else st.session_state.get(menu_key, "Pénzügy")
         )
+    force_fresh_google_adjustments = bool(
+        st.session_state.pop(
+            f"force_fresh_google_adjustments_{courier_id}_{period_start:%Y%m}",
+            False,
+        )
+    )
+    if force_fresh_google_adjustments:
+        row = row.copy()
+        row["JITT bónusz"] = 0
+        row["JITT malus"] = 0
     menu_target = st.session_state.pop(menu_target_key, None)
     if menu_target:
         st.session_state[menu_key] = menu_target
