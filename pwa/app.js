@@ -4758,13 +4758,17 @@ function activeWorkflowPanel() {
 
 function showOnlyWorkflowPanel(panelId) {
   const docs = state.workflow?.documents || {};
+  const settlementStep = workflowStep("settlement");
+  const tigStep = workflowStep("tig");
   const showSettlement = !isExtraWorkflow() && (
     Boolean(state.workflow?.financialBreakdown?.available)
     || Boolean((docs.settlement || []).length)
+    || Boolean(settlementStep && !settlementStep.locked)
   );
   const showTig = workflowCanShowTig() && (
     Boolean(state.workflow?.tigBreakdown?.available)
     || Boolean((docs.tig || []).length)
+    || Boolean(tigStep && !tigStep.locked)
   );
   ["settlement-panel", "tig-panel", "invoice-submit-panel", "invoice-check-panel"].forEach((id) => {
     const panel = $(`#${id}`);

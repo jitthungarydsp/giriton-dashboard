@@ -17910,7 +17910,10 @@ def build_workflow(
         or monthly_workflow_visible
         or (can_view_financial_amounts(user) if can_view_amounts is None else bool(can_view_amounts))
     )
-    preview_snapshot_only = not preview_read_only
+    # A mentett snapshot marad az elsődleges forrás a PWA-n, de hiányos vagy
+    # régebbi snapshot esetén legyen élő fallback is. Enélkül a workflow lépései
+    # aktívak maradhattak, miközben az elszámolás/TIG elfogadási panel eltűnt.
+    preview_snapshot_only = False
     financial_breakdown = build_financial_breakdown(
         user,
         month,
