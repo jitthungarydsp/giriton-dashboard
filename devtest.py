@@ -3780,7 +3780,12 @@ def _compact_amount_drilldown(label: str, rows: list[dict[str, object]]) -> list
     ].to_dict("records")
 
 
-def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
+def render_devtest_finance_snapshot_view(
+    snapshot: dict[str, object],
+    *,
+    courier_id: str | None = None,
+    period_start: date | None = None,
+) -> None:
     metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
     version = int(parse_huf_value(snapshot.get("version")))
     created_at = str(snapshot.get("created_at") or "")
@@ -3879,8 +3884,126 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
         + "</div></div>",
         unsafe_allow_html=True,
     )
+
+    # The fast page intentionally reads the published snapshot only. These
+    # sections restore the old finance workflow without recalculating it.
+    payable = _snapshot_amount(snapshot, "payable") or parse_huf_value(metadata.get("payable_total"))
+    income = _snapshot_amount(snapshot, "income")
+    deductions = _snapshot_amount(snapshot, "deductions")
+    st.markdown("#### Összesítő")
+    summary_columns = st.columns(3)
+    summary_columns[0].metric("Jóváírások", format_huf(income))
+    summary_columns[1].metric("Levonások összesen", format_huf(abs(deductions)))
+    summary_columns[2].metric("Kifizetendő", format_huf(payable))
+
+    payable_source_definitions = [
+        ("+", "Alapdíj", "base"),
+        ("+", "Borravaló", "tip"),
+        ("+", "Késedelmi díj", "delay_bonus"),
+        ("+", "Túramegfelelés", "compliance_bonus"),
+        ("+", "Kiflis bónusz", "monthly_bonus"),
+        ("+", "JITT bónusz", "manual_bonus"),
+        ("+", "Lojalitás", "loyalty_bonus"),
+        ("+", "Ügyfélértékelés", "customer_rating"),
+        ("+", "Korrekció +", "correction_income"),
+        ("-", "Kiflis malus", "monthly_malus"),
+        ("-", "JITT malus", "manual_malus"),
+        ("-", "ATM levonás", "atm_effect"),
+        ("-", "Egyéb kiadás", "other_expense"),
+        ("-", "Korrekció -", "correction_deduction"),
+        ("-", "Fizetés előleg", "salary_advance"),
+        ("-", "Céltartalék 10%", "reserve"),
+        ("-", "Biztosítási díj", "insurance_fee"),
+        ("=", "Kifizetendő", "payable"),
+    ]
+    payable_source_rows = []
+    for operation, label, item_key in payable_source_definitions:
+        amount = _snapshot_amount(snapshot, item_key)
+        if operation == "-":
+            amount = abs(amount)
+        if amount or operation == "=":
+            payable_source_rows.append({
+                "Művelet": operation,
+                "Tétel": label,
+                "Összeg": format_huf(amount),
+            })
+    st.markdown("#### Kifizetendő levezetése")
+    st.dataframe(
+        pd.DataFrame(payable_source_rows, columns=["Művelet", "Tétel", "Összeg"]),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    reserve_open = _snapshot_amount(snapshot, "target_reserve_open")
+    reserve_deduction = abs(_snapshot_amount(snapshot, "reserve"))
+    reserve_close = _snapshot_amount(snapshot, "target_reserve_close")
+    st.markdown("#### Céltartalék")
+    reserve_columns = st.columns(3)
+    reserve_columns[0].metric("CT nyitó", format_huf(reserve_open))
+    reserve_columns[1].metric("Havi levonás", format_huf(reserve_deduction))
+    reserve_columns[2].metric("CT záró", format_huf(reserve_close))
+    st.caption(f"Céltartalék státusz: {metadata.get('reserve_month_status') or 'In progress'}")
+
     finance_frame = _snapshot_section_frame(snapshot, "finance")
     tig_frame = _snapshot_section_frame(snapshot, "tig")
+    if courier_id and period_start and not finance_frame.empty:
+        override_frame = load_mobile_breakdown_overrides(courier_id, period_start)
+        if not override_frame.empty:
+            override_frame = override_frame.rename(columns={
+                "item_key": "Kulcs",
+                "item_label": "Megnevezés",
+                "amount_kind": "Típus",
+                "amount_value": "Érték",
+                "note": "Megjegyzés",
+            })
+            override_frame = override_frame[["Kulcs", "Megnevezés", "Típus", "Érték", "Megjegyzés"]]
+            for _, override_row in override_frame.iterrows():
+                item_key = str(override_row.get("Kulcs") or "").strip()
+                if not item_key:
+                    continue
+                matching = finance_frame["Kulcs"].astype(str).eq(item_key)
+                if matching.any():
+                    finance_frame.loc[matching, ["Megnevezés", "Típus", "Érték", "Megjegyzés"]] = override_row[
+                        ["Megnevezés", "Típus", "Érték", "Megjegyzés"]
+                    ].to_list()
+                else:
+                    finance_frame = pd.concat([finance_frame, pd.DataFrame([override_row])], ignore_index=True)
+
+        st.markdown("#### Manuális értékek")
+        st.caption("Itt kézzel hozzáadható vagy módosítható egy DB-felülírás. A mentés nem számolja újra az elszámolást.")
+        edited_finance = st.data_editor(
+            finance_frame,
+            hide_index=True,
+            use_container_width=True,
+            num_rows="dynamic",
+            key=f"snapshot_finance_editor_{courier_id}_{period_start:%Y%m}",
+            column_config={
+                "Kulcs": st.column_config.TextColumn("Kulcs", required=True),
+                "Megnevezés": st.column_config.TextColumn("Megnevezés"),
+                "Típus": st.column_config.SelectboxColumn("Típus", options=["huf", "count"], required=True),
+                "Érték": st.column_config.NumberColumn("Érték", step=1, format="%d"),
+                "Megjegyzés": st.column_config.TextColumn("Megjegyzés"),
+            },
+        )
+        if st.button(
+            "Manuális értékek mentése",
+            type="primary",
+            use_container_width=True,
+            key=f"save_snapshot_finance_overrides_{courier_id}_{period_start:%Y%m}",
+        ):
+            saved = save_mobile_breakdown_overrides(
+                courier_id,
+                period_start,
+                edited_finance.to_dict("records"),
+                str(st.session_state.get("user", {}).get("username") or "unknown"),
+            )
+            if saved:
+                clear_mobile_breakdown_override_cache()
+                st.success("A manuális értékek mentve.")
+                st.rerun()
+            else:
+                st.error("A manuális értékek mentése sikertelen. Ellenőrizd a mobile_settlement_breakdown_overrides táblát.")
+
     st.markdown("#### Mentett pénzügyi értékek")
     st.dataframe(finance_frame, hide_index=True, use_container_width=True)
     st.markdown("#### Mentett TIG")
@@ -16478,7 +16601,11 @@ def render_courier_detail_page() -> None:
                 period_start=period_start,
                 courier_id=courier_id,
             )
-            render_devtest_finance_snapshot_view(finance_snapshot)
+            render_devtest_finance_snapshot_view(
+                finance_snapshot,
+                courier_id=courier_id,
+                period_start=period_start,
+            )
         else:
             st.warning(
                 "Ehhez a futárhoz nincs mentett pénzügyi snapshot. "
