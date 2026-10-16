@@ -3587,9 +3587,44 @@ def load_devtest_finance_snapshot_by_id(courier_id: str, period_start: date, sna
             .order("display_order")
             .execute().data or []
         )
+        snapshot["sources"] = (
+            get_db().schema("settlement").table("courier_finance_snapshot_source")
+            .select("source_key,source_table,payload,row_count")
+            .eq("snapshot_id", clean_snapshot_id)
+            .order("source_key")
+            .execute().data or []
+        )
         return snapshot
     except BaseException:
         return {}
+
+
+def _snapshot_has_core_finance_data(snapshot: dict[str, object]) -> bool:
+    if not snapshot:
+        return False
+    core_keys = (
+        "income",
+        "base",
+        "tip",
+        "delay_bonus",
+        "compliance_bonus",
+        "orders",
+        "routes",
+    )
+    return any(abs(_snapshot_amount(snapshot, key)) > 0 for key in core_keys)
+
+
+def load_reliable_devtest_finance_snapshot(courier_id: str, period_start: date) -> dict[str, object]:
+    """Use the previous complete version when the newest version is empty."""
+    snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
+    if _snapshot_has_core_finance_data(snapshot):
+        return snapshot
+    previous_id = str(snapshot.get("previous_snapshot_id") or "").strip()
+    if previous_id:
+        previous = load_devtest_finance_snapshot_by_id(courier_id, period_start, previous_id)
+        if _snapshot_has_core_finance_data(previous):
+            return previous
+    return snapshot
 
 
 def restore_mobile_breakdown_from_finance_snapshot(
@@ -16381,6 +16416,7 @@ def render_courier_detail_page() -> None:
     if st.session_state.get(menu_key) == "ttekintés":
         st.session_state[menu_key] = "Pénzügy"
     selected_menu_hint = str(st.session_state.get(menu_key) or "Pénzügy")
+    existing_finance_snapshot = load_reliable_devtest_finance_snapshot(courier_id, period_start)
     if selected_menu_hint == "Profil":
         render_fast_courier_profile(
             courier_id=courier_id,
@@ -16402,7 +16438,7 @@ def render_courier_detail_page() -> None:
         )
         if selected_snapshot_menu != "Pénzügy":
             st.rerun()
-        finance_snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
+        finance_snapshot = existing_finance_snapshot
         st.markdown(
             f"<div class=\"section-title\">Pénzügy - {html.escape(courier_name)}</div>",
             unsafe_allow_html=True,
@@ -16459,6 +16495,52 @@ def render_courier_detail_page() -> None:
     profile = load_courier_profile(courier_id)
     summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
     summary_available = not summary_row.empty if isinstance(summary_row, pd.Series) else bool(summary_row)
+    if not summary_available and existing_finance_snapshot:
+        snapshot_values = {
+            key: _snapshot_amount(existing_finance_snapshot, key)
+            for key in (
+                "base", "tip", "delay_bonus", "compliance_bonus", "address_bonus_kifli",
+                "loyalty_bonus", "customer_rating", "correction", "monthly_bonus", "monthly_malus",
+                "atm_effect", "salary_advance", "reserve", "insurance_fee", "orders", "routes",
+                "highlighted_routes", "normal_routes",
+            )
+        }
+        snapshot_row_columns = {
+            "base": "Nettó bevétel",
+            "tip": "Borravaló",
+            "delay_bonus": "Késedelmi díj",
+            "compliance_bonus": "Túramegfelelés",
+            "address_bonus_kifli": "Cím bónusz (Kifli)",
+            "loyalty_bonus": "Lojalitás",
+            "customer_rating": "Ügyfélértékelés",
+            "correction": "Korrekció",
+            "monthly_bonus": "Importált bónusz",
+            "monthly_malus": "Importált málusz",
+            "atm_effect": "Importált ATM levonás",
+            "salary_advance": "Fizetés előleg",
+            "reserve": "Céltartalék 10%",
+            "insurance_fee": "Biztosítási díj",
+            "orders": "Rendelések",
+            "routes": "Útvonalak",
+            "highlighted_routes": "Kiemelt túrák",
+            "normal_routes": "Normál túrák",
+        }
+        row = row.copy()
+        for key, column in snapshot_row_columns.items():
+            row[column] = snapshot_values[key]
+        summary_row = {
+            "courier_base_rate_huf": snapshot_values["base"],
+            "tip_huf": snapshot_values["tip"],
+            "delay_bonus_huf": snapshot_values["delay_bonus"],
+            "compliance_bonus_huf": snapshot_values["compliance_bonus"],
+            "imported_bonus_huf": snapshot_values["monthly_bonus"],
+            "imported_malus_huf": snapshot_values["monthly_malus"],
+            "imported_atm_deduction_huf": snapshot_values["atm_effect"],
+            "loyalty_bonus_huf": snapshot_values["loyalty_bonus"],
+            "order_count": snapshot_values["orders"],
+            "route_count": snapshot_values["routes"],
+        }
+        summary_available = True
     profile_adjustments = (
         load_courier_adjustments(courier_id, period_start, period_end)
         if needs_finance_adjustments
