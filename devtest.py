@@ -16308,6 +16308,40 @@ def render_courier_detail_page() -> None:
             unsafe_allow_html=True,
         )
         if finance_snapshot:
+            snapshot_row = row.copy()
+            snapshot_column_map = {
+                "payable": "Kifizetendő",
+                "base": "Alapdíj",
+                "tip": "Borravaló",
+                "delay_bonus": "Késedelmi díj",
+                "compliance_bonus": "Túramegfelelés",
+                "address_bonus_kifli": "Cím bónusz (Kifli)",
+                "loyalty_bonus": "Lojalitás",
+                "customer_rating": "Ügyfélértékelés",
+                "correction_income": "Korrekció +",
+                "correction_deduction": "Korrekció -",
+                "monthly_bonus": "Importált bónusz",
+                "monthly_malus": "Importált málusz",
+                "bonus_malus": "JITT bónusz",
+                "atm_effect": "Importált ATM levonás",
+                "salary_advance": "Fizetés előleg",
+                "reserve": "Céltartalék 10%",
+                "insurance_fee": "Biztosítási díj",
+                "orders": "Rendelések",
+                "routes": "Útvonalak",
+                "highlighted_routes": "Kiemelt túrák",
+                "normal_routes": "Normál túrák",
+            }
+            for snapshot_key, row_column in snapshot_column_map.items():
+                snapshot_row[row_column] = _snapshot_amount(finance_snapshot, snapshot_key)
+            snapshot_row["Számolt túrák"] = _snapshot_amount(finance_snapshot, "routes")
+            render_empty_right_menu(
+                snapshot_row,
+                profile=load_courier_profile(courier_id),
+                monthly_closure=load_courier_monthly_closure(courier_id, period_start, period_end),
+                period_start=period_start,
+                courier_id=courier_id,
+            )
             render_devtest_finance_snapshot_view(finance_snapshot)
         else:
             st.warning(
