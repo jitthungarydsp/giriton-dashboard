@@ -5179,7 +5179,10 @@ function renderSettlementDashboardExpanded(row) {
         <strong>${escapeHtml(row.courierName || "Futár")}</strong>
         <small>#${escapeHtml(row.courierId || "-")} · ${escapeHtml(formatMonthLabel(state.settlementDashboardMonth))}</small>
       </div>
-      ${renderSettlementDashboardStatus(row.status || {})}
+      <div class="settlement-dashboard-expanded-actions">
+        ${renderSettlementDashboardStatus(row.status || {})}
+        <button class="icon-button settlement-dashboard-edit" type="button" data-settlement-dashboard-edit="${escapeHtml(row.courierId || "")}" title="Futár értékeinek szerkesztése" aria-label="Futár értékeinek szerkesztése">✎</button>
+      </div>
     </div>
     ${settlementDashboardDetailTabs()}
     ${detail.loading ? `<div class="empty-card">Futár részletek betöltése...</div>` : ""}

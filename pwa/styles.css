@@ -463,6 +463,7 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-dashboard-flag.warn { border-color: #ffd891; background: #fff7df; color: #8b5d00; }
 .settlement-dashboard-expanded { display: grid; gap: 12px; margin: -2px 0 8px; padding: 14px; border: 1px solid #a8d7a7; border-radius: 16px; background: #fbfffb; box-shadow: 0 12px 26px #31413412; }
 .settlement-dashboard-expanded-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.settlement-dashboard-expanded-actions { display: flex; align-items: center; gap: 8px; }
 .settlement-dashboard-expanded-head strong { display: block; font-size: 16px; }
 .settlement-dashboard-expanded-head small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 800; }
 .settlement-dashboard-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
