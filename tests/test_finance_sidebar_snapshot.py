@@ -2,6 +2,10 @@ import ast
 import unittest
 from io import BytesIO
 from pathlib import Path
+from datetime import date
+from types import SimpleNamespace
+import html
+import pandas as pd
 
 
 class FinanceSidebarSnapshotTest(unittest.TestCase):
@@ -41,6 +45,37 @@ class FinanceSidebarSnapshotTest(unittest.TestCase):
         self.assertIn("finance_snapshot_display_row(row, panel_snapshot)", code)
         self.assertIn("_snapshot_source_payload(panel_snapshot, 'tig_breakdown')", code)
         self.assertNotIn("transfer_uploaded or transfer_expected", code)
+
+    def test_empty_sidebar_html_is_not_markdown_code(self):
+        node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef) and node.name == "render_empty_right_menu")
+        rendered = []
+        ns = {"pd": pd, "date": date, "html": html,
+              "parse_huf_value": lambda value: float(value or 0),
+              "format_huf": lambda value: f"{int(value)} Ft",
+              "format_bank_account_4": lambda value: str(value or ""),
+              "st": SimpleNamespace(markdown=lambda text, **kwargs: rendered.append(text))}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), ns)
+        ns["render_empty_right_menu"]()
+        self.assertEqual(len(rendered), 1)
+        self.assertTrue(rendered[0].startswith('<div class="right-empty-menu">'))
+        self.assertNotIn("\n\n", rendered[0])
+        self.assertTrue(all(not line.startswith(" ") for line in rendered[0].splitlines()))
+
+    def test_initial_empty_sidebar_is_skipped_for_selected_courier(self):
+        node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef) and node.name == "show_new_settlement_page")
+        prefix = ast.Module(body=[ast.FunctionDef(
+            name="render_initial_sidebar", args=node.args, body=node.body[:2],
+            decorator_list=[], returns=None,
+        )], type_ignores=[])
+        calls = []
+        ns = {"apply_design": lambda: None, "render_empty_right_menu": lambda: calls.append("empty"),
+              "st": SimpleNamespace(session_state={"selected_courier_id": "7665"})}
+        exec(compile(ast.fix_missing_locations(prefix), "devtest.py", "exec"), ns)
+        ns["render_initial_sidebar"]()
+        self.assertEqual(calls, [])
+        ns["st"].session_state.clear()
+        ns["render_initial_sidebar"]()
+        self.assertEqual(calls, ["empty"])
 
     def test_tig_pdf_requests_cash_invoice_only_above_1000(self):
         from resources.settlement_pdf import build_tig_pdf

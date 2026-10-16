@@ -2007,8 +2007,7 @@ def render_empty_right_menu(
                 '<div class="right-invoice-row"><span>KP</span><strong>hiba</strong></div>'
             )
     invoice_compare_class = "is-bad" if invoice_compare_bad else "is-ok"
-    st.markdown(
-        f"""
+    sidebar_html = f"""
         <div class="right-empty-menu">
             <div class="right-empty-menu-card">
                 <div class="right-empty-menu-title">Kifizetendő</div>
@@ -2046,9 +2045,10 @@ def render_empty_right_menu(
                 <div class="right-invoice-status">{html.escape(invoice_compare_status)}</div>{invoice_compare_action_html}
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        """
+    # Blank interpolated notes must not split an indented HTML block into
+    # Markdown code. Render the fragment without indentation or blank lines.
+    st.markdown("\n".join(line.strip() for line in sidebar_html.splitlines() if line.strip()), unsafe_allow_html=True)
 
 
 def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
@@ -24251,7 +24251,9 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
 
 def show_new_settlement_page() -> None:
     apply_design()
-    render_empty_right_menu()
+    # A fixed empty sidebar would overlap the selected courier's sidebar.
+    if not st.session_state.get("selected_courier_id"):
+        render_empty_right_menu()
     # Cancel the legacy courier-by-courier snapshot queue. It changed the
     # selected courier and reran the whole Streamlit page for every row.
     st.session_state.pop("devtest_exact_snapshot_batch_requested", None)
