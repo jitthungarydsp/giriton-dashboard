@@ -24310,7 +24310,20 @@ def show_new_settlement_page() -> None:
             else "A futárok, státuszok és mentett pénzügyi adatok összerakása folyamatban van."
         )
         st.progress(35)
-    if use_fast_overview:
+    no_excel_session = (
+        str(selected_calculation_mode or "").strip().casefold() == "excel"
+        and not import_session_id
+    )
+    if no_excel_session:
+        # A new/empty month has no source session to calculate. Do not run
+        # the full settlement pipeline just to produce an empty dashboard.
+        data = pd.DataFrame(columns=[
+            "Courier ID", "Futár", "Raktár", "Branch", "Számítás módja",
+            "Vállalkozás", "Státusz", "Nettó bevétel", "Bónusz", "Borravaló",
+            "Levonás", "Kifizetendő", "Előző havi összeg", "KPI",
+        ])
+        data_is_fast_overview = False
+    elif use_fast_overview:
         data = build_fast_settlement_overview_data(
             import_session_id,
             balance_period_start,
@@ -24332,7 +24345,7 @@ def show_new_settlement_page() -> None:
             ),
         )
         data_is_fast_overview = False
-    if use_fast_overview and data.empty:
+    if use_fast_overview and data.empty and not no_excel_session:
         data = build_settlement_overview_data(
             selected_calculation_mode,
             import_session_id,
@@ -24353,6 +24366,11 @@ def show_new_settlement_page() -> None:
     if attendance_audit_enabled:
         data = apply_dsp_shift_attendance_audit(data, balance_period_start, balance_period_end)
     loading_panel.empty()
+    if no_excel_session:
+        st.info(
+            f"A kiválasztott hónaphoz ({selected_month}) még nincs feldolgozott Excel-import. "
+            "Töltsd fel az Excelt, majd indítsd el a számítást."
+        )
 
     with st.sidebar:
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
