@@ -442,11 +442,12 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-dashboard-toolbar strong { font-size: 18px; }
 .settlement-dashboard-toolbar span { color: var(--muted); text-align: right; }
 .settlement-dashboard-list { display: grid; gap: 8px; }
-.settlement-dashboard-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px; gap: 8px; align-items: center; width: 100%; min-height: 72px; padding: 6px 8px 6px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); text-align: left; box-shadow: 0 7px 20px #3141340a; }
+.settlement-dashboard-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; width: 100%; min-height: 72px; padding: 6px 8px 6px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); text-align: left; box-shadow: 0 7px 20px #3141340a; }
 .settlement-dashboard-row.active { border-color: #80c885; background: #f3fbf0; box-shadow: 0 10px 24px #2c7a3b18; }
 .settlement-dashboard-row.highlighted, .settlement-dashboard-row.highlighted.active { border: 2px solid #111827; box-shadow: 0 0 0 3px rgba(17,24,39,.12), 0 7px 20px #3141340a; }
 .settlement-dashboard-row-main { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(130px, .8fr) minmax(92px, auto); gap: 10px; align-items: center; width: 100%; min-height: 58px; padding: 6px 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.settlement-dashboard-edit { width: 36px; height: 36px; justify-self: center; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--green-dark); font-size: 19px; line-height: 1; cursor: pointer; }
+.settlement-dashboard-edit { display: inline-flex; width: auto; min-width: 108px; height: 36px; align-items: center; justify-content: center; gap: 5px; justify-self: center; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--green-dark); font-size: 12px; font-weight: 900; line-height: 1; cursor: pointer; }
+.settlement-dashboard-edit span:first-child { font-size: 18px; line-height: 1; }
 .settlement-dashboard-edit:hover { border-color: #20763a; background: #edf8e9; }
 .settlement-dashboard-row strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
 .settlement-dashboard-row-main > strong { text-align: right; font-size: 15px; }
@@ -1158,7 +1159,7 @@ textarea { min-height: 96px; resize: vertical; }
   .schedule-rec-foot { justify-items: start; text-align: left; }
   .settlement-dashboard-hero { grid-template-columns: 1fr; }
   .settlement-dashboard-hero strong { font-size: 24px; }
-  .settlement-dashboard-row { grid-template-columns: minmax(0, 1fr) 38px; }
+  .settlement-dashboard-row { grid-template-columns: minmax(0, 1fr) auto; }
   .settlement-dashboard-row-main { grid-template-columns: 1fr; }
   .settlement-dashboard-row-main > strong { text-align: left; }
   .settlement-dashboard-editor-row { grid-template-columns: minmax(0, 1fr) 34px; }
