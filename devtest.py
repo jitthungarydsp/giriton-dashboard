@@ -5306,8 +5306,8 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     ]
 
     # Newer PostgREST/client combinations can return an error body that the
-    # SDK cannot decode as APIError. Prefer the raw REST reader, whose HTTP
-    # error handling is stable, and keep the SDK queries as fallbacks.
+    # SDK cannot decode as APIError. Use one bounded raw REST request instead
+    # of retrying the SDK several times with its much longer timeout.
     rows = None
     try:
         from resources.courier_master_db import read_courier_master
@@ -5316,35 +5316,6 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
         rows = raw_master.to_dict("records") if isinstance(raw_master, pd.DataFrame) else []
     except BaseException:
         pass
-
-    if rows is None:
-        try:
-            rows = (
-                get_db()
-                .schema("public")
-                .table("courier_master")
-                .select("*")
-                .order("courier_name")
-                .execute()
-                .data
-                or []
-            )
-        except BaseException:
-            pass
-
-    if rows is None:
-        try:
-            rows = (
-                get_db()
-                .schema("public")
-                .table("courier_master")
-                .select("*")
-                .execute()
-                .data
-                or []
-            )
-        except BaseException:
-            pass
 
     if rows is None:
         result = pd.DataFrame(columns=columns)
