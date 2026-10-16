@@ -2782,6 +2782,24 @@ def load_latest_excel_jit_session_id(period_start: date | None = None) -> str | 
                 dated_session = _first_excel_session(dated_rows)
                 if dated_session:
                     return dated_session
+                # Older imports can have a missing or non-normalized
+                # jit_row.route_date while their calculated summary still
+                # stores the correct settlement month.
+                summary_rows = (
+                    get_db()
+                    .schema("settlement")
+                    .table("courier_settlement_summary")
+                    .select("session_id,period_start")
+                    .eq("period_start", period_start.isoformat())
+                    .limit(1)
+                    .execute()
+                    .data
+                    or []
+                )
+                if summary_rows:
+                    summary_session = str(summary_rows[0].get("session_id") or "").strip()
+                    if summary_session:
+                        return summary_session
                 return None
             except BaseException:
                 pass
