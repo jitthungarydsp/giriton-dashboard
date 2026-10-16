@@ -1,0 +1,5331 @@
+{
+  "month": "2026-09",
+  "extracted_at": "2026-10-15T21:49:26+02:00",
+  "couriers": [
+    {
+      "courier_id": "7688",
+      "courier_name": "Kancsár Zoltán",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 998902,
+      "displayed_total": "998 902 Ft",
+      "detail_total_payable_huf": 998902,
+      "detail_total_payable": "998 902 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+409 150 Ft",
+          "value_huf": 409150
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+254 886 Ft",
+          "value_huf": 254886
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+208 333 Ft",
+          "value_huf": 208333
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+208 333 Ft",
+          "value_huf": 208333
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+35 000 Ft",
+          "value_huf": 35000
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+88 200 Ft",
+          "value_huf": 88200
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "-205 000 Ft",
+          "value_huf": -205000
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "882",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8185",
+      "courier_name": "Komjáti 8185 Ákos",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 958539,
+      "displayed_total": "958 539 Ft",
+      "detail_total_payable_huf": 958539,
+      "detail_total_payable": "958 539 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+373 000 Ft",
+          "value_huf": 373000
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+237 771 Ft",
+          "value_huf": 237771
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+200 666 Ft",
+          "value_huf": 200666
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+200 666 Ft",
+          "value_huf": 200666
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+72 080 Ft",
+          "value_huf": 72080
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "-90 000 Ft",
+          "value_huf": -90000
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "-55 644 Ft",
+          "value_huf": -55644
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+20 000 Ft",
+          "value_huf": 20000
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "741",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "2875",
+      "courier_name": "Rácz Csaba",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 1061123,
+      "displayed_total": "1 061 123 Ft",
+      "detail_total_payable_huf": 1061123,
+      "detail_total_payable": "1 061 123 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+354 150 Ft",
+          "value_huf": 354150
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+192 999 Ft",
+          "value_huf": 192999
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+192 999 Ft",
+          "value_huf": 192999
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+83 160 Ft",
+          "value_huf": 83160
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+20 000 Ft",
+          "value_huf": 20000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "791",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6959",
+      "courier_name": "Bárándi Bendegúz",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 360619,
+      "displayed_total": "360 619 Ft",
+      "detail_total_payable_huf": 360619,
+      "detail_total_payable": "360 619 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+328 050 Ft",
+          "value_huf": 328050
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+205 300 Ft",
+          "value_huf": 205300
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+171 999 Ft",
+          "value_huf": 171999
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+28 750 Ft",
+          "value_huf": 28750
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+17 700 Ft",
+          "value_huf": 17700
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "-310 000 Ft",
+          "value_huf": -310000
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "-51 180 Ft",
+          "value_huf": -51180
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "-30 000 Ft",
+          "value_huf": -30000
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "709",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6909",
+      "courier_name": "Bajorhegyi Ádám",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 886299,
+      "displayed_total": "886 299 Ft",
+      "detail_total_payable_huf": 886299,
+      "detail_total_payable": "886 299 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+319 200 Ft",
+          "value_huf": 319200
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+174 407 Ft",
+          "value_huf": 174407
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+149 666 Ft",
+          "value_huf": 149666
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+149 666 Ft",
+          "value_huf": 149666
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "+11 500 Ft",
+          "value_huf": 11500
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+25 500 Ft",
+          "value_huf": 25500
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+43 860 Ft",
+          "value_huf": 43860
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "+2500 Ft",
+          "value_huf": 2500
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "580",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6596",
+      "courier_name": "Nagy Kristóf",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 771772,
+      "displayed_total": "771 772 Ft",
+      "detail_total_payable_huf": 771772,
+      "detail_total_payable": "771 772 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+295 800 Ft",
+          "value_huf": 295800
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+164 332 Ft",
+          "value_huf": 164332
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+48 000 Ft",
+          "value_huf": 48000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+60 420 Ft",
+          "value_huf": 60420
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-4280 Ft",
+          "value_huf": -4280
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+20 000 Ft",
+          "value_huf": 20000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "667",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6825",
+      "courier_name": "Szolnoki Tibor",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 884791,
+      "displayed_total": "884 791 Ft",
+      "detail_total_payable_huf": 884791,
+      "detail_total_payable": "884 791 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+298 450 Ft",
+          "value_huf": 298450
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+156 331 Ft",
+          "value_huf": 156331
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+140 332 Ft",
+          "value_huf": 140332
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+59 360 Ft",
+          "value_huf": 59360
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "+25 000 Ft",
+          "value_huf": 25000
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "664",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7147",
+      "courier_name": "Horváth István",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 854002,
+      "displayed_total": "854 002 Ft",
+      "detail_total_payable_huf": 854002,
+      "detail_total_payable": "854 002 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+303 750 Ft",
+          "value_huf": 303750
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+159 331 Ft",
+          "value_huf": 159331
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+159 331 Ft",
+          "value_huf": 159331
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+49 020 Ft",
+          "value_huf": 49020
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "615",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7486",
+      "courier_name": "Papp 7486 Nikolett",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 738192,
+      "displayed_total": "738 192 Ft",
+      "detail_total_payable_huf": 738192,
+      "detail_total_payable": "738 192 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+264 000 Ft",
+          "value_huf": 264000
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+134 666 Ft",
+          "value_huf": 134666
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+134 666 Ft",
+          "value_huf": 134666
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+39 560 Ft",
+          "value_huf": 39560
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-22 733 Ft",
+          "value_huf": -22733
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "567",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6956",
+      "courier_name": "Árva Tamás",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 792172,
+      "displayed_total": "792 172 Ft",
+      "detail_total_payable_huf": 792172,
+      "detail_total_payable": "792 172 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+282 650 Ft",
+          "value_huf": 282650
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+160 139 Ft",
+          "value_huf": 160139
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+153 331 Ft",
+          "value_huf": 153331
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+147 331 Ft",
+          "value_huf": 147331
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "+27 500 Ft",
+          "value_huf": 27500
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+16 500 Ft",
+          "value_huf": 16500
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+36 300 Ft",
+          "value_huf": 36300
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "+20 000 Ft",
+          "value_huf": 20000
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "-61 579 Ft",
+          "value_huf": -61579
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "521",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8530",
+      "courier_name": "György 8530 Roland",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 765133,
+      "displayed_total": "765 133 Ft",
+      "detail_total_payable_huf": 765133,
+      "detail_total_payable": "765 133 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+285 750 Ft",
+          "value_huf": 285750
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+136 333 Ft",
+          "value_huf": 136333
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+136 333 Ft",
+          "value_huf": 136333
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+41 280 Ft",
+          "value_huf": 41280
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "579",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7538",
+      "courier_name": "Cserna Levente Zoltán",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 368132,
+      "displayed_total": "368 132 Ft",
+      "detail_total_payable_huf": 368132,
+      "detail_total_payable": "368 132 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+275 800 Ft",
+          "value_huf": 275800
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+168 750 Ft",
+          "value_huf": 168750
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+134 332 Ft",
+          "value_huf": 134332
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+21 750 Ft",
+          "value_huf": 21750
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+7500 Ft",
+          "value_huf": 7500
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "-240 000 Ft",
+          "value_huf": -240000
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "576",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7842",
+      "courier_name": "Fabó Marcell",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 602641,
+      "displayed_total": "602 641 Ft",
+      "detail_total_payable_huf": 602641,
+      "detail_total_payable": "602 641 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+259 850 Ft",
+          "value_huf": 259850
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+136 333 Ft",
+          "value_huf": 136333
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+6000 Ft",
+          "value_huf": 6000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "+30 000 Ft",
+          "value_huf": 30000
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "582",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7817",
+      "courier_name": "Varecza Roland",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 455665,
+      "displayed_total": "455 665 Ft",
+      "detail_total_payable_huf": 455665,
+      "detail_total_payable": "455 665 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+271 850 Ft",
+          "value_huf": 271850
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+141 665 Ft",
+          "value_huf": 141665
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+23 750 Ft",
+          "value_huf": 23750
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-140 000 Ft",
+          "value_huf": -140000
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "574",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6206",
+      "courier_name": "Hervai Olivér",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 872708,
+      "displayed_total": "872 708 Ft",
+      "detail_total_payable_huf": 872708,
+      "detail_total_payable": "872 708 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+263 550 Ft",
+          "value_huf": 263550
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+132 999 Ft",
+          "value_huf": 132999
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+132 999 Ft",
+          "value_huf": 132999
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+30 360 Ft",
+          "value_huf": 30360
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "+165 000 Ft",
+          "value_huf": 165000
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "497",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7725",
+      "courier_name": "Nagy 7725 István",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 668316,
+      "displayed_total": "668 316 Ft",
+      "detail_total_payable_huf": 668316,
+      "detail_total_payable": "668 316 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+268 200 Ft",
+          "value_huf": 268200
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+134 332 Ft",
+          "value_huf": 134332
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+134 332 Ft",
+          "value_huf": 134332
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+31 020 Ft",
+          "value_huf": 31020
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-60 000 Ft",
+          "value_huf": -60000
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "508",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8332",
+      "courier_name": "Hegedüs 8332 Dávid",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 590202,
+      "displayed_total": "590 202 Ft",
+      "detail_total_payable_huf": 590202,
+      "detail_total_payable": "590 202 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+271 800 Ft",
+          "value_huf": 271800
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+136 664 Ft",
+          "value_huf": 136664
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+22 500 Ft",
+          "value_huf": 22500
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+23 750 Ft",
+          "value_huf": 23750
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "471",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6686",
+      "courier_name": "Magyar Csilla",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 547250,
+      "displayed_total": "547 250 Ft",
+      "detail_total_payable_huf": 547250,
+      "detail_total_payable": "547 250 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+238 000 Ft",
+          "value_huf": 238000
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+120 000 Ft",
+          "value_huf": 120000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+20 000 Ft",
+          "value_huf": 20000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+20 000 Ft",
+          "value_huf": 20000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "523",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7245",
+      "courier_name": "Kiss 7245 Csaba",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 598167,
+      "displayed_total": "598 167 Ft",
+      "detail_total_payable_huf": 598167,
+      "detail_total_payable": "598 167 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+265 650 Ft",
+          "value_huf": 265650
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+129 999 Ft",
+          "value_huf": 129999
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+40 000 Ft",
+          "value_huf": 40000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+21 375 Ft",
+          "value_huf": 21375
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "449",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7226",
+      "courier_name": "Bubán Szimonetta",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 493215,
+      "displayed_total": "493 215 Ft",
+      "detail_total_payable_huf": 493215,
+      "detail_total_payable": "493 215 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+256 000 Ft",
+          "value_huf": 256000
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+139 825 Ft",
+          "value_huf": 139825
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+132 000 Ft",
+          "value_huf": 132000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+22 000 Ft",
+          "value_huf": 22000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+22 000 Ft",
+          "value_huf": 22000
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "-75 000 Ft",
+          "value_huf": -75000
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "-33 610 Ft",
+          "value_huf": -33610
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+30 000 Ft",
+          "value_huf": 30000
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "522",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7665",
+      "courier_name": "Koncsik Zoltán",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 553077,
+      "displayed_total": "553 077 Ft",
+      "detail_total_payable_huf": 553077,
+      "detail_total_payable": "553 077 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+214 450 Ft",
+          "value_huf": 214450
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+114 999 Ft",
+          "value_huf": 114999
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+37 000 Ft",
+          "value_huf": 37000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+26 400 Ft",
+          "value_huf": 26400
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "544",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7632",
+      "courier_name": "Tinger József",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 651292,
+      "displayed_total": "651 292 Ft",
+      "detail_total_payable_huf": 651292,
+      "detail_total_payable": "651 292 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+212 500 Ft",
+          "value_huf": 212500
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+161 220 Ft",
+          "value_huf": 161220
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+113 666 Ft",
+          "value_huf": 113666
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+113 666 Ft",
+          "value_huf": 113666
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+19 500 Ft",
+          "value_huf": 19500
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+25 740 Ft",
+          "value_huf": 25740
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+5000 Ft",
+          "value_huf": 5000
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "528",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "5836",
+      "courier_name": "Pardi Ottó",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 555478,
+      "displayed_total": "555 478 Ft",
+      "detail_total_payable_huf": 555478,
+      "detail_total_payable": "555 478 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+265 100 Ft",
+          "value_huf": 265100
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+125 648 Ft",
+          "value_huf": 125648
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "+48 180 Ft",
+          "value_huf": 48180
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+20 000 Ft",
+          "value_huf": 20000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "351",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7767",
+      "courier_name": "Kanyó Krisztián",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 517593,
+      "displayed_total": "517 593 Ft",
+      "detail_total_payable_huf": 517593,
+      "detail_total_payable": "517 593 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+217 650 Ft",
+          "value_huf": 217650
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+117 999 Ft",
+          "value_huf": 117999
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+38 000 Ft",
+          "value_huf": 38000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "407",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6730",
+      "courier_name": "Jamal Nasir",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 530881,
+      "displayed_total": "530 881 Ft",
+      "detail_total_payable_huf": 530881,
+      "detail_total_payable": "530 881 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+191 500 Ft",
+          "value_huf": 191500
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+107 666 Ft",
+          "value_huf": 107666
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+107 666 Ft",
+          "value_huf": 107666
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "436",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7829",
+      "courier_name": "Hohmann András Ármin",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 253240,
+      "displayed_total": "253 240 Ft",
+      "detail_total_payable_huf": 253240,
+      "detail_total_payable": "253 240 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+176 500 Ft",
+          "value_huf": 176500
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+29 000 Ft",
+          "value_huf": 29000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-64 350 Ft",
+          "value_huf": -64350
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "371",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8001",
+      "courier_name": "Lulaj 8001 Brendon",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 423533,
+      "displayed_total": "423 533 Ft",
+      "detail_total_payable_huf": 423533,
+      "detail_total_payable": "423 533 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+180 850 Ft",
+          "value_huf": 180850
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+94 333 Ft",
+          "value_huf": 94333
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+31 000 Ft",
+          "value_huf": 31000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "371",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7979",
+      "courier_name": "Jeney 7979 Tibor",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 460050,
+      "displayed_total": "460 050 Ft",
+      "detail_total_payable_huf": 460050,
+      "detail_total_payable": "460 050 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+176 500 Ft",
+          "value_huf": 176500
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+87 000 Ft",
+          "value_huf": 87000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+87 000 Ft",
+          "value_huf": 87000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "387",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7056",
+      "courier_name": "Baranyi Szabolcs",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 397613,
+      "displayed_total": "397 613 Ft",
+      "detail_total_payable_huf": 397613,
+      "detail_total_payable": "397 613 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+177 550 Ft",
+          "value_huf": 177550
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+98 089 Ft",
+          "value_huf": 98089
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+96 999 Ft",
+          "value_huf": 96999
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+96 999 Ft",
+          "value_huf": 96999
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+10 200 Ft",
+          "value_huf": 10200
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "-102 224 Ft",
+          "value_huf": -102224
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+20 000 Ft",
+          "value_huf": 20000
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "352",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8264",
+      "courier_name": "Rusvai 8264 Marcell",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n✓\nHavi folyamat lezĂˇrva\nKész\n✓",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": -276107,
+      "displayed_total": "-276 107 Ft",
+      "detail_total_payable_huf": -276107,
+      "detail_total_payable": "-276 107 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+176 350 Ft",
+          "value_huf": 176350
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+94 425 Ft",
+          "value_huf": 94425
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+64 333 Ft",
+          "value_huf": 64333
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+14 750 Ft",
+          "value_huf": 14750
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+15 000 Ft",
+          "value_huf": 15000
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "-638 600 Ft",
+          "value_huf": -638600
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "-2365 Ft",
+          "value_huf": -2365
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "378",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "5774",
+      "courier_name": "Prantner Péter Ákos",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 136944,
+      "displayed_total": "136 944 Ft",
+      "detail_total_payable_huf": 136944,
+      "detail_total_payable": "136 944 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+169 800 Ft",
+          "value_huf": 169800
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+30 000 Ft",
+          "value_huf": 30000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-145 000 Ft",
+          "value_huf": -145000
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "338",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8223",
+      "courier_name": "Takács 8223 Attila",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 343950,
+      "displayed_total": "343 950 Ft",
+      "detail_total_payable_huf": 343950,
+      "detail_total_payable": "343 950 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+152 000 Ft",
+          "value_huf": 152000
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+84 000 Ft",
+          "value_huf": 84000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+14 000 Ft",
+          "value_huf": 14000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "372",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8267",
+      "courier_name": "Laukó 8267 Buda",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": -330220,
+      "displayed_total": "-330 220 Ft",
+      "detail_total_payable_huf": -330220,
+      "detail_total_payable": "-330 220 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+149 450 Ft",
+          "value_huf": 149450
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+28 500 Ft",
+          "value_huf": 28500
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+14 250 Ft",
+          "value_huf": 14250
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-628 700 Ft",
+          "value_huf": -628700
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "324",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7296",
+      "courier_name": "Petrik Róbert",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 126735,
+      "displayed_total": "126 735 Ft",
+      "detail_total_payable_huf": 126735,
+      "detail_total_payable": "126 735 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+146 300 Ft",
+          "value_huf": 146300
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+72 000 Ft",
+          "value_huf": 72000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-195 000 Ft",
+          "value_huf": -195000
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "301",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7753",
+      "courier_name": "Tuza Ádám",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 133448,
+      "displayed_total": "133 448 Ft",
+      "detail_total_payable_huf": 133448,
+      "detail_total_payable": "133 448 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+146 050 Ft",
+          "value_huf": 146050
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+24 000 Ft",
+          "value_huf": 24000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-50 000 Ft",
+          "value_huf": -50000
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "211",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6856",
+      "courier_name": "Király Dániel Dávid",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 215550,
+      "displayed_total": "215 550 Ft",
+      "detail_total_payable_huf": 215550,
+      "detail_total_payable": "215 550 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+118 700 Ft",
+          "value_huf": 118700
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+10 500 Ft",
+          "value_huf": 10500
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+10 500 Ft",
+          "value_huf": 10500
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "231",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8226",
+      "courier_name": "Baráth 8226 Dominik",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 181200,
+      "displayed_total": "181 200 Ft",
+      "detail_total_payable_huf": 181200,
+      "detail_total_payable": "181 200 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+112 700 Ft",
+          "value_huf": 112700
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+73 500 Ft",
+          "value_huf": 73500
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "-5000 Ft",
+          "value_huf": -5000
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "236",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7244",
+      "courier_name": "Nagy 7244 Attila",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 299450,
+      "displayed_total": "299 450 Ft",
+      "detail_total_payable_huf": 299450,
+      "detail_total_payable": "299 450 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+106 900 Ft",
+          "value_huf": 106900
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+48 000 Ft",
+          "value_huf": 48000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+48 000 Ft",
+          "value_huf": 48000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "+25 000 Ft",
+          "value_huf": 25000
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "242",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7724",
+      "courier_name": "Molnár Ákos",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 81896,
+      "displayed_total": "81 896 Ft",
+      "detail_total_payable_huf": 81896,
+      "detail_total_payable": "81 896 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+110 850 Ft",
+          "value_huf": 110850
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+20 500 Ft",
+          "value_huf": 20500
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "216",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6855",
+      "courier_name": "Vándor Balázs",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 242791,
+      "displayed_total": "242 791 Ft",
+      "detail_total_payable_huf": 242791,
+      "detail_total_payable": "242 791 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+126 450 Ft",
+          "value_huf": 126450
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+62 991 Ft",
+          "value_huf": 62991
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+9000 Ft",
+          "value_huf": 9000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "169",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6544",
+      "courier_name": "Kiss Koppány Zalán",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 242666,
+      "displayed_total": "242 666 Ft",
+      "detail_total_payable_huf": 242666,
+      "detail_total_payable": "242 666 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+97 650 Ft",
+          "value_huf": 97650
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+55 333 Ft",
+          "value_huf": 55333
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+55 333 Ft",
+          "value_huf": 55333
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-25 000 Ft",
+          "value_huf": -25000
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "229",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8054",
+      "courier_name": "Szombati 8054 Márk",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 167150,
+      "displayed_total": "167 150 Ft",
+      "detail_total_payable_huf": 167150,
+      "detail_total_payable": "167 150 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+100 350 Ft",
+          "value_huf": 100350
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+18 500 Ft",
+          "value_huf": 18500
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "192",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7267",
+      "courier_name": "Bodonyi Gellért",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 179532,
+      "displayed_total": "179 532 Ft",
+      "detail_total_payable_huf": 179532,
+      "detail_total_payable": "179 532 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+81 650 Ft",
+          "value_huf": 81650
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+39 799 Ft",
+          "value_huf": 39799
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+43 333 Ft",
+          "value_huf": 43333
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+7250 Ft",
+          "value_huf": 7250
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+7500 Ft",
+          "value_huf": 7500
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "169",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8980",
+      "courier_name": "Markgráf 8980 Zsolt",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 126400,
+      "displayed_total": "126 400 Ft",
+      "detail_total_payable_huf": 126400,
+      "detail_total_payable": "126 400 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+59 500 Ft",
+          "value_huf": 59500
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+33 000 Ft",
+          "value_huf": 33000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "132",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7018",
+      "courier_name": "Mocsáry Attila",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 105500,
+      "displayed_total": "105 500 Ft",
+      "detail_total_payable_huf": 105500,
+      "detail_total_payable": "105 500 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+45 500 Ft",
+          "value_huf": 45500
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+21 000 Ft",
+          "value_huf": 21000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+21 000 Ft",
+          "value_huf": 21000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "75",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8976",
+      "courier_name": "Varró 8976 lili",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 66140,
+      "displayed_total": "66 140 Ft",
+      "detail_total_payable_huf": 66140,
+      "detail_total_payable": "66 140 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+40 850 Ft",
+          "value_huf": 40850
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+3750 Ft",
+          "value_huf": 3750
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+3750 Ft",
+          "value_huf": 3750
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "71",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8994",
+      "courier_name": "Szentjobi 8994 Tamás Hunor",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 58550,
+      "displayed_total": "58 550 Ft",
+      "detail_total_payable_huf": 58550,
+      "detail_total_payable": "58 550 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+39 000 Ft",
+          "value_huf": 39000
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+3000 Ft",
+          "value_huf": 3000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+3000 Ft",
+          "value_huf": 3000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "67",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8266",
+      "courier_name": "Szikszai 8266 Ferenc",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 63264,
+      "displayed_total": "63 264 Ft",
+      "detail_total_payable_huf": 63264,
+      "detail_total_payable": "63 264 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+30 700 Ft",
+          "value_huf": 30700
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+11 332 Ft",
+          "value_huf": 11332
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+11 332 Ft",
+          "value_huf": 11332
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "52",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "7624",
+      "courier_name": "Révbíró Gábor",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 32450,
+      "displayed_total": "32 450 Ft",
+      "detail_total_payable_huf": 32450,
+      "detail_total_payable": "32 450 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+19 500 Ft",
+          "value_huf": 19500
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "36",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8853",
+      "courier_name": "Biró 8853 József",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 40400,
+      "displayed_total": "40 400 Ft",
+      "detail_total_payable_huf": 40400,
+      "detail_total_payable": "40 400 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+13 500 Ft",
+          "value_huf": 13500
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+6400 Ft",
+          "value_huf": 6400
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+9000 Ft",
+          "value_huf": 9000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "+1500 Ft",
+          "value_huf": 1500
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "+10 000 Ft",
+          "value_huf": 10000
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "28",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "9089",
+      "courier_name": "Galyas 9089 Patrik",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 19250,
+      "displayed_total": "19 250 Ft",
+      "detail_total_payable_huf": 19250,
+      "detail_total_payable": "19 250 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+9000 Ft",
+          "value_huf": 9000
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+6000 Ft",
+          "value_huf": 6000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+6000 Ft",
+          "value_huf": 6000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "-4950 Ft",
+          "value_huf": -4950
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "14",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "9065",
+      "courier_name": "Blaschek 9065 Ákos Kristóf",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 20216,
+      "displayed_total": "20 216 Ft",
+      "detail_total_payable_huf": 20216,
+      "detail_total_payable": "20 216 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+7150 Ft",
+          "value_huf": 7150
+        },
+        {
+          "label": "BORRAVALÓ",
+          "displayed_value": "+4400 Ft",
+          "value_huf": 4400
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+4333 Ft",
+          "value_huf": 4333
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+4333 Ft",
+          "value_huf": 4333
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MALUS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ATM HATÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "FIZETÉS ELŐLEG",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "10",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "8532",
+      "courier_name": "Nagy 8532 Norbert",
+      "warehouse": "",
+      "status": "✓",
+      "status_detail": "✓\nHavi pénzügyi adatok elkészültek\nKész\n✓\n2\nElszámolás elfogadása\nAktív\n→\n✓\nTIG azonnal látható\nKész\n✓\n4\nTIG elfogadása\nAktív\n→\n5\nSzámlafeltöltés\nZárolva\n🔒\n6\nSzámlaellenőrzés\nZárolva\n🔒\n7\nAdmin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s\nZárolva\n🔒",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 13600,
+      "displayed_total": "13 600 Ft",
+      "detail_total_payable_huf": 13600,
+      "detail_total_payable": "13 600 Ft",
+      "detail_loaded": true,
+      "detail_available": true,
+      "detail_error": "",
+      "complaints_count": 1,
+      "documents_count": 0,
+      "financial_cards": [
+        {
+          "label": "ALAPDÍJ",
+          "displayed_value": "+4500 Ft",
+          "value_huf": 4500
+        },
+        {
+          "label": "KÉSEDELMI DÍJ",
+          "displayed_value": "+3000 Ft",
+          "value_huf": 3000
+        },
+        {
+          "label": "TÚRAMEGFELELÉS",
+          "displayed_value": "+3000 Ft",
+          "value_huf": 3000
+        },
+        {
+          "label": "CÍM BÓNUSZ (KIFLI)",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "LOJALITÁSI BÓNUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "ÜGYFÉLÉRTÉKELÉS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KIFLIS LEVONÁSOK / BÓNUSZOK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "JITT BÓNUSZ / MÁLUSZ",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "KORREKCIÓK",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "BIZTOSÍTÁS",
+          "displayed_value": "0 Ft",
+          "value_huf": 0
+        },
+        {
+          "label": "TELJESÍTMÉNY",
+          "displayed_value": "14",
+          "value_huf": null
+        }
+      ]
+    },
+    {
+      "courier_id": "6498",
+      "courier_name": "Abonyi György Zoltán",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: TimeoutException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "12345",
+      "courier_name": "Bagoly Zoltán",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: TimeoutException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7185",
+      "courier_name": "Baranyai István",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: TimeoutException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7747",
+      "courier_name": "Bari Anett",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: TimeoutException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "6528",
+      "courier_name": "Bognár András",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8031",
+      "courier_name": "Boskó 8031 György",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8760",
+      "courier_name": "Báder 8760 Gergely",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "9261",
+      "courier_name": "Báder Miklós",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "6572",
+      "courier_name": "Deme Tamás",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8263",
+      "courier_name": "Ember 8263 Gábor",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7814",
+      "courier_name": "FARKAS ZSOLT JÁNOS E.V.",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8292",
+      "courier_name": "Fekete 8292 Bálint",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7687",
+      "courier_name": "Fábián Alexandra",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7977",
+      "courier_name": "Grózner 7977 Bálint",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7644",
+      "courier_name": "Gurzó Balázs",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7239",
+      "courier_name": "GÉMES ZOLTÁN E.V.",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7927",
+      "courier_name": "Gál 7927 Dominik",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7895",
+      "courier_name": "Herkovics Andrea",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8938",
+      "courier_name": "Hohn 8938 Hunor",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7815",
+      "courier_name": "Homonnai Imre",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7440",
+      "courier_name": "Jamal Raihan",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8764",
+      "courier_name": "Kispál Zsolt",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8945",
+      "courier_name": "Kollár 8945 Benedek",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8122",
+      "courier_name": "Koncsik 8122 Tamás",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "9382",
+      "courier_name": "Kovács László",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7221",
+      "courier_name": "Kristóf Attila",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7926",
+      "courier_name": "Kurucz 7926 Márton",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7746",
+      "courier_name": "Kövesdi Zsolt",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "6476",
+      "courier_name": "Meleg Dominika",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8032",
+      "courier_name": "Máté 8032 Dániel",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7956",
+      "courier_name": "Nagy 7956 Gergely",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8013",
+      "courier_name": "Nagy 8013 Zoltán",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "9067",
+      "courier_name": "Nagy Ákos Zoltán",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "5709",
+      "courier_name": "Nádasi Martin Nicolas",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7743",
+      "courier_name": "Német Bence",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8864",
+      "courier_name": "Orbán 8864 Attila",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "5838",
+      "courier_name": "Pardi Ottó",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8960",
+      "courier_name": "Pehl 8960 István József",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7295",
+      "courier_name": "Persőtzi Bence",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7901",
+      "courier_name": "Pálinkás Balázs",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8706",
+      "courier_name": "Péchy 8706 Tamás",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7150",
+      "courier_name": "Rezsnyák Bence László",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7072",
+      "courier_name": "Rábl Norbert",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7938",
+      "courier_name": "Sabján 7938 Iván",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7843",
+      "courier_name": "Siklósi Máté",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8055",
+      "courier_name": "Stumpf 8055 József",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7103",
+      "courier_name": "Stumpf András István",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "9016",
+      "courier_name": "Szabó 9016 Gábor Áron",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8944",
+      "courier_name": "Szamosvári 8944 Máté",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "9136",
+      "courier_name": "Szendi Balázs",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8056",
+      "courier_name": "Szinovál 8056 Szilveszter",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8265",
+      "courier_name": "Szász 8265 Márk",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7722",
+      "courier_name": "Tóth 7722 Gábor",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "6801",
+      "courier_name": "Vajda Erik",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "7939",
+      "courier_name": "Varga 7939 Patrik Ádám",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "6403",
+      "courier_name": "Varga Románó",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "8863",
+      "courier_name": "Vidák 8863 Krisztofer",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "6729",
+      "courier_name": "Zorányi Tamás Bence",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "1234",
+      "courier_name": "admin",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    },
+    {
+      "courier_id": "6642",
+      "courier_name": "Ádám Erik",
+      "warehouse": "",
+      "status": "",
+      "status_detail": "",
+      "flags": [],
+      "highlighted": false,
+      "total_payable_huf": 0,
+      "displayed_total": "0 Ft",
+      "detail_total_payable_huf": null,
+      "detail_total_payable": "",
+      "detail_loaded": false,
+      "detail_available": false,
+      "detail_error": "Elszámolás betöltési hiba: InvalidSessionIdException",
+      "complaints_count": 0,
+      "documents_count": 0,
+      "financial_cards": []
+    }
+  ]
+}

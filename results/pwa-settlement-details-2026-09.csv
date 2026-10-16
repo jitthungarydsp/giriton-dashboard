@@ -1,0 +1,1545 @@
+﻿month,courier_id,courier_name,warehouse,status,status_detail,flags,highlighted,total_payable_huf,displayed_total,detail_total_payable_huf,detail_total_payable,detail_loaded,detail_available,detail_error,complaints_count,documents_count,financial_cards_json,extracted_at
+2026-09,7688,Kancsár Zoltán,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,998902,998 902 Ft,998902,998 902 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+409 150 Ft"", ""value_huf"": 409150}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+254 886 Ft"", ""value_huf"": 254886}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+208 333 Ft"", ""value_huf"": 208333}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+208 333 Ft"", ""value_huf"": 208333}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+35 000 Ft"", ""value_huf"": 35000}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+88 200 Ft"", ""value_huf"": 88200}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""-205 000 Ft"", ""value_huf"": -205000}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""882"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8185,Komjáti 8185 Ákos,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,958539,958 539 Ft,958539,958 539 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+373 000 Ft"", ""value_huf"": 373000}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+237 771 Ft"", ""value_huf"": 237771}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+200 666 Ft"", ""value_huf"": 200666}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+200 666 Ft"", ""value_huf"": 200666}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+72 080 Ft"", ""value_huf"": 72080}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""-90 000 Ft"", ""value_huf"": -90000}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""-55 644 Ft"", ""value_huf"": -55644}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+20 000 Ft"", ""value_huf"": 20000}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""741"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,2875,Rácz Csaba,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,1061123,1 061 123 Ft,1061123,1 061 123 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+354 150 Ft"", ""value_huf"": 354150}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+192 999 Ft"", ""value_huf"": 192999}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+192 999 Ft"", ""value_huf"": 192999}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+83 160 Ft"", ""value_huf"": 83160}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+20 000 Ft"", ""value_huf"": 20000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""791"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6959,Bárándi Bendegúz,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,360619,360 619 Ft,360619,360 619 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+328 050 Ft"", ""value_huf"": 328050}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+205 300 Ft"", ""value_huf"": 205300}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+171 999 Ft"", ""value_huf"": 171999}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+28 750 Ft"", ""value_huf"": 28750}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+17 700 Ft"", ""value_huf"": 17700}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""-310 000 Ft"", ""value_huf"": -310000}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""-51 180 Ft"", ""value_huf"": -51180}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""-30 000 Ft"", ""value_huf"": -30000}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""709"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6909,Bajorhegyi Ádám,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,886299,886 299 Ft,886299,886 299 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+319 200 Ft"", ""value_huf"": 319200}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+174 407 Ft"", ""value_huf"": 174407}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+149 666 Ft"", ""value_huf"": 149666}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+149 666 Ft"", ""value_huf"": 149666}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""+11 500 Ft"", ""value_huf"": 11500}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+25 500 Ft"", ""value_huf"": 25500}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+43 860 Ft"", ""value_huf"": 43860}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""+2500 Ft"", ""value_huf"": 2500}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""580"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6596,Nagy Kristóf,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,771772,771 772 Ft,771772,771 772 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+295 800 Ft"", ""value_huf"": 295800}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+164 332 Ft"", ""value_huf"": 164332}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+48 000 Ft"", ""value_huf"": 48000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+60 420 Ft"", ""value_huf"": 60420}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-4280 Ft"", ""value_huf"": -4280}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+20 000 Ft"", ""value_huf"": 20000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""667"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6825,Szolnoki Tibor,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,884791,884 791 Ft,884791,884 791 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+298 450 Ft"", ""value_huf"": 298450}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+156 331 Ft"", ""value_huf"": 156331}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+140 332 Ft"", ""value_huf"": 140332}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+59 360 Ft"", ""value_huf"": 59360}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""+25 000 Ft"", ""value_huf"": 25000}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""664"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7147,Horváth István,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,854002,854 002 Ft,854002,854 002 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+303 750 Ft"", ""value_huf"": 303750}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+159 331 Ft"", ""value_huf"": 159331}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+159 331 Ft"", ""value_huf"": 159331}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+49 020 Ft"", ""value_huf"": 49020}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""615"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7486,Papp 7486 Nikolett,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,738192,738 192 Ft,738192,738 192 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+264 000 Ft"", ""value_huf"": 264000}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+134 666 Ft"", ""value_huf"": 134666}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+134 666 Ft"", ""value_huf"": 134666}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+39 560 Ft"", ""value_huf"": 39560}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-22 733 Ft"", ""value_huf"": -22733}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""567"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6956,Árva Tamás,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,792172,792 172 Ft,792172,792 172 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+282 650 Ft"", ""value_huf"": 282650}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+160 139 Ft"", ""value_huf"": 160139}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+153 331 Ft"", ""value_huf"": 153331}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+147 331 Ft"", ""value_huf"": 147331}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""+27 500 Ft"", ""value_huf"": 27500}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+16 500 Ft"", ""value_huf"": 16500}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+36 300 Ft"", ""value_huf"": 36300}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""+20 000 Ft"", ""value_huf"": 20000}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""-61 579 Ft"", ""value_huf"": -61579}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""521"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8530,György 8530 Roland,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,765133,765 133 Ft,765133,765 133 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+285 750 Ft"", ""value_huf"": 285750}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+136 333 Ft"", ""value_huf"": 136333}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+136 333 Ft"", ""value_huf"": 136333}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+41 280 Ft"", ""value_huf"": 41280}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""579"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7538,Cserna Levente Zoltán,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,368132,368 132 Ft,368132,368 132 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+275 800 Ft"", ""value_huf"": 275800}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+168 750 Ft"", ""value_huf"": 168750}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+134 332 Ft"", ""value_huf"": 134332}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+21 750 Ft"", ""value_huf"": 21750}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+7500 Ft"", ""value_huf"": 7500}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""-240 000 Ft"", ""value_huf"": -240000}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""576"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7842,Fabó Marcell,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,602641,602 641 Ft,602641,602 641 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+259 850 Ft"", ""value_huf"": 259850}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+136 333 Ft"", ""value_huf"": 136333}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+6000 Ft"", ""value_huf"": 6000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""+30 000 Ft"", ""value_huf"": 30000}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""582"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7817,Varecza Roland,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,455665,455 665 Ft,455665,455 665 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+271 850 Ft"", ""value_huf"": 271850}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+141 665 Ft"", ""value_huf"": 141665}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+23 750 Ft"", ""value_huf"": 23750}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-140 000 Ft"", ""value_huf"": -140000}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""574"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6206,Hervai Olivér,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,872708,872 708 Ft,872708,872 708 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+263 550 Ft"", ""value_huf"": 263550}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+132 999 Ft"", ""value_huf"": 132999}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+132 999 Ft"", ""value_huf"": 132999}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+30 360 Ft"", ""value_huf"": 30360}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""+165 000 Ft"", ""value_huf"": 165000}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""497"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7725,Nagy 7725 István,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,668316,668 316 Ft,668316,668 316 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+268 200 Ft"", ""value_huf"": 268200}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+134 332 Ft"", ""value_huf"": 134332}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+134 332 Ft"", ""value_huf"": 134332}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+31 020 Ft"", ""value_huf"": 31020}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-60 000 Ft"", ""value_huf"": -60000}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""508"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8332,Hegedüs 8332 Dávid,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,590202,590 202 Ft,590202,590 202 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+271 800 Ft"", ""value_huf"": 271800}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+136 664 Ft"", ""value_huf"": 136664}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+22 500 Ft"", ""value_huf"": 22500}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+23 750 Ft"", ""value_huf"": 23750}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""471"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6686,Magyar Csilla,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,547250,547 250 Ft,547250,547 250 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+238 000 Ft"", ""value_huf"": 238000}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+120 000 Ft"", ""value_huf"": 120000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+20 000 Ft"", ""value_huf"": 20000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+20 000 Ft"", ""value_huf"": 20000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""523"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7245,Kiss 7245 Csaba,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,598167,598 167 Ft,598167,598 167 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+265 650 Ft"", ""value_huf"": 265650}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+129 999 Ft"", ""value_huf"": 129999}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+40 000 Ft"", ""value_huf"": 40000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+21 375 Ft"", ""value_huf"": 21375}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""449"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7226,Bubán Szimonetta,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,493215,493 215 Ft,493215,493 215 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+256 000 Ft"", ""value_huf"": 256000}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+139 825 Ft"", ""value_huf"": 139825}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+132 000 Ft"", ""value_huf"": 132000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+22 000 Ft"", ""value_huf"": 22000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+22 000 Ft"", ""value_huf"": 22000}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""-75 000 Ft"", ""value_huf"": -75000}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""-33 610 Ft"", ""value_huf"": -33610}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+30 000 Ft"", ""value_huf"": 30000}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""522"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7665,Koncsik Zoltán,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,553077,553 077 Ft,553077,553 077 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+214 450 Ft"", ""value_huf"": 214450}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+114 999 Ft"", ""value_huf"": 114999}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+37 000 Ft"", ""value_huf"": 37000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+26 400 Ft"", ""value_huf"": 26400}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""544"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7632,Tinger József,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,651292,651 292 Ft,651292,651 292 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+212 500 Ft"", ""value_huf"": 212500}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+161 220 Ft"", ""value_huf"": 161220}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+113 666 Ft"", ""value_huf"": 113666}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+113 666 Ft"", ""value_huf"": 113666}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+19 500 Ft"", ""value_huf"": 19500}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+25 740 Ft"", ""value_huf"": 25740}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+5000 Ft"", ""value_huf"": 5000}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""528"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,5836,Pardi Ottó,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,555478,555 478 Ft,555478,555 478 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+265 100 Ft"", ""value_huf"": 265100}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+125 648 Ft"", ""value_huf"": 125648}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""+48 180 Ft"", ""value_huf"": 48180}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+20 000 Ft"", ""value_huf"": 20000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""351"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7767,Kanyó Krisztián,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,517593,517 593 Ft,517593,517 593 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+217 650 Ft"", ""value_huf"": 217650}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+117 999 Ft"", ""value_huf"": 117999}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+38 000 Ft"", ""value_huf"": 38000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""407"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6730,Jamal Nasir,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,530881,530 881 Ft,530881,530 881 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+191 500 Ft"", ""value_huf"": 191500}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+107 666 Ft"", ""value_huf"": 107666}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+107 666 Ft"", ""value_huf"": 107666}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""436"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7829,Hohmann András Ármin,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,253240,253 240 Ft,253240,253 240 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+176 500 Ft"", ""value_huf"": 176500}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+29 000 Ft"", ""value_huf"": 29000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-64 350 Ft"", ""value_huf"": -64350}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""371"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8001,Lulaj 8001 Brendon,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,423533,423 533 Ft,423533,423 533 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+180 850 Ft"", ""value_huf"": 180850}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+94 333 Ft"", ""value_huf"": 94333}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+31 000 Ft"", ""value_huf"": 31000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""371"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7979,Jeney 7979 Tibor,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,460050,460 050 Ft,460050,460 050 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+176 500 Ft"", ""value_huf"": 176500}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+87 000 Ft"", ""value_huf"": 87000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+87 000 Ft"", ""value_huf"": 87000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""387"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7056,Baranyi Szabolcs,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,397613,397 613 Ft,397613,397 613 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+177 550 Ft"", ""value_huf"": 177550}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+98 089 Ft"", ""value_huf"": 98089}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+96 999 Ft"", ""value_huf"": 96999}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+96 999 Ft"", ""value_huf"": 96999}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+10 200 Ft"", ""value_huf"": 10200}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""-102 224 Ft"", ""value_huf"": -102224}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+20 000 Ft"", ""value_huf"": 20000}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""352"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8264,Rusvai 8264 Marcell,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+✓
+Havi folyamat lezĂˇrva
+Kész
+✓",,False,-276107,-276 107 Ft,-276107,-276 107 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+176 350 Ft"", ""value_huf"": 176350}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+94 425 Ft"", ""value_huf"": 94425}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+64 333 Ft"", ""value_huf"": 64333}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+14 750 Ft"", ""value_huf"": 14750}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+15 000 Ft"", ""value_huf"": 15000}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""-638 600 Ft"", ""value_huf"": -638600}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""-2365 Ft"", ""value_huf"": -2365}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""378"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,5774,Prantner Péter Ákos,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,136944,136 944 Ft,136944,136 944 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+169 800 Ft"", ""value_huf"": 169800}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+30 000 Ft"", ""value_huf"": 30000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-145 000 Ft"", ""value_huf"": -145000}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""338"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8223,Takács 8223 Attila,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,343950,343 950 Ft,343950,343 950 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+152 000 Ft"", ""value_huf"": 152000}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+84 000 Ft"", ""value_huf"": 84000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+14 000 Ft"", ""value_huf"": 14000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""372"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8267,Laukó 8267 Buda,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,-330220,-330 220 Ft,-330220,-330 220 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+149 450 Ft"", ""value_huf"": 149450}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+28 500 Ft"", ""value_huf"": 28500}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+14 250 Ft"", ""value_huf"": 14250}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-628 700 Ft"", ""value_huf"": -628700}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""324"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7296,Petrik Róbert,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,126735,126 735 Ft,126735,126 735 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+146 300 Ft"", ""value_huf"": 146300}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+72 000 Ft"", ""value_huf"": 72000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-195 000 Ft"", ""value_huf"": -195000}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""301"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7753,Tuza Ádám,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,133448,133 448 Ft,133448,133 448 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+146 050 Ft"", ""value_huf"": 146050}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+24 000 Ft"", ""value_huf"": 24000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-50 000 Ft"", ""value_huf"": -50000}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""211"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6856,Király Dániel Dávid,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,215550,215 550 Ft,215550,215 550 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+118 700 Ft"", ""value_huf"": 118700}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+10 500 Ft"", ""value_huf"": 10500}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+10 500 Ft"", ""value_huf"": 10500}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""231"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8226,Baráth 8226 Dominik,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,181200,181 200 Ft,181200,181 200 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+112 700 Ft"", ""value_huf"": 112700}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+73 500 Ft"", ""value_huf"": 73500}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""-5000 Ft"", ""value_huf"": -5000}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""236"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7244,Nagy 7244 Attila,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,299450,299 450 Ft,299450,299 450 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+106 900 Ft"", ""value_huf"": 106900}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+48 000 Ft"", ""value_huf"": 48000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+48 000 Ft"", ""value_huf"": 48000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""+25 000 Ft"", ""value_huf"": 25000}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""242"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7724,Molnár Ákos,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,81896,81 896 Ft,81896,81 896 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+110 850 Ft"", ""value_huf"": 110850}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+20 500 Ft"", ""value_huf"": 20500}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""216"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6855,Vándor Balázs,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,242791,242 791 Ft,242791,242 791 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+126 450 Ft"", ""value_huf"": 126450}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+62 991 Ft"", ""value_huf"": 62991}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+9000 Ft"", ""value_huf"": 9000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""169"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6544,Kiss Koppány Zalán,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,242666,242 666 Ft,242666,242 666 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+97 650 Ft"", ""value_huf"": 97650}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+55 333 Ft"", ""value_huf"": 55333}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+55 333 Ft"", ""value_huf"": 55333}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-25 000 Ft"", ""value_huf"": -25000}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""229"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8054,Szombati 8054 Márk,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,167150,167 150 Ft,167150,167 150 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+100 350 Ft"", ""value_huf"": 100350}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+18 500 Ft"", ""value_huf"": 18500}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""192"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7267,Bodonyi Gellért,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,179532,179 532 Ft,179532,179 532 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+81 650 Ft"", ""value_huf"": 81650}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+39 799 Ft"", ""value_huf"": 39799}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+43 333 Ft"", ""value_huf"": 43333}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+7250 Ft"", ""value_huf"": 7250}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+7500 Ft"", ""value_huf"": 7500}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""169"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8980,Markgráf 8980 Zsolt,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,126400,126 400 Ft,126400,126 400 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+59 500 Ft"", ""value_huf"": 59500}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+33 000 Ft"", ""value_huf"": 33000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""132"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7018,Mocsáry Attila,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,105500,105 500 Ft,105500,105 500 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+45 500 Ft"", ""value_huf"": 45500}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+21 000 Ft"", ""value_huf"": 21000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+21 000 Ft"", ""value_huf"": 21000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""75"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8976,Varró 8976 lili,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,66140,66 140 Ft,66140,66 140 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+40 850 Ft"", ""value_huf"": 40850}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+3750 Ft"", ""value_huf"": 3750}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+3750 Ft"", ""value_huf"": 3750}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""71"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8994,Szentjobi 8994 Tamás Hunor,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,58550,58 550 Ft,58550,58 550 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+39 000 Ft"", ""value_huf"": 39000}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+3000 Ft"", ""value_huf"": 3000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+3000 Ft"", ""value_huf"": 3000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""67"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8266,Szikszai 8266 Ferenc,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,63264,63 264 Ft,63264,63 264 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+30 700 Ft"", ""value_huf"": 30700}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+11 332 Ft"", ""value_huf"": 11332}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+11 332 Ft"", ""value_huf"": 11332}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""52"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,7624,Révbíró Gábor,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,32450,32 450 Ft,32450,32 450 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+19 500 Ft"", ""value_huf"": 19500}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""36"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8853,Biró 8853 József,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,40400,40 400 Ft,40400,40 400 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+13 500 Ft"", ""value_huf"": 13500}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+6400 Ft"", ""value_huf"": 6400}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+9000 Ft"", ""value_huf"": 9000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""+1500 Ft"", ""value_huf"": 1500}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""+10 000 Ft"", ""value_huf"": 10000}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""28"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,9089,Galyas 9089 Patrik,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,19250,19 250 Ft,19250,19 250 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+9000 Ft"", ""value_huf"": 9000}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+6000 Ft"", ""value_huf"": 6000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+6000 Ft"", ""value_huf"": 6000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""-4950 Ft"", ""value_huf"": -4950}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""14"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,9065,Blaschek 9065 Ákos Kristóf,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,20216,20 216 Ft,20216,20 216 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+7150 Ft"", ""value_huf"": 7150}, {""label"": ""BORRAVALÓ"", ""displayed_value"": ""+4400 Ft"", ""value_huf"": 4400}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+4333 Ft"", ""value_huf"": 4333}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+4333 Ft"", ""value_huf"": 4333}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MALUS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ATM HATÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""FIZETÉS ELŐLEG"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""10"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,8532,Nagy 8532 Norbert,,✓,"✓
+Havi pénzügyi adatok elkészültek
+Kész
+✓
+2
+Elszámolás elfogadása
+Aktív
+→
+✓
+TIG azonnal látható
+Kész
+✓
+4
+TIG elfogadása
+Aktív
+→
+5
+Számlafeltöltés
+Zárolva
+🔒
+6
+Számlaellenőrzés
+Zárolva
+🔒
+7
+Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s
+Zárolva
+🔒",,False,13600,13 600 Ft,13600,13 600 Ft,True,True,,1,0,"[{""label"": ""ALAPDÍJ"", ""displayed_value"": ""+4500 Ft"", ""value_huf"": 4500}, {""label"": ""KÉSEDELMI DÍJ"", ""displayed_value"": ""+3000 Ft"", ""value_huf"": 3000}, {""label"": ""TÚRAMEGFELELÉS"", ""displayed_value"": ""+3000 Ft"", ""value_huf"": 3000}, {""label"": ""CÍM BÓNUSZ (KIFLI)"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""LOJALITÁSI BÓNUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""ÜGYFÉLÉRTÉKELÉS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KIFLIS LEVONÁSOK / BÓNUSZOK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""JITT BÓNUSZ / MÁLUSZ"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""KORREKCIÓK"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""BIZTOSÍTÁS"", ""displayed_value"": ""0 Ft"", ""value_huf"": 0}, {""label"": ""TELJESÍTMÉNY"", ""displayed_value"": ""14"", ""value_huf"": null}]",2026-10-15T21:49:26+02:00
+2026-09,6498,Abonyi György Zoltán,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: TimeoutException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,12345,Bagoly Zoltán,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: TimeoutException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7185,Baranyai István,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: TimeoutException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7747,Bari Anett,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: TimeoutException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,6528,Bognár András,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8031,Boskó 8031 György,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8760,Báder 8760 Gergely,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,9261,Báder Miklós,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,6572,Deme Tamás,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8263,Ember 8263 Gábor,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7814,FARKAS ZSOLT JÁNOS E.V.,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8292,Fekete 8292 Bálint,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7687,Fábián Alexandra,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7977,Grózner 7977 Bálint,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7644,Gurzó Balázs,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7239,GÉMES ZOLTÁN E.V.,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7927,Gál 7927 Dominik,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7895,Herkovics Andrea,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8938,Hohn 8938 Hunor,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7815,Homonnai Imre,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7440,Jamal Raihan,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8764,Kispál Zsolt,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8945,Kollár 8945 Benedek,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8122,Koncsik 8122 Tamás,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,9382,Kovács László,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7221,Kristóf Attila,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7926,Kurucz 7926 Márton,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7746,Kövesdi Zsolt,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,6476,Meleg Dominika,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8032,Máté 8032 Dániel,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7956,Nagy 7956 Gergely,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8013,Nagy 8013 Zoltán,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,9067,Nagy Ákos Zoltán,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,5709,Nádasi Martin Nicolas,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7743,Német Bence,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8864,Orbán 8864 Attila,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,5838,Pardi Ottó,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8960,Pehl 8960 István József,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7295,Persőtzi Bence,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7901,Pálinkás Balázs,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8706,Péchy 8706 Tamás,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7150,Rezsnyák Bence László,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7072,Rábl Norbert,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7938,Sabján 7938 Iván,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7843,Siklósi Máté,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8055,Stumpf 8055 József,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7103,Stumpf András István,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,9016,Szabó 9016 Gábor Áron,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8944,Szamosvári 8944 Máté,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,9136,Szendi Balázs,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8056,Szinovál 8056 Szilveszter,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8265,Szász 8265 Márk,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7722,Tóth 7722 Gábor,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,6801,Vajda Erik,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,7939,Varga 7939 Patrik Ádám,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,6403,Varga Románó,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,8863,Vidák 8863 Krisztofer,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,6729,Zorányi Tamás Bence,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,1234,admin,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00
+2026-09,6642,Ádám Erik,,,,,False,0,0 Ft,,,False,False,Elszámolás betöltési hiba: InvalidSessionIdException,0,0,[],2026-10-15T21:49:26+02:00

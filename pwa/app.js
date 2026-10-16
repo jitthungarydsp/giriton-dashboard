@@ -4752,7 +4752,8 @@ function activeWorkflowPanel() {
   if (key.startsWith("settlement")) return "settlement-panel";
   if (key.startsWith("tig")) return "tig-panel";
   if (key === "invoice_submit") return "invoice-submit-panel";
-  if (key === "invoice_check" || key === "invoice_payment") return "invoice-check-panel";
+  if (key === "invoice_check") return "invoice-check-panel";
+  if (key === "invoice_payment") return "invoice-payment-panel";
   return "settlement-panel";
 }
 
@@ -4770,7 +4771,7 @@ function showOnlyWorkflowPanel(panelId) {
     || Boolean((docs.tig || []).length)
     || Boolean(tigStep && !tigStep.locked)
   );
-  ["settlement-panel", "tig-panel", "invoice-submit-panel", "invoice-check-panel"].forEach((id) => {
+  ["settlement-panel", "tig-panel", "invoice-submit-panel", "invoice-check-panel", "invoice-payment-panel"].forEach((id) => {
     const panel = $(`#${id}`);
     const visible = id === panelId
       || (showSettlement && id === "settlement-panel")
@@ -4809,6 +4810,17 @@ function renderWorkflow() {
     const checkDone = !state.workflow?.manualInvoiceSkip && !state.workflow?.efoInvoiceSkip && state.workflow?.states?.invoice_check?.status === "done";
     const checkOpen = state.workflow?.states?.invoice_check?.status === "open";
     checkInfo.innerHTML = `${previewNotice}${overrideNotice}${checkDone ? `<div class="notice">A feltöltött számla ellenőrzése sikeres.</div>` : ""}${checkOpen ? `<div class="notice error">A számla manuális ellenőrzésre került, kérlek légy türelemmel.</div>` : ""}${complaintList(state.workflow?.complaints?.invoice_check || [])}`;
+  }
+  const paymentInfo = $("#invoice-payment-info");
+  if (paymentInfo) {
+    const paymentStep = workflowStep("invoice_payment");
+    const paymentDone = Boolean(paymentStep.done) || workflowStatus("invoice_payment") === "done";
+    const paymentOpen = workflowStatus("invoice_payment") === "open";
+    paymentInfo.innerHTML = paymentDone
+      ? `<div class="notice">A kifizetés lezárult.</div>`
+      : paymentOpen && !paymentStep.locked
+        ? `<div class="notice">Az elszámolás és a számla rendben van. A kifizetés adminisztráció alatt van.</div>`
+        : `<div class="notice">A kifizetés a korábbi számla-lépések lezárása után válik aktívvá.</div>`;
   }
   const submitInfo = $("#invoice-submit-info");
   if (submitInfo) {
