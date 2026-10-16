@@ -12078,6 +12078,61 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
     except Exception:
         pass
 
+    filename = str(getattr(uploaded_file, "name", "") or "").casefold()
+    if filename.endswith(".csv"):
+        try:
+            rating_raw = pd.read_csv(uploaded_file)
+        except UnicodeDecodeError:
+            try:
+                uploaded_file.seek(0)
+            except Exception:
+                pass
+            rating_raw = pd.read_csv(uploaded_file, encoding="cp1250")
+        rating_columns = {_normalized_field_key(column): column for column in rating_raw.columns}
+        rating_resolved = {
+            "courier_id": next((rating_columns[name] for name in ["courierid", "couriername", "courier_id", "futarid"] if name in rating_columns), ""),
+            "first_delivery": next((rating_columns[name] for name in ["firstdelivery", "elsokiszallitas"] if name in rating_columns), ""),
+            "last_delivery": next((rating_columns[name] for name in ["lastdelivery", "utolsokiszallitas"] if name in rating_columns), ""),
+            "rating_count": next((rating_columns[name] for name in ["courierratingscount", "courierratingcount", "ertekelesdb", "ratingcount"] if name in rating_columns), ""),
+            "average_rating": next((rating_columns[name] for name in ["averagecourierrating", "averagerating", "atlagosertekeles", "ugyfelertekeles"] if name in rating_columns), ""),
+        }
+        if not all(rating_resolved.values()):
+            raise ValueError("A CSV-ből hiányzik a futárazonosító, az első/utolsó kiszállítás, az értékelések száma vagy az átlagos értékelés oszlop.")
+
+        month_start = billing_month.replace(day=1)
+        next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        first_delivery = pd.to_datetime(rating_raw[rating_resolved["first_delivery"]], errors="coerce").dt.date
+        last_delivery = pd.to_datetime(rating_raw[rating_resolved["last_delivery"]], errors="coerce").dt.date
+        rating_data = rating_raw.loc[
+            (first_delivery < next_month)
+            & (last_delivery >= month_start)
+        ].copy()
+        if rating_data.empty:
+            raise ValueError(f"A CSV-ben nincs sor a kiválasztott hónapra: {month_start:%Y-%m}.")
+
+        name_by_id = pd.Series(dtype=object)
+        if not dashboard_data.empty and {"Courier ID", "Futár"}.issubset(dashboard_data.columns):
+            dashboard_lookup = dashboard_data.copy()
+            dashboard_lookup["_courier_id_key"] = dashboard_lookup["Courier ID"].map(_courier_id_key)
+            name_by_id = dashboard_lookup.dropna(subset=["_courier_id_key"]).drop_duplicates("_courier_id_key").set_index("_courier_id_key")["Futár"]
+
+        courier_ids = rating_data[rating_resolved["courier_id"]].map(_courier_id_key)
+        grouped = pd.DataFrame({
+            "courier_id": courier_ids,
+            "driver_name": courier_ids.map(name_by_id).fillna(courier_ids),
+            "rating_count": rating_data[rating_resolved["rating_count"]],
+            "average_rating": rating_data[rating_resolved["average_rating"]],
+        })
+        grouped = grouped.loc[grouped["courier_id"].astype(str).str.len() > 0].copy()
+        if grouped.empty:
+            raise ValueError("A CSV-ben nincs feldolgozható futársor.")
+        return _finalize_customer_rating_value_rows(
+            grouped,
+            uploaded_file,
+            billing_month,
+            "CSV ügyfélértékelés",
+        )
+
     excel_file = pd.ExcelFile(uploaded_file)
     month_start = billing_month.replace(day=1)
     next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
@@ -24525,10 +24580,10 @@ def show_new_settlement_page() -> None:
             key="customer_rating_upload_month",
         ).replace(day=1)
         uploaded_rating_excel = st.file_uploader(
-            "Ügyfélértékelés Excel",
-            type=["xlsx", "xls"],
+            "Ügyfélértékelés Excel vagy CSV",
+            type=["xlsx", "xls", "csv"],
             key="customer_rating_excel_upload",
-            help="Elvárt oszlopok: order_id, courier_name, courier_id, courier_rating, deliver_at, warehouse_name.",
+            help="Excel vagy CSV. Elvárt oszlopok: courier_id, first_delivery, last_delivery, courier_ratings_count, average_courier_rating.",
         )
         st.caption("Uj havi sablon is feltoltheto: Feltoltes_havi ful, elszamolasi_honap, futar_id, futar_nev, ugyfelertekeles_havi_atlag, ertekeles_db.")
         rating_preview = pd.DataFrame()
