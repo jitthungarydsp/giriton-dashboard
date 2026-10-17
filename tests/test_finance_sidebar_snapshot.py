@@ -9,6 +9,52 @@ import pandas as pd
 
 
 class FinanceSidebarSnapshotTest(unittest.TestCase):
+    def test_explicit_batch_queues_unique_roster_after_clearing_cache(self):
+        source = (Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8")
+        node = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+                    and node.name == "start_devtest_exact_snapshot_batch")
+        state = {}
+        calls = []
+        ns = {"pd": pd, "date": date, "st": SimpleNamespace(session_state=state),
+              "_courier_id_key": lambda value: str(value or "").strip(),
+              "load_courier_master": lambda *args: pd.DataFrame([{"Courier ID": "2"}, {"Courier ID": "1"}]),
+              "augment_settlement_courier_master": lambda frame, session: frame,
+              "refresh_settlement_profile_data": lambda: calls.append("refresh")}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), ns)
+        count = ns[node.name](pd.DataFrame([{"Courier ID": "1", "Futár": "First"}]),
+                              period_start=date(2026, 9, 1), calculation_mode="Excel",
+                              warehouse_label="Összes", session_id="session", updated_by="admin",
+                              current_data_context="context")
+        self.assertEqual(count, 2)
+        self.assertEqual(calls, ["refresh"])
+        self.assertEqual(state["devtest_exact_snapshot_batch"]["courier_ids"], ["1", "2"])
+        self.assertEqual(state["selected_courier_id"], "1")
+        self.assertEqual(state["courier_menu_target_1"], "Pénzügy")
+
+    def test_batch_source_error_moves_to_next_courier_and_reports_it(self):
+        source = (Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8")
+        node = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+                    and node.name == "show_new_settlement_page")
+        active = next(child for child in node.body if isinstance(child, ast.If)
+                      and ast.unparse(child.test) == "isinstance(batch, dict)")
+        batch = {"courier_ids": ["1", "2"], "index": 0, "processed": 0, "failed": []}
+        state = {"devtest_exact_snapshot_batch": batch, "selected_courier_id": "1"}
+        class Rerun(BaseException): pass
+        def rerun(): raise Rerun()
+        def render(): raise RuntimeError("Source unavailable")
+        ns = {"batch": batch, "st": SimpleNamespace(session_state=state, progress=lambda *a, **k: None,
+              button=lambda *a, **k: False, rerun=rerun), "render_courier_detail_page": render}
+        wrapper = ast.parse("def run_batch():\n    pass\n").body[0]
+        wrapper.body = [active]
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[wrapper], type_ignores=[])),
+                     "devtest.py", "exec"), ns)
+        with self.assertRaises(Rerun): ns["run_batch"]()
+        self.assertEqual(state["selected_courier_id"], "2")
+        self.assertIn("1: Source unavailable", batch["failed"])
+        with self.assertRaises(Rerun): ns["run_batch"]()
+        self.assertNotIn("devtest_exact_snapshot_batch", state)
+        self.assertEqual(state["devtest_exact_snapshot_batch_result"]["processed"], 0)
+        self.assertEqual(len(state["devtest_exact_snapshot_batch_result"]["failed"]), 2)
     def test_refresh_keeps_rating_and_restores_advance_without_double_deduction(self):
         source = (Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8")
         names = {"resolve_courier_salary_advance_amount", "refresh_courier_salary_advance_row"}

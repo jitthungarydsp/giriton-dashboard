@@ -5417,12 +5417,7 @@ def start_devtest_exact_snapshot_batch(
     updated_by: str,
     current_data_context: str,
 ) -> int:
-    """Queue every courier through the same detail calculation as a manual click.
-
-    The list calculation is intentionally not used here: the detail page has
-    the authoritative devtest calculation and saves its exact snapshot when it
-    is opened.  The queue makes that existing path run once per courier.
-    """
+    """Explicitly queue each courier through the individual Finance calculation."""
     source_data = data.copy() if isinstance(data, pd.DataFrame) else pd.DataFrame()
     try:
         full_roster = augment_settlement_courier_master(
@@ -5449,6 +5444,7 @@ def start_devtest_exact_snapshot_batch(
     if not courier_ids:
         return 0
 
+    refresh_settlement_profile_data()
     st.session_state["current_filtered_data"] = source_data.reset_index(drop=True)
     st.session_state["current_filtered_context"] = current_data_context
     st.session_state["devtest_exact_snapshot_batch"] = {
@@ -19020,8 +19016,6 @@ def render_courier_detail_page() -> None:
             # These three cards are also needed by the PWA detail view during
             # the exact batch run; they are already calculated on this page.
             detail_labels_to_save = set(detail_labels)
-            if exact_snapshot_batch_active:
-                detail_labels_to_save &= {"Alapdíj", "Lojalitás", "Korrekció"}
             for detail_label in sorted(detail_labels_to_save):
                 detail_frame = finance_detail_frame(detail_label)
                 if isinstance(detail_frame, pd.DataFrame) and not detail_frame.empty:
@@ -24351,17 +24345,50 @@ def show_new_settlement_page() -> None:
     # A fixed empty sidebar would overlap the selected courier's sidebar.
     if not st.session_state.get("selected_courier_id"):
         render_empty_right_menu()
-    # Cancel the legacy courier-by-courier snapshot queue. It changed the
-    # selected courier and reran the whole Streamlit page for every row.
-    st.session_state.pop("devtest_exact_snapshot_batch_requested", None)
-    if isinstance(st.session_state.get("devtest_exact_snapshot_batch"), dict):
-        st.session_state.pop("devtest_exact_snapshot_batch", None)
-        st.session_state.pop("selected_courier_id", None)
+    batch = st.session_state.get("devtest_exact_snapshot_batch")
+    if isinstance(batch, dict):
+        ids = batch.get("courier_ids") or []
+        index = int(batch.get("index") or 0)
+        st.progress(min(index / max(len(ids), 1), 1.0),
+                    text=f"Futárok egyéni frissítése: {index}/{len(ids)} kész")
+        if st.button("Frissítési sor leállítása", key="stop_exact_courier_refresh"):
+            st.session_state["devtest_exact_snapshot_batch_result"] = {
+                "processed": int(batch.get("processed") or 0), "attempted": len(ids),
+                "failed": batch.get("failed") or [], "stopped": True,
+            }
+            st.session_state.pop("devtest_exact_snapshot_batch", None)
+            st.session_state.pop("selected_courier_id", None)
+            st.rerun()
+        try:
+            render_courier_detail_page()
+            raise RuntimeError("A futár egyéni frissítése nem fejeződött be.")
+        except Exception as exc:
+            # Continue after a source/query failure, retaining the previous
+            # saved version of that courier and reporting the failure at end.
+            failed = list(batch.get("failed") or [])
+            failed.append(f"{ids[index] if index < len(ids) else '?'}: {exc}")
+            batch["failed"] = failed
+            batch["index"] = index + 1
+            if index + 1 < len(ids):
+                next_id = ids[index + 1]
+                st.session_state["selected_courier_id"] = next_id
+                st.session_state[f"courier_menu_target_{next_id}"] = "Pénzügy"
+            else:
+                st.session_state["devtest_exact_snapshot_batch_result"] = {
+                    "processed": int(batch.get("processed") or 0),
+                    "attempted": len(ids), "failed": failed,
+                }
+                st.session_state.pop("devtest_exact_snapshot_batch", None)
+                st.session_state.pop("selected_courier_id", None)
+            st.rerun()
+        return
     exact_batch_result = st.session_state.pop("devtest_exact_snapshot_batch_result", None)
     if isinstance(exact_batch_result, dict):
         failed_rows = list(exact_batch_result.get("failed") or [])
         processed = int(exact_batch_result.get("processed") or 0)
         attempted = int(exact_batch_result.get("attempted") or 0)
+        if exact_batch_result.get("stopped"):
+            st.info(f"Frissítési sor leállítva: {processed}/{attempted} futár kész.")
         if failed_rows:
             st.warning(
                 f"Pontos devtest snapshot mentés kész: {processed}/{attempted} futár, "
@@ -24369,7 +24396,7 @@ def show_new_settlement_page() -> None:
             )
             with st.expander("Sikertelen futárok részletei"):
                 st.code("\n".join(failed_rows), language="text")
-        else:
+        elif not exact_batch_result.get("stopped"):
             st.success(f"Pontos devtest snapshot mentés kész: {processed}/{attempted} futár.")
     if st.session_state.pop("settlement_force_profile_refresh", False):
         refresh_settlement_profile_data()
@@ -24584,6 +24611,24 @@ def show_new_settlement_page() -> None:
             mobile_source_session_id = settlement_mobile_session_for_mode(calculation_mode, mobile_period_start, warehouse)
         if calculation_mode in {"API", "Excel"}:
             st.caption(f"Kiválasztott mobil forrás: {calculation_mode} | session={str(mobile_source_session_id or '-')[:8]}")
+            if st.button(
+                "Összes futár egyéni frissítése",
+                use_container_width=True,
+                disabled=data.empty or not mobile_source_session_id,
+                key=f"refresh_all_couriers_individually_{mobile_period_start:%Y%m}",
+                help="Sorban végigfuttatja az egyéni pénzügyi frissítést, és menti az eredményt.",
+            ):
+                count = start_devtest_exact_snapshot_batch(
+                    data, period_start=mobile_period_start,
+                    calculation_mode=calculation_mode, warehouse_label=warehouse,
+                    session_id=mobile_source_session_id,
+                    updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+                    current_data_context=current_data_context,
+                )
+                if count:
+                    st.rerun()
+                else:
+                    st.warning("Nincs frissíthető futár.")
             if st.button(
                 "Adatok mentése",
                 type="primary",
