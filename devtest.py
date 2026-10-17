@@ -4585,7 +4585,7 @@ def enrich_mobile_settlement_row_for_snapshot(
     period_end: date,
     warehouse_label: str | None,
 ) -> tuple[dict[str, object], pd.DataFrame]:
-    enriched = dict(row)
+    enriched = refresh_courier_salary_advance_row(row, courier_id, period_start, period_end)
     route_detail = pd.DataFrame()
     try:
         route_detail = load_courier_route_detail(
@@ -5199,7 +5199,7 @@ def save_devtest_finance_snapshots_for_rows(
                 # build_settlement_overview_data already ran the complete
                 # devtest calculation. Do not repeat route, summary,
                 # adjustment and imported-component queries for every courier.
-                item = dict(raw_item)
+                item = refresh_courier_salary_advance_row(raw_item, courier_id, period_start, period_end)
                 route_detail = pd.DataFrame()
                 # Persist the same itemized DB bonuses used by the detail page.
                 # The compact overview may omit these columns entirely.
@@ -8042,8 +8042,9 @@ def load_salary_advance_installments_for_month(
             .execute().data or []
         )
         return pd.DataFrame(rows)
-    except BaseException:
-        return pd.DataFrame()
+    except Exception as exc:
+        # An unavailable source must not be published as a zero deduction.
+        raise RuntimeError("A havi fizetéselőleg-részletek nem tölthetők be; az elszámolás nem menthető.") from exc
 
 
 @st.cache_data(show_spinner=False, ttl=30)
@@ -8067,6 +8068,26 @@ def load_courier_salary_advance_current(courier_id: str, period_start: date, per
     if installments.empty or "courier_id" not in installments.columns:
         return pd.DataFrame()
     return installments[installments["courier_id"].map(_courier_id_key).eq(_courier_id_key(courier_id))].copy()
+
+
+def resolve_courier_salary_advance_amount(courier_id: str, period_start: date, period_end: date) -> float:
+    installments = load_salary_advance_installments_for_month(period_start, period_end, include_closed=True)
+    if installments.empty:
+        return 0.0
+    selected = installments.loc[installments["courier_id"].map(_courier_id_key).eq(_courier_id_key(courier_id))]
+    return float(pd.to_numeric(selected["amount_huf"], errors="coerce").fillna(0).sum())
+
+
+def refresh_courier_salary_advance_row(row: dict, courier_id: str, period_start: date, period_end: date) -> dict:
+    result = dict(row)
+    previous = abs(parse_huf_value(result.get("Fizetés előleg")))
+    current = resolve_courier_salary_advance_amount(courier_id, period_start, period_end)
+    result["Fizetés előleg"] = current
+    if "Kifizetendő" in result:
+        result["Kifizetendő"] = parse_huf_value(result["Kifizetendő"]) + previous - current
+    if "Levonás" in result:
+        result["Levonás"] = parse_huf_value(result["Levonás"]) - previous + current
+    return result
 
 
 def apply_salary_advance_deduction(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
@@ -17491,7 +17512,7 @@ def render_courier_detail_page() -> None:
         + other_route_bonus_total + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total
         + correction_income_total
     )
-    salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
+    salary_advance_total = resolve_courier_salary_advance_amount(courier_id, period_start, period_end)
     total_deduction = (
         malus_total + atm_deduction_total + other_expense_total
         + correction_deduction_total + salary_advance_total
@@ -17961,7 +17982,7 @@ def render_courier_detail_page() -> None:
         )
         correction_income_total += periodic_correction_total
         correction_total = correction_income_total - correction_deduction_total
-        salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
+        salary_advance_total = resolve_courier_salary_advance_amount(courier_id, period_start, period_end)
         imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
         imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
         imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
@@ -18056,7 +18077,7 @@ def render_courier_detail_page() -> None:
         advance_booking_summary = {"source": str(loyalty_values.get("advance_booking_source") or "-")}
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = 0.0
-        salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
+        salary_advance_total = resolve_courier_salary_advance_amount(courier_id, period_start, period_end)
         route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
         display_base_total = base_total
         imported_customer_rating_total = resolve_customer_rating_bonus_total(

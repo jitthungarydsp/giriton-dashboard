@@ -9,6 +9,43 @@ import pandas as pd
 
 
 class FinanceSidebarSnapshotTest(unittest.TestCase):
+    def test_refresh_keeps_rating_and_restores_advance_without_double_deduction(self):
+        source = (Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8")
+        names = {"resolve_courier_salary_advance_amount", "refresh_courier_salary_advance_row"}
+        nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name in names]
+        def load(start, end, include_closed=False):
+            self.assertTrue(include_closed)
+            return pd.DataFrame([
+                {"courier_id": "7817", "amount_huf": 250000, "status": "done"},
+                {"courier_id": "other", "amount_huf": 90000, "status": "open"},
+            ])
+        ns = {"pd": pd, "date": date, "_courier_id_key": str,
+              "parse_huf_value": lambda value: float(value or 0),
+              "load_salary_advance_installments_for_month": load}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "devtest.py", "exec"), ns)
+        original = {"Ügyfélértékelés": 7500, "Fizetés előleg": 0,
+                    "Kifizetendő": 232332, "Levonás": 335233}
+        refresh = ns["refresh_courier_salary_advance_row"]
+        result = refresh(original, "7817", date(2026, 9, 1), date(2026, 9, 30))
+        self.assertEqual(result["Ügyfélértékelés"], 7500)
+        self.assertEqual(result["Fizetés előleg"], 250000)
+        self.assertEqual(result["Kifizetendő"], -17668)
+        self.assertEqual(result["Levonás"], 585233)
+        self.assertEqual(refresh(result, "7817", date(2026, 9, 1), date(2026, 9, 30)), result)
+        self.assertEqual(original["Fizetés előleg"], 0)
+
+    def test_failed_advance_query_cannot_be_published_as_zero(self):
+        source = (Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8")
+        node = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+                    and node.name == "load_salary_advance_installments_for_month")
+        node.decorator_list = []
+        def failed_db():
+            raise ConnectionError("unavailable")
+        ns = {"pd": pd, "date": date, "get_db": failed_db}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), ns)
+        with self.assertRaises(RuntimeError):
+            ns[node.name](date(2026, 9, 1), date(2026, 9, 30), include_closed=True)
+
     def setUp(self):
         source = (Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8")
         self.tree = ast.parse(source)
