@@ -26,6 +26,52 @@ def load_functions(filename, names, namespace):
 
 
 class SettlementWorkflowStatusTest(unittest.TestCase):
+    def test_snapshot_dashboard_reads_workflow_without_changing_amounts(self):
+        import copy
+        data = {
+            "peopleforce_documents": [
+                {"courier_id": "2", "document_type": "tig"},
+                {"courier_id": "3", "document_type": "tig"},
+            ],
+            "peopleforce_card_statuses": [
+                {"courier_id": "2", "action_key": "settlement", "status": "done", "updated_at": "2026-10-02"},
+                {"courier_id": "2", "action_key": "settlement", "status": "open", "updated_at": "2026-10-01"},
+                {"courier_id": "3", "action_key": "settlement", "status": "done"},
+                {"courier_id": "3", "action_key": "tig", "status": "done"},
+                {"courier_id": "3", "action_key": "invoice_payment", "status": "done"},
+                {"courier_id": "1", "action_key": "settlement:advance", "status": "done"},
+            ],
+            "peopleforce_complaints": [
+                {"courier_id": "4", "document_type": "settlement", "status": "open"},
+                {"courier_id": "5", "document_type": "settlement", "status": "open", "admin_response": "Answered"},
+            ],
+        }
+        calls = []
+        def read(table, month, fields):
+            calls.append((table, month))
+            return data[table]
+        ns = {"Any": Any, "date": date, "_workflow_month_rows": read,
+              "dashboard_courier_id_key": str, "money_int": lambda v: int(v or 0),
+              "base_action_key": lambda a: str(a).split(":")[0],
+              "process_id_from_action_key": lambda a: str(a).partition(":")[2],
+              "settlement_dashboard_status": settlement_dashboard_status}
+        load_functions("pwa_api.py", {"attach_readonly_dashboard_statuses", "_dashboard_status_from_bulk",
+                                     "workflow_done", "workflow_open", "workflow_status", "workflow_action_visible"}, ns)
+        original = {"rows": [dict(courierId=str(i), snapshotVersion=7, totalPayableHuf=100*i,
+                                 status={"label": "Devtest összesítés"}) for i in range(1, 6)],
+                    "summary": {"couriers": 5, "totalPayableHuf": 1500}}
+        before = copy.deepcopy(original)
+        result = ns["attach_readonly_dashboard_statuses"](date(2026, 9, 1), original)
+        self.assertEqual(original, before)
+        self.assertEqual([r["totalPayableHuf"] for r in result["rows"]], [100, 200, 300, 400, 500])
+        self.assertEqual([r["status"]["label"] for r in result["rows"]], [
+            "Elszámolás elfogadásra vár", "TIG elfogadásra vár", "Kifizetve",
+            "Reklamáció", "Elszámolás elfogadásra vár",
+        ])
+        self.assertEqual(result["summary"]["statusCounts"]["Elszámolás elfogadásra vár"], 2)
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all(month == "2026-09-01" for table, month in calls))
+
     def test_prepared_tig_cannot_skip_settlement_acceptance(self):
         for later in ({}, {"tig_done": True}, {"invoice_submit_open": True},
                       {"invoice_check_open": True}, {"invoice_payment_open": True}):

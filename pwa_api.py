@@ -18951,6 +18951,63 @@ def dashboard_month_courier_roster(month: date) -> dict[str, dict[str, Any]]:
     return roster
 
 
+def attach_readonly_dashboard_statuses(month: date, dashboard: dict[str, Any]) -> dict[str, Any]:
+    """Overlay monthly workflow labels without recalculating or writing money."""
+    month_key = month.replace(day=1).isoformat()
+    documents: dict[str, set[str]] = {}
+    states: dict[str, dict[str, dict[str, Any]]] = {}
+    complaints: dict[str, int] = {}
+    for row in _workflow_month_rows("peopleforce_documents", month_key,
+                                    "courier_id,document_type"):
+        action = str(row.get("document_type") or "")
+        if process_id_from_action_key(action):
+            continue
+        courier_id = dashboard_courier_id_key(row.get("courier_id"))
+        documents.setdefault(courier_id, set()).add(base_action_key(action))
+    status_rows = _workflow_month_rows("peopleforce_card_statuses", month_key,
+                                       "courier_id,action_key,status,status_note,updated_at")
+    # The endpoint's bulk reader orders by courier, not by state timestamp.
+    for row in sorted(status_rows, key=lambda item: str(item.get("updated_at") or ""), reverse=True):
+        action = str(row.get("action_key") or "")
+        if process_id_from_action_key(action):
+            continue
+        courier_id = dashboard_courier_id_key(row.get("courier_id"))
+        states.setdefault(courier_id, {}).setdefault(base_action_key(action), row)
+    for row in _workflow_month_rows("peopleforce_complaints", month_key,
+                                    "courier_id,document_type,status,admin_response,responded_at"):
+        action = str(row.get("document_type") or "")
+        if process_id_from_action_key(action):
+            continue
+        if str(row.get("status") or "").lower() in {"resolved", "closed", "deleted"}:
+            continue
+        if str(row.get("admin_response") or "").strip() or row.get("responded_at"):
+            continue
+        courier_id = dashboard_courier_id_key(row.get("courier_id"))
+        if base_action_key(action) == "invoice_check":
+            states.setdefault(courier_id, {})["invoice_check"] = {
+                **states.get(courier_id, {}).get("invoice_check", {}), "status": "open",
+            }
+        else:
+            complaints[courier_id] = complaints.get(courier_id, 0) + 1
+    result = {**dashboard, "summary": dict(dashboard.get("summary") or {}), "rows": []}
+    counts: dict[str, int] = {}
+    for original in dashboard.get("rows") or []:
+        courier_id = dashboard_courier_id_key(original.get("courierId"))
+        document_types = documents.get(courier_id, set())
+        status = _dashboard_status_from_bulk(
+            has_summary=money_int(original.get("snapshotVersion")) > 0
+                        or "devtest.py" in (original.get("sources") or [])
+                        or "summary" in (original.get("sources") or []),
+            has_settlement_document="settlement" in document_types,
+            has_tig_document="tig" in document_types,
+            states=states.get(courier_id, {}), open_complaints=complaints.get(courier_id, 0),
+        )
+        result["rows"].append({**original, "status": status})
+        counts[status["label"]] = counts.get(status["label"], 0) + 1
+    result["summary"]["statusCounts"] = counts
+    return result
+
+
 def build_admin_settlement_totals(month: date) -> dict[str, Any]:
     """Build a minimal courier-total list directly from devtest summaries.
 
@@ -22307,13 +22364,13 @@ def admin_settlement_dashboard(
                 snapshot_dashboard["summary"]["totalPayableHuf"] = sum(
                     money_int(row.get("totalPayableHuf")) for row in filtered_rows
                 )
-            return snapshot_dashboard
+            return attach_readonly_dashboard_statuses(month_value, snapshot_dashboard)
         dashboard = build_admin_settlement_dashboard(month_value, q)
         # An empty fast-view response is still a successful query, but it is
         # not useful when devtest snapshots exist for the selected month.
         # Keep the visible dashboard aligned with the devtest final totals.
         if dashboard.get("rows"):
-            return dashboard
+            return attach_readonly_dashboard_statuses(month_value, dashboard)
         snapshot_dashboard = build_admin_settlement_totals(month_value)
         if snapshot_dashboard.get("rows"):
             if q:
@@ -22328,8 +22385,8 @@ def admin_settlement_dashboard(
                 snapshot_dashboard["summary"]["totalPayableHuf"] = sum(
                     money_int(row.get("totalPayableHuf")) for row in snapshot_dashboard["rows"]
                 )
-            return snapshot_dashboard
-        return dashboard
+            return attach_readonly_dashboard_statuses(month_value, snapshot_dashboard)
+        return attach_readonly_dashboard_statuses(month_value, dashboard)
     except Exception as exc:
         print(f"Admin settlement dashboard fallback: {type(exc).__name__}: {exc}")
         try:
@@ -22362,7 +22419,7 @@ def admin_settlement_dashboard(
             snapshot_dashboard["summary"]["totalPayableHuf"] = sum(
                 money_int(row.get("totalPayableHuf")) for row in snapshot_dashboard["rows"]
             )
-        return snapshot_dashboard
+        return attach_readonly_dashboard_statuses(month_value, snapshot_dashboard)
 
 
 @app.get("/api/admin/settlement-totals")
