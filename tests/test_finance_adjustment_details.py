@@ -1,12 +1,36 @@
 import ast
 import re
 import unittest
+from datetime import date
+import pandas as pd
 from pathlib import Path
 from typing import Any
 from resources.finance_adjustment_details import snapshot_manual_adjustment_details
 
 
 class FinanceAdjustmentDetailsTest(unittest.TestCase):
+    def test_bulk_snapshot_keeps_periodic_name_count_without_adding_bonus_twice(self):
+        source = (Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8")
+        node = next(node for node in ast.parse(source).body
+                    if isinstance(node, ast.FunctionDef)
+                    and node.name == "append_periodic_correction_mobile_rows")
+        detail = pd.DataFrame([{"Tétel": "Vasárnapi hősök", "Összeg": 20000,
+                                "Napok": "Vasárnap", "Számítás": "2 x 10 000 Ft"}])
+        ns = {"pd": pd, "date": date, "parse_huf_value": lambda value: float(value or 0),
+              "calculate_periodic_fee_corrections": lambda *args: (20000, detail),
+              "recalculate_mobile_breakdown_totals": lambda rows: rows}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), ns)
+        rows = ns[node.name]([
+            {"item_key": "correction", "amount_value": 60000},
+            {"item_key": "payable", "amount_value": 1100000},
+        ], row={}, route_detail=pd.DataFrame(), period_start=date(2026, 9, 1),
+            period_end=date(2026, 9, 30), update_totals=False)
+        self.assertEqual(rows[0]["amount_value"], 60000)
+        self.assertEqual(rows[1]["amount_value"], 1100000)
+        self.assertEqual(rows[2]["item_label"], "Vasárnapi hősök")
+        self.assertIn("2 x 10 000 Ft", rows[2]["note"])
+        self.assertEqual(len(rows), 3)
+
     def snapshot(self):
         entries = [
             ("malus", 10000, "Tartalékos kör (leadás)"),

@@ -4795,6 +4795,7 @@ def append_periodic_correction_mobile_rows(
     route_detail: pd.DataFrame,
     period_start: date,
     period_end: date,
+    update_totals: bool = True,
 ) -> list[dict[str, object]]:
     periodic_total, periodic_detail = calculate_periodic_fee_corrections(
         route_detail,
@@ -4806,7 +4807,8 @@ def append_periodic_correction_mobile_rows(
     for item in rows:
         if str(item.get("item_key") or "") == "correction":
             manual_correction_total = parse_huf_value(item.get("amount_value"))
-            item["amount_value"] = manual_correction_total + periodic_total
+            if update_totals:
+                item["amount_value"] = manual_correction_total + periodic_total
             break
     else:
         rows.append({
@@ -4817,7 +4819,7 @@ def append_periodic_correction_mobile_rows(
             "note": "Havi nyitáskor publikált snapshot",
         })
     detail_rows = []
-    if manual_correction_total:
+    if manual_correction_total and update_totals:
         detail_rows.append({
             "item_key": "correction_manual_snapshot",
             "item_label": "Kézi korrekciók",
@@ -5180,6 +5182,19 @@ def save_devtest_finance_snapshots_for_rows(
                 finance_rows = recalculate_mobile_breakdown_totals(
                     mobile_breakdown_rows_from_settlement_row(item)
                 )
+                # Overview totals already include periodic bonuses, but their
+                # rule names and counts must also be saved for the detail cards.
+                if not load_active_periodic_fee_rules(period_start, period_end).empty:
+                    route_detail = load_courier_route_detail(
+                        courier_id, courier_name, session_id, calculation_mode,
+                        period_start, warehouse_label,
+                        int(st.session_state.get("settlement_parameter_revision", 0)),
+                    )
+                    finance_rows = append_periodic_correction_mobile_rows(
+                        finance_rows, row=item, route_detail=route_detail,
+                        period_start=period_start, period_end=period_end,
+                        update_totals=False,
+                    )
                 # The overview row is the authoritative devtest result. The
                 # compact mobile reconstruction can omit a small component,
                 # so it must never overwrite the displayed final amount.
