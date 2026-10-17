@@ -24298,8 +24298,8 @@ def show_new_settlement_page() -> None:
     if st.session_state.get("new_calculation_mode") != "Excel":
         st.session_state["new_calculation_mode"] = "Excel"
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "Excel")
-    # For the current settlement run only September remains selectable.
-    active_settlement_months = [month_option_label(date(2026, 9, 1))]
+    # Include past settlement periods and the current month, never future ones.
+    active_settlement_months = month_options()
     current_month_label = st.session_state.get("new_month")
     if current_month_label not in active_settlement_months:
         current_month_label = active_settlement_months[0]
