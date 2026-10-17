@@ -12002,7 +12002,10 @@ def recalculate_customer_rating_source_rows(
         )
         if source_formats.astype(str).str.contains("average_rating_value", case=False, na=False).any():
             source_route_total = int(fallback_route_total or 0)
-        if source_route_total <= 0 and source_count == 1:
+        # A single monthly rating source must use the actual month's routes.
+        # Legacy/value imports can contain a placeholder count of 1; retaining
+        # that count turns a per-route rate into the displayed monthly total.
+        if source_count == 1 and int(fallback_route_total or 0) > 0:
             source_route_total = int(fallback_route_total or 0)
         recalculated.append(recalculate_customer_rating_rows(source_rows, source_route_total, period_start, period_end, rules))
     return pd.concat(recalculated, ignore_index=True) if recalculated else result.drop(columns=["_rating_source_key"])

@@ -61,6 +61,27 @@ class FinanceSidebarSnapshotTest(unittest.TestCase):
         self.assertEqual(seen, [50])
         self.assertEqual(result.iloc[0]["Ügyfélértékelés"], 7500)
 
+    def test_single_rating_source_replaces_placeholder_route_count(self):
+        names = {"recalculate_customer_rating_source_rows", "recalculate_customer_rating_rows"}
+        nodes = [node for node in self.tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+        ns = {"pd": pd, "date": date, "parse_huf_value": lambda value: float(value or 0),
+              "customer_rating_rule_amount": lambda *args: 150}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "devtest.py", "exec"), ns)
+        rows = pd.DataFrame([dict(completed_routes=1, bonus_per_route_huf=150,
+                                 bonus_total_huf=150, average_rating=4.75, rating_count=129,
+                                 source_spreadsheet_id="legacy_monthly_upload", row_data={})])
+        result = ns["recalculate_customer_rating_source_rows"](
+            rows, 50, date(2026, 9, 1), date(2026, 9, 30), pd.DataFrame())
+        self.assertEqual(result["completed_routes"].sum(), 50)
+        self.assertEqual(result["bonus_total_huf"].sum(), 7500)
+        # Multiple independent sources retain their own period counts.
+        other = rows.copy()
+        other["source_spreadsheet_id"] = "another_period"
+        combined = ns["recalculate_customer_rating_source_rows"](
+            pd.concat([rows, other], ignore_index=True), 50,
+            date(2026, 9, 1), date(2026, 9, 30), pd.DataFrame())
+        self.assertEqual(combined["bonus_total_huf"].sum(), 300)
+
     def test_snapshot_counts_accept_overview_column_names(self):
         node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)
                     and node.name == "mobile_breakdown_rows_from_settlement_row")
