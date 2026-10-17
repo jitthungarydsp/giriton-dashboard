@@ -9,6 +9,22 @@ import pandas as pd
 
 
 class FinanceSidebarSnapshotTest(unittest.TestCase):
+    def test_saved_finance_and_profile_return_before_import_reconstruction(self):
+        source = (Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8")
+        node = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+                    and node.name == "render_courier_detail_page")
+        finance_branch = next(child for child in node.body if isinstance(child, ast.If)
+                              and "selected_menu_hint == 'Pénzügy'" in ast.unparse(child.test))
+        profile_branch = next(child for child in node.body if isinstance(child, ast.If)
+                              and ast.unparse(child.test) == "selected_menu_hint == 'Profil'")
+        calls = [child for child in ast.walk(node) if isinstance(child, ast.Call)
+                 and isinstance(child.func, ast.Name)]
+        enrichment = next(child for child in calls if child.func.id == "enrich_mobile_row_with_imported_balance_components")
+        snapshot = next(child for child in calls if child.func.id == "load_reliable_devtest_finance_snapshot")
+        self.assertLess(finance_branch.end_lineno, enrichment.lineno)
+        self.assertLess(profile_branch.end_lineno, snapshot.lineno)
+        self.assertIsInstance(finance_branch.body[-1], ast.Return)
+        self.assertIsInstance(profile_branch.body[-1], ast.Return)
     def test_explicit_batch_queues_unique_roster_after_clearing_cache(self):
         source = (Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8")
         node = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)

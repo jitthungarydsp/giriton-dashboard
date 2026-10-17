@@ -17045,13 +17045,8 @@ def render_courier_detail_page() -> None:
     period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
     _, period_end = month_bounds(period_start)
     state_excel_session_id = st.session_state.get("settlement_excel_session_id")
-    session_id = (
-        state_excel_session_id
-        if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, period_start)
-        else load_latest_excel_jit_session_id(period_start)
-    )
-    imported_balance_session_id = balance_component_session_id(active_calculation_mode, period_start, session_id)
-    row = enrich_mobile_row_with_imported_balance_components(row, imported_balance_session_id)
+    # Saved Finance/Profile views do not need to validate or reconstruct imports.
+    session_id = state_excel_session_id
     period_label = (
         f"{period_start:%Y. %m. %d.} - {period_end:%Y. %m. %d.}"
         if period_start and period_end
@@ -17127,7 +17122,6 @@ def render_courier_detail_page() -> None:
     if st.session_state.get(menu_key) == "ttekintés":
         st.session_state[menu_key] = "Pénzügy"
     selected_menu_hint = str(st.session_state.get(menu_key) or "Pénzügy")
-    existing_finance_snapshot = load_reliable_devtest_finance_snapshot(courier_id, period_start)
     if selected_menu_hint == "Profil":
         render_fast_courier_profile(
             courier_id=courier_id,
@@ -17138,6 +17132,7 @@ def render_courier_detail_page() -> None:
             menu_target_key=menu_target_key,
         )
         return
+    existing_finance_snapshot = load_reliable_devtest_finance_snapshot(courier_id, period_start)
     if selected_menu_hint == "Pénzügy" and not exact_snapshot_batch_active and not finance_preflight_active:
         courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg", "Céltartalék"]
         courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Számla összevetés", "Reklamációk", "E-mail küldése", "Profil"])
@@ -17201,6 +17196,13 @@ def render_courier_detail_page() -> None:
                 "Előbb töltsd be az Excelt vagy az ügyfélértékelést."
             )
         return
+    session_id = (
+        state_excel_session_id
+        if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, period_start)
+        else load_latest_excel_jit_session_id(period_start)
+    )
+    imported_balance_session_id = balance_component_session_id(active_calculation_mode, period_start, session_id)
+    row = enrich_mobile_row_with_imported_balance_components(row, imported_balance_session_id)
     heavy_finance_menus = {"Pénzügy", "Kifizetés", "Fizetés előleg", "Bónusz", "Málusz"}
     quality_menus = {"Pénzügy", "Útvonalak"}
     needs_finance_adjustments = selected_menu_hint in heavy_finance_menus
