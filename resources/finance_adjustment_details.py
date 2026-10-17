@@ -13,7 +13,7 @@ def snapshot_manual_adjustment_details(snapshot, label):
     adjustments = next((source.get("payload") for source in snapshot.get("sources", [])
                         if source.get("source_key") == "manual_adjustments"), [])
     if not isinstance(adjustments, list):
-        return []
+        adjustments = []
     names = {"bonus": "Bónusz", "malus": "Malus", "manual_correction": "Kézi korrekció +",
              "correction_income": "Korrekció +", "correction": "Korrekció",
              "correction_deduction": "Korrekció -", "manual_correction_deduction": "Kézi korrekció -",
@@ -32,6 +32,17 @@ def snapshot_manual_adjustment_details(snapshot, label):
         period = " – ".join(str(item.get(key) or "") for key in ("valid_from", "valid_to")).strip(" –")
         rows.append({"Tétel": names[kind], "Összeg": amount,
                      "Megjegyzés": str(item.get("note") or ""), "Érvényesség": period})
+    if label == "Korrekció":
+        # Periodic bonuses are separate snapshot items, not manual adjustments.
+        # Preserve their original rule name and calculation before any remainder.
+        for item in snapshot.get("items", []):
+            if item.get("section") != "finance" or not str(item.get("item_key") or "").startswith("correction_periodic_"):
+                continue
+            amount = float(item.get("amount_value") or 0)
+            if amount:
+                rows.append({"Tétel": str(item.get("item_label") or "Időszakos bónusz"),
+                             "Összeg": amount, "Megjegyzés": str(item.get("note") or ""),
+                             "Érvényesség": ""})
     if not rows:
         return []
     total_item = next((item for item in snapshot.get("items", [])

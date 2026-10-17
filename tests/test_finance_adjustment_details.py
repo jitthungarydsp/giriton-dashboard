@@ -49,6 +49,23 @@ class FinanceAdjustmentDetailsTest(unittest.TestCase):
         self.assertIn("Második indok", items[1]["note"])
         self.assertIn("2026-09", items[1]["note"])
 
+    def test_sunday_bonus_keeps_name_and_calculation_with_manual_correction(self):
+        snapshot = {"sources": [{"source_key": "manual_adjustments", "payload": [
+            {"adjustment_type": "manual_correction", "amount_huf": 33000, "note": "Ügyfélértékelés"},
+        ]}], "items": [
+            {"section": "finance", "item_key": "correction", "amount_value": 63000},
+            {"section": "finance", "item_key": "correction_periodic_1", "amount_value": 30000,
+             "item_label": "Vasárnapi hősök bónusz", "note": "Vasárnap | 3 x 10 000 Ft"},
+        ]}
+        rows = snapshot_manual_adjustment_details(snapshot, "Korrekció")
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1]["Tétel"], "Vasárnapi hősök bónusz")
+        self.assertIn("3 x 10 000 Ft", rows[1]["Megjegyzés"])
+        self.assertEqual(sum(row["Összeg"] for row in rows), 63000)
+        snapshot["sources"] = []
+        rows = snapshot_manual_adjustment_details(snapshot, "Korrekció")
+        self.assertEqual(rows[0]["Tétel"], "Vasárnapi hősök bónusz")
+
 
 if __name__ == "__main__":
     unittest.main()
