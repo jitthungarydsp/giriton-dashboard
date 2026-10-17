@@ -1,4 +1,5 @@
 import hashlib
+from resources.finance_adjustment_details import snapshot_manual_adjustment_details
 import hmac
 import base64
 import html
@@ -10954,7 +10955,7 @@ def snapshot_detail_item(card_key: str, index: int, row: dict[str, Any]) -> dict
     )
     note_parts = [
         str(row.get(key) or "").strip()
-        for key in ("Számítás", "Szamitas", "Megjegyzés", "Megjegyzes", "Forrás", "Forras")
+        for key in ("Számítás", "Szamitas", "Megjegyzés", "Megjegyzes", "Érvényesség", "Forrás", "Forras")
         if str(row.get(key) or "").strip()
     ]
     if (
@@ -10992,6 +10993,8 @@ def snapshot_detail_rows_are_compact(detail_rows: list[dict[str, Any]]) -> bool:
 def compact_snapshot_detail_items(card_key: str, label: str, detail_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not detail_rows:
         return []
+    if card_key in {"corrections", "bonus_malus"} or any(row.get("Megjegyzés") or row.get("note") for row in detail_rows):
+        return [snapshot_detail_item(card_key, index, row) for index, row in enumerate(detail_rows, start=1)]
     if snapshot_detail_rows_are_compact(detail_rows):
         keep_zero_items = card_key in {"performance", "insurance", "loyalty_bonus", "corrections"}
         return [
@@ -11090,6 +11093,9 @@ def base_fee_category_snapshot_rows(route_rows: list[dict[str, Any]]) -> list[di
 
 
 def snapshot_card_detail_items(snapshot: dict[str, Any], label: str, card_key: str) -> list[dict[str, Any]]:
+    manual_rows = snapshot_manual_adjustment_details(snapshot, label)
+    if manual_rows:
+        return [snapshot_detail_item(card_key, index, row) for index, row in enumerate(manual_rows, start=1)]
     drilldowns = snapshot_source_payload(snapshot, "card_drilldowns")
     if not isinstance(drilldowns, dict):
         return []
@@ -12858,7 +12864,7 @@ def build_financial_breakdown(
         courier_id,
         month,
         include_sources=True,
-        source_keys={"card_drilldowns"} if snapshot_only else None,
+        source_keys={"card_drilldowns", "manual_adjustments"} if snapshot_only else None,
     )
     snapshot_breakdown = (
         build_financial_breakdown_from_snapshot(

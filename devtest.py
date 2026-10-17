@@ -1,4 +1,5 @@
 import hashlib
+from resources.finance_adjustment_details import snapshot_manual_adjustment_details
 import html
 import json
 import re
@@ -3935,6 +3936,15 @@ def render_devtest_finance_snapshot_view(
     ]
 
     def finance_detail_html(detail_label: str) -> str:
+        manual_rows = snapshot_manual_adjustment_details(snapshot, detail_label)
+        if manual_rows:
+            return '<div class="finance-kpi-detail-body">' + "".join(
+                '<div style="padding:10px 0;border-top:1px solid #eef3ef;">'
+                f'<strong>{html.escape(str(item["Tétel"]))} · {html.escape(format_huf(item["Összeg"]))}</strong>'
+                f'<div style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px;">{html.escape(str(item["Megjegyzés"]))}</div>'
+                f'<small>{html.escape(str(item["Érvényesség"]))}</small></div>'
+                for item in manual_rows
+            ) + '</div>'
         detail_rows = _drilldown_rows_for_label(drilldowns, detail_label)
         if not detail_rows:
             detail_rows = _snapshot_fallback_drilldown(snapshot, detail_label)
@@ -3988,7 +3998,7 @@ def render_devtest_finance_snapshot_view(
             f"{note_html}"
             "</div>"
         )
-        has_detail_rows = bool(_drilldown_rows_for_label(drilldowns, label) or _snapshot_fallback_drilldown(snapshot, label))
+        has_detail_rows = bool(snapshot_manual_adjustment_details(snapshot, label) or _drilldown_rows_for_label(drilldowns, label) or _snapshot_fallback_drilldown(snapshot, label))
         if not has_detail_rows:
             return card
         return (
@@ -5251,7 +5261,7 @@ def save_devtest_finance_snapshots_for_rows(
             tig_rows = tig_editor_rows_from_breakdown(tig_breakdown).to_dict("records")
             if fast_snapshot:
                 summary_row = {}
-                profile_adjustments = pd.DataFrame()
+                profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
                 reserve_month = {}
             else:
                 summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)

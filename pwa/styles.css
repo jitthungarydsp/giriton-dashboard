@@ -760,7 +760,7 @@ textarea { min-height: 96px; resize: vertical; }
 .financial-detail-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
 .financial-detail-text { min-width: 0; }
 .financial-detail-row strong { display: block; font-size: 13px; }
-.financial-detail-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; white-space: normal; }
+.financial-detail-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
 .financial-detail-row span { font-weight: 900; overflow-wrap: anywhere; text-align: right; }
 @media (max-width: 430px) {
   .financial-restore-panel,
