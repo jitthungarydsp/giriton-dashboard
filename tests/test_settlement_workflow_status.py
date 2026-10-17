@@ -3,6 +3,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 
@@ -51,6 +52,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
             calls.append((table, month))
             return data[table]
         ns = {"Any": Any, "date": date, "_workflow_month_rows": read,
+              "ThreadPoolExecutor": ThreadPoolExecutor,
               "dashboard_courier_id_key": str, "money_int": lambda v: int(v or 0),
               "base_action_key": lambda a: str(a).split(":")[0],
               "process_id_from_action_key": lambda a: str(a).partition(":")[2],

@@ -1,7 +1,8 @@
 import ast
 import copy
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,31 @@ def functions(names, namespace):
 
 
 class DashboardLatestSnapshotsTest(unittest.TestCase):
+    def test_flags_reuse_loaded_latest_versions_without_history_read(self):
+        queries = []
+        def read(table, **kwargs):
+            queries.append(table)
+            if table == "peopleforce_card_statuses":
+                return []
+            if table == "courier_finance_snapshot_item":
+                return [{"snapshot_id": "current", "item_key": "salary_advance", "amount_value": -250000}]
+            self.fail(f"Unexpected query: {table}")
+        ns = self.namespace() | {
+            "timedelta": timedelta, "ThreadPoolExecutor": ThreadPoolExecutor,
+            "dashboard_courier_id_key": str,
+            "optional_supabase_rows_paged": read,
+            "read_dashboard_latest_finance_snapshots": lambda *a: self.fail("Already loaded"),
+            "money_int": lambda v: int(v or 0), "format_huf": lambda v: str(v),
+            "normalize_text": lambda v: str(v).lower(),
+        }
+        functions({"dashboard_monthly_flags_by_courier", "merge_dashboard_flags"}, ns)
+        result = ns["dashboard_monthly_flags_by_courier"](
+            date(2026, 9, 1), ["7817"], latest_snapshots=[
+                {"id": "current", "courier_id": "7817", "version": 9},
+            ])
+        self.assertEqual(result["7817"], [{"label": "Előleg 250000", "tone": "warn"}])
+        self.assertEqual(queries, ["peopleforce_card_statuses", "courier_finance_snapshot_item"])
+
     def namespace(self):
         return {"Any": Any, "date": date, "datetime": datetime, "timezone": timezone}
 
@@ -74,7 +100,7 @@ class DashboardLatestSnapshotsTest(unittest.TestCase):
             "normalize_person_match_text": lambda v: str(v or ""),
             "money_int": lambda v: int(v or 0),
             "dashboard_month_courier_roster": lambda *a: {},
-            "dashboard_monthly_flags_by_courier": lambda *a: {},
+            "dashboard_monthly_flags_by_courier": lambda *a, **k: {},
             "read_dashboard_latest_finance_snapshots": lambda *a: copy.deepcopy(latest),
         }
         functions({"build_admin_settlement_totals"}, ns)

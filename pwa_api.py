@@ -18589,7 +18589,9 @@ def merge_dashboard_flags(*flag_groups: list[dict[str, str]]) -> list[dict[str, 
     return merged
 
 
-def dashboard_monthly_flags_by_courier(month: date, courier_ids: list[str]) -> dict[str, list[dict[str, str]]]:
+def dashboard_monthly_flags_by_courier(
+    month: date, courier_ids: list[str], *, latest_snapshots: list[dict[str, Any]] | None = None,
+) -> dict[str, list[dict[str, str]]]:
     clean_ids = list(dict.fromkeys(
         dashboard_courier_id_key(item)
         for item in courier_ids
@@ -18602,12 +18604,6 @@ def dashboard_monthly_flags_by_courier(month: date, courier_ids: list[str]) -> d
     previous_month_key = (month_start - timedelta(days=1)).replace(day=1).isoformat()
     flags_by_courier: dict[str, list[dict[str, str]]] = {courier_id: [] for courier_id in clean_ids}
 
-    snapshot_params = {
-        "select": "id,courier_id,version",
-        "period_start": f"eq.{month_key}",
-        "courier_id": f"in.({','.join(clean_ids)})",
-        "order": "courier_id.asc,version.desc",
-    }
     attention_params = {
         "select": "courier_id,action_key,status,status_note,updated_at,document_month",
         "document_month": f"in.({previous_month_key},{month_key})",
@@ -18615,15 +18611,8 @@ def dashboard_monthly_flags_by_courier(month: date, courier_ids: list[str]) -> d
         "order": "document_month.desc,updated_at.desc",
     }
     with ThreadPoolExecutor(max_workers=2) as executor:
-        snapshot_future = executor.submit(
-            optional_supabase_rows_paged,
-            "courier_finance_snapshot",
-            schema="settlement",
-            params=snapshot_params,
-            timeout=30,
-            page_size=1000,
-            max_rows=50000,
-        )
+        snapshot_future = (executor.submit(read_dashboard_latest_finance_snapshots, month_start)
+                           if latest_snapshots is None else None)
         attention_future = executor.submit(
             optional_supabase_rows_paged,
             "peopleforce_card_statuses",
@@ -18632,7 +18621,8 @@ def dashboard_monthly_flags_by_courier(month: date, courier_ids: list[str]) -> d
             page_size=1000,
             max_rows=50000,
         )
-        snapshot_rows = snapshot_future.result()
+        snapshot_rows = [row for row in (snapshot_future.result() if snapshot_future else latest_snapshots)
+                         if dashboard_courier_id_key(row.get("courier_id")) in clean_ids]
         attention_rows = attention_future.result()
     latest_snapshot_by_courier: dict[str, str] = {}
     snapshot_to_courier: dict[str, str] = {}
@@ -18957,15 +18947,22 @@ def attach_readonly_dashboard_statuses(month: date, dashboard: dict[str, Any]) -
     documents: dict[str, set[str]] = {}
     states: dict[str, dict[str, dict[str, Any]]] = {}
     complaints: dict[str, int] = {}
-    for row in _workflow_month_rows("peopleforce_documents", month_key,
-                                    "courier_id,document_type"):
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        document_future = executor.submit(_workflow_month_rows, "peopleforce_documents", month_key,
+                                          "courier_id,document_type")
+        status_future = executor.submit(_workflow_month_rows, "peopleforce_card_statuses", month_key,
+                                        "courier_id,action_key,status,status_note,updated_at")
+        complaint_future = executor.submit(_workflow_month_rows, "peopleforce_complaints", month_key,
+                                           "courier_id,document_type,status,admin_response,responded_at")
+        document_rows = document_future.result()
+        status_rows = status_future.result()
+        complaint_rows = complaint_future.result()
+    for row in document_rows:
         action = str(row.get("document_type") or "")
         if process_id_from_action_key(action):
             continue
         courier_id = dashboard_courier_id_key(row.get("courier_id"))
         documents.setdefault(courier_id, set()).add(base_action_key(action))
-    status_rows = _workflow_month_rows("peopleforce_card_statuses", month_key,
-                                       "courier_id,action_key,status,status_note,updated_at")
     # The endpoint's bulk reader orders by courier, not by state timestamp.
     for row in sorted(status_rows, key=lambda item: str(item.get("updated_at") or ""), reverse=True):
         action = str(row.get("action_key") or "")
@@ -18973,8 +18970,7 @@ def attach_readonly_dashboard_statuses(month: date, dashboard: dict[str, Any]) -
             continue
         courier_id = dashboard_courier_id_key(row.get("courier_id"))
         states.setdefault(courier_id, {}).setdefault(base_action_key(action), row)
-    for row in _workflow_month_rows("peopleforce_complaints", month_key,
-                                    "courier_id,document_type,status,admin_response,responded_at"):
+    for row in complaint_rows:
         action = str(row.get("document_type") or "")
         if process_id_from_action_key(action):
             continue
@@ -19011,7 +19007,7 @@ def attach_readonly_dashboard_statuses(month: date, dashboard: dict[str, Any]) -
 def read_dashboard_latest_finance_snapshots(month: date) -> list[dict[str, Any]]:
     """Prefer the DB latest-only projection; keep the existing reader as fallback."""
     month_key = month.replace(day=1).isoformat()
-    columns = "courier_id,courier_name,warehouse_label,version,metadata,created_at"
+    columns = "id,courier_id,courier_name,warehouse_label,version,metadata,created_at"
     try:
         rows: list[dict[str, Any]] = []
         offset = 0
@@ -19119,6 +19115,7 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
         flags_by_courier = dashboard_monthly_flags_by_courier(
             month_start,
             [str(row.get("courierId") or "") for row in rows],
+            latest_snapshots=snapshots,
         )
     except Exception as exc:
         print(f"Admin settlement flags skipped: {type(exc).__name__}: {exc}")
