@@ -8010,12 +8010,17 @@ def salary_advance_installment_amounts(total_huf: float, months: int) -> list[in
 
 
 @st.cache_data(show_spinner=False, ttl=30)
-def load_salary_advance_installments_for_month(period_start: date, period_end: date) -> pd.DataFrame:
+def load_salary_advance_installments_for_month(
+    period_start: date, period_end: date, include_closed: bool = False,
+) -> pd.DataFrame:
     try:
+        # Closing a deduction marks it as done; it remains part of that month's
+        # financial calculation. Workflow actions still need only open rows.
+        statuses = ["open", "done"] if include_closed else ["open"]
         rows = (
             get_db().schema("settlement").table("courier_salary_advance_installment")
             .select("*")
-            .eq("status", "open")
+            .in_("status", statuses)
             .gte("period_end", period_start.isoformat())
             .lte("period_start", period_end.isoformat())
             .execute().data or []
@@ -8051,7 +8056,7 @@ def load_courier_salary_advance_current(courier_id: str, period_start: date, per
 def apply_salary_advance_deduction(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
     result = data.copy()
     result["Fizetés előleg"] = 0.0
-    installments = load_salary_advance_installments_for_month(period_start, period_end)
+    installments = load_salary_advance_installments_for_month(period_start, period_end, include_closed=True)
     if installments.empty or "Courier ID" not in result.columns:
         return result
     amounts = (

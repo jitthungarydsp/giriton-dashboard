@@ -71,6 +71,40 @@ class FinanceSidebarSnapshotTest(unittest.TestCase):
         self.assertEqual(amounts["routes"], 50)
         self.assertEqual(amounts["orders"], 700)
 
+    def test_closed_advance_remains_in_monthly_calculation(self):
+        node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "apply_salary_advance_deduction")
+        def load(start, end, include_closed=False):
+            self.assertTrue(include_closed)
+            return pd.DataFrame([{"courier_id": "7817", "amount_huf": 250000, "status": "done"}])
+        ns = {"pd": pd, "date": date, "_courier_id_key": str,
+              "load_salary_advance_installments_for_month": load}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), ns)
+        result = ns[node.name](pd.DataFrame([{"Courier ID": "7817", "Levonás": 100,
+                                            "Kifizetendő": 300000}]), date(2026, 9, 1), date(2026, 9, 30))
+        self.assertEqual(result.iloc[0]["Fizetés előleg"], 250000)
+        self.assertEqual(result.iloc[0]["Levonás"], 250100)
+        self.assertEqual(result.iloc[0]["Kifizetendő"], 50000)
+
+    def test_advance_loader_keeps_workflow_open_only_and_excludes_cancelled(self):
+        node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "load_salary_advance_installments_for_month")
+        node.decorator_list = []
+        captured = []
+        class Query:
+            def schema(self, *args): return self
+            def table(self, *args): return self
+            def select(self, *args): return self
+            def in_(self, column, statuses): captured.append(statuses); return self
+            def gte(self, *args): return self
+            def lte(self, *args): return self
+            def execute(self): return SimpleNamespace(data=[])
+        ns = {"pd": pd, "date": date, "get_db": Query}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), ns)
+        ns[node.name](date(2026, 9, 1), date(2026, 9, 30))
+        ns[node.name](date(2026, 9, 1), date(2026, 9, 30), include_closed=True)
+        self.assertEqual(captured, [["open"], ["open", "done"]])
+
     def test_sidebar_uses_same_snapshot_for_tig_and_ledger(self):
         node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef) and node.name == "render_empty_right_menu")
         code = ast.unparse(node)
