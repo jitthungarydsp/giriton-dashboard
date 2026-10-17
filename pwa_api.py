@@ -172,6 +172,16 @@ class AdminWorkflowActionRequest(BaseModel):
     note: str = ""
 
 
+class MonthlyPaymentCloseRequest(BaseModel):
+    month: str
+    courierId: str
+    snapshotId: str
+    invoiceNumber: str = ""
+    note: str
+    adminNote: str = ""
+    notifyCourier: bool = False
+
+
 class SettlementCardOverrideItem(BaseModel):
     key: str = ""
     label: str
@@ -22453,6 +22463,145 @@ def admin_settlement_totals(
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
     return build_admin_settlement_totals(month_value)
+
+
+def build_admin_monthly_payment(courier_id: str, month: date) -> dict[str, Any]:
+    month = month.replace(day=1)
+    user = {"courierId": courier_id, "username": courier_id}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        snapshot_future = executor.submit(read_latest_courier_finance_snapshot, courier_id, month, include_sources=True)
+        profile_future = executor.submit(read_billing_profile, user)
+        workflow_future = executor.submit(read_workflow_rows, user, month)
+        closure_future = executor.submit(
+            supabase_rest, "GET", "courier_monthly_closure", schema="settlement",
+            params={"select": "*", "courier_id": f"eq.{courier_id}",
+                    "period_start": f"eq.{month.isoformat()}", "limit": "1"},
+        )
+        snapshot = snapshot_future.result()
+        profile = profile_future.result()
+        documents, status_rows, complaints = workflow_future.result()
+        closure_rows = closure_future.result()
+    closure = closure_rows[0] if closure_rows else {}
+    states = status_map(status_rows, "")
+    items = snapshot_item_map(snapshot, "finance")
+    has_amount = "payable" in items
+    closed = closure.get("status") == "done" or workflow_done(states, "invoice_payment")
+    amount = money_int(closure.get("payable_huf")) if closure.get("status") == "done" else money_int((items.get("payable") or {}).get("amount_value"))
+    invoices = [{**document, "downloadUrl": f"/api/documents/{quote(str(document.get('id') or ''))}"}
+                for document in documents if base_action_key(str(document.get("document_type") or "")) == "invoice"
+                and document_belongs_to_process(document, "")]
+    latest_invoice = next((document for document in invoices
+                           if not str(document.get("title") or "").strip().upper().startswith("KP")), {})
+    invoice_number = str(closure.get("invoice_number") or latest_invoice.get("title") or "")
+    if invoice_number.startswith("Számla "):
+        invoice_number = invoice_number[len("Számla "):]
+    bank_account = str(closure.get("bank_account_number") or profile.get("bank_account_number") or "")
+    approved = workflow_done(states, "invoice_check") or workflow_done(states, "manual_invoice_skip")
+    blocking = ""
+    if not closed:
+        if not snapshot or not has_amount:
+            blocking = "Hiányzik a mentett havi elszámolás."
+        elif not approved or workflow_open(states, "invoice_check"):
+            blocking = "A számla még nincs jóváhagyva."
+        elif not bank_account:
+            blocking = "Hiányzik a bankszámlaszám."
+    tig_payload = snapshot_source_payload(snapshot, "tig_breakdown")
+    return {
+        "month": month.strftime("%Y-%m"), "courierId": courier_id,
+        "courierName": str(snapshot.get("courier_name") or profile.get("courier_name") or courier_id),
+        "snapshotId": str(snapshot.get("id") or ""), "snapshotVersion": money_int(snapshot.get("version")),
+        "recipientName": str(closure.get("recipient_name") or profile.get("company_name") or profile.get("courier_name") or courier_id),
+        "bankAccount": bank_account, "amountHuf": amount, "invoiceNumber": invoice_number,
+        "paymentNote": str(closure.get("payment_note") or f"{courier_id}-{invoice_number}".strip("-")),
+        "closeNote": str((closure.get("snapshot") or {}).get("close_note") or ""),
+        "adminNote": str((closure.get("snapshot") or {}).get("admin_note") or ""),
+        "closed": closed, "closedAt": closure.get("closed_at"), "closedBy": closure.get("closed_by"),
+        "canClose": not closed and not blocking, "blockingReason": blocking,
+        "invoiceCheck": states.get("invoice_check") or {}, "invoices": invoices,
+        "breakdown": [{"key": key, "label": item.get("item_label") or key,
+                       "amountHuf": money_int(item.get("amount_value"))}
+                      for key, item in items.items() if key in {
+                          "base", "tip", "delay_bonus", "compliance_bonus", "address_bonus_kifli",
+                          "monthly_bonus", "monthly_malus", "manual_bonus", "manual_malus", "loyalty_bonus",
+                          "customer_rating", "correction", "atm_effect", "salary_advance", "reserve", "insurance_fee", "payable",
+                      } and (money_int(item.get("amount_value")) != 0 or key == "payable")],
+        "tigBreakdown": tig_payload if isinstance(tig_payload, dict) else {},
+    }
+
+
+@app.get("/api/admin/settlement-payment")
+def admin_monthly_payment(
+    month: str = Query(default=""), courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    if not str(courier or "").strip():
+        raise HTTPException(status_code=422, detail="Válassz futárt.")
+    return build_admin_monthly_payment(str(courier).strip(), parse_month(month))
+
+
+@app.post("/api/admin/settlement-payment/close")
+def admin_close_monthly_payment(
+    payload: MonthlyPaymentCloseRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    courier_id = str(payload.courierId or "").strip()
+    if not courier_id or not str(payload.snapshotId or "").strip():
+        raise HTTPException(status_code=422, detail="Hiányzik a futár vagy a mentett elszámolás azonosítója.")
+    month = parse_month(payload.month)
+    payment = build_admin_monthly_payment(courier_id, month)
+    if payment["closed"]:
+        return {"ok": True, "alreadyClosed": True, "payment": payment}
+    if payment["snapshotId"] != payload.snapshotId:
+        raise HTTPException(status_code=409, detail="A mentett elszámolás megváltozott. Frissítsd a Kifizetés fület.")
+    if not payment["canClose"]:
+        raise HTTPException(status_code=409, detail=payment["blockingReason"])
+    note = str(payload.note or "").strip()
+    amount_digits = str(abs(payment["amountHuf"]))
+    if not note or amount_digits not in re.sub(r"\D", "", note):
+        raise HTTPException(status_code=422, detail="A lezárási megjegyzés kötelező, és tartalmaznia kell a kifizetendő összeget.")
+    if str(payload.adminNote or "").strip():
+        note += f"; megjegyzés: {str(payload.adminNote).strip()}"
+    result = supabase_rest(
+        "POST", "rpc/pwa_close_monthly_payment", schema="settlement",
+        payload={"p_courier_id": courier_id, "p_period_start": month.isoformat(),
+                 "p_snapshot_id": payload.snapshotId, "p_invoice_number": str(payload.invoiceNumber or "").strip(),
+                 "p_note": note, "p_actor": str(user.get("username") or "admin")},
+    )
+    if not isinstance(result, dict) or not result.get("ok"):
+        raise HTTPException(status_code=409, detail="A lezárás nem igazolható. Frissítsd a Kifizetés fület.")
+    return {**result, "payment": build_admin_monthly_payment(courier_id, month)}
+
+
+@app.post("/api/admin/settlement-payment/reopen")
+def admin_reopen_monthly_payment(
+    payload: MonthlyPaymentCloseRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    courier_id = str(payload.courierId or "").strip()
+    note = str(payload.note or "").strip()
+    if not courier_id or not note:
+        raise HTTPException(status_code=422, detail="Válassz futárt, és add meg az elutasítás / visszanyitás indokát.")
+    month = parse_month(payload.month)
+    result = supabase_rest("POST", "rpc/pwa_reopen_monthly_payment", schema="settlement",
+                          payload={"p_courier_id": courier_id, "p_period_start": month.isoformat(),
+                                   "p_note": note, "p_actor": str(user.get("username") or "admin")})
+    if not isinstance(result, dict) or not result.get("ok"):
+        raise HTTPException(status_code=409, detail="A visszanyitás nem igazolható. Frissítsd a Kifizetés fület.")
+    payment = build_admin_monthly_payment(courier_id, month)
+    if payload.notifyCourier:
+        run_pwa_background(
+            "Havi kifizetés visszanyitási értesítés",
+            lambda: send_courier_template_email(
+                courier_id=courier_id, courier_name=payment["courierName"], template_key="payment_rejected",
+                variables={"month": month.strftime("%Y-%m"), "status_note": note,
+                           "amount_huf": format_email_huf(payment["amountHuf"])},
+                sent_by=str(user.get("username") or "admin"),
+            ),
+        )
+    return {**result, "payment": payment}
 
 
 @app.get("/api/admin/settlement-dashboard/detail")

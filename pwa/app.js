@@ -90,6 +90,8 @@ const state = {
   settlementDashboardEditCourierId: "",
   settlementDashboardDetail: null,
   settlementDashboardDetailCache: {},
+  settlementDashboardPayment: null,
+  settlementDashboardPaymentDrafts: {},
   settlementDashboardSearchTimer: null,
   financialEditCardKey: "",
   financialSnapshots: [],
@@ -107,7 +109,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v225";
+const APP_VERSION = "v226";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5212,6 +5214,69 @@ function settlementDashboardComplaintManager(complaints = []) {
   </div>`;
 }
 
+function settlementDashboardPaymentPanel(row) {
+  const month = state.settlementDashboardMonth || previousLocalMonth();
+  const loaded = state.settlementDashboardPayment;
+  if (!loaded || loaded.courierId !== String(row.courierId) || loaded.month !== month) {
+    return `<div class="empty-card">A havi kifizetési adatok még nincsenek betöltve.
+      <button class="secondary" type="button" data-load-monthly-payment>Adatok betöltése</button></div>`;
+  }
+  if (loaded.loading) return `<div class="empty-card">Számlák és kifizetési adatok betöltése...</div>`;
+  if (loaded.error) return `<div class="notice error">${escapeHtml(loaded.error)}
+    <button class="secondary" type="button" data-load-monthly-payment>Újrapróbálás</button></div>`;
+  const payment = loaded.data;
+  const draft = state.settlementDashboardPaymentDrafts?.[`${month}:${row.courierId}`] || {};
+  const table = (items) => `<div style="overflow-x:auto"><table><thead><tr><th>Tétel</th><th>Összeg</th></tr></thead><tbody>
+    ${items.map((item) => `<tr><td>${escapeHtml(item.label || item.key || "")}</td><td>${escapeHtml(formatHuf(item.amountHuf))}</td></tr>`).join("")}
+    </tbody></table></div>`;
+  const check = payment.invoiceCheck || {};
+  return `<div class="settlement-dashboard-tab-panel" data-monthly-payment-form>
+    <strong>Havi kifizetés</strong>
+    <small>Mentett elszámolás: v${escapeHtml(payment.snapshotVersion)} · ${escapeHtml(formatMonthLabel(month))}</small>
+    ${payment.closed ? `<div class="notice">A havi kifizetés már lezárva.${payment.closedBy ? ` ${escapeHtml(payment.closedBy)}` : ""}</div>` : ""}
+    ${payment.blockingReason ? `<div class="notice error">${escapeHtml(payment.blockingReason)}</div>` : ""}
+    <label>Kedvezményezett<input readonly value="${escapeHtml(payment.recipientName || "")}"></label>
+    <label>Bankszámlaszám<input readonly value="${escapeHtml(payment.bankAccount || "")}"></label>
+    <label>Kifizetendő összeg<input readonly value="${escapeHtml(formatHuf(payment.amountHuf))}"></label>
+    <label>Számlaszám<input data-monthly-payment-invoice value="${escapeHtml(draft.invoiceNumber ?? payment.invoiceNumber ?? "")}" ${payment.closed ? "disabled" : ""}></label>
+    <label>Közlemény<input readonly data-monthly-payment-reference value="${escapeHtml(payment.paymentNote || "")}"></label>
+    <strong>Feltöltött számlák</strong>
+    ${documentPreviewList(payment.invoices || [], row.courierId)}
+    <div class="notice">Számlaellenőrzés: ${escapeHtml(check.status === "done" ? "Jóváhagyva" : check.status === "open" ? "Ellenőrzésre vár" : "Nincs rögzítve")}
+      ${check.status_note ? `<div style="white-space:pre-wrap">${escapeHtml(check.status_note)}</div>` : ""}</div>
+    <details><summary>Összeg részletei</summary>${table(payment.breakdown || [])}</details>
+    <details><summary>TIG részletei</summary>${table((payment.tigBreakdown?.rows || []).map((item) => ({label:item.label || item.key, amountHuf:item.grossHuf})))}
+      <a class="download-link" href="/api/workflow/tig.pdf?month=${encodeURIComponent(month)}&courier=${encodeURIComponent(row.courierId)}">TIG PDF megnyitása</a></details>
+    <label>Kifizetési megjegyzés<textarea data-monthly-payment-admin-note ${payment.closed ? "disabled" : ""}>${escapeHtml(draft.adminNote ?? payment.adminNote ?? "")}</textarea></label>
+    <label>Kifizetés lezárási megjegyzés<textarea data-monthly-payment-note ${payment.closed ? "disabled" : ""}>${escapeHtml(payment.closed ? payment.closeNote : (draft.note ?? (payment.closeNote || `Kifizetve: ${formatHuf(payment.amountHuf)}`)))}</textarea></label>
+    <small>A lezárás a már elvégzett kifizetést rögzíti, banki utalást nem indít.</small>
+    <button class="primary" type="button" data-close-monthly-payment ${!payment.canClose ? "disabled" : ""}>Havi kifizetés lezárása</button>
+    <label>Elutasítás / visszanyitás indoka<textarea data-monthly-payment-reject-note>${escapeHtml(draft.rejectNote || "")}</textarea></label>
+    <label><input type="checkbox" data-monthly-payment-notify> E-mail értesítés a futárnak elutasításkor</label>
+    <button class="secondary" type="button" data-reopen-monthly-payment>Havi kifizetés elutasítása / visszanyitás</button>
+    <button class="secondary" type="button" data-load-monthly-payment>Kifizetési adatok frissítése</button>
+  </div>`;
+}
+
+async function loadSettlementDashboardMonthlyPayment(courierId) {
+  const month = state.settlementDashboardMonth || previousLocalMonth();
+  const id = String(courierId || "");
+  state.settlementDashboardPayment = {courierId:id, month, loading:true, data:null, error:""};
+  renderSettlementDashboard();
+  try {
+    const params = new URLSearchParams({month, courier:id});
+    const data = await api(`/api/admin/settlement-payment?${params}`, {silentLoading:true});
+    if (state.settlementDashboardPayment?.courierId === id && state.settlementDashboardPayment?.month === month) {
+      state.settlementDashboardPayment = {courierId:id, month, loading:false, data, error:""};
+    }
+  } catch (error) {
+    if (state.settlementDashboardPayment?.courierId === id && state.settlementDashboardPayment?.month === month) {
+      state.settlementDashboardPayment = {courierId:id, month, loading:false, data:null, error:error.message};
+    }
+  }
+  renderSettlementDashboard();
+}
+
 function renderSettlementDashboardExpanded(row) {
   const detail = state.settlementDashboardDetail || {};
   const workflow = detail.workflow || {};
@@ -5248,12 +5313,7 @@ function renderSettlementDashboardExpanded(row) {
         ${settlementDashboardComplaintManager(complaints)}
       </div>
     ` : ""}
-    ${!detail.loading && !detail.error && currentTab === "payment" ? `
-      <div class="settlement-dashboard-tab-panel">
-        <strong>Kifizetés</strong>
-        <div class="empty-card">A kifizetés itt egyelőre csak menüpontként jelenik meg.</div>
-      </div>
-    ` : ""}
+    ${currentTab === "payment" ? settlementDashboardPaymentPanel(row) : ""}
     ${!detail.loading && !detail.error && currentTab === "documents" ? `
       <div class="settlement-dashboard-tab-panel">
         <strong>Dokumentumok</strong>
@@ -10019,6 +10079,19 @@ $("#salary-advance-list")?.addEventListener("click", (event) => {
 $("#workflow-month").value = state.workflowMonth;
 if ($("#settlement-dashboard-month")) $("#settlement-dashboard-month").value = state.settlementDashboardMonth;
 const workflowPreviewCourierInput = $("#workflow-preview-courier");
+document.addEventListener("input", (event) => {
+  const form = event.target.closest("[data-monthly-payment-form]");
+  if (!form) return;
+  const loaded = state.settlementDashboardPayment;
+  if (!loaded?.data) return;
+  const invoiceNumber = form.querySelector("[data-monthly-payment-invoice]").value;
+  state.settlementDashboardPaymentDrafts[`${loaded.month}:${loaded.courierId}`] = {
+    invoiceNumber, adminNote:form.querySelector("[data-monthly-payment-admin-note]").value,
+    note:form.querySelector("[data-monthly-payment-note]").value,
+    rejectNote:form.querySelector("[data-monthly-payment-reject-note]").value,
+  };
+  if (!loaded.data.closed) form.querySelector("[data-monthly-payment-reference]").value = `${loaded.courierId}-${invoiceNumber}`.replace(/-$/, "");
+});
 if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = state.workflowPreviewCourierId;
 const statisticsPreviewCourierInput = $("#statistics-preview-courier");
 if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = state.workflowPreviewCourierId;
@@ -10741,6 +10814,65 @@ $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
   if (tab) {
     state.settlementDashboardExpandedTab = tab.dataset.settlementDashboardTab || "settlement";
     renderSettlementDashboard();
+    if (state.settlementDashboardExpandedTab === "payment") {
+      loadSettlementDashboardMonthlyPayment(state.settlementDashboardExpandedCourierId);
+    }
+    return;
+  }
+  if (event.target.closest("[data-load-monthly-payment]")) {
+    loadSettlementDashboardMonthlyPayment(state.settlementDashboardExpandedCourierId);
+    return;
+  }
+  const closePayment = event.target.closest("[data-close-monthly-payment]");
+  if (closePayment) {
+    const loaded = state.settlementDashboardPayment;
+    const payment = loaded?.data;
+    if (!payment?.canClose || loaded.courierId !== state.settlementDashboardExpandedCourierId
+        || loaded.month !== (state.settlementDashboardMonth || previousLocalMonth())) return;
+    const form = closePayment.closest("[data-monthly-payment-form]");
+    const invoiceNumber = form.querySelector("[data-monthly-payment-invoice]").value;
+    const note = form.querySelector("[data-monthly-payment-note]").value;
+    const adminNote = form.querySelector("[data-monthly-payment-admin-note]").value;
+    closePayment.disabled = true;
+    api("/api/admin/settlement-payment/close", {
+      method:"POST", body:JSON.stringify({month:loaded.month, courierId:loaded.courierId,
+        snapshotId:payment.snapshotId, invoiceNumber, note, adminNote}), loadingMessage:"Havi kifizetés lezárása...",
+    }).then(async (result) => {
+      if (state.settlementDashboardPayment?.courierId === loaded.courierId
+          && state.settlementDashboardPayment?.month === loaded.month) {
+        state.settlementDashboardPayment = {...loaded, data:result.payment};
+      }
+      delete state.settlementDashboardDetailCache[`${loaded.month}:${loaded.courierId}`];
+      delete state.settlementDashboardPaymentDrafts[`${loaded.month}:${loaded.courierId}`];
+      await loadSettlementDashboard();
+      renderSettlementDashboard();
+    }).catch((error) => {
+      window.alert(error.message);
+      closePayment.disabled = false;
+    });
+    return;
+  }
+  const reopenPayment = event.target.closest("[data-reopen-monthly-payment]");
+  if (reopenPayment) {
+    const loaded = state.settlementDashboardPayment;
+    if (!loaded?.data || loaded.courierId !== state.settlementDashboardExpandedCourierId
+        || loaded.month !== (state.settlementDashboardMonth || previousLocalMonth())) return;
+    const note = reopenPayment.closest("[data-monthly-payment-form]").querySelector("[data-monthly-payment-reject-note]").value.trim();
+    const notifyCourier = reopenPayment.closest("[data-monthly-payment-form]").querySelector("[data-monthly-payment-notify]").checked;
+    if (!note) { window.alert("Add meg az elutasítás / visszanyitás indokát."); return; }
+    reopenPayment.disabled = true;
+    api("/api/admin/settlement-payment/reopen", {
+      method:"POST", body:JSON.stringify({month:loaded.month, courierId:loaded.courierId,
+        snapshotId:loaded.data.snapshotId, note, notifyCourier}), loadingMessage:"Havi kifizetés visszanyitása...",
+    }).then(async (result) => {
+      if (state.settlementDashboardPayment?.courierId === loaded.courierId
+          && state.settlementDashboardPayment?.month === loaded.month) {
+        state.settlementDashboardPayment = {...loaded, data:result.payment};
+      }
+      delete state.settlementDashboardDetailCache[`${loaded.month}:${loaded.courierId}`];
+      await loadSettlementDashboard();
+      renderSettlementDashboard();
+    }).catch((error) => { window.alert(error.message); reopenPayment.disabled = false; });
     return;
   }
   const openPreview = event.target.closest("[data-settlement-dashboard-open-preview]");
