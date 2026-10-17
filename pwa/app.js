@@ -107,7 +107,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v224";
+const APP_VERSION = "v225";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -280,6 +280,10 @@ function isAdminPreviewMode() {
 function withPreviewCourier(path) {
   const courier = previewCourierValue();
   if (!courier) return path;
+  // Server-generated preview links already carry their document owner.
+  // Do not add a second courier parameter from possibly changed UI state.
+  const url = new URL(path, window.location.origin);
+  if (url.searchParams.has("courier")) return path;
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}courier=${encodeURIComponent(courier)}`;
 }
@@ -4558,12 +4562,21 @@ function tigValue(value) {
   return formatHuf(Number(value || 0));
 }
 
+function workflowTigDownloadUrl() {
+  const params = new URLSearchParams(workflowQuery());
+  if (state.user?.canPreviewCouriers) {
+    const viewedCourier = String(state.workflow?.viewingAs?.courierId || "").trim();
+    if (viewedCourier) params.set("courier", viewedCourier);
+  }
+  return `/api/workflow/tig.pdf?${params}`;
+}
+
 function renderTigBreakdown() {
   const tig = state.workflow?.tigBreakdown || {};
   if (!tig.available) {
     return `<div class="notice">${escapeHtml(tig.message || "A TIG bontas meg nincs kesz.")}</div>`;
   }
-  const tigDownloadUrl = `/api/workflow/tig.pdf?${workflowQuery()}`;
+  const tigDownloadUrl = workflowTigDownloadUrl();
   const tigIdentifier = tig.documentReference ? `${tig.month || state.workflowMonth} · ${tig.documentReference}` : (tig.month || state.workflowMonth);
   const rows = (tig.rows || []).filter((row) => row.key !== "cash_deduction" && row.key !== "tig_cash_deduction");
   const transferRows = rows.filter((row) => row.key !== "cash_service");

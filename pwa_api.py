@@ -18331,7 +18331,10 @@ def read_courier_document_archive(user: dict[str, Any]) -> list[dict[str, Any]]:
                 "uploaded_by": "rendszer",
                 "uploaded_at": created_at,
                 "virtual": True,
-                "downloadUrl": f"/api/workflow/tig.pdf?month={quote(month_key)}",
+                "downloadUrl": (
+                    f"/api/workflow/tig.pdf?month={quote(month_key)}"
+                    + (f"&courier={quote(courier_id)}" if user.get("_previewedBy") else "")
+                ),
             })
     archive_rows.sort(
         key=lambda row: (
