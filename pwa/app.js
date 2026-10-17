@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v227";
+const APP_VERSION = "v228";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -4966,8 +4966,64 @@ function toggleOpenMuszakproShifts() {
   return loadOpenMuszakproShifts();
 }
 
-function renderSettlementDashboardStatus(status = {}) {
-  return `<span class="settlement-dashboard-status ${escapeHtml(status.tone || "muted")}">${escapeHtml(status.label || "Ismeretlen")}</span>`;
+function renderSettlementDashboardStatus(status = {}, courierId = "") {
+  const text = escapeHtml(status.label || "Ismeretlen");
+  const classes = `settlement-dashboard-status ${escapeHtml(status.tone || "muted")}`;
+  if (!courierId) return `<span class="${classes}">${text}</span>`;
+  return `<button type="button" class="${classes} settlement-dashboard-status-button" data-dashboard-change-status="${escapeHtml(courierId)}" aria-label="${escapeHtml(`Státusz módosítása: ${status.label || 'Ismeretlen'}`)}">${text}</button>`;
+}
+
+function openSettlementDashboardStatusEditor(courierId) {
+  const row = (state.settlementDashboard?.rows || []).find(item => String(item.courierId) === String(courierId));
+  if (!row) return;
+  const month = state.settlementDashboardMonth || previousLocalMonth();
+  const options = [
+    ["settlement_wait", "Elszámolás elfogadásra vár"], ["tig_wait", "TIG-re vár"],
+    ["tig_accept", "TIG elfogadásra vár"], ["invoice_upload", "Számlafeltöltésre vár"],
+    ["invoice_check", "Számla ellenőrzésre vár"], ["payment_wait", "Kifizetésre vár"],
+  ];
+  document.querySelector("#monthly-status-editor")?.remove();
+  const dialog = document.createElement("dialog");
+  dialog.id = "monthly-status-editor";
+  dialog.className = "monthly-status-editor";
+  dialog.innerHTML = `<form><h3>Státusz módosítása</h3>
+    <p>${escapeHtml(row.courierName)} · ${escapeHtml(formatMonthLabel(month))}</p>
+    <p>Jelenlegi státusz: <strong>${escapeHtml(row.status?.label || "Ismeretlen")}</strong></p>
+    <label>Új státusz<select name="target">${options.map(([key, label]) => `<option value="${key}" ${row.status?.label === label ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
+    <label>Módosítás megjegyzése<textarea name="note" required placeholder="Miért kerül ebbe a státuszba?"></textarea></label>
+    <div class="notice">Ez a futár havi folyamatát módosítja. A cél előtti lépéseket admin által teljesítettnek jelöli, a későbbieket visszalépteti. Az összeg nem változik. A kifizetést a Kifizetés fülön lehet lezárni vagy visszanyitni.</div>
+    <div data-status-error role="alert"></div>
+    <button type="submit" class="primary">Státusz mentése</button>
+    <button type="button" class="secondary" data-status-cancel>Mégse</button>
+  </form>`;
+  document.body.appendChild(dialog);
+  dialog.querySelector("[data-status-cancel]").onclick = () => dialog.close();
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.querySelector("form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('[type="submit"]');
+    const error = form.querySelector("[data-status-error]");
+    const note = form.elements.note.value.trim();
+    if (!note) return;
+    button.disabled = true;
+    error.textContent = "";
+    try {
+      await api("/api/admin/settlement-dashboard/status", {method:"POST",
+        body:JSON.stringify({month, courierId:String(courierId), target:form.elements.target.value, note}),
+        loadingMessage:"Státusz mentése..."});
+      delete state.settlementDashboardDetailCache[`${month}:${courierId}`];
+      if (state.settlementDashboardPayment?.courierId === String(courierId)) state.settlementDashboardPayment = null;
+      dialog.close();
+      await loadSettlementDashboard();
+      if (state.settlementDashboardExpandedCourierId === String(courierId)) await loadSettlementDashboardCourierDetail(courierId);
+    } catch (exc) {
+      error.className = "notice error";
+      error.textContent = exc.message;
+      button.disabled = false;
+    }
+  });
+  dialog.showModal();
 }
 
 function settlementDashboardStatusOptions(statusCounts = {}) {
@@ -5366,7 +5422,7 @@ function renderSettlementDashboardExpanded(row) {
         <small>#${escapeHtml(row.courierId || "-")} · ${escapeHtml(formatMonthLabel(state.settlementDashboardMonth))}</small>
       </div>
       <div class="settlement-dashboard-expanded-actions">
-        ${renderSettlementDashboardStatus(row.status || {})}
+        ${renderSettlementDashboardStatus(row.status || {}, row.courierId)}
         <button class="icon-button settlement-dashboard-edit" type="button" data-settlement-dashboard-edit="${escapeHtml(row.courierId || "")}" title="Futár értékeinek szerkesztése" aria-label="Futár értékeinek szerkesztése"><span aria-hidden="true">✎</span><span>Szerkesztés</span></button>
       </div>
     </div>
@@ -5443,7 +5499,7 @@ function renderSettlementDashboard() {
             ${renderSettlementDashboardFlags(row.flags || [])}
           </div>
           <div>
-            ${renderSettlementDashboardStatus(row.status || {})}
+            ${renderSettlementDashboardStatus(row.status || {}, row.courierId)}
             <small>${escapeHtml(row.status?.detail || "")}</small>
           </div>
           <strong>${escapeHtml(formatHuf(row.totalPayableHuf || 0))}</strong>
@@ -10819,6 +10875,12 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
   }
 });
 $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
+  const changeStatus = event.target.closest("[data-dashboard-change-status]");
+  if (changeStatus) {
+    event.preventDefault();
+    openSettlementDashboardStatusEditor(changeStatus.dataset.dashboardChangeStatus);
+    return;
+  }
   const editButton = event.target.closest("[data-settlement-dashboard-edit]");
   if (editButton) {
     event.preventDefault();

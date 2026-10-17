@@ -182,6 +182,13 @@ class MonthlyPaymentCloseRequest(BaseModel):
     notifyCourier: bool = False
 
 
+class DashboardStatusChangeRequest(BaseModel):
+    month: str
+    courierId: str
+    target: str
+    note: str
+
+
 class SettlementCardOverrideItem(BaseModel):
     key: str = ""
     label: str
@@ -22605,6 +22612,31 @@ def settlement_quality_details(
     require_workflow_month_allowed(user, month_value, preview=preview)
     courier_id, _name = courier_identity(view_user)
     return read_settlement_quality_details(courier_id, month_value, card)
+
+
+@app.post("/api/admin/settlement-dashboard/status")
+def admin_change_dashboard_status(
+    payload: DashboardStatusChangeRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    courier_id = str(payload.courierId or "").strip()
+    month = parse_month(payload.month)
+    note = str(payload.note or "").strip()
+    target = str(payload.target or "").strip()
+    if not courier_id or not note:
+        raise HTTPException(status_code=422, detail="Válassz futárt és add meg a módosítás megjegyzését.")
+    if target not in {"settlement_wait", "tig_wait", "tig_accept", "invoice_upload", "invoice_check", "payment_wait"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen célstátusz. A kifizetést a Kifizetés fülön zárd le.")
+    if courier_has_efo_assignment({"courierId": courier_id, "username": courier_id}, month):
+        raise HTTPException(status_code=409, detail="EFO folyamatnál a státuszt a futár részletes folyamatnézetében kezeld.")
+    result = supabase_rest("POST", "rpc/pwa_change_monthly_status", schema="settlement",
+                          payload={"p_courier_id": courier_id, "p_period_start": month.isoformat(),
+                                   "p_target": target, "p_note": note,
+                                   "p_actor": str(user.get("username") or "admin")})
+    if not isinstance(result, dict) or not result.get("ok"):
+        raise HTTPException(status_code=409, detail="A státuszváltás nem igazolható. Frissítsd a listát.")
+    return result
 
 
 @app.get("/api/admin/settlement-payment")

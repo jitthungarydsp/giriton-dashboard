@@ -453,6 +453,11 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-dashboard-row-main > strong { min-width: 0; text-align: right; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .settlement-dashboard-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
 .settlement-dashboard-status { display: inline-flex; width: fit-content; max-width: 100%; min-height: 28px; align-items: center; padding: 6px 10px; border-radius: 999px; background: #eef1eb; color: var(--muted); font-size: 11px; font-weight: 950; text-transform: uppercase; overflow-wrap: anywhere; }
+.settlement-dashboard-status-button { border: 0; text-align: left; cursor: pointer; font-family: inherit; line-height: inherit; }
+.settlement-dashboard-status-button:focus-visible { outline: 2px solid var(--green-dark); outline-offset: 3px; }
+.monthly-status-editor { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; border: 1px solid var(--line); border-radius: 18px; padding: 22px; color: var(--ink); background: #fff; }
+.monthly-status-editor::backdrop { background: #183b2b66; }
+.monthly-status-editor form { display: grid; gap: 14px; }
 .settlement-dashboard-status.done { background: #e2f2df; color: var(--green-dark); }
 .settlement-dashboard-status.error { background: #ffe3e0; color: #9d2f28; }
 .settlement-dashboard-status.attention { background: #fff0ef; color: #b93c33; }
