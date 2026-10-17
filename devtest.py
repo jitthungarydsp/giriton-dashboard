@@ -17092,11 +17092,8 @@ def render_courier_detail_page() -> None:
     if finance_preflight_active:
         st.session_state.pop(finance_preflight_key, None)
         st.session_state.pop(finance_preflight_target_key, None)
-        st.session_state[menu_key] = (
-            finance_preflight_target
-            if finance_preflight_target
-            else st.session_state.get(menu_key, "Pénzügy")
-        )
+        # Calculate and save on Finance first, then return to the requested tab.
+        st.session_state[menu_key] = "Pénzügy"
     force_fresh_google_adjustments = bool(
         st.session_state.pop(
             f"force_fresh_google_adjustments_{courier_id}_{period_start:%Y%m}",
@@ -18009,8 +18006,8 @@ def render_courier_detail_page() -> None:
                 imported_bonus_total = 0.0
                 imported_malus_total = 0.0
                 imported_atm_total = 0.0
-            order_total = int(amount("order_count"))
-            route_total = int(amount("route_count"))
+            order_total = max(order_total, int(amount("order_count")))
+            route_total = max(route_total, int(amount("route_count")))
         elif summary_available:
             summary_base_total = parse_huf_value(summary_row.get("courier_base_rate_huf"))
             summary_tip_total = parse_huf_value(summary_row.get("tip_huf"))

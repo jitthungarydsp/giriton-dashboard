@@ -111,8 +111,10 @@ class FinanceSidebarSnapshotTest(unittest.TestCase):
         rows = pd.DataFrame([dict(completed_routes=1, bonus_per_route_huf=150,
                                  bonus_total_huf=150, average_rating=4.75, rating_count=129,
                                  source_spreadsheet_id="legacy_monthly_upload", row_data={})])
+        from resources.profile_route_metrics import resolve_profile_route_metrics
+        routes = resolve_profile_route_metrics(pd.DataFrame(), {"route_count": 0}, {"Kör": 50})["route_total"]
         result = ns["recalculate_customer_rating_source_rows"](
-            rows, 50, date(2026, 9, 1), date(2026, 9, 30), pd.DataFrame())
+            rows, routes, date(2026, 9, 1), date(2026, 9, 30), pd.DataFrame())
         self.assertEqual(result["completed_routes"].sum(), 50)
         self.assertEqual(result["bonus_total_huf"].sum(), 7500)
         # Multiple independent sources retain their own period counts.
@@ -122,6 +124,17 @@ class FinanceSidebarSnapshotTest(unittest.TestCase):
             pd.concat([rows, other], ignore_index=True), 50,
             date(2026, 9, 1), date(2026, 9, 30), pd.DataFrame())
         self.assertEqual(combined["bonus_total_huf"].sum(), 300)
+
+    def test_refresh_from_other_tab_calculates_finance_before_returning(self):
+        node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "render_courier_detail_page")
+        preflight = next(child for child in node.body if isinstance(child, ast.If)
+                         and ast.unparse(child.test) == "finance_preflight_active")
+        ns = {"st": SimpleNamespace(session_state={"tab": "Fizetés előleg"}),
+              "finance_preflight_active": True, "finance_preflight_key": "pending",
+              "finance_preflight_target_key": "target", "menu_key": "tab"}
+        exec(compile(ast.Module(body=[preflight], type_ignores=[]), "devtest.py", "exec"), ns)
+        self.assertEqual(ns["st"].session_state["tab"], "Pénzügy")
 
     def test_snapshot_counts_accept_overview_column_names(self):
         node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)

@@ -44,16 +44,30 @@ def resolve_profile_route_metrics(route_detail: pd.DataFrame, summary_row: dict[
         _coerce_int(fallback.get("order_count")),
         _coerce_int(fallback.get("workload_order_count")),
         _coerce_int(fallback.get("total_orders")),
+        _coerce_int(fallback.get("Rendelések")),
+        _coerce_int(fallback.get("Rendelés")),
     )
     route_candidates = [
         _coerce_int(fallback.get("route_count")),
         _coerce_int(fallback.get("completed_route_count")),
         _coerce_int(fallback.get("calculated_routes")),
         _coerce_int(fallback.get("total_routes")),
+        _coerce_int(fallback.get("Kör")),
+        _coerce_int(fallback.get("Útvonalak")),
+        _coerce_int(fallback.get("Számolt túrák")),
     ]
     typed_route_total = sum(
         _coerce_int(fallback.get(column))
         for column in ("normal_route_count", "express_route_count", "regional_route_count")
     )
     route_total = max(*route_candidates, typed_route_total)
+    if _has_row(fallback_row) and fallback_row is not fallback:
+        route_total = max(route_total, *(
+            _coerce_int(fallback_row.get(key)) for key in
+            ("Kör", "Útvonalak", "Számolt túrák", "route_count", "completed_route_count")
+        ))
+        order_total = max(order_total, *(
+            _coerce_int(fallback_row.get(key)) for key in
+            ("Rendelések", "Rendelés", "order_count")
+        ))
     return {"route_total": route_total, "order_total": order_total}
