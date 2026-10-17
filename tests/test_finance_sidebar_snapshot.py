@@ -39,6 +39,38 @@ class FinanceSidebarSnapshotTest(unittest.TestCase):
         self.assertEqual(result["Kifizetendő"], 0)
         self.assertEqual(result["Nettó bevétel"], 0)
 
+    def test_rating_uses_route_alias_when_kor_is_zero(self):
+        node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "apply_customer_rating_bonus")
+        ratings = pd.DataFrame([dict(courier_id="7817", driver_name="Roland",
+                                    completed_routes=1, bonus_per_route_huf=150, bonus_total_huf=150)])
+        seen = []
+        def resolve(courier_id, name, routes, *args):
+            seen.append(routes)
+            return routes * 150
+        ns = {"pd": pd, "date": date, "parse_huf_value": lambda v: float(v or 0),
+              "load_customer_rating_bonus_rows": lambda *args: ratings.copy(),
+              "_courier_id_key": str, "_courier_match_key": str,
+              "_customer_rating_dashboard_routes": lambda *args: (pd.Series(dtype=float), pd.Series(dtype=float)),
+              "resolve_customer_rating_bonus_total": resolve,
+              "_numeric_series": lambda df, key: df.get(key, pd.Series(0, index=df.index)),
+              "payable_bonus_total": lambda df: df["Bónusz"]}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), ns)
+        result = ns[node.name](pd.DataFrame([{"Courier ID": "7817", "Futár": "Roland",
+                                            "Kör": 0, "Útvonalak": 50}]), date(2026, 9, 1), date(2026, 9, 30))
+        self.assertEqual(seen, [50])
+        self.assertEqual(result.iloc[0]["Ügyfélértékelés"], 7500)
+
+    def test_snapshot_counts_accept_overview_column_names(self):
+        node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "mobile_breakdown_rows_from_settlement_row")
+        ns = {"parse_huf_value": lambda value: float(value or 0)}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), ns)
+        rows = ns[node.name]({"Kör": 50, "Rendelés": 700})
+        amounts = {row["item_key"]: row["amount_value"] for row in rows}
+        self.assertEqual(amounts["routes"], 50)
+        self.assertEqual(amounts["orders"], 700)
+
     def test_sidebar_uses_same_snapshot_for_tig_and_ledger(self):
         node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef) and node.name == "render_empty_right_menu")
         code = ast.unparse(node)

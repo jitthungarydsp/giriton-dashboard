@@ -4310,8 +4310,8 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     address_bonus_kifli = parse_huf_value(row.get("Cím bónusz (Kifli)"))
     deduction = parse_huf_value(row.get("Levonás"))
     payable = parse_huf_value(row.get("Kifizetendő"))
-    orders = parse_huf_value(row.get("Rendelések"))
-    routes = parse_huf_value(row.get("Útvonalak") or row.get("Számolt túrák"))
+    orders = max(parse_huf_value(row.get(key)) for key in ("Rendelések", "Rendelés", "order_count"))
+    routes = max(parse_huf_value(row.get(key)) for key in ("Kör", "Útvonalak", "Számolt túrák", "route_count", "routes"))
     highlighted = parse_huf_value(row.get("Kiemelt túrák"))
     normal = parse_huf_value(row.get("Normál túrák"))
     if routes > 0 and highlighted + normal == 0:
@@ -11899,7 +11899,8 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
             resolve_customer_rating_bonus_total(
                 row.get("Courier ID"),
                 row.get("Futár"),
-                int(parse_huf_value(row.get("Kör"))),
+                int(max(parse_huf_value(row.get(key)) for key in
+                        ("Kör", "Számolt túrák", "Útvonalak", "route_count", "routes"))),
                 period_start,
                 period_end,
             ) or bonus
