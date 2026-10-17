@@ -107,7 +107,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v223";
+const APP_VERSION = "v224";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -10741,19 +10741,20 @@ $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
     const box = saveComplaint.closest("[data-dashboard-complaint-id]");
     const status = box?.querySelector('[data-complaint-field="status"]')?.value || "resolved";
     const response = box?.querySelector('[data-complaint-field="response"]')?.value || "";
+    const courierId = state.settlementDashboardExpandedCourierId;
+    const month = state.settlementDashboardMonth || previousLocalMonth();
     saveComplaint.disabled = true;
     api(`/api/admin/workflow/complaints/${encodeURIComponent(complaintId)}`, {
       method: "PATCH",
       body: JSON.stringify({ status, response }),
       loadingMessage: "Reklamáció mentése...",
-    }).then((payload) => {
-      state.settlementDashboardDetail = {
-        courierId: state.settlementDashboardExpandedCourierId,
-        loading: false,
-        workflow: payload.workflow,
-        error: "",
-      };
-      renderSettlementDashboard();
+    }).then(async () => {
+      delete state.settlementDashboardDetailCache[`${month}:${courierId}`];
+      if (state.settlementDashboardExpandedCourierId === courierId
+          && (state.settlementDashboardMonth || previousLocalMonth()) === month) {
+        await loadSettlementDashboardCourierDetail(courierId);
+        renderSettlementDashboard();
+      }
     }).catch((error) => {
       window.alert(error.message);
       saveComplaint.disabled = false;

@@ -17307,7 +17307,7 @@ def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], l
             },
         )
         complaint_params = {
-            "select": "id,document_type,message,status,created_at",
+            "select": "id,document_type,message,status,created_at,admin_response,responded_by,responded_at",
             "courier_id": f"eq.{courier_id}",
             "document_month": f"eq.{month_value}",
             "status": "neq.deleted",
@@ -22966,13 +22966,15 @@ def admin_update_workflow_complaint(
         "responded_by": str(user.get("username") or "admin"),
         "responded_at": datetime.now(timezone.utc).isoformat(),
     }
-    supabase_rest(
+    saved_complaints = supabase_rest(
         "PATCH",
         "peopleforce_complaints",
         params={"id": f"eq.{complaint_id}"},
         payload=update_payload,
-        prefer="return=minimal",
+        prefer="return=representation",
     )
+    if not saved_complaints or str(saved_complaints[0].get("id") or "") != complaint_id:
+        raise HTTPException(status_code=409, detail="A reklamáció válaszának mentése nem igazolható. Frissítsd a listát.")
     view_user = {
         "courierId": courier_id,
         "username": str(row.get("courier_name") or courier_id),
