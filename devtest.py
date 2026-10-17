@@ -3217,6 +3217,15 @@ def clear_mobile_breakdown_override_cache() -> None:
             clear()
 
 
+def request_courier_finance_refresh(courier_id: str) -> None:
+    """Queue a single recalculation after a successful user data edit."""
+    courier_id = _courier_id_key(courier_id)
+    if not courier_id:
+        return
+    target_menu = str(st.session_state.get(f"courier_menu_{courier_id}") or "Pénzügy")
+    st.session_state[f"courier_rebuild_request_{courier_id}"] = {"target_menu": target_menu}
+
+
 def save_mobile_breakdown_overrides(
     courier_id: str,
     period_start: date,
@@ -3250,12 +3259,14 @@ def save_mobile_breakdown_overrides(
             .eq("period_start", period_start.replace(day=1).isoformat()) \
             .eq("courier_id", clean_courier_id).execute()
         if not payloads:
+            request_courier_finance_refresh(clean_courier_id)
             return True
         get_db().schema("settlement").table("mobile_settlement_breakdown_overrides").upsert(
             payloads,
             on_conflict="period_start,courier_id,item_key",
         ).execute()
         clear_mobile_breakdown_override_cache()
+        request_courier_finance_refresh(clean_courier_id)
         return True
     except BaseException:
         return False
@@ -6622,6 +6633,7 @@ def close_target_reserve_month(
         "reserve_status": "done",
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("courier_ID", courier_id).execute()
+    request_courier_finance_refresh(courier_id)
     load_target_reserve_status.clear()
     load_target_reserve_monthly.clear()
     load_previous_target_reserve_monthly.clear()
@@ -6677,6 +6689,7 @@ def save_target_reserve_event(
         update_payload["reserve_deduction_huf"] = amount
     get_db().schema("public").table("courier_target_reserve").update(update_payload).eq("courier_ID", str(courier_id).strip()).execute()
 
+    request_courier_finance_refresh(courier_id)
     load_target_reserve_status.clear()
     load_target_reserve_rows_bulk.clear()
     load_target_reserve_event_totals.clear()
@@ -7905,6 +7918,7 @@ def save_courier_monthly_closure(
         payload,
         on_conflict="courier_id,period_start,period_end",
     ).execute()
+    request_courier_finance_refresh(courier_id)
     load_courier_monthly_closure.clear()
 
 
@@ -7940,6 +7954,7 @@ def reopen_courier_monthly_closure(courier_id: str, period_start: date, period_e
             .eq("period_start", period_start.isoformat()) \
             .eq("period_end", period_end.isoformat()) \
             .execute()
+    request_courier_finance_refresh(courier_id)
     load_courier_monthly_closure.clear()
     load_monthly_closure_statuses.clear()
 
@@ -7965,6 +7980,7 @@ def reopen_target_reserve_month(courier_id: str, period_start: date, period_end:
         "reserve_status": "in_progress",
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("courier_ID", courier_id).execute()
+    request_courier_finance_refresh(courier_id)
     load_target_reserve_status.clear()
     load_target_reserve_monthly.clear()
     load_previous_target_reserve_monthly.clear()
@@ -8121,6 +8137,7 @@ def create_salary_advance_plan(
     get_db().schema("settlement").table("courier_salary_advance_plan").insert(plan_payload).execute()
     if installment_payloads:
         get_db().schema("settlement").table("courier_salary_advance_installment").insert(installment_payloads).execute()
+    request_courier_finance_refresh(courier_id)
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
     return plan_id
@@ -8406,6 +8423,7 @@ def update_salary_advance_schedule(
 
     plan_id = str(request_row.get("plan_id") or "").strip()
     if not plan_id:
+        request_courier_finance_refresh(courier_id)
         load_courier_salary_advance_requests.clear()
         load_salary_advance_requests_for_month.clear()
         return "Az igény ütemezése módosítva. Részlet-terv még nem jött létre."
@@ -8478,6 +8496,7 @@ def update_salary_advance_schedule(
         "closed_by": actor if not new_amounts else None,
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("id", plan_id).execute()
+    request_courier_finance_refresh(courier_id)
     load_courier_salary_advance_requests.clear()
     load_salary_advance_requests_for_month.clear()
     load_salary_advance_installments_for_month.clear()
@@ -8568,6 +8587,7 @@ def mark_salary_advance_request_paid(request_row: dict, courier_name: str) -> st
 
 
 def cancel_salary_advance_plan_for_request(request_row: dict, response_message: str = "") -> int:
+    courier_id = str(request_row.get("courier_id") or "").strip()
     plan_id = str(request_row.get("plan_id") or "").strip()
     if not plan_id:
         return 0
@@ -8602,6 +8622,7 @@ def cancel_salary_advance_plan_for_request(request_row: dict, response_message: 
         "closed_by": actor,
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("id", plan_id).execute()
+    request_courier_finance_refresh(courier_id)
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
     return len(installment_ids)
@@ -8731,6 +8752,7 @@ def close_salary_advance_installments(courier_id: str, period_start: date, perio
                 "closed_by": actor,
                 "updated_at": pd.Timestamp.utcnow().isoformat(),
             }).eq("id", plan_id).execute()
+    request_courier_finance_refresh(courier_id)
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
     return len(installment_ids)
@@ -8767,6 +8789,7 @@ def reopen_salary_advance_installments(courier_id: str, period_start: date, peri
             "closed_by": None,
             "updated_at": pd.Timestamp.utcnow().isoformat(),
         }).eq("id", plan_id).execute()
+    request_courier_finance_refresh(courier_id)
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
     return len(installment_ids)
@@ -15700,6 +15723,7 @@ def save_route_issue_review(
         "performed_by": actor,
     }).execute()
     load_route_issue_reviews.clear()
+    request_courier_finance_refresh(courier_id)
 
 
 def build_route_issue_rows(
@@ -16000,6 +16024,7 @@ def save_courier_adjustment(session_id: str | None, courier_id: str, adjustment_
         valid_from=valid_from,
         valid_to=valid_to,
     )
+    request_courier_finance_refresh(courier_id)
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
@@ -16042,6 +16067,7 @@ def update_courier_adjustment(
         valid_from=valid_from,
         valid_to=valid_to,
     )
+    request_courier_finance_refresh(courier_id)
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
@@ -16076,6 +16102,7 @@ def delete_courier_adjustment(
         valid_from=valid_from,
         valid_to=valid_to,
     )
+    request_courier_finance_refresh(courier_id)
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
@@ -16122,6 +16149,7 @@ def reset_courier_adjustments(session_id: str | None, courier_id: str, period_st
         valid_from=period_start,
         valid_to=period_end,
     )
+    request_courier_finance_refresh(courier_id)
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
@@ -16834,6 +16862,7 @@ def render_fast_courier_profile(
                 saved_profile_id = str(profile_courier_id or courier_id).strip()
                 update_courier_master_profile(saved_profile_id, new_fields)
                 log_profile_change(saved_profile_id, changes)
+                request_courier_finance_refresh(courier_id)
             st.session_state[edit_key] = False
             st.session_state[menu_target_key] = "Profil"
             load_courier_profile.clear()
@@ -19052,8 +19081,9 @@ def render_courier_detail_page() -> None:
         if finance_preflight_active:
             snapshot_result = save_current_finance_snapshot("devtest.render_courier_detail_page.preflight")
             clear_devtest_finance_snapshot_cache()
-            if snapshot_result.get("reason"):
-                st.caption("Pénzügyi verzió mentése még nincs aktív. Futtasd a courier_finance_snapshot SQL-t.")
+            if not (snapshot_result.get("saved") or snapshot_result.get("unchanged")):
+                st.error(f"A frissített elszámolás mentése sikertelen: {snapshot_result.get('reason') or 'ismeretlen hiba'}")
+                return
             target_menu_after_finance = (
                 finance_preflight_target
                 if finance_preflight_target in courier_menu_items
@@ -19073,22 +19103,19 @@ def render_courier_detail_page() -> None:
             "note": "Megjegyzés",
         })
         st.markdown("#### Mobilon látható értékek")
-        auto_snapshot_result = save_current_finance_snapshot("devtest.render_courier_detail_page.auto")
-        if auto_snapshot_result.get("saved"):
-            clear_devtest_finance_snapshot_cache()
-            st.caption(f"PWA snapshot automatikusan frissítve. Verzió: {auto_snapshot_result.get('version')}")
-        elif auto_snapshot_result.get("reason"):
-            st.caption(f"PWA snapshot automatikus frissítése nem futott le: {auto_snapshot_result.get('reason')}")
-
-        # The batch action deliberately advances only after the exact detail
-        # snapshot above has been written.  This is the same path as opening
-        # each courier manually, without requiring 114 separate clicks.
+        # Ordinary page rendering never publishes a finance version. Only an
+        # explicitly started batch may save while advancing through couriers.
+        auto_snapshot_result = {}
         exact_batch = st.session_state.get("devtest_exact_snapshot_batch")
         if isinstance(exact_batch, dict):
             batch_ids = [str(value) for value in exact_batch.get("courier_ids") or []]
             batch_index = int(exact_batch.get("index") or 0)
             batch_period = str(exact_batch.get("period_start") or "")
-            if batch_index < len(batch_ids) and _courier_id_key(batch_ids[batch_index]) == _courier_id_key(courier_id):
+            if (batch_period == period_start.isoformat() and batch_index < len(batch_ids)
+                    and _courier_id_key(batch_ids[batch_index]) == _courier_id_key(courier_id)):
+                auto_snapshot_result = save_current_finance_snapshot("devtest.render_courier_detail_page.batch")
+                if auto_snapshot_result.get("saved"):
+                    clear_devtest_finance_snapshot_cache()
                 if auto_snapshot_result.get("saved") or auto_snapshot_result.get("unchanged"):
                     exact_batch["processed"] = int(exact_batch.get("processed") or 0) + 1
                 else:
@@ -22102,6 +22129,7 @@ def render_courier_detail_page() -> None:
                     saved_profile_id = str(profile_courier_id or courier_id).strip()
                     update_courier_master_profile(saved_profile_id, new_fields)
                     log_profile_change(saved_profile_id, changes)
+                    request_courier_finance_refresh(courier_id)
                 st.session_state[edit_key] = False
                 keep_courier_menu("Profil")
                 load_courier_profile.clear()

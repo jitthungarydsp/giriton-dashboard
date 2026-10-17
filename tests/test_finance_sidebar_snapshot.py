@@ -39,6 +39,47 @@ class FinanceSidebarSnapshotTest(unittest.TestCase):
         self.assertEqual(result["Kifizetendő"], 0)
         self.assertEqual(result["Nettó bevétel"], 0)
 
+    def test_detail_render_saves_only_in_explicit_action_branches(self):
+        node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "render_courier_detail_page")
+        calls = []
+        def visit(current, conditions):
+            if isinstance(current, ast.Call) and isinstance(current.func, ast.Name) \
+                    and current.func.id == "save_current_finance_snapshot":
+                calls.append((ast.literal_eval(current.args[0]), conditions))
+            for field, value in ast.iter_fields(current):
+                children = value if isinstance(value, list) else [value]
+                for child in children:
+                    if isinstance(child, ast.AST):
+                        tests = conditions
+                        if isinstance(current, ast.If) and field == "body":
+                            tests = conditions + [ast.unparse(current.test)]
+                        visit(child, tests)
+        visit(node, [])
+        self.assertEqual(len(calls), 3)
+        for source, conditions in calls:
+            if source.endswith(".preflight"):
+                self.assertIn("finance_preflight_active", conditions)
+            elif source.endswith(".batch"):
+                self.assertTrue(any("batch_period == period_start.isoformat()" in test for test in conditions))
+                self.assertTrue(any("batch_ids[batch_index]" in test for test in conditions))
+            elif source.endswith(".manual"):
+                self.assertTrue(any("st.button(" in test for test in conditions))
+            else:
+                self.fail(f"Unexpected publication path: {source}")
+
+    def test_successful_edit_queues_one_refresh_for_affected_courier(self):
+        node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "request_courier_finance_refresh")
+        state = {"courier_menu_7817": "Fizetés előleg"}
+        ns = {"st": SimpleNamespace(session_state=state), "_courier_id_key": lambda value: str(value or "").strip()}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), ns)
+        ns[node.name]("7817")
+        ns[node.name]("7817")
+        ns[node.name]("")
+        self.assertEqual(state.pop("courier_rebuild_request_7817"), {"target_menu": "Fizetés előleg"})
+        self.assertEqual(state, {"courier_menu_7817": "Fizetés előleg"})
+
     def test_rating_uses_route_alias_when_kor_is_zero(self):
         node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)
                     and node.name == "apply_customer_rating_bonus")
