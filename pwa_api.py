@@ -19008,6 +19008,40 @@ def attach_readonly_dashboard_statuses(month: date, dashboard: dict[str, Any]) -
     return result
 
 
+def read_dashboard_latest_finance_snapshots(month: date) -> list[dict[str, Any]]:
+    """Prefer the DB latest-only projection; keep the existing reader as fallback."""
+    month_key = month.replace(day=1).isoformat()
+    columns = "courier_id,courier_name,warehouse_label,version,metadata,created_at"
+    try:
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while offset < 50000:
+            page = supabase_rest(
+                "GET", "rpc/pwa_dashboard_latest_finance_snapshots",
+                schema="settlement",
+                params={"p_period_start": month_key, "select": columns,
+                        "order": "courier_id.asc", "limit": "1000", "offset": str(offset)},
+                timeout=20,
+            )
+            if not isinstance(page, list):
+                raise ValueError("Unexpected latest-snapshot response")
+            rows.extend(page)
+            if len(page) < 1000:
+                return rows
+            offset += 1000
+        raise ValueError("Latest-snapshot page limit reached")
+    except Exception as exc:
+        # No partial fast response is used after a failed page. Older deployments
+        # continue to return exactly the existing financial snapshot data.
+        print(f"Dashboard latest-only reader unavailable; using legacy read: {type(exc).__name__}")
+        return optional_supabase_rows_paged(
+            "courier_finance_snapshot", schema="settlement",
+            params={"select": columns, "period_start": f"eq.{month_key}",
+                    "order": "courier_id.asc,version.desc,created_at.desc"},
+            timeout=45, page_size=1000, max_rows=50000,
+        )
+
+
 def build_admin_settlement_totals(month: date) -> dict[str, Any]:
     """Build a minimal courier-total list directly from devtest summaries.
 
@@ -19018,18 +19052,7 @@ def build_admin_settlement_totals(month: date) -> dict[str, Any]:
     """
     month_start = month.replace(day=1)
     month_key = month_start.isoformat()
-    snapshots = optional_supabase_rows_paged(
-        "courier_finance_snapshot",
-        schema="settlement",
-        params={
-            "select": "courier_id,courier_name,warehouse_label,version,metadata,created_at",
-            "period_start": f"eq.{month_key}",
-            "order": "courier_id.asc,version.desc,created_at.desc",
-        },
-        timeout=45,
-        page_size=1000,
-        max_rows=50000,
-    )
+    snapshots = read_dashboard_latest_finance_snapshots(month_start)
     latest_by_courier: dict[str, dict[str, Any]] = {}
     for snapshot in snapshots:
         courier_id = dashboard_courier_id_key(snapshot.get("courier_id"))
