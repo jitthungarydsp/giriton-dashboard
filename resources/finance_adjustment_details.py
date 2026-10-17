@@ -64,12 +64,6 @@ def snapshot_manual_adjustment_details(snapshot, label):
                              "Érvényesség": ""})
     if not rows:
         return []
-    total_item = next((item for item in snapshot.get("items", [])
-                       if item.get("section") == "finance" and item.get("item_key") == total_key), None)
-    if total_item is not None:
-        remainder = float(total_item.get("amount_value") or 0) - sum(row["Összeg"] for row in rows)
-        if abs(remainder) > 0.5:
-            rows.append({"Tétel": "További mentett tételek", "Összeg": remainder,
-                         "Megjegyzés": "A mentett összesítés fennmaradó része; ehhez a verzióhoz nincs kézi tételmegjegyzés.",
-                         "Érvényesség": ""})
+    # A difference from the saved total is a consistency problem, not an entry.
+    # Never create an unexplained credit/deduction to balance the detail rows.
     return rows

@@ -50,14 +50,23 @@ class FinanceAdjustmentDetailsTest(unittest.TestCase):
     def test_each_correction_and_malus_has_its_own_note(self):
         snapshot = self.snapshot()
         rows = snapshot_manual_adjustment_details(snapshot, "Korrekció")
-        self.assertEqual(len(rows), 5)  # Four manual rows plus the saved nonmanual remainder.
+        self.assertEqual(len(rows), 4)
         self.assertEqual([row["Összeg"] for row in rows[:4]], [21000, -500000, -65000, -409900])
         self.assertIn("SIW-944", rows[1]["Megjegyzés"])
-        self.assertEqual(sum(row["Összeg"] for row in rows), -933900)
+        self.assertEqual(sum(row["Összeg"] for row in rows), -953900)
         malus = snapshot_manual_adjustment_details(snapshot, "JITT bónusz / malus")
         self.assertEqual(len(malus), 2)
         self.assertIn("\n", malus[1]["Megjegyzés"])
         self.assertEqual(sum(row["Összeg"] for row in malus), -75000)
+
+    def test_missing_saved_malus_does_not_create_balancing_credit(self):
+        snapshot = {"sources": [{"source_key": "manual_adjustments", "payload": [
+            {"adjustment_type": "malus", "amount_huf": 170000, "note": "CASCO"},
+            {"adjustment_type": "bonus", "amount_huf": 30000, "note": "Oktatói"},
+        ]}], "items": [{"section": "finance", "item_key": "bonus_malus", "amount_value": 0}]}
+        rows = snapshot_manual_adjustment_details(snapshot, "JITT bónusz / malus")
+        self.assertEqual([row["Összeg"] for row in rows], [-170000, 30000])
+        self.assertEqual(sum(row["Összeg"] for row in rows), -140000)
 
     def test_pwa_does_not_merge_equal_amounts_with_different_notes(self):
         source = (Path(__file__).resolve().parents[1] / "pwa_api.py").read_text(encoding="utf-8")

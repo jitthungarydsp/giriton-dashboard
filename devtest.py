@@ -3938,13 +3938,24 @@ def render_devtest_finance_snapshot_view(
     def finance_detail_html(detail_label: str) -> str:
         manual_rows = snapshot_manual_adjustment_details(snapshot, detail_label)
         if manual_rows:
+            total_key = {"Korrekció": "correction", "JITT bónusz / malus": "bonus_malus"}[detail_label]
+            detail_total = sum(item["Összeg"] for item in manual_rows)
+            saved_total = _snapshot_amount(snapshot, total_key)
+            discrepancy_html = ""
+            if abs(saved_total - detail_total) > 0.5:
+                discrepancy_html = (
+                    '<div role="alert" style="padding:10px;color:#a12622;">'
+                    f'Mentett adatok eltérése: tételes összeg {html.escape(format_huf(detail_total))}; '
+                    f'mentett összesítés {html.escape(format_huf(saved_total))}. '
+                    'Az elszámolás újraszámítása és mentése szükséges.</div>'
+                )
             return '<div class="finance-kpi-detail-body">' + "".join(
                 '<div style="padding:10px 0;border-top:1px solid #eef3ef;">'
                 f'<strong>{html.escape(str(item["Tétel"]))} · {html.escape(format_huf(item["Összeg"]))}</strong>'
                 f'<div style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px;">{html.escape(str(item["Megjegyzés"]))}</div>'
                 f'<small>{html.escape(str(item["Érvényesség"]))}</small></div>'
                 for item in manual_rows
-            ) + '</div>'
+            ) + discrepancy_html + '</div>'
         detail_rows = _drilldown_rows_for_label(drilldowns, detail_label)
         if not detail_rows:
             detail_rows = _snapshot_fallback_drilldown(snapshot, detail_label)
@@ -5179,8 +5190,14 @@ def save_devtest_finance_snapshots_for_rows(
                 # adjustment and imported-component queries for every courier.
                 item = dict(raw_item)
                 route_detail = pd.DataFrame()
+                # Persist the same itemized DB bonuses used by the detail page.
+                # The compact overview may omit these columns entirely.
+                finance_rows = append_jitt_bonus_malus_mobile_rows(
+                    mobile_breakdown_rows_from_settlement_row(item),
+                    item, period_start, period_end,
+                )
                 finance_rows = recalculate_mobile_breakdown_totals(
-                    mobile_breakdown_rows_from_settlement_row(item)
+                    finance_rows
                 )
                 # Overview totals already include periodic bonuses, but their
                 # rule names and counts must also be saved for the detail cards.
