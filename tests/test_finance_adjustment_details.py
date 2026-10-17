@@ -66,6 +66,21 @@ class FinanceAdjustmentDetailsTest(unittest.TestCase):
         rows = snapshot_manual_adjustment_details(snapshot, "Korrekció")
         self.assertEqual(rows[0]["Tétel"], "Vasárnapi hősök bónusz")
 
+    def test_older_snapshot_rule_details_replace_generic_remainder(self):
+        snapshot = {"sources": [
+            {"source_key": "manual_adjustments", "payload": [
+                {"adjustment_type": "manual_correction", "amount_huf": 33000, "note": "Ügyfélértékelés"},
+            ]},
+            {"source_key": "card_drilldowns", "payload": {"Korrekció": [
+                {"Tétel": "Korrekció +", "Összeg": 63000, "Megjegyzés": "Valós elszámolási adat"},
+                {"Tétel": "Vasárnapi hősök", "Összeg": 30000, "Napok": "Vasárnap", "Számítás": "3 x 10 000 Ft"},
+            ]}},
+        ], "items": [{"section": "finance", "item_key": "correction", "amount_value": 63000}]}
+        rows = snapshot_manual_adjustment_details(snapshot, "Korrekció")
+        self.assertEqual([row["Összeg"] for row in rows], [33000, 30000])
+        self.assertEqual(rows[1]["Tétel"], "Vasárnapi hősök")
+        self.assertIn("3 x 10 000 Ft", rows[1]["Megjegyzés"])
+
 
 if __name__ == "__main__":
     unittest.main()
