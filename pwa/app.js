@@ -92,6 +92,7 @@ const state = {
   settlementDashboardDetailCache: {},
   settlementDashboardPayment: null,
   settlementDashboardPaymentDrafts: {},
+  settlementQualityDetailsCache: {},
   settlementDashboardSearchTimer: null,
   financialEditCardKey: "",
   financialSnapshots: [],
@@ -109,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v226";
+const APP_VERSION = "v227";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -4365,7 +4366,7 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
       ${displayCards.map((card) => {
         const editing = state.financialEditCardKey === String(card.key || "");
         return `
-        <details class="financial-card ${editing ? "editing" : ""} ${escapeHtml(card.tone || "")} financial-card-${escapeHtml(card.key || "item")}" ${editing || ["base", "tip", "compliance_bonus", "bonus_malus", "atm_effect", "loyalty_bonus", "corrections"].includes(card.key) ? "open" : ""}>
+        <details class="financial-card ${editing ? "editing" : ""} ${escapeHtml(card.tone || "")} financial-card-${escapeHtml(card.key || "item")}" ${qualityDetailAttributes(card.key, state.workflow?.viewingAs?.courierId || previewCourierValue() || state.user?.courierId || "", state.workflowMonth)} ${editing || ["base", "tip", "compliance_bonus", "bonus_malus", "atm_effect", "loyalty_bonus", "corrections"].includes(card.key) ? "open" : ""}>
           <summary>
             <div class="financial-card-title">
               <span>${escapeHtml(card.label)}</span>
@@ -4378,6 +4379,7 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
             </div>
           </summary>
           ${editing ? financialEditableRows(card) : financialDetailRows(card.items || [])}
+          ${qualityDetailsPlaceholder(card.key)}
         </details>
       `;
       }).join("")}
@@ -5027,6 +5029,70 @@ function settlementDashboardDetailTabs() {
   </div>`;
 }
 
+function qualityDetailAttributes(card, courier, month) {
+  if (!["delay_bonus", "compliance_bonus"].includes(card)) return "";
+  return `data-quality-card="${escapeHtml(card)}" data-quality-courier="${escapeHtml(courier)}" data-quality-month="${escapeHtml(month)}"`;
+}
+
+function qualityDetailsPlaceholder(card) {
+  if (!["delay_bonus", "compliance_bonus"].includes(card)) return "";
+  return `<div data-quality-details><button class="secondary" type="button" data-quality-retry>${card === "compliance_bonus" ? "Műszakkésések és no-show napok" : "Címkésések napjai"}</button></div>`;
+}
+
+function renderSettlementQualityDetails(payload) {
+  return `<div class="quality-detail-list">
+    ${(payload.groups || []).map((group) => `<section><h4>${escapeHtml(group.label)} · ${Number(group.count || 0)} db</h4>
+      ${(group.rows || []).length ? group.rows.map((row) => `<div class="quality-detail-row">
+        <strong>${escapeHtml(row.date || "-")}</strong><span>${escapeHtml(row.label || "")}</span>
+        <small>${escapeHtml(row.note || "")}</small></div>`).join("") : `<p>${Number(group.count || 0) > 0 ? "A havi összesítésben szerepel, de ehhez nincs mentett napi részlet." : "Nincs ilyen esemény a mentett adatokban."}</p>`}
+    </section>`).join("")}
+    ${payload.truncated ? `<div class="notice">Az első 200 érintett túra látható.</div>` : ""}
+    <button class="secondary" type="button" data-quality-retry>Naplista frissítése</button>
+  </div>`;
+}
+
+async function loadSettlementQualityDetails(details, force = false) {
+  const card = details.dataset.qualityCard;
+  const courier = details.dataset.qualityCourier;
+  const month = details.dataset.qualityMonth;
+  const target = details.querySelector("[data-quality-details]");
+  if (!target || !courier || !month) return;
+  const key = `${state.user?.username || ""}:${month}:${courier}:${card}`;
+  const cache = state.settlementQualityDetailsCache;
+  const cached = cache[key];
+  if (!force && cached?.data && Date.now() - cached.loadedAt < 30000) {
+    target.innerHTML = renderSettlementQualityDetails(cached.data);
+    return;
+  }
+  if (cached?.loading) return;
+  cache[key] = {loading:true};
+  target.innerHTML = `<div class="empty-card">Napok betöltése...</div>`;
+  try {
+    const params = new URLSearchParams({month, courier, card});
+    const data = await api(`/api/workflow/quality-details?${params}`, {silentLoading:true});
+    cache[key] = {data, loadedAt:Date.now(), loading:false};
+    if (target.isConnected) target.innerHTML = renderSettlementQualityDetails(data);
+  } catch (error) {
+    delete cache[key];
+    if (target.isConnected) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}
+      <button class="secondary" type="button" data-quality-retry>Újrapróbálás</button></div>`;
+  }
+}
+
+document.addEventListener("click", (event) => {
+  const retry = event.target.closest("[data-quality-retry]");
+  const details = event.target.closest("details[data-quality-card]");
+  if (!details) return;
+  if (retry) {
+    loadSettlementQualityDetails(details, true);
+    return;
+  }
+  const summary = event.target.closest("summary");
+  if (summary && summary.parentElement === details && !details.open) {
+    setTimeout(() => { if (details.open) loadSettlementQualityDetails(details); }, 0);
+  }
+});
+
 function settlementDashboardBreakdownPreview(workflow = {}) {
   const breakdown = workflow.financialBreakdown || {};
   if (!breakdown.available) return `<div class="empty-card">${escapeHtml(breakdown.message || "Nincs elszámolási bontás.")}</div>`;
@@ -5061,9 +5127,10 @@ function settlementDashboardBreakdownPreview(workflow = {}) {
       <strong>${escapeHtml(formatHuf(breakdown.totalPayableHuf || 0))}</strong>
     </div>
     ${cards.map((card) => `
-      <details class="settlement-dashboard-mini-card">
+      <details class="settlement-dashboard-mini-card" ${qualityDetailAttributes(card.key, state.settlementDashboardExpandedCourierId, state.settlementDashboardMonth || previousLocalMonth())}>
         <summary><span>${escapeHtml(card.label || "")}</span><strong>${formatFinancialValue(card)}</strong></summary>
         ${financialDetailRows(card.items || [])}
+        ${qualityDetailsPlaceholder(card.key)}
       </details>
     `).join("")}
     <button class="secondary" type="button" data-settlement-dashboard-open-preview>Teljes admin előnézet megnyitása</button>

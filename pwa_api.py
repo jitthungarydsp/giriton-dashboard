@@ -13612,6 +13612,18 @@ def load_shift_overview_raw_quality_for_courier(
         },
         timeout=60,
     )
+    return parse_shift_overview_quality_rows(rows)
+
+
+def quality_shift_clock(value: Any) -> str:
+    text = str(value or "").strip()
+    match = re.search(r"(?:T|\s)(\d{2}:\d{2})(?::\d{2})?", text)
+    if match:
+        return match.group(1)
+    return text[:5] if re.match(r"^\d{2}:\d{2}", text) else ""
+
+
+def parse_shift_overview_quality_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total_shifts = 0
     no_show_shifts = 0
     late_login_shifts = 0
@@ -13642,9 +13654,9 @@ def load_shift_overview_raw_quality_for_courier(
             evaluation = normalize_text(shift.get("evaluation") or shift.get("status") or "")
             shift_label = "Műszak"
             if planned_start and planned_end:
-                shift_label = f"{planned_start[:5]}-{planned_end[:5]}"
+                shift_label = f"{quality_shift_clock(planned_start)}-{quality_shift_clock(planned_end)}"
             elif planned_start:
-                shift_label = planned_start[:5]
+                shift_label = quality_shift_clock(planned_start)
             detail_key = f"{work_date}|{planned_start}|{planned_end}|{evaluation}"
             if evaluation in {"no_show", "no show", "did_not_come", "did not come", "nem jelent meg"}:
                 if detail_key not in seen_no_show:
@@ -13660,7 +13672,7 @@ def load_shift_overview_raw_quality_for_courier(
                     late_shift_details.append({
                         "date": work_date,
                         "label": shift_label,
-                        "note": f"Késői bejelentkezés: {actual_start[:5] or '-'}",
+                        "note": f"Késői bejelentkezés: {quality_shift_clock(actual_start) or '-'}",
                     })
     return {
         "hasData": bool(rows),
@@ -22527,6 +22539,72 @@ def build_admin_monthly_payment(courier_id: str, month: date) -> dict[str, Any]:
                       } and (money_int(item.get("amount_value")) != 0 or key == "payable")],
         "tigBreakdown": tig_payload if isinstance(tig_payload, dict) else {},
     }
+
+
+def read_settlement_quality_details(courier_id: str, month: date, card: str) -> dict[str, Any]:
+    """Read bounded monthly quality sources; never refresh upstream or persist."""
+    month = month.replace(day=1)
+    groups = []
+    if card == "compliance_bonus":
+        rows = supabase_rest("GET", "courier_shift_overview_raw", params={
+            "select": "warehouse_id,response_json", "courier_id": f"eq.{courier_id}",
+            "year": f"eq.{month.year}", "month": f"eq.{month.month}",
+            "status_code": "eq.200", "limit": "10",
+        }, timeout=15) or []
+        quality = parse_shift_overview_quality_rows(rows)
+        for key, label, count_key, detail_key in (
+            ("lateShift", "Műszakkésések", "lateLoginShifts", "lateShiftDetails"),
+            ("noShow", "No-show műszakok", "noShowShifts", "noShowDetails"),
+        ):
+            details = [row for row in quality[detail_key] if str(row.get("date") or "").startswith(month.strftime("%Y-%m"))]
+            groups.append({"key": key, "label": label, "count": max(safe_int(quality[count_key]), len(details)), "rows": details})
+    elif card == "delay_bonus":
+        params = {
+            "select": "delivery_date,route_id,delayed_stops_count,total_delay_minutes,cleaned_delay_count,uncleaned_delay_count,cleaned_delay_minutes,uncleaned_delay_minutes,cleaned_reasons",
+            "courier_id": f"eq.{courier_id}",
+            "and": f"(delivery_date.gte.{month.isoformat()},delivery_date.lte.{month_end(month).isoformat()})",
+            "or": "(total_delay_minutes.gt.0,delayed_stops_count.gt.0)",
+            "order": "delivery_date.asc,route_id.asc", "limit": "200",
+        }
+        rows = supabase_rest("GET", "courier_financial_overview_delay", params=params, timeout=15) or []
+        for key, label, count_key, minutes_key in (
+            ("uncleanedTimeWindowLate", "Nem mentesített címkésések", "uncleaned_delay_count", "uncleaned_delay_minutes"),
+            ("cleanedTimeWindowLate", "Mentesített címkésések", "cleaned_delay_count", "cleaned_delay_minutes"),
+        ):
+            details = []
+            count = 0
+            for row in rows:
+                amount = safe_int(row.get(count_key))
+                if amount <= 0:
+                    continue
+                count += amount
+                reasons = row.get("cleaned_reasons")
+                reason = ", ".join(str(value) for value in reasons) if isinstance(reasons, list) else str(reasons or "")
+                details.append({"date": str(row.get("delivery_date") or "")[:10],
+                                "label": f"Túra {row.get('route_id') or '-'}", "routeId": str(row.get("route_id") or ""),
+                                "note": f"{amount} cím · {safe_int(row.get(minutes_key))} perc" + (f" · {reason}" if reason and key == "cleanedTimeWindowLate" else "")})
+            groups.append({"key": key, "label": label, "count": count, "rows": details})
+    else:
+        raise HTTPException(status_code=422, detail="Ehhez a kártyához nincs minőségi naplista.")
+    return {"courierId": courier_id, "month": month.strftime("%Y-%m"), "card": card,
+            "groups": groups, "source": "saved_quality_data", "truncated": card == "delay_bonus" and len(rows) >= 200}
+
+
+@app.get("/api/workflow/quality-details")
+def settlement_quality_details(
+    month: str = Query(default=""), courier: str = Query(default=""), card: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    own_id, _own_name = courier_identity(user)
+    if courier and dashboard_courier_id_key(courier) == dashboard_courier_id_key(own_id):
+        view_user, preview = user, False
+    else:
+        view_user, preview = workflow_view_user(user, courier)
+    month_value = parse_month(month)
+    require_workflow_month_allowed(user, month_value, preview=preview)
+    courier_id, _name = courier_identity(view_user)
+    return read_settlement_quality_details(courier_id, month_value, card)
 
 
 @app.get("/api/admin/settlement-payment")
