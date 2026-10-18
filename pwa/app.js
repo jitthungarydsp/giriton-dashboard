@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v231";
+const APP_VERSION = "v234";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -4659,13 +4659,13 @@ function workflowTigDownloadUrl() {
   return `/api/workflow/tig.pdf?${params}`;
 }
 
-function renderTigBreakdown() {
-  const tig = state.workflow?.tigBreakdown || {};
+function renderTigBreakdown(tig = state.workflow?.tigBreakdown || {}, options = {}) {
   if (!tig.available) {
     return `<div class="notice">${escapeHtml(tig.message || "A TIG bontas meg nincs kesz.")}</div>`;
   }
-  const tigDownloadUrl = workflowTigDownloadUrl();
-  const tigIdentifier = tig.documentReference ? `${tig.month || state.workflowMonth} · ${tig.documentReference}` : (tig.month || state.workflowMonth);
+  const tigDownloadUrl = options.downloadUrl || workflowTigDownloadUrl();
+  const tigMonth = tig.month || options.month || state.workflowMonth;
+  const tigIdentifier = tig.documentReference ? `${tigMonth} · ${tig.documentReference}` : tigMonth;
   const rows = (tig.rows || []).filter((row) => row.key !== "cash_deduction" && row.key !== "tig_cash_deduction");
   const transferRows = rows.filter((row) => row.key !== "cash_service");
   const cashRows = rows.filter((row) => row.key === "cash_service");
@@ -5075,14 +5075,55 @@ function openSettlementDashboardStatusEditor(courierId) {
     <p>Jelenlegi státusz: <strong>${escapeHtml(row.status?.label || "Ismeretlen")}</strong></p>
     <label>Új státusz<select name="target">${options.map(([key, label]) => `<option value="${key}" ${row.status?.label === label ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
     <label>Módosítás megjegyzése<textarea name="note" required placeholder="Miért kerül ebbe a státuszba?"></textarea></label>
+    <div data-close-invoice-complaints hidden><label><input type="checkbox" name="closeInvoiceComplaints"> A számlaellenőrzéshez tartozó nyitott reklamációkat is zárom.</label><small>A módosítás megjegyzése kerül a lezárás indokába. A többi reklamáció külön kezelendő.</small></div>
     <div class="notice">Ez a futár havi folyamatát módosítja. A cél előtti lépéseket admin által teljesítettnek jelöli, a későbbieket visszalépteti. Az összeg nem változik. A kifizetést a Kifizetés fülön lehet lezárni vagy visszanyitni.</div>
     <div data-status-error role="alert"></div>
+    <button type="button" class="secondary" data-recheck-latest-invoice>Ellenőrzés újrafuttatása</button>
+    <div data-invoice-recheck-result aria-live="polite"></div>
     <button type="submit" class="primary">Státusz mentése</button>
     <button type="button" class="secondary" data-status-cancel>Mégse</button>
   </form>`;
   document.body.appendChild(dialog);
   dialog.querySelector("[data-status-cancel]").onclick = () => dialog.close();
   dialog.addEventListener("close", () => dialog.remove());
+  const statusForm = dialog.querySelector("form");
+  const updateComplaintClosure = () => {
+    const available = statusForm.elements.target.value === "payment_wait";
+    dialog.querySelector("[data-close-invoice-complaints]").hidden = !available;
+    statusForm.elements.closeInvoiceComplaints.disabled = !available;
+    if (!available) statusForm.elements.closeInvoiceComplaints.checked = false;
+  };
+  statusForm.elements.target.addEventListener("change", updateComplaintClosure);
+  updateComplaintClosure();
+  dialog.querySelector("[data-recheck-latest-invoice]").addEventListener("click", async () => {
+    const resultBox = dialog.querySelector("[data-invoice-recheck-result]");
+    const buttons = [...dialog.querySelectorAll("button")];
+    buttons.forEach(button => { button.disabled = true; });
+    resultBox.className = "notice";
+    resultBox.textContent = "A legújabb elszámolási számla ellenőrzése folyamatban...";
+    try {
+      const result = await api("/api/admin/settlement-dashboard/recheck-invoice", {
+        method: "POST", body: JSON.stringify({month, courierId: String(courierId)}),
+        loadingMessage: "A legújabb számla újraellenőrzése...",
+      });
+      const validation = result.validation || {};
+      resultBox.className = validation.ok ? "notice" : "notice error";
+      resultBox.innerHTML = `<strong>${validation.ok ? "Sikeres ellenőrzés." : "Az ellenőrzés hibát talált."}</strong>
+        ${(result.documents || []).map(item => `<div>Ellenőrzött számla: ${escapeHtml(item.fileName || item.id)}</div>`).join("")}
+        ${(validation.checks || []).filter(check => check.status === "error").map(check => `<div>${escapeHtml(check.title)}: ${escapeHtml(check.detail || "")}</div>`).join("")}
+        ${result.paymentClosed ? `<div>A lezárt kifizetés állapota változatlan.</div>` : ""}
+        ${validation.ok ? `<small>A nyitott reklamációk lezárása a státusz mentésekor külön kérhető.</small>` : ""}`;
+      delete state.settlementDashboardDetailCache[`${month}:${courierId}`];
+      if (state.settlementDashboardPayment?.courierId === String(courierId)) state.settlementDashboardPayment = null;
+      await loadSettlementDashboard();
+      if (state.settlementDashboardExpandedCourierId === String(courierId)) await loadSettlementDashboardCourierDetail(courierId);
+    } catch (exc) {
+      resultBox.className = "notice error";
+      resultBox.textContent = exc.message;
+    } finally {
+      buttons.forEach(button => { button.disabled = false; });
+    }
+  });
   dialog.querySelector("form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -5094,7 +5135,8 @@ function openSettlementDashboardStatusEditor(courierId) {
     error.textContent = "";
     try {
       await api("/api/admin/settlement-dashboard/status", {method:"POST",
-        body:JSON.stringify({month, courierId:String(courierId), target:form.elements.target.value, note}),
+        body:JSON.stringify({month, courierId:String(courierId), target:form.elements.target.value, note,
+          closeInvoiceComplaints: form.elements.target.value === "payment_wait" && statusForm.elements.closeInvoiceComplaints.checked}),
         loadingMessage:"Státusz mentése..."});
       delete state.settlementDashboardDetailCache[`${month}:${courierId}`];
       if (state.settlementDashboardPayment?.courierId === String(courierId)) state.settlementDashboardPayment = null;
@@ -5160,6 +5202,7 @@ function renderSettlementDashboardFlags(flags = []) {
 function settlementDashboardDetailTabs() {
   const tabs = [
     ["settlement", "Elszámolás"],
+    ["tig", "TIG"],
     ["complaints", "Reklamáció"],
     ["payment", "Kifizetés"],
     ["documents", "Dokumentumok"],
@@ -5496,6 +5539,23 @@ function renderDashboardInvoiceIssue(row) {
   </div>`;
 }
 
+function settlementDashboardTigPanel(workflow, row) {
+  const month = state.settlementDashboardMonth || previousLocalMonth();
+  const accepted = workflow.states?.tig?.status === "done";
+  const params = new URLSearchParams({month, courier: String(row.courierId)});
+  const documents = workflow.documents?.tig || [];
+  const content = workflow.tigBreakdown?.available
+    ? renderTigBreakdown(workflow.tigBreakdown, {month, downloadUrl: `/api/workflow/tig.pdf?${params}`})
+    : documents.length
+      ? documentPreviewList(documents, row.courierId)
+      : `<div class="notice">${escapeHtml(workflow.tigBreakdown?.message || "Ehhez a hónaphoz még nincs elkészített TIG.")}</div>`;
+  return `<section class="process-card settlement-dashboard-tab-panel ${accepted ? "accepted" : ""}">
+    <div class="process-title"><span class="step-code">3</span><div><h3>TIG és elfogadás</h3><p>A TIG tételes bontása, külön KP sorral.</p></div></div>
+    ${content}
+    ${accepted ? `<div class="accept-row done">A TIG-et elfogadtad.</div>` : `<div class="notice">A TIG még nincs elfogadva.</div>`}
+  </section>`;
+}
+
 function renderSettlementDashboardExpanded(row) {
   const detail = state.settlementDashboardDetail || {};
   const workflow = detail.workflow || {};
@@ -5527,6 +5587,7 @@ function renderSettlementDashboardExpanded(row) {
     ${detail.loading ? `<div class="empty-card">Futár részletek betöltése...</div>` : ""}
     ${detail.error ? `<div class="notice error">${escapeHtml(detail.error)}</div>` : ""}
     ${!detail.loading && !detail.error && currentTab === "settlement" ? (state.settlementDashboardEditCourierId === String(row.courierId || "") ? settlementDashboardFinanceEditor(workflow) : settlementDashboardBreakdownPreview(workflow)) : ""}
+    ${!detail.loading && !detail.error && currentTab === "tig" ? settlementDashboardTigPanel(workflow, row) : ""}
     ${!detail.loading && !detail.error && currentTab === "complaints" ? `
       <div class="settlement-dashboard-tab-panel">
         <strong>Reklamációk</strong>
@@ -5609,14 +5670,14 @@ function renderSettlementDashboard() {
   `;
 }
 
-async function loadSettlementDashboardCourierDetail(courierId) {
+async function loadSettlementDashboardCourierDetail(courierId, {includeTig = state.settlementDashboardExpandedTab === "tig"} = {}) {
   const cleanId = String(courierId || "").trim();
   if (!cleanId) return;
   const month = state.settlementDashboardMonth || previousLocalMonth();
   const cacheKey = `${month}:${cleanId}`;
   state.settlementDashboardExpandedCourierId = cleanId;
   const cached = state.settlementDashboardDetailCache?.[cacheKey];
-  if (cached) {
+  if (cached && (!includeTig || cached.tigLoaded)) {
     state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow: cached, error: "" };
     renderSettlementDashboard();
     return;
@@ -5629,6 +5690,7 @@ async function loadSettlementDashboardCourierDetail(courierId) {
       courier: cleanId,
       _: String(Date.now()),
     });
+    if (includeTig) params.set("include_tig", "true");
     const workflow = await api(`/api/admin/settlement-dashboard/detail?${params}`, { silentLoading: true });
     state.settlementDashboardDetailCache[cacheKey] = workflow;
     state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow, error: "" };
@@ -11040,6 +11102,9 @@ $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
   if (tab) {
     state.settlementDashboardExpandedTab = tab.dataset.settlementDashboardTab || "settlement";
     renderSettlementDashboard();
+    if (state.settlementDashboardExpandedTab === "tig") {
+      loadSettlementDashboardCourierDetail(state.settlementDashboardExpandedCourierId, {includeTig: true});
+    }
     if (state.settlementDashboardExpandedTab === "payment") {
       loadSettlementDashboardMonthlyPayment(state.settlementDashboardExpandedCourierId);
     }

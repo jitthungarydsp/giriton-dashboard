@@ -187,6 +187,12 @@ class DashboardStatusChangeRequest(BaseModel):
     courierId: str
     target: str
     note: str
+    closeInvoiceComplaints: bool = False
+
+
+class DashboardInvoiceRecheckRequest(BaseModel):
+    month: str
+    courierId: str
 
 
 class SettlementCardOverrideItem(BaseModel):
@@ -9359,7 +9365,8 @@ def supabase_rest(
                 # Only deliberate workflow validation messages are exposed.
                 raise HTTPException(status_code=409, detail=str(db_error.get("message") or "A folyamat nem léptethető tovább."))
             if code == "PGRST202":
-                raise HTTPException(status_code=503, detail="A státuszváltó SQL-függvény még nem elérhető. Futtasd a pwa_dashboard_change_monthly_status.sql fájlt.")
+                migration = "pwa_dashboard_status_close_invoice_complaints.sql" if "with_complaints" in table else "pwa_dashboard_change_monthly_status.sql"
+                raise HTTPException(status_code=503, detail=f"A státuszváltó SQL-függvény még nem elérhető. Futtasd a {migration} fájlt.")
             if code:
                 raise HTTPException(status_code=502, detail=f"Státuszváltási adatbázishiba: {code}. A részletek a szervernaplóban találhatók.")
 
@@ -22654,13 +22661,17 @@ def admin_change_dashboard_status(
     month = parse_month(payload.month)
     note = str(payload.note or "").strip()
     target = str(payload.target or "").strip()
+    close_invoice_complaints = bool(getattr(payload, "closeInvoiceComplaints", False))
+    if close_invoice_complaints and target != "payment_wait":
+        raise HTTPException(status_code=422, detail="A számlaellenőrzési reklamációk csak Kifizetésre vár státuszba engedéskor zárhatók le együtt.")
     if not courier_id or not note:
         raise HTTPException(status_code=422, detail="Válassz futárt és add meg a módosítás megjegyzését.")
     if target not in {"settlement_wait", "tig_wait", "tig_accept", "invoice_upload", "invoice_check", "payment_wait"}:
         raise HTTPException(status_code=422, detail="Ismeretlen célstátusz. A kifizetést a Kifizetés fülön zárd le.")
     if courier_has_efo_assignment({"courierId": courier_id, "username": courier_id}, month):
         raise HTTPException(status_code=409, detail="EFO folyamatnál a státuszt a futár részletes folyamatnézetében kezeld.")
-    result = supabase_rest("POST", "rpc/pwa_change_monthly_status", schema="settlement",
+    rpc = "pwa_change_monthly_status_with_complaints" if close_invoice_complaints else "pwa_change_monthly_status"
+    result = supabase_rest("POST", f"rpc/{rpc}", schema="settlement",
                           explain_workflow_error=True,
                           payload={"p_courier_id": courier_id, "p_period_start": month.isoformat(),
                                    "p_target": target, "p_note": note,
@@ -22668,6 +22679,114 @@ def admin_change_dashboard_status(
     if not isinstance(result, dict) or not result.get("ok"):
         raise HTTPException(status_code=409, detail="A státuszváltás nem igazolható. Frissítsd a listát.")
     return result
+
+
+def latest_monthly_invoice_candidates(documents: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Pick each invoice type by upload time, never by a cached browser ID."""
+    def upload_order(row):
+        try:
+            timestamp = datetime.fromisoformat(str(row.get("uploaded_at") or row.get("created_at") or "").replace("Z", "+00:00"))
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            return timestamp.timestamp(), str(row.get("id") or "")
+        except ValueError:
+            return float("-inf"), str(row.get("id") or "")
+    selected = {}
+    for row in sorted(documents, key=upload_order, reverse=True):
+        if row.get("document_type") != "invoice" or not document_belongs_to_process(row, ""):
+            continue
+        cash_title = re.match(r"\s*kp\s+sz[aá]mla\b", str(row.get("title") or ""), re.IGNORECASE)
+        cash_note = re.search(r"fizet[eé]si m[oó]d\s*:\s*(?:kp\b|k[eé]szp[eé]nz)", str(row.get("note") or ""), re.IGNORECASE)
+        mode = "cash" if cash_title or cash_note else "transfer"
+        selected.setdefault(mode, row)
+    return selected
+
+
+def read_latest_monthly_invoices(courier_id: str, month: date, require_cash: bool) -> dict[str, dict[str, Any]]:
+    documents = []
+    offset = 0
+    while True:
+        page = supabase_rest("GET", "peopleforce_documents", params={
+            "select": "id,document_type,title,note,file_name,uploaded_at,created_at",
+            "courier_id": f"eq.{courier_id}", "document_month": f"eq.{month.isoformat()}",
+            "document_type": "eq.invoice", "order": "uploaded_at.desc,id.desc",
+            "limit": "1000", "offset": str(offset),
+        }) or []
+        documents.extend(page)
+        selected = latest_monthly_invoice_candidates(documents)
+        if ("transfer" in selected and (not require_cash or "cash" in selected)) or len(page) < 1000:
+            return selected
+        offset += len(page)
+
+
+@app.post("/api/admin/settlement-dashboard/recheck-invoice")
+def admin_recheck_latest_monthly_invoice(
+    payload: DashboardInvoiceRecheckRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    admin = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    courier_id = str(payload.courierId or "").strip()
+    if not courier_id:
+        raise HTTPException(status_code=422, detail="Válassz futárt az ellenőrzéshez.")
+    month = parse_month(payload.month)
+    view_user = {"courierId": courier_id, "username": read_courier_display_name(courier_id) or courier_id}
+    financial = build_financial_breakdown(view_user, month, allow_unpublished=True)
+    tig = build_workflow_tig_breakdown(view_user, month, financial)
+    requirements = workflow_invoice_requirements(financial, tig)
+    if not tig.get("available"):
+        raise HTTPException(status_code=409, detail="Az ellenőrzéshez nincs elérhető havi TIG.")
+    require_cash = bool(requirements.get("requiresCashInvoice"))
+    selected = read_latest_monthly_invoices(courier_id, month, require_cash)
+    if "transfer" not in selected:
+        raise HTTPException(status_code=404, detail="Ehhez a futárhoz és hónaphoz nincs feltöltött elszámolási számla.")
+    profile = read_billing_profile(view_user)
+    validations = []
+    checked_documents = []
+    for mode in (["transfer", "cash"] if require_cash else ["transfer"]):
+        document = selected.get(mode)
+        if not document:
+            continue
+        rows = supabase_rest("GET", "peopleforce_documents", params={
+            "select": "id,file_name,file_content_base64,file_size",
+            "id": f"eq.{document['id']}", "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{month.isoformat()}", "document_type": "eq.invoice", "limit": "1",
+        }, timeout=60)
+        if not rows:
+            raise HTTPException(status_code=409, detail="A legújabb számla nem érhető el. Indítsd újra az ellenőrzést.")
+        try:
+            content = base64.b64decode(rows[0].get("file_content_base64") or "", validate=True)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail="A legújabb számla tartalma sérült.") from exc
+        if not content or len(content) > MAX_INVOICE_BYTES:
+            raise HTTPException(status_code=422, detail="A legújabb számla üres vagy túl nagy.")
+        filename = rows[0].get("file_name") or document.get("file_name") or "szamla.pdf"
+        validation = validate_invoice(
+            file_name=filename, content=content, invoice_month=month,
+            courier_name=view_user["username"], courier_id=courier_id,
+            expected_gross_amount=money_int(requirements.get("cashGrossHuf" if mode == "cash" else "transferGrossHuf")),
+            invoice_mode=mode, require_submission_fields=False,
+            expected_seller_name=profile.get("company_name", ""),
+            expected_seller_tax_number=profile.get("tax_number", ""),
+            expected_seller_address=profile.get("company_address", ""),
+        )
+        validations.append(("KP számla" if mode == "cash" else "Elszámolási számla", validation))
+        checked_documents.append({"id": document["id"], "fileName": filename, "mode": mode, "uploadedAt": document.get("uploaded_at")})
+    checks = [{**check, "title": f"{label}: {check.get('title') or ''}"}
+              for label, validation in validations for check in validation.get("checks", [])]
+    if require_cash and "cash" not in selected:
+        checks.append({"status": "error", "title": "KP számla", "detail": "A TIG alapján külön KP számla szükséges, de nincs feltöltve."})
+    ok = all(validation.get("ok") for _, validation in validations) and not any(check.get("status") == "error" for check in checks)
+    validation = {"ok": ok, "checks": checks}
+    _documents, status_rows, _complaints = read_workflow_rows(view_user, month)
+    paid = workflow_done(status_map(status_rows, ""), "invoice_payment")
+    actor = str(admin.get("username") or "admin")
+    if not paid:
+        errors = " | ".join(f"{check.get('title')}: {check.get('detail')}" for check in checks if check.get("status") == "error")
+        note = ("A legújabb számla újraellenőrzése sikeres." if ok else f"Számlaellenőrzési hiba: {errors}")
+        note += f" Admin: {actor}. Dokumentumok: {', '.join(item['id'] for item in checked_documents)}"
+        upsert_workflow_status(view_user, month, "invoice_check", "done" if ok else "open", note[:1500], "")
+    return {"validation": validation, "documents": checked_documents, "workflowUpdated": not paid,
+            "paymentClosed": paid, "checkedBy": actor, "checkedAt": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/api/admin/settlement-payment")
@@ -22749,6 +22868,7 @@ def admin_reopen_monthly_payment(
 def admin_settlement_dashboard_detail(
     month: str = Query(default=""),
     courier: str = Query(default=""),
+    include_tig: bool = Query(default=False),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
@@ -22816,6 +22936,14 @@ def admin_settlement_dashboard_detail(
             allow_unpublished=True,
             snapshot_only=False,
         )
+    tig_breakdown = build_workflow_tig_breakdown(
+        view_user, month_value, financial_breakdown, snapshot_only=False,
+    ) if include_tig else {
+        "available": False,
+        "month": month_value.strftime("%Y-%m"),
+        "message": "A TIG a TIG fül megnyitásakor töltődik be.",
+        "rows": [],
+    }
     if latest_snapshot and draft_rows:
         preview_snapshot, _totals = admin_snapshot_dict_from_finance_rows(
             latest_snapshot,
@@ -22838,16 +22966,12 @@ def admin_settlement_dashboard_detail(
         "viewerReadOnly": True,
         "viewingAs": public_user(view_user),
         "steps": [],
-        "states": {},
+        "states": status_map(_status_rows, "") if include_tig else {},
         "documents": document_groups,
         "financialBreakdown": financial_breakdown,
         "editableFinanceRows": editable_rows,
-        "tigBreakdown": {
-            "available": False,
-            "month": month_value.strftime("%Y-%m"),
-            "message": "A dashboard gyorsnézetben a TIG nem töltődik be.",
-            "rows": [],
-        },
+        "tigBreakdown": tig_breakdown,
+        "tigLoaded": bool(include_tig),
         "invoiceRequirements": {},
         "complaints": complaints_by_action,
         "complaintResponses": {},

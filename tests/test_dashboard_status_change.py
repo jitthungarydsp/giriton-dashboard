@@ -72,6 +72,25 @@ class DashboardStatusChangeTest(unittest.TestCase):
         with self.assertRaises(Error): ns["admin_change_dashboard_status"](payload)
         self.assertEqual(calls, [])
 
+    def test_payment_approval_can_close_invoice_complaints_in_one_transaction(self):
+        ns, calls, Error = self.endpoint()
+        payload = SimpleNamespace(month="2026-09", courierId="7147", target="payment_wait",
+                                  note="A számla ellenőrizve, kifizethető", closeInvoiceComplaints=True)
+        ns["admin_change_dashboard_status"](payload)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], ("POST", "rpc/pwa_change_monthly_status_with_complaints"))
+        self.assertEqual(calls[0][1]["payload"]["p_courier_id"], "7147")
+        self.assertEqual(calls[0][1]["payload"]["p_note"], payload.note)
+
+    def test_complaint_closure_is_rejected_for_other_targets(self):
+        ns, calls, Error = self.endpoint()
+        payload = SimpleNamespace(month="2026-09", courierId="7147", target="invoice_check",
+                                  note="Ellenőrzés", closeInvoiceComplaints=True)
+        with self.assertRaises(Error) as caught:
+            ns["admin_change_dashboard_status"](payload)
+        self.assertEqual(caught.exception.status_code, 422)
+        self.assertEqual(calls, [])
+
     def test_badge_keeps_style_and_has_distinct_click_target(self):
         source = (ROOT / "pwa/app.js").read_text(encoding="utf-8")
         start = source.index("function renderSettlementDashboardStatus(")
