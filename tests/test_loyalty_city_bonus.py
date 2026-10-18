@@ -6,6 +6,8 @@ import unicodedata
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pandas as pd
 
@@ -19,6 +21,9 @@ class LoyaltyCityBonusTests(unittest.TestCase):
             "_loyalty_count_record", "_loyalty_route_counts_from_settlement_rows",
             "completed_months_between", "_loyalty_rule_bool",
             "loyalty_advance_booking_min_from_rule", "apply_loyalty_bonus", "payable_bonus_total",
+            "load_loyalty_advance_booking_days", "_loyalty_booking_pair_key",
+            "_booking_user_email_key", "_booking_operation_key", "_is_clean_booking_operation",
+            "_is_booking_change_operation", "_booked_in_period", "_parse_booking_timestamp_date",
         }
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         for node in nodes:
@@ -39,12 +44,14 @@ class LoyaltyCityBonusTests(unittest.TestCase):
                 {"previous_normal_routes_min": 40, "bonus_amount_huf": 1000, "priority": 100},
             ]),
             "load_loyalty_route_counts_for_period": lambda *args: pd.DataFrame(columns=["driver_key", "route_type", "routes", "orders"]),
-            "load_loyalty_advance_booking_days": lambda *args: pd.DataFrame(),
             "load_loyalty_profile_lookup": lambda: {"test courier": {"start_date": "2025-01-01"}},
             "load_courier_profile_lookup": lambda: {},
             "load_advance_booking_cancellation_summary": lambda *args: {"remaining_shift_count": bookings},
         }
         exec(self.code, ns)
+        ns["load_loyalty_advance_booking_days"] = lambda *args: pd.DataFrame([{
+            "courier_id": "123", "driver_key": "test courier", "advance_booking_days": bookings,
+        }])
         records = [ns["_loyalty_count_record"]({"Driver": "Test Courier", "Route Type": kind, "Orders": 10}) for kind in route_types]
         counts = pd.DataFrame(records, columns=["driver_key", "route_type", "routes", "orders"])
         ns["load_loyalty_route_counts"] = lambda *args: counts
@@ -107,6 +114,56 @@ class LoyaltyCityBonusTests(unittest.TestCase):
             "route_type": "regional", "bonus_amount_huf": 1000, "priority": 1,
         }]))
         self.assertEqual(row["Lojalitás"], 0)
+
+    def test_200_couriers_share_one_monthly_booking_load(self):
+        ns = self.namespace()
+        batch = pd.DataFrame([
+            {"courier_id": str(index), "driver_key": "test courier", "advance_booking_days": 48}
+            for index in range(200)
+        ])
+        ns["load_loyalty_advance_booking_days"] = Mock(return_value=batch)
+        ns["load_advance_booking_cancellation_summary"] = Mock(
+            side_effect=AssertionError("Unexpected per-courier database lookup")
+        )
+        data = pd.DataFrame([
+            {"Futár": "Test Courier", "Courier ID": str(index), "Normál túrák": 26}
+            for index in range(200)
+        ])
+        result = ns["apply_loyalty_bonus"](data, date(2026, 9, 1), date(2026, 9, 30), "session")
+        self.assertEqual(result["Lojalitás"].sum(), 200 * 19000)
+        ns["load_loyalty_advance_booking_days"].assert_called_once()
+        ns["load_advance_booking_cancellation_summary"].assert_not_called()
+
+    def test_monthly_booking_pages_include_cancellations_after_first_1000_rows(self):
+        ns = self.namespace()
+        # Restore the real batch loader after namespace() installs its fixture.
+        exec(self.code, ns)
+        rows = [
+            {"courier_id": "123", "courier_name": "Test Courier", "user_email": "test@example.test",
+             "operation": "book", "booked_at": "2026-08-20", "shift_date": "2026-09-01",
+             "shift_time": str(index), "warehouse": "BUD1"}
+            for index in range(1000)
+        ]
+        rows.append({**rows[0], "operation": "cancel", "booked_at": "2026-09-01"})
+        ranges = []
+        query = Mock()
+        for method in ("select", "gte", "lte", "order"):
+            getattr(query, method).return_value = query
+        def select_range(start, end):
+            ranges.append((start, end))
+            query.execute.return_value = SimpleNamespace(data=rows[start:end + 1])
+            return query
+        query.range.side_effect = select_range
+        db = Mock()
+        db.schema.return_value.table.return_value = query
+        ns.update({
+            "get_db": lambda: db,
+            "add_months": lambda *args: date(2026, 8, 1),
+            "month_bounds": lambda *args: (date(2026, 8, 1), date(2026, 8, 31)),
+        })
+        result = ns["load_loyalty_advance_booking_days"](date(2026, 9, 1), date(2026, 9, 30))
+        self.assertEqual(result.iloc[0]["advance_booking_days"], 999)
+        self.assertEqual(ranges, [(0, 999), (1000, 1999)])
 
     def test_explicit_booking_column_overrides_legacy_name(self):
         ns = self.namespace()

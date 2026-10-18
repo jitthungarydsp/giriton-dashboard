@@ -11015,6 +11015,7 @@ def build_fast_settlement_overview_data(
         persisted_ids.add(courier_id)
 
     output_rows: list[dict[str, object]] = []
+    summary_by_id = {_courier_id_key(item.get("courier_id")): item for item in summary_rows}
     for row in rows:
         courier_id = str(row.get("courier_id") or "").strip()
         courier_key = _courier_id_key(courier_id)
@@ -11055,6 +11056,11 @@ def build_fast_settlement_overview_data(
             "Normál túrák": parse_huf_value(row.get("normal_routes")),
             "Nettó bevétel": parse_huf_value(row.get("courier_base_rate_huf")),
             "Bónusz": parse_huf_value(row.get("route_bonus_total_huf")),
+            "Lojalitás": parse_huf_value(
+                row.get("loyalty_bonus_huf")
+                if row.get("loyalty_bonus_huf") is not None
+                else summary_by_id.get(courier_key, {}).get("loyalty_bonus_huf")
+            ),
             "Borravaló": parse_huf_value(row.get("tip_huf")),
             "Alvállalkozói összeg": contractor_total or payable,
             "Levonás": 0.0,
@@ -11068,13 +11074,8 @@ def build_fast_settlement_overview_data(
     data = pd.DataFrame(output_rows)
     if data.empty:
         return data
-    data = apply_loyalty_bonus(
-        data,
-        period_start,
-        period_end,
-        session_id,
-        "Excel",
-    )
+    # The landing list reads persisted amounts. Full loyalty calculations
+    # belong to explicit recalculation/detail flows, not every list refresh.
     # Keep persisted financial totals, but classify workflow and complaint types
     # from the live monthly records instead of an older SQL view's labels.
     data = apply_peopleforce_workflow_status(data, period_start)
@@ -11384,14 +11385,23 @@ def load_loyalty_route_counts_for_period(period_start: date, period_end: date, s
 def load_loyalty_advance_booking_days(period_start: date, period_end: date) -> pd.DataFrame:
     previous_period_start, previous_period_end = month_bounds(add_months(period_start, -1))
     try:
-        rows = (
-            get_db().schema("settlement").table("courier_loyalty_booking_log")
-            .select("courier_id,courier_name,user_email,operation,booked_at,shift_date,shift_time,warehouse,raw_shift_data,source_key")
-            .gte("shift_date", period_start.isoformat())
-            .lte("shift_date", period_end.isoformat())
-            .limit(50000)
-            .execute().data or []
-        )
+        rows = []
+        page_start = 0
+        page_size = 1000
+        while True:
+            page = (
+                get_db().schema("settlement").table("courier_loyalty_booking_log")
+                .select("courier_id,courier_name,user_email,operation,booked_at,shift_date,shift_time,warehouse,raw_shift_data,source_key")
+                .gte("shift_date", period_start.isoformat())
+                .lte("shift_date", period_end.isoformat())
+                .order("id")
+                .range(page_start, page_start + page_size - 1)
+                .execute().data or []
+            )
+            rows.extend(page)
+            if len(page) < page_size:
+                break
+            page_start += len(page)
     except BaseException:
         return pd.DataFrame(columns=["courier_id", "driver_key", "advance_booking_days"])
     booked_pairs: dict[str, set[tuple[str, ...]]] = {}
@@ -11561,12 +11571,11 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         current_order_count = int(float(driver_counts["orders"].sum()))
         previous_normal_routes = int(float(previous_normal.get(driver_key, 0) or 0))
         courier_id_key = _courier_id_key(courier_id)
-        advance_summary = load_advance_booking_cancellation_summary(courier_id_key, str(row.get("Futár") or ""), period_start, period_end)
-        advance_booking_days = int(parse_huf_value(advance_summary.get("remaining_shift_count")))
-        if advance_booking_days <= 0:
-            advance_booking_days = int(float(
-                booking_by_courier_id.get(courier_id_key, booking_by_driver.get(driver_key, 0)) or 0
-            ))
+        # The monthly batch already applies the same booking/cancellation
+        # matching. Avoid one extra database round trip for every courier.
+        advance_booking_days = int(float(
+            booking_by_courier_id.get(courier_id_key, booking_by_driver.get(driver_key, 0)) or 0
+        ))
         previous_route_values.append(previous_normal_routes)
         current_route_values.append(current_route_count)
         booking_day_values.append(advance_booking_days)

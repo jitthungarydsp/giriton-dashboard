@@ -162,6 +162,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
 
     def test_streamlit_fast_list_recomputes_stale_database_label(self):
         row = dict(courier_id="7688", courier_name="Teszt Futár", payable_huf=100,
+                   loyalty_bonus_huf=9500,
                    session_id="monthly", settlement_done=False, has_tig_document=True,
                    dashboard_status_label="TIG elfogadásra vár")
         ns = {
@@ -181,8 +182,13 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
                      "apply_salary_advance_request_status", "apply_expense_request_status", "apply_effective_payment_total_column"):
             ns[name] = lambda value, *_: value
         load_functions("devtest.py", {"build_fast_settlement_overview_data", "_streamlit_status_from_dashboard_label", "apply_peopleforce_workflow_status", "complaint_has_admin_answer", "restore_open_complaint_status"}, ns)
+        def unexpected_recalculation(*args):
+            raise AssertionError("The fast list must not recalculate every courier's loyalty")
+        ns["apply_loyalty_bonus"] = unexpected_recalculation
         result = ns["build_fast_settlement_overview_data"](None, date(2026, 9, 1), date(2026, 9, 30), None)
         self.assertEqual(result.iloc[0]["Státusz"], "Elszámolás elfogadásra vár")
+        self.assertEqual(result.iloc[0]["Kifizetendő"], 100)
+        self.assertEqual(result.iloc[0]["Lojalitás"], 9500)
 
     def test_pending_invoice_check_is_not_payment_waiting(self):
         flags = dict(settlement_ready=True, settlement_done=True, tig_ready=True,
