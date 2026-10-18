@@ -16263,12 +16263,8 @@ def refresh_google_bonus_malus_for_courier(
 
 def refresh_loyalty_calculation_data() -> None:
     clear_settlement_overview_data_cache()
-    load_active_base_rate_rules.clear()
-    load_active_bonus_level_rules.clear()
-    load_courier_route_detail.clear()
     load_courier_settlement_summary.clear()
     load_courier_settlement_summary_row.clear()
-    load_courier_booking_emails.clear()
     load_advance_booking_cancellation_summary.clear()
     load_loyalty_advance_booking_days.clear()
     load_loyalty_bonus_rules_for_month.clear()
@@ -16277,7 +16273,6 @@ def refresh_loyalty_calculation_data() -> None:
     load_loyalty_profile_lookup.clear()
     load_loyalty_month_requirement_for_date.clear()
     load_courier_profile.clear()
-    load_courier_master.clear()
 
 
 def settlement_loyalty_cache_key(session_id: str | None, period_start: date, calculation_mode: str) -> str:
@@ -16347,6 +16342,56 @@ def courier_main_list_flag_html(row: pd.Series) -> str:
     )
 
 
+def persist_loyalty_summary_changes(data: pd.DataFrame, session_id: str | None, progress_callback=None) -> int:
+    """Update only changed loyalty amounts, grouping equal amounts per request."""
+    if not session_id or data.empty:
+        return 0
+    client = get_db().schema("settlement")
+    existing = []
+    offset = 0
+    while True:
+        page = (
+            client.table("courier_settlement_summary")
+            .select("id,courier_id,driver_name,loyalty_bonus_huf")
+            .eq("session_id", session_id).order("id").range(offset, offset + 999)
+            .execute().data or []
+        )
+        existing.extend(page)
+        if len(page) < 1000:
+            break
+        offset += len(page)
+    by_id = {}
+    by_name = {}
+    for row in data.to_dict("records"):
+        courier_id = _courier_id_key(row.get("Courier ID"))
+        name = _courier_match_key(row.get("Futár"))
+        amount = parse_huf_value(row.get("Lojalitás"))
+        if courier_id:
+            by_id[courier_id] = amount
+        elif name:
+            by_name[name] = amount
+    changed_by_amount = {}
+    for row in existing:
+        courier_id = _courier_id_key(row.get("courier_id"))
+        name = _courier_match_key(row.get("driver_name"))
+        amount = by_id.get(courier_id, by_name.get(name))
+        if amount is None or amount == parse_huf_value(row.get("loyalty_bonus_huf")):
+            continue
+        changed_by_amount.setdefault(amount, []).append(row["id"])
+    total = sum(len(ids) for ids in changed_by_amount.values())
+    updated = 0
+    for amount, ids in changed_by_amount.items():
+        for start in range(0, len(ids), 100):
+            batch = ids[start:start + 100]
+            client.table("courier_settlement_summary").update(
+                {"loyalty_bonus_huf": amount}
+            ).eq("session_id", session_id).in_("id", batch).execute()
+            updated += len(batch)
+            if callable(progress_callback):
+                progress_callback("Mentés", updated, total)
+    return updated
+
+
 def store_loyalty_recalculation_for_session(
     data: pd.DataFrame,
     *,
@@ -16356,8 +16401,14 @@ def store_loyalty_recalculation_for_session(
     calculation_mode: str,
     warehouse_label: str | None = None,
     updated_by: str = "system",
+    progress_callback=None,
 ) -> int:
+    if callable(progress_callback):
+        progress_callback("City körök és előfoglalások betöltése", 0, len(data))
     recalculated = apply_loyalty_bonus(data, period_start, period_end, session_id, calculation_mode)
+    if callable(progress_callback):
+        progress_callback("Lojalitás kiszámítva", len(recalculated), len(recalculated))
+    persist_loyalty_summary_changes(recalculated, session_id, progress_callback)
     cache_rows: dict[str, dict[str, object]] = {}
     value_columns = [
         "Lojalitás",
@@ -16376,35 +16427,9 @@ def store_loyalty_recalculation_for_session(
         for key in keys:
             if key.split(":", 1)[1]:
                 cache_rows[key] = values
-        if session_id:
-            try:
-                update_query = (
-                    get_db().schema("settlement").table("courier_settlement_summary")
-                    .update({"loyalty_bonus_huf": parse_huf_value(item.get("Lojalitás"))})
-                    .eq("session_id", session_id)
-                )
-                courier_id_key = _courier_id_key(item.get("Courier ID"))
-                if courier_id_key:
-                    update_query = update_query.eq("courier_id", courier_id_key)
-                else:
-                    update_query = update_query.eq("driver_name", str(item.get("Futár") or ""))
-                update_query.execute()
-            except BaseException:
-                pass
     st.session_state[settlement_loyalty_cache_key(session_id, period_start, calculation_mode)] = cache_rows
-    try:
-        save_devtest_finance_snapshots_for_rows(
-            recalculated,
-            period_start,
-            calculation_mode,
-            warehouse_label,
-            session_id,
-            updated_by,
-        )
-    except BaseException:
-        pass
-    load_excel_courier_base_rates.clear()
-    load_excel_raw_route_amounts.clear()
+    st.session_state[settlement_loyalty_cache_key(session_id, period_start, calculation_mode) + "_pending_publication"] = True
+    clear_settlement_overview_data_cache()
     load_courier_settlement_summary.clear()
     load_courier_settlement_summary_row.clear()
     return len({key for key in cache_rows if key.startswith("id:")})
@@ -24574,6 +24599,10 @@ def show_new_settlement_page() -> None:
             ),
         )
         data_is_fast_overview = False
+    data = apply_cached_loyalty_values(
+        data, period_start=balance_period_start,
+        session_id=import_session_id, calculation_mode=selected_calculation_mode,
+    )
     if route_audit_enabled:
         data = apply_excel_route_coverage_audit(data, import_session_id)
     if delay_audit_enabled:
@@ -24703,6 +24732,10 @@ def show_new_settlement_page() -> None:
                         with st.expander("Sikertelen futárok részletei"):
                             st.code("\n".join(str(item) for item in errors), language="text")
                 else:
+                    st.session_state.pop(
+                        settlement_loyalty_cache_key(mobile_source_session_id, mobile_period_start, calculation_mode)
+                        + "_pending_publication", None,
+                    )
                     st.success(
                         "Adatok mentve: "
                         f"{result.get('processed', 0)}/{result.get('attempted', 0)} futár, "
@@ -24733,10 +24766,19 @@ def show_new_settlement_page() -> None:
             "Lojalitás újraszámítása",
             use_container_width=True,
             key="refresh_loyalty_calculation_only",
-            help="Újraszámolja a city túrák lojalitási bónuszát, és menti a friss pénzügyi verziót, amelyből a PWA is olvas.",
+            help="Csak a city túrák lojalitási bónuszát frissíti. A teljes elszámolás PWA-ra mentéséhez használd az Adatok mentése gombot.",
         ):
             refresh_loyalty_calculation_data()
-            with st.spinner("Lojalitás újraszámítása..."):
+            loyalty_progress = st.progress(0, text="Lojalitás előkészítése...")
+
+            def update_loyalty_progress(stage, current, total):
+                ratio = current / max(total, 1)
+                loyalty_progress.progress(
+                    min(max(ratio * 0.5 + (0.5 if stage == "Mentés" else 0), 0), 1),
+                    text=f"{stage}: {current}/{total}",
+                )
+
+            try:
                 refreshed_count = store_loyalty_recalculation_for_session(
                     data,
                     period_start=balance_period_start,
@@ -24745,9 +24787,20 @@ def show_new_settlement_page() -> None:
                     calculation_mode=selected_calculation_mode,
                     warehouse_label=selected_warehouse_label,
                     updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+                    progress_callback=update_loyalty_progress,
                 )
-            st.toast(f"Lojalitás újraszámítva: {selected_month} ({refreshed_count} futár)", icon="✅")
-            st.rerun()
+            except Exception as exc:
+                loyalty_progress.empty()
+                st.error(f"A lojalitás frissítése sikertelen: {exc}")
+            else:
+                loyalty_progress.progress(1.0, text="Lojalitás frissítve.")
+                st.toast(f"Lojalitás újraszámítva: {selected_month} ({refreshed_count} futár)", icon="✅")
+                st.rerun()
+        if st.session_state.get(
+            settlement_loyalty_cache_key(import_session_id, balance_period_start, selected_calculation_mode)
+            + "_pending_publication"
+        ):
+            st.info("A lojalitás újraszámolva. A teljes pénzügyi elszámolás és a PWA frissítéséhez kattints az Adatok mentése gombra.")
         if st.button("Szűrők törlése",use_container_width=True):
             st.session_state["new_branch"]="Összes"
             st.session_state["new_calculation_mode"]="Excel"
