@@ -590,7 +590,7 @@ def _show_reserve_insurance(client: Any) -> None:
 
 
 def _show_loyalty_bonus(client: Any) -> None:
-    st.caption("A lojalitási bónusz a futár munkakezdése alapján, hónapszámhoz kötve számolható túrára vagy címre.")
+    st.caption("A lojalitási bónusz csak city (normál) túrákra jár. A díjsávot az előre foglalt műszakok száma és a munkakezdés óta eltelt hónapok határozzák meg.")
     data = read_items(client, LOYALTY_BONUS_TABLE)
     if not data.empty:
         view = data.copy()
@@ -608,7 +608,7 @@ def _show_loyalty_bonus(client: Any) -> None:
         left, middle, right = st.columns(3)
         required_months = left.number_input("Lojális bónusz hónapok száma", min_value=0, value=_int((row or {}).get("loyalty_months_required")), step=1)
         previous_normal_routes_min = left.number_input("Előre foglalt műszak minimum", min_value=0, value=_int((row or {}).get("previous_normal_routes_min")), step=1)
-        routes = ["normal", "express", "regional", "any"]
+        routes = ["normal"]
         route_type = middle.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type") or "normal"), format_func=ROUTE_LABELS.get)
         units = ["per_route", "per_order"]
         unit = right.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get)

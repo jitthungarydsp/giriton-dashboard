@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v230";
+const APP_VERSION = "v231";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -4022,32 +4022,79 @@ function documentPreviewList(documents, courierId = "") {
   </div>`;
 }
 
+function closeDocumentPreview(panel) {
+  panel.previewController?.abort();
+  if (panel.previewObjectUrl) URL.revokeObjectURL(panel.previewObjectUrl);
+  panel.previewObjectUrl = null;
+  panel.replaceChildren();
+}
+
+async function loadDocumentPdfPage(panel, url, pageNumber = 1) {
+  panel.previewController?.abort();
+  const controller = new AbortController();
+  panel.previewController = controller;
+  if (panel.previewObjectUrl) URL.revokeObjectURL(panel.previewObjectUrl);
+  panel.previewObjectUrl = null;
+  panel.innerHTML = '<div class="empty-card">PDF-oldal betöltése…</div>';
+  try {
+    const resource = new URL(url, window.location.origin);
+    resource.searchParams.set("preview_page", String(pageNumber));
+    const response = await fetch(`${resource.pathname}${resource.search}`, {credentials: "same-origin", signal: controller.signal});
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(typeof error.detail === "string" ? error.detail : `Az előnézet nem tölthető be (${response.status}).`);
+    }
+    if (!response.headers.get("content-type")?.startsWith("image/")) throw new Error("Az előnézethez a szerver frissítése szükséges.");
+    const blob = await response.blob();
+    if (controller.signal.aborted) return;
+    const pages = Math.max(1, Number(response.headers.get("X-PDF-Pages")) || 1);
+    panel.previewObjectUrl = URL.createObjectURL(blob);
+    panel.innerHTML = `<div class="pdf-preview-toolbar">
+      <button type="button" class="secondary" data-pdf-page="${pageNumber - 1}" ${pageNumber <= 1 ? "disabled" : ""}>Előző oldal</button>
+      <span>${pageNumber} / ${pages}. oldal</span>
+      <button type="button" class="secondary" data-pdf-page="${pageNumber + 1}" ${pageNumber >= pages ? "disabled" : ""}>Következő oldal</button>
+    </div><img class="pdf-preview-page" alt="PDF ${pageNumber}. oldal" />`;
+    panel.querySelector("img").src = panel.previewObjectUrl;
+    panel.querySelectorAll("[data-pdf-page]").forEach(button => button.addEventListener("click", () => {
+      loadDocumentPdfPage(panel, url, Number(button.dataset.pdfPage));
+    }));
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    panel.innerHTML = `<div class="notice error">${escapeHtml(error.message || "A PDF-előnézet nem tölthető be.")}</div>`;
+  }
+}
+
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-document-preview-url]");
   if (!button) return;
   const list = button.closest(".document-preview-list");
   const panel = button.closest(".document-preview-card").querySelector("[data-document-preview-panel]");
   const wasOpen = Boolean(panel.firstElementChild);
-  list.querySelectorAll("[data-document-preview-panel]").forEach(item => { item.replaceChildren(); });
+  list.querySelectorAll("[data-document-preview-panel]").forEach(closeDocumentPreview);
   list.querySelectorAll("[data-document-preview-url]").forEach(item => { item.textContent = "Megtekintés"; item.setAttribute("aria-expanded", "false"); });
   if (wasOpen) return;
   const url = button.dataset.documentPreviewUrl;
   const title = button.dataset.documentPreviewTitle || "Dokumentum";
-  const media = document.createElement(button.dataset.documentPreviewType === "image" ? "img" : "iframe");
-  if (media.tagName === "IMG") {
-    media.alt = title;
-    media.style.maxWidth = "100%";
-  } else {
-    media.title = title;
-  }
-  media.src = url;
   const link = document.createElement("a");
   link.href = url;
   link.target = "_blank";
   link.rel = "noopener";
   link.className = "download-link";
   link.textContent = "Megnyitás külön lapon";
-  panel.append(link, media);
+  panel.append(link);
+  const content = document.createElement("div");
+  panel.append(content);
+  // Keep the render state on the panel so closing it cancels the active request.
+  if (button.dataset.documentPreviewType === "image") {
+    const media = document.createElement("img");
+    media.alt = title;
+    media.style.maxWidth = "100%";
+    media.src = url;
+    content.append(media);
+  } else {
+    panel.previewController = {abort: () => closeDocumentPreview(content)};
+    loadDocumentPdfPage(content, url);
+  }
   button.textContent = "Előnézet bezárása";
   button.setAttribute("aria-expanded", "true");
 });

@@ -11264,26 +11264,9 @@ def load_loyalty_route_counts(session_id: str | None) -> pd.DataFrame:
         return pd.DataFrame(columns=["driver_key", "route_type", "routes", "orders"])
     records: list[dict[str, object]] = []
     for row in rows:
-        payload = row.get("normalized_data") or {}
-        if isinstance(payload, str):
-            try:
-                payload = json.loads(payload)
-            except json.JSONDecodeError:
-                payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        driver_name = payload.get("Driver") or payload.get("driver_name") or payload.get("Futár") or payload.get("courier_name") or ""
-        route_type = payload.get("Route Type") or payload.get("route_type") or payload.get("Túratípus") or payload.get("Tipus") or "normal"
-        orders = next(
-            (payload.get(key) for key in ["Orders", "orders", "Rendelések", "order_count"] if payload.get(key) not in (None, "")),
-            0,
-        )
-        records.append({
-            "driver_key": _courier_match_key(driver_name),
-            "route_type": normalize_customer_rating_route_type(route_type),
-            "routes": 1,
-            "orders": parse_huf_value(orders),
-        })
+        record = _loyalty_count_record(row.get("normalized_data"))
+        if record:
+            records.append(record)
     if not records:
         return pd.DataFrame(columns=["driver_key", "route_type", "routes", "orders"])
     return pd.DataFrame(records).groupby(["driver_key", "route_type"], as_index=False)[["routes", "orders"]].sum()
@@ -11295,30 +11278,29 @@ def _loyalty_route_counts_from_settlement_rows(data: pd.DataFrame) -> pd.DataFra
         driver_key = _courier_match_key(row.get("Futár"))
         if not driver_key:
             continue
-        total_routes = max(
-            int(parse_huf_value(row.get("Számolt túrák"))),
-            int(parse_huf_value(row.get("Útvonalak"))),
-            int(parse_huf_value(row.get("Kör"))),
-            int(parse_huf_value(row.get("completed_route_count"))),
-            int(parse_huf_value(row.get("calculated_routes"))),
-        )
         normal_routes = int(parse_huf_value(row.get("Normál túrák") or row.get("Normál túra") or row.get("Normál kör")))
         highlighted_routes = int(parse_huf_value(row.get("Kiemelt túrák") or row.get("Kiemelt túra") or row.get("Kiemelt kör")))
         express_normal = int(parse_huf_value(row.get("Express normál")))
         express_highlighted = int(parse_huf_value(row.get("Express kiemelt")))
-        normal_total = normal_routes + highlighted_routes
         express_total = express_normal + express_highlighted
-        if total_routes > 0 and normal_total + express_total == 0:
-            normal_total = total_routes
-        elif total_routes > normal_total + express_total:
-            normal_total += total_routes - normal_total - express_total
+        regional_total = int(parse_huf_value(row.get("regional_route_count") or row.get("regional_routes") or row.get("Regionális túrák")))
+        # Day-type totals include express/regional tours. An unclassified
+        # remainder is not evidence of a city tour.
+        if "normal_route_count" in row and pd.notna(row.get("normal_route_count")):
+            normal_total = int(parse_huf_value(row.get("normal_route_count")))
+        elif any(key in row and pd.notna(row.get(key)) for key in ("regional_route_count", "regional_routes", "Regionális túrák")) and any(
+            key in row and pd.notna(row.get(key)) for key in ("Express normál", "Express kiemelt")
+        ):
+            normal_total = max(normal_routes + highlighted_routes - express_total - regional_total, 0)
+        else:
+            normal_total = 0
         orders = int(parse_huf_value(row.get("Cím") or row.get("Rendelés") or row.get("Cím / rendelés")))
         if normal_total > 0:
             records.append({
                 "driver_key": driver_key,
                 "route_type": "normal",
                 "routes": normal_total,
-                "orders": orders,
+                "orders": orders if not express_total and not regional_total else 0,
             })
         if express_total > 0:
             records.append({
@@ -11332,6 +11314,17 @@ def _loyalty_route_counts_from_settlement_rows(data: pd.DataFrame) -> pd.DataFra
     return pd.DataFrame(records).groupby(["driver_key", "route_type"], as_index=False)[["routes", "orders"]].sum()
 
 
+def normalize_loyalty_route_type(value: object) -> str:
+    text = _normalized_field_key(value)
+    if "express" in text:
+        return "express"
+    if "region" in text:
+        return "regional"
+    if text in {"normal", "normalis", "standard", "city", "urban", "varosi"}:
+        return "normal"
+    return "unknown"
+
+
 def _loyalty_count_record(payload: object) -> dict[str, object] | None:
     if isinstance(payload, str):
         try:
@@ -11343,14 +11336,14 @@ def _loyalty_count_record(payload: object) -> dict[str, object] | None:
     driver_name = payload.get("Driver") or payload.get("driver_name") or payload.get("Futár") or payload.get("courier_name") or ""
     if not str(driver_name or "").strip():
         return None
-    route_type = payload.get("Route Type") or payload.get("route_type") or payload.get("Túratípus") or payload.get("Tipus") or "normal"
+    route_type = payload.get("Route Type") or payload.get("route_type") or payload.get("Túratípus") or payload.get("Tipus") or ""
     orders = next(
         (payload.get(key) for key in ["Orders", "orders", "Rendelések", "order_count"] if payload.get(key) not in (None, "")),
         0,
     )
     return {
         "driver_key": _courier_match_key(driver_name),
-        "route_type": normalize_customer_rating_route_type(route_type),
+        "route_type": normalize_loyalty_route_type(route_type),
         "routes": 1,
         "orders": parse_huf_value(orders),
     }
@@ -11478,6 +11471,7 @@ def loyalty_advance_booking_min_from_rule(rule: pd.Series) -> int:
         "advance_booked_shifts_min",
         "advance_booking_days_min",
         "advance_booking_min",
+        "previous_normal_routes_min",
     ):
         if column in rule and pd.notna(rule.get(column)):
             return int(parse_huf_value(rule.get(column)))
@@ -11492,13 +11486,12 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
     if current_counts.empty:
         current_counts = settlement_counts
     elif not settlement_counts.empty:
-        # Keep the larger value per courier/type so a partial source or a name
-        # mismatch cannot turn an existing loyalty calculation into zero.
-        current_counts = (
-            pd.concat([current_counts, settlement_counts], ignore_index=True)
-            .groupby(["driver_key", "route_type"], as_index=False)[["routes", "orders"]]
-            .max()
-        )
+        # Use aggregates only for couriers without route-level data. Taking
+        # the maximum can reintroduce express/regional tours as city tours.
+        missing_counts = settlement_counts.loc[
+            ~settlement_counts["driver_key"].isin(current_counts["driver_key"])
+        ]
+        current_counts = pd.concat([current_counts, missing_counts], ignore_index=True)
     previous_month_end = period_start - timedelta(days=1)
     previous_month_start = previous_month_end.replace(day=1)
     previous_counts = load_loyalty_route_counts_for_period(previous_month_start, previous_month_end, source_mode)
@@ -11562,13 +11555,10 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         start_value = row.get("Munkakezdés") or profile.get("start_date")
         work_end_value = profile.get("work_end_date")
         months_worked = completed_months_between(start_value, period_start)
-        driver_counts = current_by_driver.get(driver_key)
-        settlement_route_count = int(parse_huf_value(row.get("Számolt túrák") or row.get("Útvonalak") or row.get("Kör")))
-        settlement_order_count = int(parse_huf_value(row.get("Cím") or row.get("Rendelés") or row.get("Cím / rendelés")))
-        source_route_count = int(float(driver_counts["routes"].sum())) if driver_counts is not None and not driver_counts.empty else 0
-        source_order_count = int(float(driver_counts["orders"].sum())) if driver_counts is not None and not driver_counts.empty else 0
-        current_route_count = max(source_route_count, settlement_route_count)
-        current_order_count = max(source_order_count, settlement_order_count)
+        driver_counts = current_by_driver.get(driver_key, current_counts.iloc[0:0])
+        driver_counts = driver_counts.loc[driver_counts["route_type"] == "normal"]
+        current_route_count = int(float(driver_counts["routes"].sum()))
+        current_order_count = int(float(driver_counts["orders"].sum()))
         previous_normal_routes = int(float(previous_normal.get(driver_key, 0) or 0))
         courier_id_key = _courier_id_key(courier_id)
         advance_summary = load_advance_booking_cancellation_summary(courier_id_key, str(row.get("Futár") or ""), period_start, period_end)
@@ -11594,7 +11584,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         if current_route_count <= 0 and current_order_count <= 0:
             loyalty_amounts.append(0.0)
             rate_values.append(0.0)
-            status_values.append("Nincs aktuális kör")
+            status_values.append("Nincs igazolt city kör")
             continue
 
         selected_rule = None
@@ -11604,9 +11594,6 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
             required_months = int(parse_huf_value(rule.get("loyalty_months_required")))
             if months_worked < required_months:
                 missing.append(f"{required_months}. hónap")
-            previous_routes_min = int(parse_huf_value(rule.get("previous_normal_routes_min")))
-            if previous_normal_routes < previous_routes_min:
-                missing.append(f"előző havi normál kör < {previous_routes_min}")
             booked_shift_min = int(parse_huf_value(rule.get("_advance_booking_min")))
             if advance_booking_days < booked_shift_min:
                 missing.append(f"előre foglalt műszak < {booked_shift_min}")
@@ -11617,12 +11604,10 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
                     missing.append("aktív jogviszony")
             if _loyalty_rule_bool(rule, "require_advance_booking", True) and advance_booking_days <= 0:
                 missing.append("előfoglalás")
-            route_type = normalize_customer_rating_route_type(rule.get("route_type") or "normal")
-            matched_counts = (
-                driver_counts
-                if route_type == "any"
-                else driver_counts.loc[driver_counts["route_type"] == route_type]
-            )
+            rule_type = str(rule.get("route_type") or "normal").strip().casefold()
+            if rule_type != "any" and normalize_loyalty_route_type(rule_type) != "normal":
+                continue
+            matched_counts = driver_counts
             if matched_counts.empty:
                 missing.append("aktuális túratípus")
             if not missing:
@@ -11640,12 +11625,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
 
         unit = str(selected_rule.get("calculation_unit") or "per_route")
         amount = parse_huf_value(selected_rule.get("bonus_amount_huf"))
-        route_type = normalize_customer_rating_route_type(selected_rule.get("route_type") or "normal")
-        matched_counts = (
-            driver_counts
-            if route_type == "any"
-            else driver_counts.loc[driver_counts["route_type"] == route_type]
-        )
+        matched_counts = driver_counts
         quantity_column = "orders" if unit == "per_order" else "routes"
         quantity = float(matched_counts[quantity_column].sum())
         total = quantity * amount
@@ -16293,7 +16273,7 @@ def refresh_loyalty_calculation_data() -> None:
 
 def settlement_loyalty_cache_key(session_id: str | None, period_start: date, calculation_mode: str) -> str:
     return (
-        "settlement_loyalty_values_"
+        "settlement_loyalty_values_city_v2_"
         f"{period_start:%Y%m}_"
         f"{str(calculation_mode or '').strip().casefold()}_"
         f"{str(session_id or '')}"
@@ -18542,7 +18522,7 @@ def render_courier_detail_page() -> None:
                         "Összeg": loyalty_total,
                         "Számítás": f"{loyalty_current_routes} x {format_huf(unit_amount)}" if unit_amount else format_huf(loyalty_total),
                     },
-                    {"Tétel": "Kifutott kör", "Darab": loyalty_current_routes, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_current_routes)},
+                    {"Tétel": "Kifutott city kör", "Darab": loyalty_current_routes, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_current_routes)},
                     {"Tétel": "Előre foglalt műszak", "Darab": loyalty_advance_booking_days, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_advance_booking_days)},
                     {"Tétel": "Státusz", "Darab": 0, "Egységösszeg": 0, "Összeg": 0, "Számítás": loyalty_status or "-"},
                 ])
@@ -24744,7 +24724,7 @@ def show_new_settlement_page() -> None:
             "Lojalitás újraszámítása",
             use_container_width=True,
             key="refresh_loyalty_calculation_only",
-            help="Csak az admin elszámolási nézet lojalitás számítását frissíti. Nem ír PWA/mobil bontást.",
+            help="Újraszámolja a city túrák lojalitási bónuszát, és menti a friss pénzügyi verziót, amelyből a PWA is olvas.",
         ):
             refresh_loyalty_calculation_data()
             with st.spinner("Lojalitás újraszámítása..."):

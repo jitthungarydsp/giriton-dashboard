@@ -22326,6 +22326,7 @@ def workflow_tig_pdf(
     process: str = Query(default=""),
     courier: str = Query(default=""),
     inline: bool = Query(default=False),
+    preview_page: int = Query(default=0, ge=0),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
@@ -22395,6 +22396,8 @@ def workflow_tig_pdf(
         tig_breakdown=tig_breakdown,
     )
     filename = f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{month_value:%Y-%m}_{reference}.pdf"
+    if isinstance(preview_page, int) and preview_page > 0:
+        return render_pdf_preview_page(pdf_bytes, preview_page)
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -23908,11 +23911,36 @@ def courier_documents(
     return {"documents": read_courier_document_archive(view_user)}
 
 
+def render_pdf_preview_page(content: bytes, page_number: int) -> Response:
+    """Render only the requested PDF page; never save or modify the document."""
+    import fitz
+
+    try:
+        with fitz.open(stream=content, filetype="pdf") as pdf:
+            if pdf.needs_pass:
+                raise HTTPException(status_code=422, detail="A jelszóval védett PDF nem jeleníthető meg előnézetben.")
+            if not 1 <= page_number <= pdf.page_count:
+                raise HTTPException(status_code=404, detail="Ez a PDF-oldal nem található.")
+            page = pdf.load_page(page_number - 1)
+            scale = min(1.5, 1200 / max(page.rect.width, 1), 1800 / max(page.rect.height, 1))
+            image = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).tobytes("png")
+            pages = pdf.page_count
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="A PDF-előnézet nem készíthető el. Próbáld a külön megnyitást vagy letöltést.") from exc
+    return Response(content=image, media_type="image/png", headers={
+        "Cache-Control": "private, no-store", "X-PDF-Pages": str(pages),
+        "X-Content-Type-Options": "nosniff",
+    })
+
+
 @app.get("/api/documents/{document_id}")
 def download_document(
     document_id: str,
     courier: str = Query(default=""),
     inline: bool = Query(default=False),
+    preview_page: int = Query(default=0, ge=0),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
@@ -23951,6 +23979,10 @@ def download_document(
     mime_type = str(row.get("mime_type") or "application/octet-stream")
     if file_name.lower().endswith(".pdf") and mime_type in {"application/octet-stream", ""}:
         mime_type = "application/pdf"
+    if isinstance(preview_page, int) and preview_page > 0:
+        if mime_type != "application/pdf":
+            raise HTTPException(status_code=415, detail="Ehhez a fájlhoz nincs PDF-előnézet.")
+        return render_pdf_preview_page(content, preview_page)
     preview_allowed = mime_type == "application/pdf" or mime_type in {"image/png", "image/jpeg", "image/webp", "image/gif"}
     disposition = "inline" if inline is True and preview_allowed else "attachment"
     return Response(
