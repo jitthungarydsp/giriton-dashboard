@@ -22325,6 +22325,7 @@ def workflow_tig_pdf(
     month: str = Query(default=""),
     process: str = Query(default=""),
     courier: str = Query(default=""),
+    inline: bool = Query(default=False),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
@@ -22397,7 +22398,8 @@ def workflow_tig_pdf(
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        headers={"Content-Disposition": f"{'inline' if inline is True else 'attachment'}; filename*=UTF-8''{quote(filename)}",
+                 "Cache-Control": "private, no-store"},
     )
 
 
@@ -23910,6 +23912,7 @@ def courier_documents(
 def download_document(
     document_id: str,
     courier: str = Query(default=""),
+    inline: bool = Query(default=False),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
@@ -23945,10 +23948,16 @@ def download_document(
     except Exception as exc:
         raise HTTPException(status_code=502, detail="A dokumentum tartalma sérült.") from exc
     file_name = str(row.get("file_name") or "dokumentum").replace('"', "")
+    mime_type = str(row.get("mime_type") or "application/octet-stream")
+    if file_name.lower().endswith(".pdf") and mime_type in {"application/octet-stream", ""}:
+        mime_type = "application/pdf"
+    preview_allowed = mime_type == "application/pdf" or mime_type in {"image/png", "image/jpeg", "image/webp", "image/gif"}
+    disposition = "inline" if inline is True and preview_allowed else "attachment"
     return Response(
         content=content,
-        media_type=str(row.get("mime_type") or "application/octet-stream"),
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"},
+        media_type=mime_type,
+        headers={"Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(file_name)}",
+                 "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
 
 

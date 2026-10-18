@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v229";
+const APP_VERSION = "v230";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -3998,9 +3998,15 @@ function documentPreviewList(documents, courierId = "") {
   return `<div class="document-preview-list">
     ${documents.map((document) => {
       const baseUrl = document.downloadUrl || "#";
-      const url = courierId
-        ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}courier=${encodeURIComponent(courierId)}`
-        : withPreviewCourier(baseUrl);
+      const resourceUrl = new URL(baseUrl, window.location.origin);
+      if (courierId) resourceUrl.searchParams.set("courier", courierId);
+      else {
+        const previewCourier = previewCourierValue();
+        if (previewCourier && !resourceUrl.searchParams.has("courier")) resourceUrl.searchParams.set("courier", previewCourier);
+      }
+      const url = `${resourceUrl.pathname}${resourceUrl.search}`;
+      resourceUrl.searchParams.set("inline", "true");
+      const previewUrl = `${resourceUrl.pathname}${resourceUrl.search}`;
       const mime = String(document.mime_type || document.mimeType || "").toLowerCase();
       const fileName = String(document.file_name || document.fileName || "");
       const canPreview = mime.includes("pdf") || /\.(pdf)$/i.test(fileName) || mime.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(fileName);
@@ -4009,11 +4015,42 @@ function documentPreviewList(documents, courierId = "") {
           <div><strong>${escapeHtml(document.title || fileName)}</strong><small>${escapeHtml(fileName)} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt</small></div>
           <a class="download-link" href="${escapeHtml(url)}">Letöltés</a>
         </div>
-        ${canPreview ? `<iframe title="${escapeHtml(document.title || fileName)}" src="${escapeHtml(url)}"></iframe>` : `<div class="empty-card">Ehhez a fájltípushoz nincs beágyazott előnézet.</div>`}
+        ${canPreview ? `<button class="secondary" type="button" aria-expanded="false" data-document-preview-url="${escapeHtml(previewUrl)}" data-document-preview-title="${escapeHtml(document.title || fileName)}" data-document-preview-type="${mime.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(fileName) ? "image" : "pdf"}">Megtekintés</button>
+          <div data-document-preview-panel></div>` : `<div class="empty-card">Ehhez a fájltípushoz nincs beágyazott előnézet.</div>`}
       </article>`;
     }).join("")}
   </div>`;
 }
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-document-preview-url]");
+  if (!button) return;
+  const list = button.closest(".document-preview-list");
+  const panel = button.closest(".document-preview-card").querySelector("[data-document-preview-panel]");
+  const wasOpen = Boolean(panel.firstElementChild);
+  list.querySelectorAll("[data-document-preview-panel]").forEach(item => { item.replaceChildren(); });
+  list.querySelectorAll("[data-document-preview-url]").forEach(item => { item.textContent = "Megtekintés"; item.setAttribute("aria-expanded", "false"); });
+  if (wasOpen) return;
+  const url = button.dataset.documentPreviewUrl;
+  const title = button.dataset.documentPreviewTitle || "Dokumentum";
+  const media = document.createElement(button.dataset.documentPreviewType === "image" ? "img" : "iframe");
+  if (media.tagName === "IMG") {
+    media.alt = title;
+    media.style.maxWidth = "100%";
+  } else {
+    media.title = title;
+  }
+  media.src = url;
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.className = "download-link";
+  link.textContent = "Megnyitás külön lapon";
+  panel.append(link, media);
+  button.textContent = "Előnézet bezárása";
+  button.setAttribute("aria-expanded", "true");
+});
 
 function documentArchiveQuery() {
   const params = new URLSearchParams();
