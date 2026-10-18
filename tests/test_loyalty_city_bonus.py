@@ -24,6 +24,8 @@ class LoyaltyCityBonusTests(unittest.TestCase):
             "load_loyalty_advance_booking_days", "_loyalty_booking_pair_key",
             "_booking_user_email_key", "_booking_operation_key", "_is_clean_booking_operation",
             "_is_booking_change_operation", "_booked_in_period", "_parse_booking_timestamp_date",
+            "loyalty_route_counts_from_detail", "load_loyalty_route_counts",
+            "validate_loyalty_snapshot_consistency",
         }
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         for node in nodes:
@@ -69,6 +71,64 @@ class LoyaltyCityBonusTests(unittest.TestCase):
         self.assertEqual(row["Lojalitás aktuális normál kör"], 19)
         self.assertEqual(row["Lojalitás előre foglalt nap"], 48)
         self.assertEqual(row["Lojalitás státusz"], "Jogosult")
+
+    def test_abonyi_detail_uses_41_city_tours_and_excludes_six_express(self):
+        ns = self.namespace()
+        detail = pd.DataFrame([
+            {"Route ID": str(index), "Túratípus": "Normál" if index < 41 else "Expressz",
+             "Rendelések": 10} for index in range(47)
+        ])
+        counts = ns["loyalty_route_counts_from_detail"](detail, "Test Courier")
+        ns["load_loyalty_route_counts"] = Mock(side_effect=AssertionError("Do not replace the detail tours"))
+        data = pd.DataFrame([{"Futár": "Test Courier", "Courier ID": "123", "Kör": 47}])
+        row = ns["apply_loyalty_bonus"](
+            data, date(2026, 9, 1), date(2026, 9, 30), "session", route_counts=counts,
+        ).iloc[0]
+        self.assertEqual(row["Lojalitás aktuális normál kör"], 41)
+        self.assertEqual(row["Lojalitás"], 41000)
+        self.assertEqual(row["Lojalitás Ft/kör"], 1000)
+
+    def test_route_counts_include_city_tours_after_first_1000_rows(self):
+        ns = self.namespace()
+        exec(self.code, ns)
+        rows = [{"normalized_data": {"Driver": "Other Courier", "Route Type": "normal"}} for _ in range(981)]
+        rows += [{"normalized_data": {"Driver": "Test Courier", "Route Type": "city"}} for _ in range(41)]
+        rows += [{"normalized_data": {"Driver": "Test Courier", "Route Type": "express"}} for _ in range(6)]
+        query = Mock()
+        for method in ("select", "eq", "order"):
+            getattr(query, method).return_value = query
+        ranges = []
+        def select_range(start, end):
+            ranges.append((start, end))
+            query.execute.return_value = SimpleNamespace(data=rows[start:end + 1])
+            return query
+        query.range.side_effect = select_range
+        db = Mock()
+        db.schema.return_value.table.return_value = query
+        ns["get_db"] = lambda: db
+        counts = ns["load_loyalty_route_counts"]("session")
+        city = counts.loc[(counts["driver_key"] == "test courier") & (counts["route_type"] == "normal")]
+        self.assertEqual(city.iloc[0]["routes"], 41)
+        self.assertEqual(ranges, [(0, 999), (1000, 1999)])
+
+    def test_snapshot_rejects_different_loyalty_header_and_detail(self):
+        ns = self.namespace()
+        rows = [{"item_key": "loyalty_bonus", "amount_value": 23500}]
+        sources = [{"source_key": "card_drilldowns", "payload": {
+            "Lojalitás": [{"Tétel": "Lojalitás", "Összeg": 19000}],
+        }}]
+        with self.assertRaisesRegex(ValueError, "főösszege"):
+            ns["validate_loyalty_snapshot_consistency"](rows, sources)
+
+    def test_snapshot_accepts_41_city_tours_at_1000_huf(self):
+        ns = self.namespace()
+        rows = [{"item_key": "loyalty_bonus", "amount_value": 41000},
+                {"item_key": "loyalty_current_normal_routes", "amount_value": 41}]
+        sources = [{"source_key": "card_drilldowns", "payload": {
+            "Lojalitás": [{"Tétel": "Lojalitás", "Összeg": 41000},
+                          {"Tétel": "Kifutott city kör", "Darab": 41}],
+        }}]
+        ns["validate_loyalty_snapshot_consistency"](rows, sources)
 
     def test_booking_threshold_is_inclusive(self):
         for bookings, rate in [(39, 500), (40, 1000)]:

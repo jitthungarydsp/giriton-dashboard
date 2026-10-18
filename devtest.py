@@ -3423,6 +3423,26 @@ def build_finance_snapshot_drilldown_payload(
     return payload
 
 
+def validate_loyalty_snapshot_consistency(finance_rows, source_payloads) -> None:
+    finance = {str(row.get("item_key") or ""): row for row in finance_rows}
+    for source in source_payloads or []:
+        if source.get("source_key") != "card_drilldowns":
+            continue
+        payload = source.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        for row in payload.get("Lojalitás") or []:
+            label = str(row.get("Tétel") or "")
+            if label == "Lojalitás" and "loyalty_bonus" in finance:
+                expected = parse_huf_value(finance["loyalty_bonus"].get("amount_value"))
+                if abs(parse_huf_value(row.get("Összeg")) - expected) > 0.01:
+                    raise ValueError("A lojalitás főösszege és részletezése eltér. Az elszámolás újraszámítása szükséges.")
+            if label in {"Kifutott kör", "Kifutott city kör"} and "loyalty_current_normal_routes" in finance:
+                expected = parse_huf_value(finance["loyalty_current_normal_routes"].get("amount_value"))
+                if parse_huf_value(row.get("Darab")) != expected:
+                    raise ValueError("A lojalitás city körszáma és részletezése eltér. Az elszámolás újraszámítása szükséges.")
+
+
 def save_devtest_finance_snapshot_version(
     *,
     courier_id: str,
@@ -3440,6 +3460,7 @@ def save_devtest_finance_snapshot_version(
     clean_courier_id = _courier_id_key(courier_id)
     if not clean_courier_id:
         return {"saved": False, "reason": "missing_courier_id"}
+    validate_loyalty_snapshot_consistency(finance_rows, source_payloads)
     period = period_start.replace(day=1).isoformat()
     safe_metadata = _snapshot_json_safe(metadata)
     items = [
@@ -3917,6 +3938,13 @@ def render_devtest_finance_snapshot_view(
     version = int(parse_huf_value(snapshot.get("version")))
     created_at = str(snapshot.get("created_at") or "")
     st.caption(f"DB-ből betöltött pénzügyi verzió: v{version} | {created_at}")
+    try:
+        validate_loyalty_snapshot_consistency(
+            [item for item in snapshot.get("items") or [] if item.get("section") == "finance"],
+            snapshot.get("sources"),
+        )
+    except ValueError as exc:
+        st.warning(str(exc))
     drilldowns = _snapshot_source_payload(snapshot, "card_drilldowns")
     drilldowns = drilldowns if isinstance(drilldowns, dict) else {}
 
@@ -5251,6 +5279,7 @@ def save_devtest_finance_snapshots_for_rows(
                     period_end,
                     session_id,
                     calculation_mode,
+                    route_counts=loyalty_route_counts_from_detail(route_detail, courier_name),
                 ).iloc[0].to_dict()
                 component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
                 item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
@@ -11254,13 +11283,21 @@ def load_loyalty_route_counts(session_id: str | None) -> pd.DataFrame:
     if not session_id:
         return pd.DataFrame(columns=["driver_key", "route_type", "routes", "orders"])
     try:
-        rows = (
-            get_db().schema("settlement").table("jit_row")
-            .select("normalized_data,is_route_primary")
-            .eq("session_id", session_id)
-            .eq("is_route_primary", True)
-            .execute().data or []
-        )
+        rows = []
+        offset = 0
+        while True:
+            page = (
+                get_db().schema("settlement").table("jit_row")
+                .select("normalized_data,is_route_primary")
+                .eq("session_id", session_id)
+                .eq("is_route_primary", True)
+                .order("id").range(offset, offset + 999)
+                .execute().data or []
+            )
+            rows.extend(page)
+            if len(page) < 1000:
+                break
+            offset += len(page)
     except BaseException:
         return pd.DataFrame(columns=["driver_key", "route_type", "routes", "orders"])
     records: list[dict[str, object]] = []
@@ -11488,14 +11525,32 @@ def loyalty_advance_booking_min_from_rule(rule: pd.Series) -> int:
     return 0
 
 
-def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date, session_id: str | None, source_mode: str = "") -> pd.DataFrame:
+def loyalty_route_counts_from_detail(route_detail: pd.DataFrame, courier_name: str) -> pd.DataFrame:
+    """Use the same unique tours that the base-fee breakdown displays."""
+    columns = ["driver_key", "route_type", "routes", "orders"]
+    if route_detail.empty:
+        return pd.DataFrame(columns=columns)
+    detail = route_detail.copy()
+    if "Route ID" in detail.columns:
+        known = detail["Route ID"].notna() & detail["Route ID"].astype(str).str.strip().ne("")
+        detail = pd.concat([detail.loc[known].drop_duplicates("Route ID"), detail.loc[~known]])
+    records = [{
+        "driver_key": _courier_match_key(courier_name),
+        "route_type": normalize_loyalty_route_type(row.get("Túratípus")),
+        "routes": 1,
+        "orders": parse_huf_value(row.get("Rendelések")),
+    } for row in detail.to_dict("records")]
+    return pd.DataFrame(records, columns=columns).groupby(["driver_key", "route_type"], as_index=False)[["routes", "orders"]].sum()
+
+
+def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date, session_id: str | None, source_mode: str = "", route_counts: pd.DataFrame | None = None) -> pd.DataFrame:
     result = data.copy()
     rules = load_loyalty_bonus_rules_for_month(period_start, period_end)
-    current_counts = load_loyalty_route_counts(session_id)
+    current_counts = load_loyalty_route_counts(session_id) if route_counts is None else route_counts
     settlement_counts = _loyalty_route_counts_from_settlement_rows(result)
-    if current_counts.empty:
+    if current_counts.empty and route_counts is None:
         current_counts = settlement_counts
-    elif not settlement_counts.empty:
+    elif route_counts is None and not settlement_counts.empty:
         # Use aggregates only for couriers without route-level data. Taking
         # the maximum can reintroduce express/regional tours as city tours.
         missing_counts = settlement_counts.loc[
@@ -17395,6 +17450,7 @@ def render_courier_detail_page() -> None:
                 period_end,
                 session_id,
                 active_calculation_mode,
+                route_counts=loyalty_route_counts_from_detail(route_detail, courier_name),
             ).iloc[0]
             loyalty_amount_value = parse_huf_value(recalculated.get("Lojalitás"))
             loyalty_previous_routes_value = int(parse_huf_value(recalculated.get("Lojalitás előző havi normál kör")))
@@ -19001,6 +19057,13 @@ def render_courier_detail_page() -> None:
                 ):
                     continue
                 item_key = str(override_row.get("item_key") or "")
+                if item_key in {
+                    "loyalty_bonus", "loyalty_current_normal_routes",
+                    "loyalty_previous_normal_routes", "loyalty_advance_booking_days",
+                }:
+                    # Calculated loyalty must stay identical to its detail
+                    # table. Older mobile overrides cannot replace it.
+                    continue
                 mobile_default_rows.loc[item_key, ["item_label", "amount_value", "amount_kind", "note"]] = [
                     override_row.get("item_label"),
                     override_row.get("amount_value"),
