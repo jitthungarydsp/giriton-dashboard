@@ -180,7 +180,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         for name in ("apply_loyalty_bonus", "apply_settlement_attention_flags", "apply_monthly_closure_status",
                      "apply_salary_advance_request_status", "apply_expense_request_status", "apply_effective_payment_total_column"):
             ns[name] = lambda value, *_: value
-        load_functions("devtest.py", {"build_fast_settlement_overview_data", "_streamlit_status_from_dashboard_label", "apply_peopleforce_workflow_status"}, ns)
+        load_functions("devtest.py", {"build_fast_settlement_overview_data", "_streamlit_status_from_dashboard_label", "apply_peopleforce_workflow_status", "complaint_has_admin_answer", "restore_open_complaint_status"}, ns)
         result = ns["build_fast_settlement_overview_data"](None, date(2026, 9, 1), date(2026, 9, 30), None)
         self.assertEqual(result.iloc[0]["Státusz"], "Elszámolás elfogadásra vár")
 
@@ -215,7 +215,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
             "complaint_status_meta": lambda *_: ("Új", "complaint-status-new", "led-orange"),
             "SETTLEMENT_ATTENTION_ACTION_KEY": "settlement_attention",
         }
-        load_functions("devtest.py", {"apply_peopleforce_workflow_status", "_streamlit_status_from_dashboard_label"}, ns)
+        load_functions("devtest.py", {"apply_peopleforce_workflow_status", "_streamlit_status_from_dashboard_label", "complaint_has_admin_answer"}, ns)
         data = pd.DataFrame([{"Courier ID": "8185", "Státusz": "Bejelentések", "_settlement_ready": True}])
         result = ns["apply_peopleforce_workflow_status"](data, date(2026, 9, 1))
         self.assertEqual(result.iloc[0]["Státusz"], "Számlaellenőrzésre vár")
@@ -234,6 +234,47 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         for block in sql.split("    case\n")[1:]:
             self.assertLess(block.index("and not settlement_done then"), block.index("when invoice_payment_done"))
             self.assertNotIn("has_tig_document or tig_started", block)
+
+    def test_missing_reply_fields_do_not_hide_open_complaints(self):
+        records = pd.DataFrame([
+            dict(courier_id="1", document_type="settlement", status="new",
+                 admin_response=float("nan"), responded_at=pd.NaT),
+            dict(courier_id="2", document_type="settlement", status="new",
+                 admin_response="Megválaszolva", responded_at=None),
+            dict(courier_id="3", document_type="invoice_check", status="new",
+                 admin_response=None, responded_at=pd.NaT),
+            dict(courier_id="4", document_type="settlement", status="closed",
+                 admin_response=None, responded_at=None),
+        ])
+        ns = dict(pd=pd, date=date, timedelta=timedelta,
+                  settlement_dashboard_status=settlement_dashboard_status,
+                  _courier_id_key=lambda value: str(value or ""),
+                  read_peopleforce_documents_for_month=lambda *_: pd.DataFrame(),
+                  read_peopleforce_card_statuses_for_month=lambda *_: pd.DataFrame(),
+                  read_peopleforce_complaints_for_month=lambda *_: records,
+                  process_id_from_action_key=lambda *_: "",
+                  base_action_key=lambda value: value,
+                  complaint_status_meta=lambda *_: ("Új", "badge", "led"),
+                  SETTLEMENT_ATTENTION_ACTION_KEY="settlement_attention")
+        load_functions("devtest.py", {"apply_peopleforce_workflow_status", "_streamlit_status_from_dashboard_label",
+                                     "complaint_has_admin_answer", "restore_open_complaint_status"}, ns)
+        data = pd.DataFrame([{"Courier ID": str(i), "Kifizetendő": i * 100} for i in range(1, 5)])
+        result = ns["apply_peopleforce_workflow_status"](data, date(2026, 9, 1))
+        self.assertEqual(result["Nyitott reklamáció"].tolist(), [True, False, False, False])
+        self.assertEqual(result.iloc[0]["Státusz"], "Bejelentések")
+        self.assertEqual(result.iloc[2]["Státusz"], "Számlaellenőrzésre vár")
+        # Later payment and advance overlays must not make the card count zero.
+        result.loc[0, "Státusz"] = "Kifizetve (Fizetés előleg)"
+        restored = ns["restore_open_complaint_status"](result)
+        self.assertEqual(int(restored["Státusz"].eq("Bejelentések").sum()), 1)
+        self.assertEqual(restored["Kifizetendő"].tolist(), data["Kifizetendő"].tolist())
+
+    def test_complaint_reply_missing_values(self):
+        ns = load_functions("devtest.py", {"complaint_has_admin_answer"}, {"pd": pd})
+        for value in [None, float("nan"), pd.NaT, pd.NA, "", "   "]:
+            with self.subTest(value=value):
+                self.assertFalse(ns["complaint_has_admin_answer"]({"responded_at": value, "admin_response": value}))
+        self.assertTrue(ns["complaint_has_admin_answer"]({"responded_at": "2026-10-18"}))
 
 
 if __name__ == "__main__":

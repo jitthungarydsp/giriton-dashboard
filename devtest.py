@@ -6931,6 +6931,23 @@ def apply_settlement_attention_flags(data: pd.DataFrame, document_month: date) -
     return result
 
 
+def complaint_has_admin_answer(item: dict) -> bool:
+    # Pandas converts missing database timestamps to NaN/NaT. These are not replies.
+    return any(
+        pd.notna(item.get(key)) and bool(str(item.get(key)).strip())
+        for key in ("admin_response", "responded_at")
+        if item.get(key) is not None
+    )
+
+
+def restore_open_complaint_status(data: pd.DataFrame) -> pd.DataFrame:
+    """Preserve complaint priority after payment/advance status overlays."""
+    result = data.copy()
+    if "Nyitott reklamáció" in result.columns:
+        result.loc[result["Nyitott reklamáció"].fillna(False).astype(bool), "Státusz"] = "Bejelentések"
+    return result
+
+
 def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) -> pd.DataFrame:
     result = data.copy()
     if result.empty or "Courier ID" not in result.columns:
@@ -6957,7 +6974,8 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
         previous_attention_statuses = pd.DataFrame()
     try:
         complaints = read_peopleforce_complaints_for_month(month_start)
-    except Exception:
+    except Exception as exc:
+        st.warning(f"A havi reklamációk nem olvashatók; a bejelentésszámláló nem megbízható: {exc}")
         complaints = pd.DataFrame()
 
     document_types_by_courier: dict[str, set[str]] = {}
@@ -7033,7 +7051,7 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
             if process_id_from_action_key(item.get("document_type")):
                 continue
             status = str(item.get("status") or "").strip().casefold()
-            has_admin_answer = bool(str(item.get("admin_response") or "").strip() or str(item.get("responded_at") or "").strip())
+            has_admin_answer = complaint_has_admin_answer(item)
             courier_key = _courier_id_key(item.get("courier_id"))
             document_type = item.get("document_type")
             invoice_check_complaint = base_action_key(document_type) == "invoice_check"
@@ -7079,6 +7097,7 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
         return _streamlit_status_from_dashboard_label(status["label"])
 
     result["Státusz"] = courier_ids.map(workflow_status)
+    result["Nyitott reklamáció"] = courier_ids.isin(complaint_couriers)
     result["Számlaellenőrzés reklamáció"] = courier_ids.map(
         lambda value: _courier_id_key(value) in invoice_attention_couriers
     )
@@ -10883,6 +10902,7 @@ def build_settlement_overview_data(
     data = apply_salary_advance_request_status(data, period_start, period_end)
     data = apply_expense_request_status(data, period_start)
     data = apply_effective_payment_total_column(data, period_start)
+    data = restore_open_complaint_status(data)
     return data
 
 
@@ -11064,6 +11084,7 @@ def build_fast_settlement_overview_data(
     data = apply_salary_advance_request_status(data, period_start, period_end)
     data = apply_expense_request_status(data, period_start)
     data = apply_effective_payment_total_column(data, period_start)
+    data = restore_open_complaint_status(data)
     return data
 
 
@@ -14628,10 +14649,7 @@ def close_open_courier_complaints_without_response(courier_id: str, document_mon
         if base_action_key(document_type) == "invoice_check":
             continue
         status = str(item.get("status") or "").strip().casefold()
-        has_admin_answer = bool(
-            str(item.get("admin_response") or "").strip()
-            or str(item.get("responded_at") or "").strip()
-        )
+        has_admin_answer = complaint_has_admin_answer(item)
         if status in {"resolved", "closed", "deleted"} or has_admin_answer:
             continue
         complaint_id = item.get("id")
@@ -25445,6 +25463,12 @@ def show_new_settlement_page() -> None:
     render_pwa_password_reset_panel()
 
     st.markdown('<div class="section-title">Áttekintés</div>', unsafe_allow_html=True)
+
+    if st.button("Státuszok és reklamációk újratöltése", key="reload_settlement_workflow_statuses"):
+        read_peopleforce_complaints_for_month.clear()
+        read_peopleforce_card_statuses_for_month.clear()
+        clear_settlement_overview_data_cache()
+        st.rerun()
 
     workflow_cards = [
         ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
