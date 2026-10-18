@@ -16350,12 +16350,23 @@ def persist_loyalty_summary_changes(data: pd.DataFrame, session_id: str | None, 
     existing = []
     offset = 0
     while True:
-        page = (
-            client.table("courier_settlement_summary")
-            .select("id,courier_id,driver_name,loyalty_bonus_huf")
-            .eq("session_id", session_id).order("id").range(offset, offset + 999)
-            .execute().data or []
-        )
+        try:
+            page = (
+                client.table("courier_settlement_summary")
+                .select("id,courier_id,driver_name,loyalty_bonus_huf")
+                .eq("session_id", session_id).order("id").range(offset, offset + 999)
+                .execute().data or []
+            )
+        except Exception as exc:
+            details = str(exc)
+            if "loyalty_bonus_huf" in details and any(code in details for code in ("42703", "PGRST204")):
+                raise RuntimeError(
+                    "Hiányzik a lojalitás összegének adatbázismezője. "
+                    "Futtasd a Supabase SQL Editorban a "
+                    "sql/settlement_add_loyalty_summary_amount.sql javítást, "
+                    "majd indítsd újra a lojalitás számítását."
+                ) from exc
+            raise
         existing.extend(page)
         if len(page) < 1000:
             break

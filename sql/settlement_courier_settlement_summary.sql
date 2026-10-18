@@ -21,6 +21,7 @@ create table if not exists settlement.courier_settlement_summary (
     imported_bonus_huf numeric not null default 0,
     manual_bonus_huf numeric not null default 0,
     customer_rating_bonus_huf numeric not null default 0,
+    loyalty_bonus_huf numeric not null default 0,
     malus_huf numeric not null default 0,
     atm_deduction_huf numeric not null default 0,
     other_expense_huf numeric not null default 0,
@@ -28,6 +29,9 @@ create table if not exists settlement.courier_settlement_summary (
     calculated_at timestamptz not null default now(),
     constraint courier_settlement_summary_session_driver_unique unique (session_id, driver_name)
 );
+
+alter table settlement.courier_settlement_summary
+    add column if not exists loyalty_bonus_huf numeric not null default 0;
 
 create index if not exists courier_settlement_summary_session_idx
     on settlement.courier_settlement_summary(session_id);

@@ -147,6 +147,21 @@ class LoyaltyRecalculationSpeedTests(unittest.TestCase):
             )
         self.assertEqual(ns["st"].session_state, {})
 
+    def test_missing_column_identifies_required_migration_and_does_not_cache_success(self):
+        db = SummaryDatabase(self.rows(1))
+        db.execute = Mock(side_effect=RuntimeError({
+            "message": "column courier_settlement_summary.loyalty_bonus_huf does not exist",
+            "code": "42703",
+        }))
+        ns = self.namespace(db)
+        with self.assertRaisesRegex(RuntimeError, "settlement_add_loyalty_summary_amount.sql"):
+            ns["store_loyalty_recalculation_for_session"](
+                self.data(1), period_start=date(2026, 9, 1), period_end=date(2026, 9, 30),
+                session_id="month", calculation_mode="Excel",
+            )
+        self.assertEqual(ns["st"].session_state, {})
+        self.assertEqual(db.writes, [])
+
 
 if __name__ == "__main__":
     unittest.main()
