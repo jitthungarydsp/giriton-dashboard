@@ -315,36 +315,44 @@ def read_peopleforce_complaints(courier_id, document_month, document_type):
 
 
 @st.cache_data(show_spinner=False, ttl=120)
-def read_peopleforce_complaints_for_month(document_month, document_type=None, limit=5000):
+def read_peopleforce_complaints_for_month(document_month, document_type=None, limit=5000, courier_id=None):
     supabase_url = require_supabase()
     params = {
         "select": ",".join(COMPLAINT_COLUMNS),
         "document_month": f"eq.{format_month(document_month)}",
         "status": "neq.deleted",
-        "order": "created_at.desc",
-        "limit": str(int(limit)),
+        "order": "created_at.desc,id.desc",
     }
     document_type = str(document_type or "").strip()
     if document_type:
         params["document_type"] = f"eq.{document_type}"
-
-    response = requests.get(
-        f"{supabase_url}/rest/v1/peopleforce_complaints",
-        headers=supabase_headers(),
-        params=params,
-        timeout=60,
-    )
-    if response.status_code == 400 and "admin_response" in response.text:
-        fallback_columns = COMPLAINT_COLUMNS[:9]
-        params["select"] = ",".join(fallback_columns)
+    if courier_id is not None:
+        courier_id = str(courier_id).strip()
+        if not courier_id:
+            return pd.DataFrame(columns=COMPLAINT_COLUMNS)
+        params["courier_id"] = f"eq.{courier_id}"
+    rows = []
+    max_rows = max(0, int(limit))
+    while len(rows) < max_rows:
+        page_size = min(500, max_rows - len(rows))
+        params.update({"limit": str(page_size), "offset": str(len(rows))})
         response = requests.get(
             f"{supabase_url}/rest/v1/peopleforce_complaints",
             headers=supabase_headers(),
-            params=params,
+            params=dict(params),
             timeout=60,
         )
-    raise_for_supabase_error(response)
-    rows = response.json()
+        if response.status_code == 400 and "admin_response" in response.text:
+            params["select"] = ",".join(COMPLAINT_COLUMNS[:9])
+            response = requests.get(
+                f"{supabase_url}/rest/v1/peopleforce_complaints",
+                headers=supabase_headers(), params=dict(params), timeout=60,
+            )
+        raise_for_supabase_error(response)
+        page = response.json()
+        if not page:
+            break
+        rows.extend(page)
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=COMPLAINT_COLUMNS)
 
 

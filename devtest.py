@@ -21652,20 +21652,13 @@ def render_courier_detail_page() -> None:
             return f"{label} ({process_id})" if process_id else label
 
         actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+        if st.button("Reklamációk újratöltése", key=f"reload_complaints_{courier_id}_{period_start:%Y%m}"):
+            read_peopleforce_complaints_for_month.clear()
+            clear_settlement_overview_data_cache()
         try:
-            complaints = read_peopleforce_complaints_for_month(period_start.replace(day=1))
-            if not complaints.empty:
-                complaints = complaints[
-                    complaints.get("courier_id", pd.Series("", index=complaints.index))
-                    .astype(str).map(_courier_id_key).eq(_courier_id_key(courier_id))
-                ].copy()
-                complaint_document_types = complaints.get(
-                    "document_type",
-                    pd.Series("", index=complaints.index),
-                )
-                complaints = complaints[
-                    ~complaint_document_types.map(lambda value: base_action_key(value) == "invoice_check")
-                ].copy()
+            complaints = read_peopleforce_complaints_for_month(
+                period_start.replace(day=1), courier_id=_courier_id_key(courier_id),
+            )
         except Exception as exc:
             st.error(f"A reklamációk nem tölthetők be: {exc}")
             complaints = pd.DataFrame()
@@ -22337,7 +22330,17 @@ def show_reports_dialog() -> None:
     df = st.session_state.get("current_filtered_data", load_courier_master())
     ids = set(df["Courier ID"].astype(str))
 
-    complaints = get_demo_complaints()
+    report_month = parse_month_option(st.session_state.get("new_month") or month_options()[0]).replace(day=1)
+    try:
+        complaints = read_peopleforce_complaints_for_month(report_month).copy()
+    except Exception as exc:
+        st.error(f"A reklamációk nem tölthetők be: {exc}")
+        return
+    complaints["Courier ID"] = complaints.get("courier_id", pd.Series("", index=complaints.index)).map(_courier_id_key)
+    complaints["Típus"] = complaints.get("document_type", pd.Series("", index=complaints.index)).fillna("")
+    complaints["Státusz"] = complaints.get("status", pd.Series("", index=complaints.index)).fillna("")
+    complaints["Dátum"] = complaints.get("created_at", pd.Series("", index=complaints.index)).fillna("")
+    complaints["Üzenet"] = complaints.get("message", pd.Series("", index=complaints.index)).fillna("")
     complaints["_invoice_upload_stuck"] = False
     complaints = complaints[
         complaints["Courier ID"].astype(str).isin(ids)
@@ -22402,8 +22405,11 @@ def show_reports_dialog() -> None:
                 use_container_width=True,
                 key=f"open_report_{report['Courier ID']}_{index}",
             ):
-                st.session_state["selected_report"] = report.to_dict()
-                show_report_detail_dialog()
+                report_courier_id = str(report["Courier ID"])
+                st.session_state["selected_courier_id"] = report_courier_id
+                st.session_state[f"courier_menu_{report_courier_id}"] = "Reklamációk"
+                st.session_state[f"courier_menu_target_{report_courier_id}"] = "Reklamációk"
+                st.rerun(scope="app")
 
             cols[1].caption(str(report["Típus"]))
             cols[2].caption(str(report["Státusz"]))
