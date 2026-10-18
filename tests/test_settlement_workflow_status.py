@@ -35,6 +35,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
                 {"courier_id": "3", "document_type": "tig"},
             ],
             "peopleforce_card_statuses": [
+                {"courier_id": "2", "action_key": "invoice_check", "status": "open", "status_note": "TIG összeg eltérés: 113 Ft", "updated_at": "2026-10-03"},
                 {"courier_id": "2", "action_key": "settlement", "status": "done", "updated_at": "2026-10-02"},
                 {"courier_id": "2", "action_key": "settlement", "status": "open", "updated_at": "2026-10-01"},
                 {"courier_id": "3", "action_key": "settlement", "status": "done"},
@@ -43,6 +44,9 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
                 {"courier_id": "1", "action_key": "settlement:advance", "status": "done"},
             ],
             "peopleforce_complaints": [
+                {"courier_id": "2", "document_type": "invoice_check", "status": "new", "message": "Számla dátuma hibás"},
+                {"courier_id": "2", "document_type": "invoice_check", "status": "resolved", "message": "Régi hiba"},
+                {"courier_id": "2", "document_type": "invoice_check:advance", "status": "new", "message": "Más folyamat hibája"},
                 {"courier_id": "4", "document_type": "settlement", "status": "open"},
                 {"courier_id": "5", "document_type": "settlement", "status": "open", "admin_response": "Answered"},
             ],
@@ -67,10 +71,13 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         self.assertEqual(original, before)
         self.assertEqual([r["totalPayableHuf"] for r in result["rows"]], [100, 200, 300, 400, 500])
         self.assertEqual([r["status"]["label"] for r in result["rows"]], [
-            "Elszámolás elfogadásra vár", "TIG elfogadásra vár", "Kifizetve",
+            "Elszámolás elfogadásra vár", "Számla ellenőrzésre vár", "Kifizetve",
             "Reklamáció", "Elszámolás elfogadásra vár",
         ])
         self.assertEqual(result["summary"]["statusCounts"]["Elszámolás elfogadásra vár"], 2)
+        check = result["rows"][1]["invoiceCheck"]
+        self.assertEqual(check["note"], "TIG összeg eltérés: 113 Ft")
+        self.assertEqual(check["messages"], ["Számla dátuma hibás"])
         self.assertEqual(len(calls), 3)
         self.assertTrue(all(month == "2026-09-01" for table, month in calls))
 

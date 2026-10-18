@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v228";
+const APP_VERSION = "v229";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5400,6 +5400,18 @@ async function loadSettlementDashboardMonthlyPayment(courierId) {
   renderSettlementDashboard();
 }
 
+function renderDashboardInvoiceIssue(row) {
+  if (row.status?.label !== "Számla ellenőrzésre vár") return "";
+  const check = row.invoiceCheck || {};
+  const messages = [...new Set([check.note, ...(check.messages || [])].map(value => String(value || "").trim()).filter(Boolean))];
+  const formatNote = value => escapeHtml(String(value).replace(/\s+\|\s+/g, "\n\n")).replace(/\r?\n/g, "<br>");
+  return `<div class="notice error dashboard-invoice-issue" role="note">
+    <strong>Számlaellenőrzés – mentett indok</strong>
+    ${messages.length ? messages.map(message => `<p>${formatNote(message)}</p>`).join("")
+      : `<p>Még nincs rögzített hibaindok. Ez a státusz önmagában nem jelenti, hogy a számla hibás; az adminellenőrzés még folyamatban lehet.</p>`}
+  </div>`;
+}
+
 function renderSettlementDashboardExpanded(row) {
   const detail = state.settlementDashboardDetail || {};
   const workflow = detail.workflow || {};
@@ -5427,6 +5439,7 @@ function renderSettlementDashboardExpanded(row) {
       </div>
     </div>
     ${settlementDashboardDetailTabs()}
+    ${renderDashboardInvoiceIssue(row)}
     ${detail.loading ? `<div class="empty-card">Futár részletek betöltése...</div>` : ""}
     ${detail.error ? `<div class="notice error">${escapeHtml(detail.error)}</div>` : ""}
     ${!detail.loading && !detail.error && currentTab === "settlement" ? (state.settlementDashboardEditCourierId === String(row.courierId || "") ? settlementDashboardFinanceEditor(workflow) : settlementDashboardBreakdownPreview(workflow)) : ""}
@@ -5506,7 +5519,7 @@ function renderSettlementDashboard() {
           </button>
           <button class="icon-button settlement-dashboard-edit" type="button" data-settlement-dashboard-edit="${escapeHtml(row.courierId || "")}" title="Futár értékeinek szerkesztése" aria-label="Futár értékeinek szerkesztése"><span aria-hidden="true">✎</span><span>Szerkesztés</span></button>
         </div>
-        ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? renderSettlementDashboardExpanded(row) : ""}
+        ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? renderSettlementDashboardExpanded(row) : renderDashboardInvoiceIssue(row)}
       `).join("") : `<div class="empty-card">${activeStatusFilter ? "Nincs futár ebben a státuszban." : "Nincs futár a kiválasztott hónapban."}</div>`}
     </div>
   `;

@@ -9331,6 +9331,7 @@ def supabase_rest(
     prefer: str = "",
     timeout: int = 30,
     schema: str = "public",
+    explain_workflow_error: bool = False,
 ) -> Any:
     url = load_setting("SUPABASE_URL").rstrip("/")
 
@@ -9347,6 +9348,20 @@ def supabase_rest(
         print("Supabase table:", table)
         print("Supabase status:", response.status_code)
         print("Supabase response:", response.text)
+
+        if explain_workflow_error:
+            try:
+                db_error = response.json()
+            except ValueError:
+                db_error = {}
+            code = str(db_error.get("code") or "") if isinstance(db_error, dict) else ""
+            if code == "P0001":
+                # Only deliberate workflow validation messages are exposed.
+                raise HTTPException(status_code=409, detail=str(db_error.get("message") or "A folyamat nem léptethető tovább."))
+            if code == "PGRST202":
+                raise HTTPException(status_code=503, detail="A státuszváltó SQL-függvény még nem elérhető. Futtasd a pwa_dashboard_change_monthly_status.sql fájlt.")
+            if code:
+                raise HTTPException(status_code=502, detail=f"Státuszváltási adatbázishiba: {code}. A részletek a szervernaplóban találhatók.")
 
         raise HTTPException(
             status_code=502,
@@ -18979,13 +18994,14 @@ def attach_readonly_dashboard_statuses(month: date, dashboard: dict[str, Any]) -
     documents: dict[str, set[str]] = {}
     states: dict[str, dict[str, dict[str, Any]]] = {}
     complaints: dict[str, int] = {}
+    invoice_complaints: dict[str, list[str]] = {}
     with ThreadPoolExecutor(max_workers=3) as executor:
         document_future = executor.submit(_workflow_month_rows, "peopleforce_documents", month_key,
                                           "courier_id,document_type")
         status_future = executor.submit(_workflow_month_rows, "peopleforce_card_statuses", month_key,
                                         "courier_id,action_key,status,status_note,updated_at")
         complaint_future = executor.submit(_workflow_month_rows, "peopleforce_complaints", month_key,
-                                           "courier_id,document_type,status,admin_response,responded_at")
+                                           "courier_id,document_type,message,status,admin_response,responded_at")
         document_rows = document_future.result()
         status_rows = status_future.result()
         complaint_rows = complaint_future.result()
@@ -19012,6 +19028,9 @@ def attach_readonly_dashboard_statuses(month: date, dashboard: dict[str, Any]) -
             continue
         courier_id = dashboard_courier_id_key(row.get("courier_id"))
         if base_action_key(action) == "invoice_check":
+            message = str(row.get("message") or "").strip()
+            if message:
+                invoice_complaints.setdefault(courier_id, []).append(message)
             states.setdefault(courier_id, {})["invoice_check"] = {
                 **states.get(courier_id, {}).get("invoice_check", {}), "status": "open",
             }
@@ -19030,7 +19049,13 @@ def attach_readonly_dashboard_statuses(month: date, dashboard: dict[str, Any]) -
             has_tig_document="tig" in document_types,
             states=states.get(courier_id, {}), open_complaints=complaints.get(courier_id, 0),
         )
-        result["rows"].append({**original, "status": status})
+        check_state = states.get(courier_id, {}).get("invoice_check") or {}
+        check_note = str(check_state.get("status_note") or "").strip()
+        result["rows"].append({**original, "status": status,
+                               "invoiceCheck": {"status": check_state.get("status") or "",
+                                                "note": check_note,
+                                                "messages": invoice_complaints.get(courier_id, []),
+                                                "updatedAt": check_state.get("updated_at") or ""}})
         counts[status["label"]] = counts.get(status["label"], 0) + 1
     result["summary"]["statusCounts"] = counts
     return result
@@ -22631,6 +22656,7 @@ def admin_change_dashboard_status(
     if courier_has_efo_assignment({"courierId": courier_id, "username": courier_id}, month):
         raise HTTPException(status_code=409, detail="EFO folyamatnál a státuszt a futár részletes folyamatnézetében kezeld.")
     result = supabase_rest("POST", "rpc/pwa_change_monthly_status", schema="settlement",
+                          explain_workflow_error=True,
                           payload={"p_courier_id": courier_id, "p_period_start": month.isoformat(),
                                    "p_target": target, "p_note": note,
                                    "p_actor": str(user.get("username") or "admin")})

@@ -10,6 +10,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DashboardStatusChangeTest(unittest.TestCase):
+    def test_database_validation_message_is_visible_without_exposing_sql_details(self):
+        class Error(Exception):
+            def __init__(self, **kwargs): self.detail = kwargs["detail"]
+        response = SimpleNamespace(ok=False, status_code=400, text="internal query",
+                                   json=lambda: {"code":"P0001", "message":"Előbb fel kell tölteni a havi számlát."})
+        ns = {"Any":Any, "HTTPException":Error, "load_setting":lambda key:"https://example.test",
+              "supabase_schema_headers":lambda **k:{},
+              "requests":SimpleNamespace(request=lambda *a, **k:response)}
+        tree = ast.parse((ROOT / "pwa_api.py").read_text(encoding="utf-8"))
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "supabase_rest")
+        exec(compile(ast.Module(body=[node],type_ignores=[]),"pwa_api.py","exec"),ns)
+        with self.assertRaises(Error) as caught:
+            ns["supabase_rest"]("POST","rpc/pwa_change_monthly_status",explain_workflow_error=True)
+        self.assertEqual(caught.exception.detail,"Előbb fel kell tölteni a havi számlát.")
+        response.json = lambda:{"code":"42883","message":"internal function details"}
+        with self.assertRaises(Error) as caught:
+            ns["supabase_rest"]("POST","rpc/pwa_change_monthly_status",explain_workflow_error=True)
+        self.assertIn("42883",caught.exception.detail)
+        self.assertNotIn("internal function",caught.exception.detail)
     def endpoint(self):
         class Error(Exception):
             def __init__(self, **kwargs): self.status_code = kwargs["status_code"]
