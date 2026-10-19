@@ -4274,7 +4274,7 @@ def render_devtest_finance_snapshot_view(
             key=f"snapshot_save_adjustments_{courier_id}_{period_start:%Y%m}",
         )
         reset_adjustments_clicked = reset_adjustments.button(
-            "Kézi tételek törlése",
+            "Kijelölt tételek törlése",
             use_container_width=True,
             disabled=closure_done,
             key=f"snapshot_reset_adjustments_{courier_id}_{period_start:%Y%m}",
@@ -4343,10 +4343,13 @@ def render_devtest_finance_snapshot_view(
 
         if reset_adjustments_clicked:
             try:
-                reset_courier_adjustments(session_id, courier_id, period_start, period_end)
+                deleted_count = delete_marked_courier_adjustments(session_id, courier_id, adjustments, edited_adjustments)
+                if not deleted_count:
+                    st.info("Jelöld ki a törlendő sorokat a Törlés oszlopban.")
+                    return
                 refresh_settlement_profile_data()
                 clear_devtest_finance_snapshot_cache()
-                st.success("A kézi tételek törölve.")
+                st.success(f"{deleted_count} kijelölt kézi tétel törölve.")
                 st.rerun()
             except Exception as exc:
                 st.error(f"A kézi tételek törlése sikertelen. Részlet: {exc}")
@@ -16294,6 +16297,32 @@ def load_courier_adjustment_log(courier_id: str) -> pd.DataFrame:
             return pd.DataFrame()
 
 
+def delete_marked_courier_adjustments(
+    session_id: str | None,
+    courier_id: str,
+    adjustments: pd.DataFrame,
+    edited_adjustments: pd.DataFrame,
+) -> int:
+    """Delete only explicitly checked existing rows from this courier's editor."""
+    original_by_id = {str(row["id"]): row for _, row in adjustments.iterrows()}
+    selected_ids = set()
+    for _, row in edited_adjustments.iterrows():
+        marked = row.get("Törlés")
+        if pd.isna(marked) or marked != True:
+            continue
+        adjustment_id = str(row.get("id") or "").strip()
+        if adjustment_id in original_by_id:
+            selected_ids.add(adjustment_id)
+    for adjustment_id in selected_ids:
+        original = original_by_id[adjustment_id]
+        delete_courier_adjustment(
+            session_id, courier_id, adjustment_id, str(original.get("adjustment_type") or ""),
+            parse_huf_value(original.get("amount_huf")), str(original.get("note") or ""),
+            valid_from=original.get("valid_from"), valid_to=original.get("valid_to"),
+        )
+    return len(selected_ids)
+
+
 def reset_courier_adjustments(session_id: str | None, courier_id: str, period_start: date, period_end: date) -> None:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
     adjustments = load_courier_adjustments(courier_id, period_start, period_end)
@@ -19650,7 +19679,7 @@ def render_courier_detail_page() -> None:
             st.markdown('<div class="finance-note">A pozitív összeg növeli, a levonás típusú sor csökkenti a kifizetendő összeget.</div>', unsafe_allow_html=True)
             save_col, reset_col = st.columns([0.46, 0.54])
             save_clicked = save_col.button("Változások mentése", type="primary", use_container_width=True, disabled=closure_done, key=f"finance_save_adjustments_{courier_id}")
-            reset_clicked = reset_col.button("Havi kézi tételek visszaállítása", use_container_width=True, disabled=closure_done, key=f"reset_adjustments_{courier_id}", help="A kézi korrekciók inaktiválódnak, az alap DB-értékek maradnak.")
+            reset_clicked = reset_col.button("Kijelölt tételek törlése", use_container_width=True, disabled=closure_done, key=f"reset_adjustments_{courier_id}", help="Csak a Törlés oszlopban kijelölt tételeket törli.")
 
         def editor_date(value: object, fallback: date | None = None) -> date | None:
             if value is None or value == "":
@@ -19723,7 +19752,10 @@ def render_courier_detail_page() -> None:
 
         if reset_clicked:
             try:
-                reset_courier_adjustments(session_id, courier_id, period_start, period_end)
+                deleted_count = delete_marked_courier_adjustments(session_id, courier_id, adjustments, edited_adjustments)
+                if not deleted_count:
+                    st.info("Jelöld ki a törlendő sorokat a Törlés oszlopban.")
+                    return
                 refresh_settlement_profile_data()
                 rerun_courier_profile("Pénzügy")
             except Exception as exc:
