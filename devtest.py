@@ -8882,6 +8882,18 @@ def resolve_target_reserve_month(
     payable_before_insurance: float,
 ) -> dict[str, object]:
     saved = load_target_reserve_monthly(courier_id, period_start, period_end)
+    # An explicit restoration is authoritative until a new manual reserve
+    # event occurs. Opening a detail page must not overwrite it with a
+    # calculation from the compact overview's different payable subtotal.
+    snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
+    metadata = snapshot.get("metadata") or {}
+    if metadata.get("restored_from_snapshot_id"):
+        event_totals = load_target_reserve_event_totals(courier_id, period_start, period_end)
+        if not any(parse_huf_value(event_totals.get(key)) for key in ("payment", "deduction")):
+            restored = _snapshot_source_payload(snapshot, "target_reserve_month")
+            if isinstance(restored, dict) and "reserve_after_huf" in restored:
+                save_target_reserve_monthly(session_id, courier_id, period_start, period_end, restored)
+                return dict(restored)
     if saved.get("status") == "done":
         return {
             "payable_before_insurance_huf": parse_huf_value(saved.get("payable_before_insurance_huf")),
