@@ -2853,11 +2853,24 @@ def load_latest_excel_jit_period_start() -> date | None:
 
 
 def default_settlement_month_label() -> str:
-    latest_period_start = load_latest_excel_jit_period_start()
-    if latest_period_start:
-        return month_option_label(latest_period_start)
-    today = date.today().replace(day=1)
-    return month_option_label(today)
+    """Monthly settlement starts with the last completed calendar month."""
+    previous_month = date.today().replace(day=1) - timedelta(days=1)
+    return month_option_label(previous_month)
+
+
+def initialize_settlement_month_selection(session_state, available_months: list[str]) -> str:
+    """Restore a widget removed by Streamlit when another page was shown."""
+    selected = session_state.get("new_month") or session_state.get("settlement_selected_month")
+    if selected not in available_months:
+        default = default_settlement_month_label()
+        selected = default if default in available_months else available_months[0]
+    session_state["new_month"] = selected
+    session_state["settlement_selected_month"] = selected
+    return selected
+
+
+def remember_settlement_month_selection() -> None:
+    st.session_state["settlement_selected_month"] = st.session_state["new_month"]
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -24528,10 +24541,7 @@ def show_new_settlement_page() -> None:
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "Excel")
     # Include past settlement periods and the current month, never future ones.
     active_settlement_months = month_options()
-    current_month_label = st.session_state.get("new_month")
-    if current_month_label not in active_settlement_months:
-        current_month_label = active_settlement_months[0]
-        st.session_state["new_month"] = current_month_label
+    current_month_label = initialize_settlement_month_selection(st.session_state, active_settlement_months)
     st.session_state["new_month_auto_default"] = current_month_label
     selected_month_label = current_month_label
     selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
@@ -24544,6 +24554,7 @@ def show_new_settlement_page() -> None:
             "Elszámolási hónap",
             sidebar_month_options,
             key="new_month",
+            on_change=remember_settlement_month_selection,
         )
         selected_calculation_mode = st.selectbox(
             "Számítás módja",
