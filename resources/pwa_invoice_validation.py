@@ -49,6 +49,18 @@ def _name_match_tokens(value: Any) -> list[str]:
     return [token for token in _tokens(value) if token not in ignored]
 
 
+def _contains_pdf_phrase(tokens: list[str], text: str) -> bool:
+    """PDF extraction can omit spaces between otherwise correct words.
+
+    Match the complete phrase with optional separators, retaining outer word
+    boundaries so a shorter name or house number cannot match a longer one.
+    """
+    if not tokens:
+        return False
+    pattern = r"(?<![a-z0-9])" + r"[\W_]*".join(re.escape(token) for token in tokens) + r"(?![a-z0-9])"
+    return re.search(pattern, _fold(text)) is not None
+
+
 def _address_tokens(value: Any) -> list[str]:
     ignored = {
         "magyarorszag",
@@ -476,20 +488,25 @@ def validate_invoice(
     if expected_seller_name:
         courier_name = expected_seller_name
     expected_name_tokens = _name_match_tokens(courier_name)
+    seller_name_matches = bool(expected_name_tokens) and (
+        all(token in normalized_tokens for token in expected_name_tokens)
+        or _contains_pdf_phrase(expected_name_tokens, text)
+    )
     add(
-        "ok" if expected_name_tokens and all(token in normalized_tokens for token in expected_name_tokens) else ("warn" if image_only_metadata_fallback else "error"),
+        "ok" if seller_name_matches else ("warn" if image_only_metadata_fallback else "error"),
         "Eladó neve",
         (
             f"Képalapú PDF miatt OCR nélkül nem ellenőrizhető automatikusan. Profil: {courier_name}."
             if image_only_metadata_fallback
+            else f"Az eladó neve egyezik a profillal: {courier_name}." if seller_name_matches
             else f"Javítandó: az eladó neve egyezzen a profilban szereplő névvel: {courier_name}."
         ),
     )
 
     buyer_name_tokens = _tokens("Just in Time Transport Hungary Kft.")
-    add("ok" if all(token in normalized_tokens for token in buyer_name_tokens) else ("warn" if image_only_metadata_fallback else "error"), "Vevő neve", "Just in Time Transport Hungary Kft.")
+    add("ok" if all(token in normalized_tokens for token in buyer_name_tokens) or _contains_pdf_phrase(buyer_name_tokens, text) else ("warn" if image_only_metadata_fallback else "error"), "Vevő neve", "Just in Time Transport Hungary Kft.")
     buyer_address_tokens = {"1201", "budapest", "atleta", "utca", "44"}
-    add("ok" if buyer_address_tokens.issubset(normalized_tokens) else ("warn" if image_only_metadata_fallback else "error"), "Vevő címe", "1201 Budapest, Atléta utca 44.")
+    add("ok" if buyer_address_tokens.issubset(normalized_tokens) or _contains_pdf_phrase(_tokens("1201 Budapest Atléta utca 44"), text) else ("warn" if image_only_metadata_fallback else "error"), "Vevő címe", "1201 Budapest, Atléta utca 44.")
 
     seller_tax = str(fields.get("seller_tax_number") or "")
     if expected_seller_tax_number:
@@ -510,7 +527,8 @@ def validate_invoice(
 
     expected_address_tokens = _address_tokens(expected_seller_address)
     if expected_address_tokens:
-        add("ok" if _address_matches(expected_seller_address, normalized_tokens) else "warn", "Eladó címe", f"Figyelmeztetés: az eladó címe nem egyezik pontosan a profilban szereplő címmel: {expected_seller_address}.")
+        address_matches = _address_matches(expected_seller_address, normalized_tokens) or _contains_pdf_phrase(expected_address_tokens, text)
+        add("ok" if address_matches else "warn", "Eladó címe", f"Az eladó címe egyezik: {expected_seller_address}." if address_matches else f"Figyelmeztetés: az eladó címe nem egyezik pontosan a profilban szereplő címmel: {expected_seller_address}.")
     else:
         add("warn", "Eladó címe", "A futárprofilban még nincs cím az összehasonlításhoz.")
 
@@ -572,7 +590,9 @@ def validate_invoice(
             if skip_invoice_number_match:
                 add("warn", "Számlaszám egyezése", f"Kihagyva admin/futár jelölés alapján. Megadva: {invoice_number}; PDF: {pdf_number}.")
             else:
-                add("ok" if _invoice_number_matches(invoice_number, pdf_number) else "error", "Számlaszám egyezése", f"Javítandó: a megadott számlaszám egyezzen a PDF-ben szereplővel. Megadva: {invoice_number}; PDF: {pdf_number}.")
+                number_matches = _invoice_number_matches(invoice_number, pdf_number)
+                detail = f"A számla sorszáma egyezik: {pdf_number}." if number_matches else f"Javítandó: a számla sorszámát add meg (PDF: {pdf_number}), ne a bankszámlaszámot. Megadva: {invoice_number}."
+                add("ok" if number_matches else "error", "Számlaszám egyezése", detail)
         add("ok" if gross_amount > 0 else "error", "Bruttó összeg", _format_huf(gross_amount) if gross_amount > 0 else "0 Ft fölötti összeg szükséges.")
         if gross_amount > 0 and pdf_gross:
             add("ok" if gross_amount == pdf_gross else "error", "Megadott bruttó összeg", f"Megadva: {_format_huf(gross_amount)}; PDF: {_format_huf(pdf_gross)}.")

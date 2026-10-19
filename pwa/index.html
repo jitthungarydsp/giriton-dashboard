@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#17231c" />
     <meta name="description" content="Jitt futár mobilalkalmazás" />
-    <link rel="manifest" href="/manifest.webmanifest?v=236" />
-    <link rel="icon" href="/icon.svg?v=236" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icon.svg?v=236" />
-    <link rel="stylesheet" href="/styles.css?v=236" />
+    <link rel="manifest" href="/manifest.webmanifest?v=237" />
+    <link rel="icon" href="/icon.svg?v=237" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg?v=237" />
+    <link rel="stylesheet" href="/styles.css?v=237" />
     <title>Jitt</title>
   </head>
   <body>
@@ -140,7 +140,7 @@
         <section id="invoice-submit-panel" class="process-card">
           <div class="process-title"><span class="step-code">5</span><div><h3>Számlafeltöltés</h3><p>A TIG elfogadása után válik aktívvá. A dokumentum mindenképpen beérkezik hozzánk.</p></div></div>
           <form id="invoice-submit-form" class="process-form two-column">
-            <label>Számlaszám<input id="invoice-number" name="invoice_number" required /></label>
+            <label>Számla sorszáma<input id="invoice-number" name="invoice_number" placeholder="Pl. BG-2026-16" aria-describedby="invoice-number-help" autocomplete="off" required /><small id="invoice-number-help">A számlán szereplő sorszámot add meg, ne a bankszámlaszámot.</small></label>
             <label><span id="gross-amount-label">Átutalásos számla bruttó összege (Ft)</span><input id="gross-amount" name="gross_amount" type="number" min="1" step="1" required /></label>
             <label>TIG / elszámolás azonosító<input id="tig-reference" name="tig_reference" /></label>
             <label>Megjegyzés<input id="invoice-note" name="note" /></label>
@@ -869,6 +869,6 @@
         </section>
       </dialog>
     </main>
-    <script src="/app.js?v=236" defer></script>
+    <script src="/app.js?v=237" defer></script>
   </body>
 </html>
