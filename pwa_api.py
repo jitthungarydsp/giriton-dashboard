@@ -229,6 +229,25 @@ class SettlementFinanceEditRequest(BaseModel):
     rows: list[SettlementFinanceEditRow] = Field(default_factory=list)
 
 
+class WorksheetManualRow(BaseModel):
+    id: str
+    type: str
+    amountHuf: int
+    note: str
+    validFrom: str
+    validTo: str
+
+
+class WorksheetPilotRequest(BaseModel):
+    month: str
+    courierId: str
+    snapshotId: str
+    rows: list[SettlementFinanceEditRow] = Field(default_factory=list)
+    manualRows: list[WorksheetManualRow] = Field(default_factory=list)
+    note: str
+    previewHash: str = ""
+
+
 class SettlementSnapshotRestoreRequest(BaseModel):
     month: str
     courierId: str
@@ -9367,6 +9386,8 @@ def supabase_rest(
                 # Only deliberate workflow validation messages are exposed.
                 raise HTTPException(status_code=409, detail=str(db_error.get("message") or "A folyamat nem léptethető tovább."))
             if code == "PGRST202":
+                if table == "rpc/pwa_commit_worksheet_pilot":
+                    raise HTTPException(status_code=503, detail="A munkalap mentése még nincs telepítve. Futtasd a pwa_finance_worksheet_pilot.sql fájlt.")
                 migration = "pwa_dashboard_status_close_invoice_complaints.sql" if "with_complaints" in table else "pwa_dashboard_change_monthly_status.sql"
                 raise HTTPException(status_code=503, detail=f"A státuszváltó SQL-függvény még nem elérhető. Futtasd a {migration} fájlt.")
             if code:
@@ -11357,6 +11378,7 @@ def build_financial_breakdown_from_snapshot(
         "snapshotId": str(snapshot.get("id") or ""),
         "snapshotVersion": money_int(snapshot.get("version")),
         "tigSnapshotRows": snapshot_items_by_section(snapshot, "tig"),
+        "worksheetTig": snapshot_source_payload(snapshot, "tig_breakdown") if metadata.get("source") == "pwa_worksheet_pilot" else None,
         "message": "",
     }
 
@@ -11383,7 +11405,7 @@ def build_tig_breakdown_from_snapshot(
     tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
     cash_amount = workflow_cash_amount_from_financial_breakdown(financial_breakdown)
     payable = money_int(financial_breakdown.get("totalPayableHuf"))
-    tig = build_tig_breakdown(
+    tig = financial_breakdown.get("worksheetTig") or build_tig_breakdown(
         {
             "name": courier_name,
             "company_name": profile.get("company_name") or courier_name,
@@ -11414,6 +11436,7 @@ def build_tig_breakdown_from_snapshot(
         "courierName": courier_name,
         "rows": tig.get("rows") or [],
         "finalTotalHuf": money_int(tig.get("finalTotalHuf")),
+        "cashGrossHuf": money_int(tig.get("cashGrossHuf")),
         "taxMode": str(tig.get("taxMode") or ""),
         "taxLabel": str(tig.get("taxLabel") or ""),
         "source": "settlement.courier_finance_snapshot",
@@ -22919,7 +22942,7 @@ def read_dashboard_detail_snapshot(courier_id: str, month: date) -> dict[str, An
                 "order": "version.desc", "limit": "1",
                 "items.order": "section.asc,display_order.asc", "items.limit": "500",
                 "sources.order": "source_key.asc", "sources.limit": "100",
-                "sources.source_key": "in.(card_drilldowns,manual_adjustments,courier_profile,tig_breakdown,target_reserve_month)",
+                "sources.source_key": "in.(card_drilldowns,manual_adjustments,courier_profile,tig_breakdown,target_reserve_month,pwa_worksheet_audit,pwa_worksheet_manual_rows)",
             },
             timeout=30,
         )
@@ -23021,7 +23044,12 @@ def admin_settlement_dashboard_detail(
         )
         if preview_breakdown:
             financial_breakdown = preview_breakdown
+    worksheet_pilot = None
+    if courier_id == "12345" and month_value == date(2026, 9, 1) and latest_snapshot:
+        from resources.pwa_finance_worksheet import worksheet_state
+        worksheet_pilot = worksheet_state(latest_snapshot)
     return {
+        "worksheetPilot": worksheet_pilot,
         "month": month_value.strftime("%Y-%m"),
         "process": "",
         "processLabel": workflow_process_label(""),
@@ -23046,6 +23074,56 @@ def admin_settlement_dashboard_detail(
         "visibilityMode": "admin",
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def prepare_pilot_request(payload: WorksheetPilotRequest) -> tuple[dict[str, Any], dict[str, Any]]:
+    from resources.pwa_finance_worksheet import require_pilot, prepare_worksheet
+    try:
+        require_pilot(payload.courierId, payload.month)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    month = parse_month(payload.month)
+    snapshot = read_latest_courier_finance_snapshot(payload.courierId, month, include_sources=True)
+    if not snapshot or str(snapshot.get("id")) != payload.snapshotId:
+        raise HTTPException(status_code=409, detail="Az elszámolás verziója megváltozott. Töltsd újra a munkalapot.")
+    closure = supabase_rest("GET", "courier_monthly_closure", schema="settlement",
+                            params={"select": "status", "courier_id": "eq.12345", "period_start": "eq.2026-09-01", "status": "eq.done", "limit": "1"})
+    paid = supabase_rest("GET", "peopleforce_card_statuses",
+                         params={"select": "status", "courier_id": "eq.12345", "document_month": "eq.2026-09-01", "action_key": "eq.invoice_payment", "status": "eq.done", "limit": "1"})
+    if closure or paid:
+        raise HTTPException(status_code=409, detail="A kifizetés lezárt. A munkalap nem módosítható.")
+    try:
+        result = prepare_worksheet(snapshot, [r.model_dump() for r in payload.rows],
+                                   [r.model_dump() for r in payload.manualRows], payload.note)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return snapshot, result
+
+
+@app.post("/api/admin/settlement-worksheet/preview")
+def admin_worksheet_pilot_preview(payload: WorksheetPilotRequest,
+                                 giriton_pwa_session: str | None = Cookie(default=None)):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    snapshot, result = prepare_pilot_request(payload)
+    return {"ok": True, "snapshotId": snapshot["id"], "previewHash": result["previewHash"],
+            "totals": result["totals"], "tig": result["tig"], "previousTotal": result["previousTotal"],
+            "delta": result["delta"], "changes": result["changes"]}
+
+
+@app.post("/api/admin/settlement-worksheet/commit")
+def admin_worksheet_pilot_commit(payload: WorksheetPilotRequest,
+                                giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    snapshot, result = prepare_pilot_request(payload)
+    if not payload.previewHash or payload.previewHash != result["previewHash"]:
+        raise HTTPException(status_code=409, detail="A módosításokhoz előbb készíts friss előnézetet.")
+    saved = supabase_rest("POST", "rpc/pwa_commit_worksheet_pilot", schema="settlement", explain_workflow_error=True,
+                          payload={"p_courier_id": payload.courierId, "p_period_start": "2026-09-01",
+                                   "p_base_snapshot_id": snapshot["id"], "p_fingerprint": result["previewHash"],
+                                   "p_actor": str(user.get("username") or "admin"), "p_prepared": result["prepared"]})
+    if not isinstance(saved, dict) or not saved.get("ok"):
+        raise HTTPException(status_code=409, detail="A mentés nem igazolható. Frissítsd a munkalapot.")
+    return saved
 
 
 def admin_save_finance_editor_rows(

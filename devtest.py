@@ -3750,7 +3750,13 @@ def _snapshot_has_core_finance_data(snapshot: dict[str, object]) -> bool:
 
 def load_reliable_devtest_finance_snapshot(courier_id: str, period_start: date) -> dict[str, object]:
     """Use the previous complete version when the newest version is empty."""
+    if str(courier_id) == "12345" and period_start == date(2026, 9, 1):
+        clear_cached_read = getattr(load_latest_devtest_finance_snapshot, "clear", None)
+        if clear_cached_read:
+            clear_cached_read(courier_id, period_start)  # Read-only refresh of this pilot's cache entry.
     snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
+    if (snapshot.get("metadata") or {}).get("source") == "pwa_worksheet_pilot":
+        return snapshot  # A deliberately zeroed worksheet is a valid saved version.
     if _snapshot_has_core_finance_data(snapshot):
         return snapshot
     previous_id = str(snapshot.get("previous_snapshot_id") or "").strip()
@@ -3847,6 +3853,8 @@ def finance_snapshot_display_row(row, snapshot: dict[str, object]) -> dict[str, 
     result["Számolt túrák"] = result["Útvonalak"]
     result["Nettó bevétel"] = result["Alapdíj"]
     result["Korrekció"] = result["Korrekció +"] - result["Korrekció -"]
+    if (snapshot.get("metadata") or {}).get("source") == "pwa_worksheet_pilot":
+        result["Korrekció"] = _snapshot_amount(snapshot, "correction")
     bonus_malus = result["JITT bónusz"]
     result["JITT bónusz"] = max(bonus_malus, 0)
     result["JITT malus"] = abs(min(bonus_malus, 0))
@@ -3951,6 +3959,9 @@ def render_devtest_finance_snapshot_view(
     version = int(parse_huf_value(snapshot.get("version")))
     created_at = str(snapshot.get("created_at") or "")
     st.caption(f"DB-ből betöltött pénzügyi verzió: v{version} | {created_at}")
+    if metadata.get("source") == "pwa_worksheet_pilot":
+        st.info("PWA munkalapon mentett közös pénzügyi verzió. Az összegek és a TIG-bontás ebből a mentésből származnak.")
+        st.caption(f"Módosítás indoka: {metadata.get('worksheet_note') or '-'}")
     try:
         validate_loyalty_snapshot_consistency(
             [item for item in snapshot.get("items") or [] if item.get("section") == "finance"],
@@ -4354,6 +4365,12 @@ def render_devtest_finance_snapshot_view(
             except Exception as exc:
                 st.error(f"A kézi tételek törlése sikertelen. Részlet: {exc}")
 
+    if metadata.get("source") == "pwa_worksheet_pilot":
+        pwa_manual_rows = _snapshot_source_payload(snapshot, "pwa_worksheet_manual_rows")
+        if pwa_manual_rows:
+            st.markdown("#### PWA munkalap kézi tételei")
+            st.caption("A fenti pénzügyi összegek már tartalmazzák ezeket. Szerkesztés a PWA munkalapján.")
+            st.dataframe(pd.DataFrame(pwa_manual_rows), hide_index=True, use_container_width=True)
     st.markdown("#### Mentett pénzügyi értékek")
     st.dataframe(finance_frame, hide_index=True, use_container_width=True)
     st.markdown("#### Mentett TIG")

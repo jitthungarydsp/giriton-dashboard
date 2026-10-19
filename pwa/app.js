@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v240";
+const APP_VERSION = "v241";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5329,6 +5329,9 @@ function settlementDashboardManualPreviewRow() {
 }
 
 function settlementDashboardFinanceEditor(workflow = {}) {
+  if (state.settlementDashboardExpandedCourierId === "12345" && state.settlementDashboardMonth === "2026-09" && workflow.worksheetPilot) {
+    return settlementDashboardPilotFinanceEditor(workflow.worksheetPilot);
+  }
   const rows = settlementDashboardEditorRows(workflow);
   const totals = new Set(["payable", "income", "deductions"]);
   if (rows.some(row => ["correction_income", "correction_deduction"].includes(row.key))) totals.add("correction");
@@ -5361,6 +5364,98 @@ function settlementDashboardFinanceEditor(workflow = {}) {
       <small class="settlement-dashboard-editor-help">Az újraszámítás, mentés és TIG-módosítás ebben a vizuális változatban nem működik.</small>
     </section>
   </div>`;
+}
+
+function settlementDashboardPilotManualRow(row = {}) {
+  const id = row.id || `manual-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const types = [["bonus", "Bónusz"], ["malus", "Malus"], ["correction_income", "Korrekció +"], ["correction_deduction", "Korrekció −"], ["customer_rating", "Ügyfélértékelés"], ["atm_deduction", "ATM levonás"], ["other_expense", "Egyéb kiadás"]];
+  return `<div class="settlement-worksheet-manual-row" data-dashboard-editor-row data-manual-id="${escapeHtml(id)}">
+    <label>Típus<select data-manual-field="type">${types.map(([key, label]) => `<option value="${key}" ${row.type === key ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+    <label>Összeg (Ft)<input type="number" min="0" step="1" data-manual-field="amountHuf" value="${escapeHtml(String(row.amountHuf ?? 0))}"></label>
+    <label class="settlement-worksheet-note">Megjegyzés<input data-manual-field="note" value="${escapeHtml(row.note || "")}" placeholder="Miért jár ez a tétel?"></label>
+    <label>Érvényes ettől<input type="date" data-manual-field="validFrom" value="${escapeHtml(row.validFrom || "2026-09-01")}" min="2026-09-01" max="2026-09-30"></label>
+    <label>Érvényes eddig<input type="date" data-manual-field="validTo" value="${escapeHtml(row.validTo || "2026-09-30")}" min="2026-09-01" max="2026-09-30"></label>
+    <button type="button" class="secondary settlement-dashboard-editor-delete" data-dashboard-editor-delete aria-label="Kézi tétel eltávolítása">×</button>
+  </div>`;
+}
+
+function settlementDashboardPilotFinanceEditor(pilot) {
+  return `<div class="settlement-dashboard-editor settlement-worksheet" data-pilot-worksheet data-snapshot-id="${escapeHtml(pilot.snapshotId)}">
+    <div class="settlement-dashboard-editor-head"><div><strong>Pénzügyi munkalap</strong><small>Bagoly Zoltán · #12345 · 2026. szeptember · mentett verzió: v${escapeHtml(String(pilot.version))}</small></div><span class="settlement-dashboard-editor-badge">Tesztfutár</span></div>
+    <div class="notice">Csak ennek a futárnak a mentett tételeit módosítja. A mentés után ugyanaz az új verzió látszik a PWA-ban és a devtest.py-ban. A meglévő TIG PDF változatlan marad.</div>
+    <section class="settlement-worksheet-section"><h4>Pénzügyi értékek</h4><small>A levonások negatív előjellel szerepelnek. A darabszám módosítása önmagában nem számolja újra a díjakat.</small>
+      <table class="settlement-worksheet-table"><thead><tr><th>Tétel</th><th>Mentett alapérték</th><th>Új alapérték</th></tr></thead><tbody>${pilot.rows.map(row => `<tr><td><strong>${escapeHtml(row.label)}</strong><small>${escapeHtml(row.note || "")}</small></td><td>${escapeHtml(row.amountKind === "count" ? `${formatCount(row.amountHuf)} db` : formatHuf(row.amountHuf))}</td><td><label class="settlement-worksheet-value"><input type="number" step="1" data-worksheet-key="${escapeHtml(row.key)}" value="${escapeHtml(String(row.amountHuf))}" aria-label="${escapeHtml(row.label)} új értéke"><span>${row.amountKind === "count" ? "db" : "Ft"}</span></label></td></tr>`).join("")}</tbody></table>
+    </section>
+    <section class="settlement-worksheet-section"><div class="settlement-dashboard-editor-head"><div><h4>PWA kézi tételek</h4><small>Ezek az alapértékeken felüli módosítások. Egy sor eltávolítása csak ezt a sort veszi ki a tervezetből.</small></div><button type="button" class="secondary" data-dashboard-editor-add>+ Új tétel</button></div><div data-worksheet-manual-rows>${(pilot.manualRows || []).map(settlementDashboardPilotManualRow).join("")}</div>
+    ${(pilot.existingManualRows || []).length ? `<details><summary>Korábbi kézi forrástételek (${pilot.existingManualRows.length})</summary><small>A mentett alapértékek már tartalmazhatják ezeket; nem adjuk hozzá újra.</small>${pilot.existingManualRows.map(row => `<p>${escapeHtml(row.note || row.adjustment_type)} · ${escapeHtml(formatHuf(row.amount_huf))}</p>`).join("")}</details>` : ""}</section>
+    <section class="settlement-worksheet-section"><label>Módosítás indoka<textarea data-worksheet-note placeholder="Mi változott és miért?" rows="2"></textarea></label></section>
+    <section class="settlement-worksheet-section"><div class="settlement-worksheet-totals"><div><small>Mentett kifizetendő</small><strong>${escapeHtml(formatHuf(pilot.savedTotal))}</strong></div><div><small>Tervezett kifizetendő</small><strong data-worksheet-total>—</strong></div><div><small>Eltérés</small><strong data-worksheet-delta>—</strong></div></div>
+    <div class="settlement-worksheet-tig"><strong>TIG-bontás előnézete</strong><span data-worksheet-tig>—</span></div><div data-worksheet-changes></div>
+    <div class="settlement-dashboard-editor-actions"><button type="button" class="secondary" data-worksheet-preview>Előnézet számítása</button><button type="button" class="primary" data-worksheet-commit disabled>Változások mentése</button></div><div data-worksheet-message role="status" aria-live="polite"></div></section>
+  </div>`;
+}
+
+function readPilotWorksheet(editor) {
+  return { month: "2026-09", courierId: "12345", snapshotId: editor.dataset.snapshotId,
+    note: editor.querySelector("[data-worksheet-note]").value.trim(),
+    rows: [...editor.querySelectorAll("[data-worksheet-key]")].map(input => ({key: input.dataset.worksheetKey, amountHuf: Number(input.value)})),
+    manualRows: [...editor.querySelectorAll("[data-manual-id]")].map(row => {
+      const value = key => row.querySelector(`[data-manual-field="${key}"]`).value;
+      return {id: row.dataset.manualId, type: value("type"), amountHuf: Number(value("amountHuf")), note: value("note").trim(), validFrom: value("validFrom"), validTo: value("validTo")};
+    }) };
+}
+
+function invalidatePilotWorksheet(editor) {
+  if (!editor) return;
+  editor.worksheetPreview = null;
+  editor.querySelector("[data-worksheet-commit]").disabled = true;
+  editor.querySelector("[data-worksheet-total]").textContent = "—";
+  editor.querySelector("[data-worksheet-delta]").textContent = "—";
+  editor.querySelector("[data-worksheet-tig]").textContent = "—";
+  editor.querySelector("[data-worksheet-changes]").textContent = "";
+  editor.querySelector("[data-worksheet-message]").textContent = "A módosításokhoz friss előnézet szükséges.";
+}
+
+async function submitPilotWorksheet(editor, commit) {
+  if (state.settlementDashboardExpandedCourierId !== "12345" || state.settlementDashboardMonth !== "2026-09") return;
+  const payload = readPilotWorksheet(editor);
+  const message = editor.querySelector("[data-worksheet-message]");
+  if (!payload.note) { message.textContent = "A módosítás indoka kötelező."; return; }
+  if (commit && (!editor.worksheetPreview || editor.worksheetPreview.payload !== JSON.stringify(payload))) {
+    invalidatePilotWorksheet(editor); return;
+  }
+  const inputs = [...editor.querySelectorAll("input,select,textarea,button")];
+  inputs.forEach(input => { input.disabled = true; });
+  message.textContent = commit ? "Mentés folyamatban..." : "Előnézet számítása...";
+  try {
+    const result = await api(`/api/admin/settlement-worksheet/${commit ? "commit" : "preview"}`, {
+      method: "POST", body: JSON.stringify({...payload, previewHash: commit ? editor.worksheetPreview.hash : ""}),
+      loadingMessage: commit ? "Tesztfutár módosításainak mentése..." : "Tesztfutár előnézetének számítása...",
+    });
+    if (commit) {
+      delete state.settlementDashboardDetailCache["2026-09:12345"];
+      state.settlementDashboardPayment = null;
+      await loadSettlementDashboard();
+      if (state.settlementDashboardExpandedCourierId === "12345" && state.settlementDashboardMonth === "2026-09") {
+        await loadSettlementDashboardCourierDetail("12345");
+        const savedMessage = document.querySelector("[data-pilot-worksheet] [data-worksheet-message]");
+        if (savedMessage) savedMessage.textContent = `Mentve: v${result.version}. A devtest.py nézetet frissítve ugyanez a mentés jelenik meg. A korábbi TIG PDF nem frissült.`;
+      }
+    } else {
+      editor.worksheetPreview = {hash: result.previewHash, payload: JSON.stringify(payload)};
+      editor.querySelector("[data-worksheet-total]").textContent = formatHuf(result.totals.payable_total);
+      editor.querySelector("[data-worksheet-delta]").textContent = formatHuf(result.delta);
+      editor.querySelector("[data-worksheet-tig]").textContent = `${formatHuf(result.tig.finalTotalHuf)} átutalás${result.tig.cashGrossHuf ? ` + ${formatHuf(result.tig.cashGrossHuf)} külön KP` : ""}`;
+      editor.querySelector("[data-worksheet-changes]").innerHTML = result.changes.map(row => `<p>${escapeHtml(row.label)}: ${escapeHtml(formatHuf(row.before))} → ${escapeHtml(formatHuf(row.after))}</p>`).join("");
+      message.textContent = "Előnézet kész. Még nem történt mentés.";
+    }
+  } catch (error) {
+    message.textContent = error.message;
+    if (!commit) editor.worksheetPreview = null;
+  } finally {
+    inputs.forEach(input => { input.disabled = false; });
+    editor.querySelector("[data-worksheet-commit]").disabled = !editor.worksheetPreview;
+  }
 }
 
 function settlementDashboardComplaintManager(complaints = []) {
@@ -10971,7 +11066,18 @@ $("#settlement-import-config-panel")?.addEventListener("click", (event) => {
     renderSettlementImportConfig();
   }
 });
+$("#settlement-dashboard-panel")?.addEventListener("input", (event) => {
+  invalidatePilotWorksheet(event.target.closest("[data-pilot-worksheet]"));
+});
+$("#settlement-dashboard-panel")?.addEventListener("change", (event) => {
+  invalidatePilotWorksheet(event.target.closest("[data-pilot-worksheet]"));
+});
 $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
+  const worksheetAction = event.target.closest("[data-worksheet-preview], [data-worksheet-commit]");
+  if (worksheetAction) {
+    submitPilotWorksheet(worksheetAction.closest("[data-pilot-worksheet]"), worksheetAction.hasAttribute("data-worksheet-commit"));
+    return;
+  }
   const changeStatus = event.target.closest("[data-dashboard-change-status]");
   if (changeStatus) {
     event.preventDefault();
@@ -10999,13 +11105,17 @@ $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
   }
   const addEditorRow = event.target.closest("[data-dashboard-editor-add]");
   if (addEditorRow) {
-    addEditorRow.closest("[data-visual-only-editor]")?.querySelector("[data-worksheet-manual-rows]")
-      ?.insertAdjacentHTML("beforeend", settlementDashboardManualPreviewRow());
+    const pilot = addEditorRow.closest("[data-pilot-worksheet]");
+    addEditorRow.closest("[data-visual-only-editor], [data-pilot-worksheet]")?.querySelector("[data-worksheet-manual-rows]")
+      ?.insertAdjacentHTML("beforeend", pilot ? settlementDashboardPilotManualRow() : settlementDashboardManualPreviewRow());
+    invalidatePilotWorksheet(pilot);
     return;
   }
   const deleteEditorRow = event.target.closest("[data-dashboard-editor-delete]");
   if (deleteEditorRow) {
+    const pilot = deleteEditorRow.closest("[data-pilot-worksheet]");
     deleteEditorRow.closest("[data-dashboard-editor-row]")?.remove();
+    invalidatePilotWorksheet(pilot);
     return;
   }
   const filter = event.target.closest("[data-settlement-status-filter]");
