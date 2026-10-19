@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v238";
+const APP_VERSION = "v240";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5314,121 +5314,53 @@ function settlementDashboardEditorRows(workflow = {}) {
   return Array.isArray(workflow.editableFinanceRows) ? workflow.editableFinanceRows : [];
 }
 
-function settlementDashboardFinanceEditor(workflow = {}) {
-  const rows = settlementDashboardEditorRows(workflow);
-  return `<div class="settlement-dashboard-editor">
-    <div class="settlement-dashboard-editor-head">
-      <div>
-        <strong>Pénzügyi értékek szerkesztése</strong>
-        <small>Az ideiglenes mentés után a Frissítés újraszámolja a végösszeget.</small>
-      </div>
-      <span class="settlement-dashboard-editor-badge">${escapeHtml(formatCount(rows.length))} sor</span>
-    </div>
-    <div class="settlement-dashboard-editor-rows">
-      ${rows.map((row, index) => `
-        <div class="settlement-dashboard-editor-row" data-dashboard-editor-row data-key="${escapeHtml(row.key || `new_${index + 1}`)}">
-          <input type="text" data-editor-field="label" value="${escapeHtml(row.label || "")}" placeholder="Megnevezés" aria-label="Megnevezés">
-          <input type="number" data-editor-field="amountHuf" value="${escapeHtml(String(row.amountHuf ?? 0))}" step="1" aria-label="Összeg">
-          <select data-editor-field="amountKind" aria-label="Típus">
-            <option value="huf" ${String(row.amountKind || "huf") === "huf" ? "selected" : ""}>Ft</option>
-            <option value="count" ${String(row.amountKind || "") === "count" ? "selected" : ""}>db</option>
-          </select>
-          <input type="text" data-editor-field="note" value="${escapeHtml(row.note || "")}" placeholder="Megjegyzés" aria-label="Megjegyzés">
-          <button class="icon-button settlement-dashboard-editor-delete" type="button" data-dashboard-editor-delete title="Sor törlése" aria-label="Sor törlése">×</button>
-        </div>
-      `).join("")}
-    </div>
-    <div class="settlement-dashboard-editor-actions">
-      <button class="secondary" type="button" data-dashboard-editor-add>+ Új sor</button>
-      <button class="secondary" type="button" data-dashboard-editor-draft>Ideiglenes mentés</button>
-      <button class="primary" type="button" data-dashboard-editor-refresh>Frissítés és újraszámítás</button>
-      <button class="secondary" type="button" data-dashboard-editor-google>Bonus/Malus frissítése</button>
-      <button class="primary" type="button" data-dashboard-editor-snapshot>Mentés új snapshotba</button>
-    </div>
-    <small class="settlement-dashboard-editor-help">A végleges mentés után ezek az értékek jelennek meg a futár elszámolásában és a devtest.py nézetben is.</small>
+function settlementDashboardManualPreviewRow() {
+  const month = state.settlementDashboardMonth || previousLocalMonth();
+  const [year, monthNumber] = month.split("-").map(Number);
+  const lastDay = new Date(year, monthNumber, 0).getDate();
+  return `<div class="settlement-worksheet-manual-row" data-dashboard-editor-row>
+    <label>Típus<select aria-label="Kézi tétel típusa">${["Bónusz", "Malus", "Korrekció +", "Korrekció −", "Ügyfélértékelés", "ATM levonás", "Egyéb kiadás"].map(label => `<option>${label}</option>`).join("")}</select></label>
+    <label>Összeg (Ft)<input type="number" value="0" step="1" aria-label="Kézi tétel összege"></label>
+    <label class="settlement-worksheet-note">Megjegyzés<input type="text" placeholder="A módosítás indoka" aria-label="Kézi tétel megjegyzése"></label>
+    <label>Érvényes ettől<input type="date" value="${escapeHtml(month)}-01" aria-label="Érvényesség kezdete"></label>
+    <label>Érvényes eddig<input type="date" value="${escapeHtml(month)}-${lastDay}" aria-label="Érvényesség vége"></label>
+    <button class="secondary settlement-dashboard-editor-delete" type="button" data-dashboard-editor-delete aria-label="Kézi tétel eltávolítása">×</button>
   </div>`;
 }
 
-function readSettlementDashboardEditorRows() {
-  return [...document.querySelectorAll("#settlement-dashboard-panel [data-dashboard-editor-row]")].map((row, index) => ({
-    key: row.dataset.key || `new_${index + 1}`,
-    label: row.querySelector('[data-editor-field="label"]')?.value || "",
-    amountHuf: Number(row.querySelector('[data-editor-field="amountHuf"]')?.value || 0),
-    amountKind: row.querySelector('[data-editor-field="amountKind"]')?.value || "huf",
-    note: row.querySelector('[data-editor-field="note"]')?.value || "",
-  }));
-}
-
-async function settlementDashboardEditorRequest(endpoint, button) {
-  const courierId = state.settlementDashboardExpandedCourierId || "";
-  if (!courierId) return;
-  const month = state.settlementDashboardMonth || previousLocalMonth();
-  const previousText = button?.textContent || "";
-  if (button) {
-    button.disabled = true;
-    button.textContent = "Mentés...";
-  }
-  try {
-    const payload = await api(endpoint, {
-      method: "POST",
-      body: JSON.stringify({ month, courierId, rows: readSettlementDashboardEditorRows() }),
-      loadingMessage: "Pénzügyi értékek mentése...",
-    });
-    const current = state.settlementDashboardDetail || {};
-    const workflow = current.workflow || {};
-    state.settlementDashboardDetail = {
-      ...current,
-      workflow: {
-        ...workflow,
-        financialBreakdown: payload.financialBreakdown || workflow.financialBreakdown,
-        editableFinanceRows: payload.rows || workflow.editableFinanceRows,
-      },
-      error: "",
-    };
-    state.settlementDashboardDetailCache[`${month}:${courierId}`] = state.settlementDashboardDetail.workflow;
-    if (endpoint.endsWith("/save-snapshot")) {
-      state.settlementDashboardEditCourierId = "";
-      await loadSettlementDashboard();
-    } else {
-      renderSettlementDashboard();
-    }
-  } catch (error) {
-    window.alert(error.message);
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = previousText;
-    }
-  }
-}
-
-async function refreshSettlementDashboardGoogle(button) {
-  const courierId = state.settlementDashboardExpandedCourierId || "";
-  if (!courierId) return;
-  const previousText = button?.textContent || "";
-  if (button) {
-    button.disabled = true;
-    button.textContent = "Sheet betöltése...";
-  }
-  try {
-    const month = state.settlementDashboardMonth || previousLocalMonth();
-    await api("/api/admin/settlement-finance-editor/google-refresh", {
-      method: "POST",
-      body: JSON.stringify({ month, courierId, rows: [] }),
-      loadingMessage: "Bonus/Malus frissítése...",
-    });
-    delete state.settlementDashboardDetailCache[`${month}:${courierId}`];
-    await loadSettlementDashboardCourierDetail(courierId);
-    state.settlementDashboardEditCourierId = courierId;
-    renderSettlementDashboard();
-  } catch (error) {
-    window.alert(error.message);
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = previousText;
-    }
-  }
+function settlementDashboardFinanceEditor(workflow = {}) {
+  const rows = settlementDashboardEditorRows(workflow);
+  const totals = new Set(["payable", "income", "deductions"]);
+  if (rows.some(row => ["correction_income", "correction_deduction"].includes(row.key))) totals.add("correction");
+  const values = rows.filter(row => !totals.has(row.key));
+  const savedTotal = workflow.financialBreakdown?.totalPayableHuf ?? rows.find(row => row.key === "payable")?.amountHuf ?? 0;
+  const tigTotal = workflow.tigBreakdown?.finalTotalHuf;
+  return `<div class="settlement-dashboard-editor settlement-worksheet" data-visual-only-editor>
+    <div class="settlement-dashboard-editor-head">
+      <div><strong>Pénzügyi munkalap</strong><small>A mezők kipróbálhatók. A módosítások csak ezen a képernyőn látszanak, bezáráskor elvesznek.</small></div>
+      <span class="settlement-dashboard-editor-badge">Vizuális előnézet</span>
+    </div>
+    <section class="settlement-worksheet-section">
+      <h4>Pénzügyi értékek</h4>
+      <table class="settlement-worksheet-table"><thead><tr><th>Tétel</th><th>Mentett érték</th><th>Új érték</th></tr></thead><tbody>
+        ${values.map(row => `<tr><td><strong>${escapeHtml(row.label || row.key)}</strong><small>${escapeHtml(row.note || "")}</small></td>
+          <td>${escapeHtml(row.amountKind === "count" ? `${formatCount(row.amountHuf || 0)} db` : formatHuf(row.amountHuf || 0))}</td>
+          <td><label class="settlement-worksheet-value"><input type="number" value="${escapeHtml(String(row.amountHuf ?? 0))}" step="1" aria-label="${escapeHtml(row.label || row.key)} új értéke"><span>${row.amountKind === "count" ? "db" : "Ft"}</span></label></td></tr>`).join("") || `<tr><td colspan="3">Nincs szerkeszthető pénzügyi tétel.</td></tr>`}
+      </tbody></table>
+      <small class="settlement-dashboard-editor-help">Az összesített végösszegek külön, az előnézetben jelennek meg.</small>
+    </section>
+    <section class="settlement-worksheet-section">
+      <div class="settlement-dashboard-editor-head"><div><h4>Kézi tételek</h4><small>Új módosítások tervezete. A meglévő összegek a fenti táblázatban láthatók.</small></div><button class="secondary" type="button" data-dashboard-editor-add>+ Új tétel</button></div>
+      <div data-worksheet-manual-rows>${settlementDashboardManualPreviewRow()}</div>
+    </section>
+    <section class="settlement-worksheet-section"><label>Módosítás indoka<textarea placeholder="Mi változott és miért?" rows="2" aria-label="Módosítás indoka"></textarea></label></section>
+    <section class="settlement-worksheet-section">
+      <div class="settlement-worksheet-totals"><div><small>Mentett kifizetendő</small><strong>${escapeHtml(formatHuf(savedTotal))}</strong></div><div><small>Tervezett kifizetendő</small><strong>—</strong></div><div><small>Eltérés</small><strong>—</strong></div></div>
+      <div class="settlement-worksheet-tig"><strong>TIG</strong><span>${tigTotal == null ? "A TIG összege ezen a nézeten még nincs betöltve." : `Mentett összeg: ${escapeHtml(formatHuf(tigTotal))}`}</span></div>
+      <div class="settlement-dashboard-editor-actions"><button class="secondary" type="button" disabled>Előnézet számítása</button><button class="primary" type="button" disabled>Változások mentése</button></div>
+      <small class="settlement-dashboard-editor-help">Az újraszámítás, mentés és TIG-módosítás ebben a vizuális változatban nem működik.</small>
+    </section>
+  </div>`;
 }
 
 function settlementDashboardComplaintManager(complaints = []) {
@@ -5569,7 +5501,7 @@ function renderSettlementDashboardExpanded(row) {
       </div>
       <div class="settlement-dashboard-expanded-actions">
         ${renderSettlementDashboardStatus(row.status || {}, row.courierId)}
-        <button class="icon-button settlement-dashboard-edit" type="button" data-settlement-dashboard-edit="${escapeHtml(row.courierId || "")}" title="Futár értékeinek szerkesztése" aria-label="Futár értékeinek szerkesztése"><span aria-hidden="true">✎</span><span>Szerkesztés</span></button>
+        <button class="icon-button settlement-dashboard-edit" type="button" data-settlement-dashboard-edit="${escapeHtml(row.courierId || "")}" aria-pressed="${state.settlementDashboardEditCourierId === String(row.courierId || "")}" title="Futár értékeinek szerkesztése" aria-label="Futár értékeinek szerkesztése"><span aria-hidden="true">✎</span><span>Szerkesztés</span></button>
       </div>
     </div>
     ${settlementDashboardDetailTabs()}
@@ -5652,7 +5584,7 @@ function renderSettlementDashboard() {
           </div>
           <strong>${escapeHtml(formatHuf(row.totalPayableHuf || 0))}</strong>
           </button>
-          <button class="icon-button settlement-dashboard-edit" type="button" data-settlement-dashboard-edit="${escapeHtml(row.courierId || "")}" title="Futár értékeinek szerkesztése" aria-label="Futár értékeinek szerkesztése"><span aria-hidden="true">✎</span><span>Szerkesztés</span></button>
+          <button class="icon-button settlement-dashboard-edit" type="button" data-settlement-dashboard-edit="${escapeHtml(row.courierId || "")}" aria-pressed="${state.settlementDashboardEditCourierId === String(row.courierId || "")}" title="Futár értékeinek szerkesztése" aria-label="Futár értékeinek szerkesztése"><span aria-hidden="true">✎</span><span>Szerkesztés</span></button>
         </div>
         ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? renderSettlementDashboardExpanded(row) : renderDashboardInvoiceIssue(row)}
       `).join("") : `<div class="empty-card">${activeStatusFilter ? "Nincs futár ebben a státuszban." : "Nincs futár a kiválasztott hónapban."}</div>`}
@@ -11051,50 +10983,29 @@ $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
     const courierId = editButton.dataset.settlementDashboardEdit || "";
+    if (state.settlementDashboardEditCourierId === courierId) {
+      state.settlementDashboardEditCourierId = "";
+      renderSettlementDashboard();
+      return;
+    }
     state.settlementDashboardEditCourierId = courierId;
     state.settlementDashboardExpandedTab = "settlement";
     if (state.settlementDashboardExpandedCourierId === courierId && state.settlementDashboardDetail?.workflow) {
       renderSettlementDashboard();
     } else {
-      loadSettlementDashboardCourierDetail(courierId).then(() => {
-        state.settlementDashboardEditCourierId = courierId;
-        renderSettlementDashboard();
-      });
+      loadSettlementDashboardCourierDetail(courierId);
     }
     return;
   }
   const addEditorRow = event.target.closest("[data-dashboard-editor-add]");
   if (addEditorRow) {
-    const rows = readSettlementDashboardEditorRows();
-    rows.push({ key: `new_${Date.now()}`, label: "", amountHuf: 0, amountKind: "huf", note: "" });
-    const workflow = state.settlementDashboardDetail?.workflow || {};
-    state.settlementDashboardDetail.workflow = { ...workflow, editableFinanceRows: rows };
-    renderSettlementDashboard();
+    addEditorRow.closest("[data-visual-only-editor]")?.querySelector("[data-worksheet-manual-rows]")
+      ?.insertAdjacentHTML("beforeend", settlementDashboardManualPreviewRow());
     return;
   }
   const deleteEditorRow = event.target.closest("[data-dashboard-editor-delete]");
   if (deleteEditorRow) {
     deleteEditorRow.closest("[data-dashboard-editor-row]")?.remove();
-    return;
-  }
-  const draftEditor = event.target.closest("[data-dashboard-editor-draft]");
-  if (draftEditor) {
-    settlementDashboardEditorRequest("/api/admin/settlement-finance-editor/draft", draftEditor);
-    return;
-  }
-  const refreshEditor = event.target.closest("[data-dashboard-editor-refresh]");
-  if (refreshEditor) {
-    settlementDashboardEditorRequest("/api/admin/settlement-finance-editor/refresh", refreshEditor);
-    return;
-  }
-  const googleEditor = event.target.closest("[data-dashboard-editor-google]");
-  if (googleEditor) {
-    refreshSettlementDashboardGoogle(googleEditor);
-    return;
-  }
-  const snapshotEditor = event.target.closest("[data-dashboard-editor-snapshot]");
-  if (snapshotEditor) {
-    settlementDashboardEditorRequest("/api/admin/settlement-finance-editor/save-snapshot", snapshotEditor);
     return;
   }
   const filter = event.target.closest("[data-settlement-status-filter]");
