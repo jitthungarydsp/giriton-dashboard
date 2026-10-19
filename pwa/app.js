@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v234";
+const APP_VERSION = "v235";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5670,6 +5670,8 @@ function renderSettlementDashboard() {
   `;
 }
 
+const settlementDashboardDetailRequests = new Map();
+
 async function loadSettlementDashboardCourierDetail(courierId, {includeTig = state.settlementDashboardExpandedTab === "tig"} = {}) {
   const cleanId = String(courierId || "").trim();
   if (!cleanId) return;
@@ -5684,6 +5686,10 @@ async function loadSettlementDashboardCourierDetail(courierId, {includeTig = sta
   }
   state.settlementDashboardDetail = { courierId: cleanId, loading: true, workflow: null, error: "" };
   renderSettlementDashboard();
+  const requestKey = `${cacheKey}:${includeTig}`;
+  let request = settlementDashboardDetailRequests.get(requestKey);
+  const stillSelected = () => state.settlementDashboardExpandedCourierId === cleanId
+    && (state.settlementDashboardMonth || previousLocalMonth()) === month;
   try {
     const params = new URLSearchParams({
       month,
@@ -5691,11 +5697,21 @@ async function loadSettlementDashboardCourierDetail(courierId, {includeTig = sta
       _: String(Date.now()),
     });
     if (includeTig) params.set("include_tig", "true");
-    const workflow = await api(`/api/admin/settlement-dashboard/detail?${params}`, { silentLoading: true });
+    if (!request) {
+      request = api(`/api/admin/settlement-dashboard/detail?${params}`, { silentLoading: true });
+      settlementDashboardDetailRequests.set(requestKey, request);
+    }
+    const response = await request;
+    const existing = state.settlementDashboardDetailCache[cacheKey];
+    const workflow = existing?.tigLoaded && !response.tigLoaded ? existing : response;
     state.settlementDashboardDetailCache[cacheKey] = workflow;
+    if (!stillSelected()) return;
     state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow, error: "" };
   } catch (error) {
+    if (!stillSelected()) return;
     state.settlementDashboardDetail = { courierId: cleanId, loading: false, workflow: null, error: error.message };
+  } finally {
+    if (settlementDashboardDetailRequests.get(requestKey) === request) settlementDashboardDetailRequests.delete(requestKey);
   }
   renderSettlementDashboard();
 }

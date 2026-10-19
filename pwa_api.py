@@ -22881,6 +22881,28 @@ def admin_reopen_monthly_payment(
     return {**result, "payment": payment}
 
 
+def read_dashboard_detail_snapshot(courier_id: str, month: date) -> dict[str, Any]:
+    """Read one saved version with its items and display sources in one round trip."""
+    try:
+        rows = supabase_rest(
+            "GET", "courier_finance_snapshot", schema="settlement",
+            params={
+                "select": "*,items:courier_finance_snapshot_item(section,item_key,item_label,amount_value,amount_kind,note,display_order),sources:courier_finance_snapshot_source(source_key,source_table,payload,row_count)",
+                "courier_id": f"eq.{courier_id}",
+                "period_start": f"eq.{month.replace(day=1).isoformat()}",
+                "order": "version.desc", "limit": "1",
+                "items.order": "section.asc,display_order.asc", "items.limit": "500",
+                "sources.order": "source_key.asc", "sources.limit": "100",
+                "sources.source_key": "in.(card_drilldowns,manual_adjustments,courier_profile,tig_breakdown,target_reserve_month)",
+            },
+            timeout=30,
+        )
+        return dict(rows[0]) if rows else {}
+    except Exception:
+        # Older installations may not expose the foreign-key relationships yet.
+        return read_latest_courier_finance_snapshot(courier_id, month, include_sources=True)
+
+
 @app.get("/api/admin/settlement-dashboard/detail")
 def admin_settlement_dashboard_detail(
     month: str = Query(default=""),
@@ -22895,10 +22917,16 @@ def admin_settlement_dashboard_detail(
         raise HTTPException(status_code=422, detail="Hiányzik a futár azonosító.")
     view_user = {
         "courierId": courier_id,
-        "username": read_courier_display_name(courier_id) or courier_id,
+        "username": courier_id,
     }
-    latest_snapshot = read_latest_courier_finance_snapshot(courier_id, month_value, include_sources=True)
-    draft_rows = read_mobile_breakdown_overrides(courier_id, month_value)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        snapshot_future = executor.submit(read_dashboard_detail_snapshot, courier_id, month_value)
+        drafts_future = executor.submit(read_mobile_breakdown_overrides, courier_id, month_value)
+        workflow_future = executor.submit(read_workflow_rows, view_user, month_value)
+        latest_snapshot = snapshot_future.result()
+        draft_rows = drafts_future.result()
+        documents, _status_rows, complaints = workflow_future.result()
+    view_user["username"] = str(latest_snapshot.get("courier_name") or read_courier_display_name(courier_id) or courier_id)
     editable_rows = admin_finance_rows_from_snapshot(latest_snapshot)
     if draft_rows:
         editable_rows = admin_merge_finance_edit_rows(
@@ -22914,17 +22942,10 @@ def admin_settlement_dashboard_detail(
                 for key, value in draft_rows.items()
             ],
         )
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        workflow_future = executor.submit(read_workflow_rows, view_user, month_value)
-        financial_future = executor.submit(
-            build_financial_breakdown,
-            view_user,
-            month_value,
-            allow_unpublished=True,
-            snapshot_only=True,
-        )
-        documents, _status_rows, complaints = workflow_future.result()
-        financial_breakdown = financial_future.result()
+    financial_breakdown = (
+        build_financial_breakdown_from_snapshot(view_user, month_value, latest_snapshot, include_quality_notes=False)
+        if latest_snapshot else None
+    ) or {"available": False}
     documents = [row for row in documents if document_belongs_to_process(row, "")]
     complaints = [
         row for row in complaints
