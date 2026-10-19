@@ -158,6 +158,25 @@ def _extract_invoice_dates(text: str) -> dict[str, date | None]:
         r"fizetesi\s+hatarido",
         r"fizetesi\s+hatar",
     ]
+    # NAV PDFs can extract the complete metadata row as value-before-label:
+    # D1 Teljesítés: D2 Keltezés: D3 Fizetési határidő:
+    # Recognize the whole sequence before trying label-before-value lookups,
+    # which would otherwise consume the next column or the invoice period.
+    date_value = r"20\d{2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2}\.?"
+    reversed_row = re.search(
+        rf"(?P<performance>{date_value})\s*(?:{'|'.join(performance_labels)})\s*:\s*"
+        rf"(?P<issue>{date_value})\s*(?:{'|'.join(issue_labels)})\s*:\s*"
+        rf"(?P<due>{date_value})\s*(?:{'|'.join(due_labels)})\s*:",
+        folded,
+    )
+    if reversed_row:
+        reversed_dates = {
+            "issue_date": _parse_date(reversed_row.group("issue")),
+            "performance_date": _parse_date(reversed_row.group("performance")),
+            "due_date": _parse_date(reversed_row.group("due")),
+        }
+        if all(reversed_dates.values()):
+            return reversed_dates
     dates = {
         "issue_date": _extract_first_labeled_date(text, issue_labels) or _extract_near_labeled_date(text, issue_labels),
         "performance_date": _extract_first_labeled_date(text, performance_labels) or _extract_near_labeled_date(text, performance_labels),

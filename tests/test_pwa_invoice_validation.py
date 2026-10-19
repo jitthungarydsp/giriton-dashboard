@@ -2,7 +2,35 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from resources.pwa_invoice_validation import validate_invoice
+from resources.pwa_invoice_validation import _extract_invoice_dates, validate_invoice
+
+
+class InvoiceDateOrderTest(unittest.TestCase):
+    def test_nav_values_before_labels_do_not_pick_invoice_period(self):
+        text = """Fizetési mód: Átutalás
+2026.10.19. Teljesítés: 2026.10.19. Keltezés: 2026.10.26. Fizetési határidő:
+HUF Pénznem: 2026.09.01.-2026.09.30. Teljesítési időszak:"""
+        fields = _extract_invoice_dates(text)
+        self.assertEqual(fields, {
+            "issue_date": date(2026, 10, 19), "performance_date": date(2026, 10, 19),
+            "due_date": date(2026, 10, 26),
+        })
+        self.assertEqual((fields["due_date"] - fields["issue_date"]).days, 7)
+
+    def test_reversed_columns_keep_distinct_performance_and_issue_dates(self):
+        fields = _extract_invoice_dates(
+            "2026.10.18.\nTeljesítés:\n2026.10.19.\nKeltezés:\n2026.10.27.\nFizetési határidő:"
+        )
+        self.assertEqual(fields["performance_date"], date(2026, 10, 18))
+        self.assertEqual(fields["issue_date"], date(2026, 10, 19))
+        self.assertEqual(fields["due_date"], date(2026, 10, 27))
+
+    def test_normal_label_before_value_order_is_unchanged(self):
+        fields = _extract_invoice_dates(
+            "Teljesítés: 2026.10.19. Keltezés: 2026.10.19. Fizetési határidő: 2026.10.26."
+        )
+        self.assertEqual(fields["issue_date"], date(2026, 10, 19))
+        self.assertEqual(fields["due_date"], date(2026, 10, 26))
 
 
 class InvoicePdfSpacingTest(unittest.TestCase):
