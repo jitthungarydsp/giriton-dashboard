@@ -189,7 +189,7 @@ class DashboardStatusChangeRequest(BaseModel):
     courierId: str
     target: str
     note: str
-    closeInvoiceComplaints: bool = False
+    closeInvoiceComplaints: bool = False  # Legacy clients; closure is now automatic.
 
 
 class DashboardInvoiceRecheckRequest(BaseModel):
@@ -22708,17 +22708,13 @@ def admin_change_dashboard_status(
     month = parse_month(payload.month)
     note = str(payload.note or "").strip()
     target = str(payload.target or "").strip()
-    close_invoice_complaints = bool(getattr(payload, "closeInvoiceComplaints", False))
-    if close_invoice_complaints and target != "payment_wait":
-        raise HTTPException(status_code=422, detail="A számlaellenőrzési reklamációk csak Kifizetésre vár státuszba engedéskor zárhatók le együtt.")
     if not courier_id or not note:
         raise HTTPException(status_code=422, detail="Válassz futárt és add meg a módosítás megjegyzését.")
     if target not in {"settlement_wait", "tig_wait", "tig_accept", "invoice_upload", "invoice_check", "payment_wait"}:
         raise HTTPException(status_code=422, detail="Ismeretlen célstátusz. A kifizetést a Kifizetés fülön zárd le.")
     if courier_has_efo_assignment({"courierId": courier_id, "username": courier_id}, month):
         raise HTTPException(status_code=409, detail="EFO folyamatnál a státuszt a futár részletes folyamatnézetében kezeld.")
-    rpc = "pwa_change_monthly_status_with_complaints" if close_invoice_complaints else "pwa_change_monthly_status"
-    result = supabase_rest("POST", f"rpc/{rpc}", schema="settlement",
+    result = supabase_rest("POST", "rpc/pwa_change_monthly_status", schema="settlement",
                           explain_workflow_error=True,
                           payload={"p_courier_id": courier_id, "p_period_start": month.isoformat(),
                                    "p_target": target, "p_note": note,

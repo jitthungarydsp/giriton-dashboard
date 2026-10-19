@@ -1,11 +1,17 @@
 -- Explicit admin action only; installation does not change any existing state.
+-- Rerun this migration when upgrading: status saves now close monthly workflow
+-- complaints atomically and preserve their previous values in the audit table.
 begin;
 create schema if not exists pwa_dashboard_read;
 create table if not exists pwa_dashboard_read.monthly_status_change_audit (
     id uuid primary key default gen_random_uuid(), courier_id text not null,
     period_start date not null, target text not null, note text not null,
-    changed_by text not null, previous_states jsonb not null, created_at timestamptz not null default now()
+    changed_by text not null, previous_states jsonb not null,
+    previous_complaints jsonb not null default '[]'::jsonb,
+    created_at timestamptz not null default now()
 );
+alter table pwa_dashboard_read.monthly_status_change_audit
+    add column if not exists previous_complaints jsonb not null default '[]'::jsonb;
 revoke all on pwa_dashboard_read.monthly_status_change_audit from public, anon, authenticated;
 grant usage on schema pwa_dashboard_read to service_role;
 grant select, insert on pwa_dashboard_read.monthly_status_change_audit to service_role;
@@ -23,10 +29,12 @@ declare
     v_name text;
     v_has_tig boolean;
     v_states jsonb;
+    v_complaints jsonb;
+    v_closed integer;
 begin
     if nullif(trim(p_note), '') is null or nullif(trim(p_actor), '') is null
        or nullif(trim(p_courier_id), '') is null
-       or p_period_start <> date_trunc('month', p_period_start)::date then
+       or p_period_start is null or p_period_start <> date_trunc('month', p_period_start)::date then
         raise exception 'A futár, hónap és módosítási megjegyzés kötelező.';
     end if;
     v_index := array_position(v_targets, p_target);
@@ -37,11 +45,6 @@ begin
        or exists (select 1 from public.peopleforce_card_statuses where courier_id::text = p_courier_id
         and document_month = p_period_start and action_key = 'invoice_payment' and status = 'done') then
         raise exception 'A kifizetés már lezárva. Előbb a Kifizetés fülön nyisd vissza.';
-    end if;
-    if exists (select 1 from public.peopleforce_complaints where courier_id::text = p_courier_id
-        and document_month = p_period_start and document_type in ('settlement','tig','invoice_submit','invoice_check')
-        and status not in ('resolved','closed','deleted') and nullif(trim(admin_response), '') is null and responded_at is null) then
-        raise exception 'Előbb válaszold meg vagy zárd le a nyitott reklamációt.';
     end if;
     select courier_name into v_name from settlement.courier_finance_snapshot where courier_id = p_courier_id
         and period_start = p_period_start order by version desc limit 1;
@@ -69,9 +72,26 @@ begin
     select coalesce(jsonb_agg(to_jsonb(s)), '[]'::jsonb) into v_states from public.peopleforce_card_statuses s
         where courier_id::text = p_courier_id and document_month = p_period_start
         and action_key = any(v_actions);
+    -- Close only this monthly workflow's complaints, retaining their previous
+    -- values and replies. A later failure rolls back this entire transaction.
+    select coalesce(jsonb_agg(to_jsonb(c)), '[]'::jsonb) into v_complaints
+    from (
+        select * from public.peopleforce_complaints
+        where courier_id::text = p_courier_id and document_month = p_period_start
+          and document_type in ('settlement','tig','invoice_submit','invoice_check')
+          and coalesce(status, 'new') not in ('resolved','closed','deleted')
+        for update
+    ) c;
+    update public.peopleforce_complaints
+    set status = 'closed',
+        admin_response = concat_ws(E'\n\n', nullif(trim(admin_response), ''),
+            'Admin státuszváltás: ' || p_target || '. ' || p_note),
+        responded_by = p_actor, responded_at = now()
+    where id::text in (select item->>'id' from jsonb_array_elements(v_complaints) item);
+    get diagnostics v_closed = row_count;
     insert into pwa_dashboard_read.monthly_status_change_audit
-        (courier_id,period_start,target,note,changed_by,previous_states)
-        values (p_courier_id,p_period_start,p_target,p_note,p_actor,v_states);
+        (courier_id,period_start,target,note,changed_by,previous_states,previous_complaints)
+        values (p_courier_id,p_period_start,p_target,p_note,p_actor,v_states,v_complaints);
     delete from public.peopleforce_card_statuses where courier_id::text = p_courier_id
         and document_month = p_period_start and action_key = any(v_actions);
     v_completed := case p_target when 'settlement_wait' then 0 when 'tig_wait' then 1
@@ -85,7 +105,7 @@ begin
                     'Admin státuszváltás: ' || p_target || '. ' || p_note,p_actor,now());
         end if;
     end loop;
-    return jsonb_build_object('ok',true,'target',p_target);
+    return jsonb_build_object('ok',true,'target',p_target,'closedComplaints',v_closed);
 end;
 $$;
 revoke all on function settlement.pwa_change_monthly_status(text,date,text,text,text) from public, anon, authenticated;

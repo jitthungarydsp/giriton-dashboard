@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v235";
+const APP_VERSION = "v236";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5075,7 +5075,7 @@ function openSettlementDashboardStatusEditor(courierId) {
     <p>Jelenlegi státusz: <strong>${escapeHtml(row.status?.label || "Ismeretlen")}</strong></p>
     <label>Új státusz<select name="target">${options.map(([key, label]) => `<option value="${key}" ${row.status?.label === label ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
     <label>Módosítás megjegyzése<textarea name="note" required placeholder="Miért kerül ebbe a státuszba?"></textarea></label>
-    <div data-close-invoice-complaints hidden><label><input type="checkbox" name="closeInvoiceComplaints"> A számlaellenőrzéshez tartozó nyitott reklamációkat is zárom.</label><small>A módosítás megjegyzése kerül a lezárás indokába. A többi reklamáció külön kezelendő.</small></div>
+    <div class="notice">Mentéskor a futár ehhez a havi folyamathoz tartozó nyitott reklamációi automatikusan lezárulnak. A módosítás megjegyzése kerül a lezárás indokába.</div>
     <div class="notice">Ez a futár havi folyamatát módosítja. A cél előtti lépéseket admin által teljesítettnek jelöli, a későbbieket visszalépteti. Az összeg nem változik. A kifizetést a Kifizetés fülön lehet lezárni vagy visszanyitni.</div>
     <div data-status-error role="alert"></div>
     <button type="button" class="secondary" data-recheck-latest-invoice>Ellenőrzés újrafuttatása</button>
@@ -5086,15 +5086,6 @@ function openSettlementDashboardStatusEditor(courierId) {
   document.body.appendChild(dialog);
   dialog.querySelector("[data-status-cancel]").onclick = () => dialog.close();
   dialog.addEventListener("close", () => dialog.remove());
-  const statusForm = dialog.querySelector("form");
-  const updateComplaintClosure = () => {
-    const available = statusForm.elements.target.value === "payment_wait";
-    dialog.querySelector("[data-close-invoice-complaints]").hidden = !available;
-    statusForm.elements.closeInvoiceComplaints.disabled = !available;
-    if (!available) statusForm.elements.closeInvoiceComplaints.checked = false;
-  };
-  statusForm.elements.target.addEventListener("change", updateComplaintClosure);
-  updateComplaintClosure();
   dialog.querySelector("[data-recheck-latest-invoice]").addEventListener("click", async () => {
     const resultBox = dialog.querySelector("[data-invoice-recheck-result]");
     const buttons = [...dialog.querySelectorAll("button")];
@@ -5112,7 +5103,7 @@ function openSettlementDashboardStatusEditor(courierId) {
         ${(result.documents || []).map(item => `<div>Ellenőrzött számla: ${escapeHtml(item.fileName || item.id)}</div>`).join("")}
         ${(validation.checks || []).filter(check => check.status === "error").map(check => `<div>${escapeHtml(check.title)}: ${escapeHtml(check.detail || "")}</div>`).join("")}
         ${result.paymentClosed ? `<div>A lezárt kifizetés állapota változatlan.</div>` : ""}
-        ${validation.ok ? `<small>A nyitott reklamációk lezárása a státusz mentésekor külön kérhető.</small>` : ""}`;
+        ${validation.ok ? `<small>A havi folyamathoz tartozó nyitott reklamációk a státusz mentésekor automatikusan lezárulnak.</small>` : ""}`;
       delete state.settlementDashboardDetailCache[`${month}:${courierId}`];
       if (state.settlementDashboardPayment?.courierId === String(courierId)) state.settlementDashboardPayment = null;
       await loadSettlementDashboard();
@@ -5135,8 +5126,7 @@ function openSettlementDashboardStatusEditor(courierId) {
     error.textContent = "";
     try {
       await api("/api/admin/settlement-dashboard/status", {method:"POST",
-        body:JSON.stringify({month, courierId:String(courierId), target:form.elements.target.value, note,
-          closeInvoiceComplaints: form.elements.target.value === "payment_wait" && statusForm.elements.closeInvoiceComplaints.checked}),
+        body:JSON.stringify({month, courierId:String(courierId), target:form.elements.target.value, note}),
         loadingMessage:"Státusz mentése..."});
       delete state.settlementDashboardDetailCache[`${month}:${courierId}`];
       if (state.settlementDashboardPayment?.courierId === String(courierId)) state.settlementDashboardPayment = null;

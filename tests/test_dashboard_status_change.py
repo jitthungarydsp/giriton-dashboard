@@ -72,24 +72,38 @@ class DashboardStatusChangeTest(unittest.TestCase):
         with self.assertRaises(Error): ns["admin_change_dashboard_status"](payload)
         self.assertEqual(calls, [])
 
-    def test_payment_approval_can_close_invoice_complaints_in_one_transaction(self):
+    def test_all_status_targets_close_complaints_without_opt_in(self):
+        ns, calls, _ = self.endpoint()
+        for target in ("settlement_wait", "tig_wait", "tig_accept", "invoice_upload", "invoice_check", "payment_wait"):
+            with self.subTest(target=target):
+                calls.clear()
+                payload = SimpleNamespace(month="2026-09", courierId="7244", target=target,
+                                          note="Új számla szükséges")
+                ns["admin_change_dashboard_status"](payload)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][0], ("POST", "rpc/pwa_change_monthly_status"))
+                self.assertEqual(calls[0][1]["payload"], {
+                    "p_courier_id": "7244", "p_period_start": "2026-09-01",
+                    "p_target": target, "p_note": payload.note, "p_actor": "admin",
+                })
+
+    def test_legacy_payment_approval_uses_same_atomic_transaction(self):
         ns, calls, Error = self.endpoint()
         payload = SimpleNamespace(month="2026-09", courierId="7147", target="payment_wait",
                                   note="A számla ellenőrizve, kifizethető", closeInvoiceComplaints=True)
         ns["admin_change_dashboard_status"](payload)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][0], ("POST", "rpc/pwa_change_monthly_status_with_complaints"))
+        self.assertEqual(calls[0][0], ("POST", "rpc/pwa_change_monthly_status"))
         self.assertEqual(calls[0][1]["payload"]["p_courier_id"], "7147")
         self.assertEqual(calls[0][1]["payload"]["p_note"], payload.note)
 
-    def test_complaint_closure_is_rejected_for_other_targets(self):
+    def test_legacy_false_flag_does_not_disable_automatic_closure(self):
         ns, calls, Error = self.endpoint()
         payload = SimpleNamespace(month="2026-09", courierId="7147", target="invoice_check",
-                                  note="Ellenőrzés", closeInvoiceComplaints=True)
-        with self.assertRaises(Error) as caught:
-            ns["admin_change_dashboard_status"](payload)
-        self.assertEqual(caught.exception.status_code, 422)
-        self.assertEqual(calls, [])
+                                  note="Ellenőrzés", closeInvoiceComplaints=False)
+        ns["admin_change_dashboard_status"](payload)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], ("POST", "rpc/pwa_change_monthly_status"))
 
     def test_badge_keeps_style_and_has_distinct_click_target(self):
         source = (ROOT / "pwa/app.js").read_text(encoding="utf-8")
