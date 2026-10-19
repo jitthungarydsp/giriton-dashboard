@@ -11307,6 +11307,7 @@ def build_financial_breakdown_from_snapshot(
         },
         {"key": "atm_effect", "label": "ATM hatás", "amountHuf": amount("atm_effect"), "tone": "deduction", "items": detail_or_fallback("atm_effect", ["atm_effect"])},
         {"key": "salary_advance", "label": "Fizetés előleg", "amountHuf": amount("salary_advance"), "tone": "deduction", "items": items(["salary_advance"])},
+        {"key": "reserve_release", "label": "Céltartalék jóváírás", "amountHuf": amount("reserve_payment_credit") + amount("reserve_deduction_credit"), "tone": "income", "items": items(["reserve_payment_credit", "reserve_deduction_credit"])},
         {
             "key": "insurance",
             "label": "Biztosítás",
