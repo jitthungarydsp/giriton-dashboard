@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v237";
+const APP_VERSION = "v238";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5639,7 +5639,7 @@ function renderSettlementDashboard() {
     </div>
     <div class="settlement-dashboard-list">
       ${displayRows.length ? displayRows.map((row) => `
-        <div class="settlement-dashboard-row ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? "active" : ""} ${(row.flags || []).some((flag) => normalizeText(flag.label || "") === "kiemelt figyeles") ? "highlighted" : ""}">
+        <div class="settlement-dashboard-row ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? "active" : ""} ${(row.flags || []).some((flag) => settlementImportRuleText(flag.label || "") === "kiemelt figyeles") ? "highlighted" : ""}">
           <button class="settlement-dashboard-row-main" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
           <div>
             <strong>${escapeHtml(row.courierName || "Futár")}</strong>
