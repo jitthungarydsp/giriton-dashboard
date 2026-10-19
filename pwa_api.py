@@ -1,4 +1,5 @@
 import hashlib
+from resources.http_pool import database_http_request
 from resources.finance_adjustment_details import snapshot_manual_adjustment_details
 import hmac
 import base64
@@ -26,6 +27,7 @@ import tomllib
 from fastapi import Cookie, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 from resources.email_sender import send_login_credentials, send_message, smtp_config, validate_email
@@ -9341,7 +9343,7 @@ def supabase_rest(
 ) -> Any:
     url = load_setting("SUPABASE_URL").rstrip("/")
 
-    response = requests.request(
+    response = database_http_request(
         method,
         f"{url}/rest/v1/{table}",
         headers=supabase_schema_headers(prefer=prefer, schema=schema),
@@ -18736,9 +18738,9 @@ def dashboard_monthly_flags_by_courier(
             if insurance_fee > 0:
                 flags_by_courier.setdefault(courier_id, []).append({"label": "Biztosítás", "tone": ""})
             if salary_advance > 0:
-                flags_by_courier.setdefault(courier_id, []).append({"label": f"Előleg {format_huf(salary_advance)}", "tone": "warn"})
+                flags_by_courier.setdefault(courier_id, []).append({"label": f"Előleg {format_snapshot_huf(salary_advance)}", "tone": "warn"})
             if loyalty_bonus > 0:
-                flags_by_courier.setdefault(courier_id, []).append({"label": f"Lojalitás {format_huf(loyalty_bonus)}", "tone": "info"})
+                flags_by_courier.setdefault(courier_id, []).append({"label": f"Lojalitás {format_snapshot_huf(loyalty_bonus)}", "tone": "info"})
 
     current_attention_by_courier: dict[str, str] = {}
     previous_attention_by_courier: dict[str, str] = {}
@@ -18892,16 +18894,20 @@ def dashboard_month_courier_roster(month: date) -> dict[str, dict[str, Any]]:
     roster: dict[str, dict[str, Any]] = {}
     master_by_id: dict[str, dict[str, Any]] = {}
 
-    master_rows = optional_supabase_rows_paged(
-        "courier_master",
-        params={
-            "select": "courier_id,courier_name,warehouse_name",
-            "order": "courier_name.asc,courier_id.asc",
-        },
-        timeout=30,
-        page_size=1000,
-        max_rows=50000,
-    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        master_future = executor.submit(optional_supabase_rows_paged,
+            "courier_master",
+            params={
+                "select": "courier_id,courier_name,warehouse_name",
+                "order": "courier_name.asc,courier_id.asc",
+            },
+            timeout=30,
+            page_size=1000,
+            max_rows=50000,
+        )
+        config_future = executor.submit(read_mobile_settlement_period_config, month_start)
+        master_rows = master_future.result()
+        config = config_future.result()
     for row in master_rows:
         courier_id = dashboard_courier_id_key(row.get("courier_id"))
         if not courier_id:
@@ -18918,23 +18924,36 @@ def dashboard_month_courier_roster(month: date) -> dict[str, dict[str, Any]]:
         if dashboard_courier_name_key(profile.get("courierName"))
     }
 
-    config = read_mobile_settlement_period_config(month_start)
     session_id = str(config.get("session_id") or "").strip()
     if not session_id:
         session_id = latest_excel_balance_session_for_month(month_start)
     if session_id:
-        summary_rows = optional_supabase_rows_paged(
-            "courier_settlement_summary",
-            schema="settlement",
-            params={
-                "select": "courier_id,driver_name,payable_huf,calculated_at,session_id",
-                "session_id": f"eq.{session_id}",
-                "order": "driver_name.asc,courier_id.asc",
-            },
-            timeout=45,
-            page_size=1000,
-            max_rows=50000,
-        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            summary_future = executor.submit(optional_supabase_rows_paged,
+                "courier_settlement_summary",
+                schema="settlement",
+                params={
+                    "select": "courier_id,driver_name,payable_huf,calculated_at,session_id",
+                    "session_id": f"eq.{session_id}",
+                    "order": "driver_name.asc,courier_id.asc",
+                },
+                timeout=45,
+                page_size=1000,
+                max_rows=50000,
+            )
+            jit_future = executor.submit(optional_supabase_rows_paged,
+                "jit_row",
+                schema="settlement",
+                params={
+                    "select": "normalized_data,source_sheet,route_date",
+                    "session_id": f"eq.{session_id}",
+                },
+                timeout=45,
+                page_size=1000,
+                max_rows=50000,
+            )
+            summary_rows = summary_future.result()
+            jit_rows = jit_future.result()
         summary_by_id: dict[str, dict[str, Any]] = {}
         summary_by_name: dict[str, dict[str, Any]] = {}
         for row in summary_rows:
@@ -18960,17 +18979,6 @@ def dashboard_month_courier_roster(month: date) -> dict[str, dict[str, Any]]:
             profile["summaryPayableHuf"] = settlement_summary_payable_value(row)
             profile["summaryUpdatedAt"] = str(row.get("calculated_at") or "")
             profile["summary"] = True
-        jit_rows = optional_supabase_rows_paged(
-            "jit_row",
-            schema="settlement",
-            params={
-                "select": "normalized_data,source_sheet,route_date",
-                "session_id": f"eq.{session_id}",
-            },
-            timeout=45,
-            page_size=1000,
-            max_rows=50000,
-        )
         month_end_date = month_end(month_start)
         for row in jit_rows:
             route_date = date_from_row_value(row.get("route_date"))
@@ -19012,13 +19020,8 @@ def dashboard_month_courier_roster(month: date) -> dict[str, dict[str, Any]]:
     return roster
 
 
-def attach_readonly_dashboard_statuses(month: date, dashboard: dict[str, Any]) -> dict[str, Any]:
-    """Overlay monthly workflow labels without recalculating or writing money."""
+def read_dashboard_month_workflow(month: date) -> tuple[list[dict], list[dict], list[dict]]:
     month_key = month.replace(day=1).isoformat()
-    documents: dict[str, set[str]] = {}
-    states: dict[str, dict[str, dict[str, Any]]] = {}
-    complaints: dict[str, int] = {}
-    invoice_complaints: dict[str, list[str]] = {}
     with ThreadPoolExecutor(max_workers=3) as executor:
         document_future = executor.submit(_workflow_month_rows, "peopleforce_documents", month_key,
                                           "courier_id,document_type")
@@ -19029,6 +19032,21 @@ def attach_readonly_dashboard_statuses(month: date, dashboard: dict[str, Any]) -
         document_rows = document_future.result()
         status_rows = status_future.result()
         complaint_rows = complaint_future.result()
+    return document_rows, status_rows, complaint_rows
+
+
+def attach_readonly_dashboard_statuses(
+    month: date, dashboard: dict[str, Any], *, workflow_rows=None,
+) -> dict[str, Any]:
+    """Overlay monthly workflow labels without recalculating or writing money."""
+    month_key = month.replace(day=1).isoformat()
+    documents: dict[str, set[str]] = {}
+    states: dict[str, dict[str, dict[str, Any]]] = {}
+    complaints: dict[str, int] = {}
+    invoice_complaints: dict[str, list[str]] = {}
+    document_rows, status_rows, complaint_rows = (
+        read_dashboard_month_workflow(month) if workflow_rows is None else workflow_rows
+    )
     for row in document_rows:
         action = str(row.get("document_type") or "")
         if process_id_from_action_key(action):
@@ -19120,27 +19138,24 @@ def read_dashboard_latest_finance_snapshots(month: date) -> list[dict[str, Any]]
 
 
 def build_admin_settlement_totals(month: date) -> dict[str, Any]:
-    """Build a minimal courier-total list directly from devtest summaries.
-
-    This endpoint intentionally avoids the workflow/status joins used by the
-    visual dashboard. The export robot only needs the same final amount as
-    devtest.py; finance snapshots are used only to keep the courier roster
-    complete and never provide the displayed amount.
-    """
+    """Use saved finance totals, filling missing couriers from the monthly roster."""
     month_start = month.replace(day=1)
     month_key = month_start.isoformat()
-    snapshots = read_dashboard_latest_finance_snapshots(month_start)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        snapshots_future = executor.submit(read_dashboard_latest_finance_snapshots, month_start)
+        roster_future = executor.submit(dashboard_month_courier_roster, month_start)
+        snapshots = snapshots_future.result()
+        try:
+            roster = roster_future.result()
+        except Exception as exc:
+            print(f"Admin settlement roster skipped: {type(exc).__name__}: {exc}")
+            roster = {}
     latest_by_courier: dict[str, dict[str, Any]] = {}
     for snapshot in snapshots:
         courier_id = dashboard_courier_id_key(snapshot.get("courier_id"))
         if courier_id and courier_id not in latest_by_courier:
             latest_by_courier[courier_id] = snapshot
 
-    try:
-        roster = dashboard_month_courier_roster(month_start)
-    except Exception as exc:
-        print(f"Admin settlement roster skipped: {type(exc).__name__}: {exc}")
-        roster = {}
     roster_by_name = {
         dashboard_courier_name_key(profile.get("courierName")): profile
         for profile in roster.values()
@@ -20345,6 +20360,16 @@ def disable_push_subscription(
 
 
 app = FastAPI(title="Kifli Futár PWA", docs_url=None, redoc_url=None)
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
+
+
+@app.middleware("http")
+async def measure_api_response_time(request: Request, call_next):
+    started = time.perf_counter()
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - started) * 1000:.1f}"
+    return response
 
 
 @app.post("/api/login")
@@ -22451,11 +22476,16 @@ def admin_settlement_dashboard(
 ):
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
+    workflow_rows = None
     try:
         # The devtest finance snapshot is the canonical amount shown in the
         # courier detail page. Use the same source for the list so the amount
         # cannot change merely because the courier row was opened.
-        snapshot_dashboard = build_admin_settlement_totals(month_value)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            totals_future = executor.submit(build_admin_settlement_totals, month_value)
+            workflow_future = executor.submit(read_dashboard_month_workflow, month_value)
+            snapshot_dashboard = totals_future.result()
+            workflow_rows = workflow_future.result()
         if any(money_int(row.get("snapshotVersion")) > 0 for row in snapshot_dashboard.get("rows") or []):
             if q:
                 clean_query = normalize_text(q)
@@ -22470,13 +22500,13 @@ def admin_settlement_dashboard(
                 snapshot_dashboard["summary"]["totalPayableHuf"] = sum(
                     money_int(row.get("totalPayableHuf")) for row in filtered_rows
                 )
-            return attach_readonly_dashboard_statuses(month_value, snapshot_dashboard)
+            return attach_readonly_dashboard_statuses(month_value, snapshot_dashboard, workflow_rows=workflow_rows)
         dashboard = build_admin_settlement_dashboard(month_value, q)
         # An empty fast-view response is still a successful query, but it is
         # not useful when devtest snapshots exist for the selected month.
         # Keep the visible dashboard aligned with the devtest final totals.
         if dashboard.get("rows"):
-            return attach_readonly_dashboard_statuses(month_value, dashboard)
+            return attach_readonly_dashboard_statuses(month_value, dashboard, workflow_rows=workflow_rows)
         snapshot_dashboard = build_admin_settlement_totals(month_value)
         if snapshot_dashboard.get("rows"):
             if q:
@@ -22491,8 +22521,8 @@ def admin_settlement_dashboard(
                 snapshot_dashboard["summary"]["totalPayableHuf"] = sum(
                     money_int(row.get("totalPayableHuf")) for row in snapshot_dashboard["rows"]
                 )
-            return attach_readonly_dashboard_statuses(month_value, snapshot_dashboard)
-        return attach_readonly_dashboard_statuses(month_value, dashboard)
+            return attach_readonly_dashboard_statuses(month_value, snapshot_dashboard, workflow_rows=workflow_rows)
+        return attach_readonly_dashboard_statuses(month_value, dashboard, workflow_rows=workflow_rows)
     except Exception as exc:
         print(f"Admin settlement dashboard fallback: {type(exc).__name__}: {exc}")
         try:
@@ -22525,7 +22555,7 @@ def admin_settlement_dashboard(
             snapshot_dashboard["summary"]["totalPayableHuf"] = sum(
                 money_int(row.get("totalPayableHuf")) for row in snapshot_dashboard["rows"]
             )
-        return attach_readonly_dashboard_statuses(month_value, snapshot_dashboard)
+        return attach_readonly_dashboard_statuses(month_value, snapshot_dashboard, workflow_rows=workflow_rows)
 
 
 @app.get("/api/admin/settlement-totals")

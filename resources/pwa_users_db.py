@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import requests
+from resources.http_pool import database_http_request
 
 from resources.security import hash_password, verify_password
 from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
@@ -30,7 +31,7 @@ def _request(method: str, table: str, *, params: dict[str, str] | None = None, p
     supabase_url, _service_role_key = get_supabase_config()
     if not supabase_url:
         return None
-    response = requests.request(
+    response = database_http_request(
         method,
         f"{supabase_url.rstrip('/')}/rest/v1/{table}",
         headers=_headers(prefer),

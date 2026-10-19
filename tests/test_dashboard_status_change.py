@@ -17,7 +17,7 @@ class DashboardStatusChangeTest(unittest.TestCase):
                                    json=lambda: {"code":"P0001", "message":"Előbb fel kell tölteni a havi számlát."})
         ns = {"Any":Any, "HTTPException":Error, "load_setting":lambda key:"https://example.test",
               "supabase_schema_headers":lambda **k:{},
-              "requests":SimpleNamespace(request=lambda *a, **k:response)}
+              "database_http_request":lambda *a, **k:response}
         tree = ast.parse((ROOT / "pwa_api.py").read_text(encoding="utf-8"))
         node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "supabase_rest")
         exec(compile(ast.Module(body=[node],type_ignores=[]),"pwa_api.py","exec"),ns)

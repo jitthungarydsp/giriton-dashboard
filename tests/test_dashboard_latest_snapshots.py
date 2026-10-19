@@ -32,7 +32,7 @@ class DashboardLatestSnapshotsTest(unittest.TestCase):
             "dashboard_courier_id_key": str,
             "optional_supabase_rows_paged": read,
             "read_dashboard_latest_finance_snapshots": lambda *a: self.fail("Already loaded"),
-            "money_int": lambda v: int(v or 0), "format_huf": lambda v: str(v),
+            "money_int": lambda v: int(v or 0), "format_snapshot_huf": lambda v: str(v),
             "normalize_text": lambda v: str(v).lower(),
         }
         functions({"dashboard_monthly_flags_by_courier", "merge_dashboard_flags"}, ns)
@@ -44,7 +44,8 @@ class DashboardLatestSnapshotsTest(unittest.TestCase):
         self.assertEqual(queries, ["peopleforce_card_statuses", "courier_finance_snapshot_item"])
 
     def namespace(self):
-        return {"Any": Any, "date": date, "datetime": datetime, "timezone": timezone}
+        return {"Any": Any, "date": date, "datetime": datetime, "timezone": timezone,
+                "ThreadPoolExecutor": ThreadPoolExecutor}
 
     def test_latest_only_request_is_get_and_does_not_load_history(self):
         calls = []
