@@ -1,0 +1,22 @@
+{
+  "master": {
+    "CT_Z_FT": "24705",
+    "current_reserve_huf": 24705
+  },
+  "monthly": {
+    "reserve_after_huf": 24705.0,
+    "payable_after_insurance_huf": 562345.0
+  },
+  "snapshot": {
+    "id": "0791074c-74e1-4b0b-8bdc-0b8ea5d30912",
+    "version": 17
+  },
+  "active_events": [
+    {
+      "id": "113e1597-d1c2-498d-bc04-2fb690c97819",
+      "event_type": "deduction",
+      "amount_huf": 350000
+    }
+  ],
+  "checked_at": "2026-10-19T07:41:13.535872+00:00"
+}

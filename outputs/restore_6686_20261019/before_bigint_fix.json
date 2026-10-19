@@ -1,0 +1,125 @@
+{
+  "courier_target_reserve": [
+    {
+      "CT_Z_FT": "374705",
+      "current_reserve_huf": 374705,
+      "updated_at": "2026-10-19T07:24:34.513327+00:00"
+    }
+  ],
+  "courier_target_reserve_monthly": [
+    {
+      "id": "db91a486-8d5b-4779-a6f1-b7617a805603",
+      "courier_id": "6686",
+      "session_id": "0896f9a0-c83f-4690-9c4a-09061e5a28e0",
+      "period_start": "2026-09-01",
+      "period_end": "2026-09-30",
+      "payable_before_insurance_huf": 247050.0,
+      "reserve_before_huf": 350000.0,
+      "reserve_addition_huf": -325295.0,
+      "insurance_fee_huf": 10000.0,
+      "payable_after_insurance_huf": 562345.0,
+      "reserve_after_huf": 24705.0,
+      "insurance_active_before": true,
+      "insurance_active_after": true,
+      "status": "in_progress",
+      "calculated_at": "2026-10-19T07:37:17.183048+00:00",
+      "closed_at": null,
+      "closed_by": null,
+      "created_at": "2026-10-15T21:44:13.865944+00:00",
+      "updated_at": "2026-10-19T07:37:19.83446+00:00"
+    }
+  ],
+  "courier_target_reserve_event": [
+    {
+      "id": "113e1597-d1c2-498d-bc04-2fb690c97819",
+      "session_id": "0896f9a0-c83f-4690-9c4a-09061e5a28e0",
+      "courier_id": "6686",
+      "courier_name": "Magyar Csilla",
+      "period_start": "2026-09-01",
+      "period_end": "2026-09-30",
+      "event_type": "deduction",
+      "amount_huf": 350000,
+      "note": "Céltartalék levonás - 2026-09, károkozás",
+      "created_by": "Bagoly Zoltán",
+      "created_at": "2026-10-19T07:37:18.06702+00:00",
+      "deleted_at": null
+    }
+  ],
+  "courier_finance_snapshot": [
+    {
+      "id": "b1b47615-41c2-4cce-88db-82b38c0370a1",
+      "period_start": "2026-09-01",
+      "courier_id": "6686",
+      "courier_name": "Magyar Csilla",
+      "version": 16,
+      "source": "devtest_finance",
+      "calculation_mode": "Excel",
+      "warehouse_label": "Összes",
+      "session_id": "0896f9a0-c83f-4690-9c4a-09061e5a28e0",
+      "fingerprint": "9d402f04efcb877ed1bee7d5a26790e301fc0f7c4188f40eb9e5238421768e57",
+      "metadata": {
+        "source": "devtest.reserve_release",
+        "order_count": 523,
+        "restored_at": "2026-10-19T07:11:18.081901+00:00",
+        "route_count": 40,
+        "income_total": 903250.0,
+        "payable_total": 562345.0,
+        "deduction_total": -34705.0,
+        "tig_final_total": 562345.0,
+        "correction_total": -306200.0,
+        "restoration_reason": "User requested reversal of 2026-10-19 target reserve movements",
+        "restored_from_version": 10,
+        "reserve_release_booked": true,
+        "reserve_release_totals": {
+          "payment": 0.0,
+          "deduction": 350000.0
+        },
+        "restored_from_snapshot_id": "09fd7cce-9664-47a2-9fc6-b50613955e5c",
+        "invalidated_reserve_event_ids": [
+          "c5dd2bf7-3e8b-4f63-a6ac-90c639b314d6",
+          "53627668-8822-4da5-a4bb-7543d37e80c1"
+        ]
+      },
+      "created_by": "Bagoly Zoltán",
+      "created_at": "2026-10-19T07:37:18.816555+00:00",
+      "previous_snapshot_id": "8c580ca2-5bfd-4364-b065-5cafa8b5f479",
+      "previous_fingerprint": "822a5e85048d2b524e3190b464f88f11088da1c5c8ed42af8ba120ef08d33432",
+      "changed_from_previous": true
+    },
+    {
+      "id": "8c580ca2-5bfd-4364-b065-5cafa8b5f479",
+      "period_start": "2026-09-01",
+      "courier_id": "6686",
+      "courier_name": "Magyar Csilla",
+      "version": 15,
+      "source": "devtest_finance",
+      "calculation_mode": "Excel",
+      "warehouse_label": "Összes",
+      "session_id": "0896f9a0-c83f-4690-9c4a-09061e5a28e0",
+      "fingerprint": "822a5e85048d2b524e3190b464f88f11088da1c5c8ed42af8ba120ef08d33432",
+      "metadata": {
+        "source": "devtest.render_courier_detail_page.preflight",
+        "order_count": 523,
+        "restored_at": "2026-10-19T07:11:18.081901+00:00",
+        "route_count": 40,
+        "income_total": 553250.0,
+        "payable_total": 212345.0,
+        "deduction_total": -34705.0,
+        "tig_final_total": 212345.0,
+        "correction_total": -306200.0,
+        "restoration_reason": "User requested reversal of 2026-10-19 target reserve movements",
+        "restored_from_version": 10,
+        "restored_from_snapshot_id": "09fd7cce-9664-47a2-9fc6-b50613955e5c",
+        "invalidated_reserve_event_ids": [
+          "c5dd2bf7-3e8b-4f63-a6ac-90c639b314d6",
+          "53627668-8822-4da5-a4bb-7543d37e80c1"
+        ]
+      },
+      "created_by": "codex:user_requested_restore_6686",
+      "created_at": "2026-10-19T07:11:19.360371+00:00",
+      "previous_snapshot_id": "ec560584-77db-4608-aea2-9e37a24d2f3b",
+      "previous_fingerprint": "90c7c7498d42f76fffcb5faa9d8ddd125f5a5a936e59d031396f474d821f210b",
+      "changed_from_previous": true
+    }
+  ]
+}

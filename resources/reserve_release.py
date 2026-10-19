@@ -71,7 +71,7 @@ def prepare_reserve_release(snapshot, totals):
             {"Tétel": "Céltartalék feltöltés", "Összeg": amount("reserve")},
             *[{"Tétel": by_key[key]["item_label"], "Összeg": amounts[kind]} for kind, key in keys.items() if amounts[kind]],
             {"Tétel": "Nyitó céltartalék", "Összeg": amount("target_reserve_open")},
-            {"Tétel": "Záró céltartalék", "Összeg": closing},
+            {"Tétel": "Új nyitó egyenleg", "Összeg": closing},
         ]
         drill["Mobilon látható értékek"] = deepcopy(finance)
     return {"changed": True, "finance_rows": finance, "sources": sources,

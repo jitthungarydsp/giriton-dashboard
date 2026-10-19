@@ -1,0 +1,23 @@
+[
+  {
+    "id": "db91a486-8d5b-4779-a6f1-b7617a805603",
+    "courier_id": "6686",
+    "session_id": "0896f9a0-c83f-4690-9c4a-09061e5a28e0",
+    "period_start": "2026-09-01",
+    "period_end": "2026-09-30",
+    "payable_before_insurance_huf": 547250.0,
+    "reserve_before_huf": 350000.0,
+    "reserve_addition_huf": 50000.0,
+    "insurance_fee_huf": 10000.0,
+    "payable_after_insurance_huf": 487250.0,
+    "reserve_after_huf": 400000.0,
+    "insurance_active_before": true,
+    "insurance_active_after": true,
+    "status": "in_progress",
+    "calculated_at": "2026-10-19T07:14:36.706598+00:00",
+    "closed_at": null,
+    "closed_by": null,
+    "created_at": "2026-10-15T21:44:13.865944+00:00",
+    "updated_at": "2026-10-19T07:14:36.706675+00:00"
+  }
+]

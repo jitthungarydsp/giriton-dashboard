@@ -2,6 +2,8 @@ import ast
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 import unittest
 
 from resources.reserve_release import prepare_reserve_release, split_net_reserve_rows
@@ -22,6 +24,91 @@ def fixture():
 
 
 class ReserveReleaseTest(unittest.TestCase):
+    def test_reloaded_snapshot_without_release_metadata_keeps_booked_month(self):
+        prepared = prepare_reserve_release(fixture(), {"deduction": 350000})
+        snapshot = {"items": prepared["finance_rows"], "sources": prepared["sources"], "metadata": {"source": "preflight"}}
+        tree = ast.parse((Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8"))
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                    and n.name == "resolve_target_reserve_month")
+        save = Mock()
+        namespace = {
+            "date": date, "parse_huf_value": lambda v: float(v or 0),
+            "load_latest_devtest_finance_snapshot": lambda *a: snapshot,
+            "load_target_reserve_monthly": lambda *a: {"reserve_after_huf": 50000},
+            "load_target_reserve_event_totals": lambda *a: {"deduction": 350000},
+            "_snapshot_amount": lambda s, k: next((v["amount_value"] for v in s["items"] if v["item_key"] == k), 0),
+            "_snapshot_source_payload": lambda s, k: next(v["payload"] for v in s["sources"] if v["source_key"] == k),
+            "save_target_reserve_monthly": save,
+            "calculate_target_reserve_month": Mock(side_effect=AssertionError("Must use booked month")),
+        }
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), namespace)
+        result = namespace["resolve_target_reserve_month"](
+            "session", "6686", date(2026, 9, 1), date(2026, 9, 30), {}, 547250)
+        self.assertEqual(result["reserve_after_huf"], 24705)
+        self.assertEqual(result["payable_after_insurance_huf"], 562345)
+        save.assert_called_once()
+
+    def test_retry_of_saved_release_writes_bigint_and_does_not_book_again(self):
+        prepared = prepare_reserve_release(fixture(), {"deduction": 350000})
+        snapshot = {"items": prepared["finance_rows"], "sources": prepared["sources"], "session_id": "session"}
+        writes = []
+
+        class Query:
+            def schema(self, schema):
+                return self
+
+            def table(self, table):
+                self.table_name = table
+                return self
+
+            def upsert(self, payload, **kwargs):
+                self.payload = payload
+                return self
+
+            def update(self, payload):
+                self.payload = payload
+                return self
+
+            def eq(self, key, value):
+                self.assert_scope = (key, value)
+                return self
+
+            def execute(self):
+                if self.table_name == "courier_target_reserve":
+                    # PostgREST rejects JSON 24705.0 for this bigint column.
+                    if type(self.payload["current_reserve_huf"]) is not int:
+                        raise ValueError("invalid input syntax for type bigint")
+                    if self.assert_scope != ("courier_ID", "6686"):
+                        raise AssertionError("Wrong courier")
+                writes.append((self.table_name, self.payload))
+
+        tree = ast.parse((Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8"))
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                    and n.name == "save_target_reserve_snapshot_after_event")
+        namespace = {
+            "date": date, "get_db": Query, "parse_huf_value": lambda v: float(v or 0),
+            "pd": SimpleNamespace(Timestamp=SimpleNamespace(utcnow=lambda: date(2026, 10, 19))),
+            "month_bounds": lambda d: (d, date(2026, 9, 30)),
+            "load_latest_devtest_finance_snapshot": lambda *a: snapshot,
+            "load_target_reserve_event_totals": lambda *a: {"deduction": 350000},
+            "_snapshot_source_payload": lambda s, key: next(v["payload"] for v in s["sources"] if v["source_key"] == key),
+            "_snapshot_amount": lambda s, key: float(next(v["amount_value"] for v in s["items"] if v["item_key"] == key)),
+            "load_target_reserve_monthly": Mock(return_value={"status": "in_progress"}),
+            "load_target_reserve_status": Mock(), "load_target_reserve_rows_bulk": Mock(),
+            "clear_devtest_finance_snapshot_cache": Mock(), "clear_settlement_overview_data_cache": Mock(),
+            "save_devtest_finance_snapshot_version": Mock(side_effect=AssertionError("Already booked")),
+        }
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), namespace)
+        for _ in range(2):
+            result = namespace["save_target_reserve_snapshot_after_event"](
+                courier_id="6686", period_start=date(2026, 9, 1), calculation_mode="Excel",
+                warehouse_label=None, updated_by="admin")
+            self.assertEqual(result["new_versions"], 0)
+        master = [payload for table, payload in writes if table == "courier_target_reserve"]
+        self.assertEqual([v["current_reserve_huf"] for v in master], [24705, 24705])
+        self.assertTrue(all(v["CT_Z_FT"] == "24705" for v in master))
+        namespace["save_devtest_finance_snapshot_version"].assert_not_called()
+
     def test_mobile_recalculation_counts_releases_as_income(self):
         tree = ast.parse((Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8"))
         names = {"recalculate_mobile_breakdown_totals", "_mobile_breakdown_amount", "_set_mobile_breakdown_row_amount"}

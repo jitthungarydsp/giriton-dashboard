@@ -1,0 +1,28 @@
+[
+  {
+    "id": "49d61985-9fe8-4e58-a066-4987bacaf4d4",
+    "session_id": "0896f9a0-c83f-4690-9c4a-09061e5a28e0",
+    "courier_id": "6686",
+    "driver_name": "Magyar Csilla",
+    "period_start": "2026-09-03",
+    "period_end": "2026-09-28",
+    "route_count": 40,
+    "order_count": 523,
+    "company_base_rate_huf": 500000,
+    "courier_base_rate_huf": 238000,
+    "tip_huf": 149250.0,
+    "delay_bonus_huf": 120000,
+    "compliance_bonus_huf": 20000,
+    "other_route_bonus_huf": 0,
+    "route_bonus_total_huf": 140000,
+    "imported_bonus_huf": 0,
+    "manual_bonus_huf": 0,
+    "customer_rating_bonus_huf": 0,
+    "malus_huf": 0,
+    "atm_deduction_huf": 0,
+    "other_expense_huf": 0,
+    "payable_huf": 527250.0,
+    "calculated_at": "2026-10-15T19:50:58.7357+00:00",
+    "loyalty_bonus_huf": 20000.0
+  }
+]

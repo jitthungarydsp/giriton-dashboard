@@ -6812,8 +6812,9 @@ def save_target_reserve_snapshot_after_event(
         "status": existing.get("status") or "in_progress",
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }, on_conflict="courier_id,period_start,period_end").execute()
+    closing_huf = int(round(parse_huf_value(update["closing"])))
     get_db().schema("public").table("courier_target_reserve").update({
-        "CT_Z_FT": str(int(update["closing"])), "current_reserve_huf": update["closing"],
+        "CT_Z_FT": str(closing_huf), "current_reserve_huf": closing_huf,
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("courier_ID", courier_id).execute()
     clear_devtest_finance_snapshot_cache()
@@ -8934,9 +8935,13 @@ def resolve_target_reserve_month(
     # calculation from the compact overview's different payable subtotal.
     snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
     metadata = snapshot.get("metadata") or {}
-    if metadata.get("restored_from_snapshot_id") or metadata.get("reserve_release_booked"):
+    booked_totals = {
+        "payment": _snapshot_amount(snapshot, "reserve_payment_credit"),
+        "deduction": _snapshot_amount(snapshot, "reserve_deduction_credit"),
+    }
+    if metadata.get("restored_from_snapshot_id") or metadata.get("reserve_release_booked") or any(booked_totals.values()):
         event_totals = load_target_reserve_event_totals(courier_id, period_start, period_end)
-        applied = metadata.get("reserve_release_totals") or {"payment": 0, "deduction": 0}
+        applied = booked_totals
         if all(parse_huf_value(event_totals.get(key)) == parse_huf_value(applied.get(key)) for key in ("payment", "deduction")):
             restored = _snapshot_source_payload(snapshot, "target_reserve_month")
             if isinstance(restored, dict) and "reserve_after_huf" in restored:
@@ -18863,10 +18868,15 @@ def render_courier_detail_page() -> None:
             if detail_label == "Fizetés előleg":
                 return pd.DataFrame([{"Tétel": "Aktuális havi fizetés előleg", "Összeg": -salary_advance_total}])
             if detail_label == "Céltartalék 10%":
+                reserve_events = load_target_reserve_event_totals(courier_id, period_start, period_end)
+                reserve_topup = reserve_addition_total + sum(
+                    parse_huf_value(reserve_events.get(kind)) for kind in ("payment", "deduction")
+                )
                 return pd.DataFrame([
-                    {"Tétel": "Céltartalék feltöltés", "Összeg": -reserve_addition_total},
+                    {"Tétel": "Céltartalék feltöltés", "Összeg": -reserve_topup},
+                    {"Tétel": "Biztosítási díj", "Összeg": -insurance_fee_total},
                     {"Tétel": "Nyitó céltartalék", "Összeg": reserve_before_total},
-                    {"Tétel": "Záró céltartalék", "Összeg": reserve_after_total},
+                    {"Tétel": "Új nyitó egyenleg", "Összeg": reserve_after_total},
                 ])
             return pd.DataFrame()
 

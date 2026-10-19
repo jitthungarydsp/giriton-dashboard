@@ -1,0 +1,13 @@
+{
+  "courier_ID": "6686",
+  "USERNAME": "Magyar Csilla",
+  "Column J": "2025-09-01",
+  "CT_Z_FT": "300000",
+  "current_reserve_huf": 300000,
+  "reserve_deduction_huf": 50000,
+  "insurance_active": true,
+  "created_at": "2026-07-17T08:05:27.398305+00:00",
+  "updated_at": "2026-10-19T07:11:18.081901+00:00",
+  "CT_NY_FT": "50000",
+  "reserve_status": "done"
+}

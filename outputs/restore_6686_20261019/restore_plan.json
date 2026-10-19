@@ -1,0 +1,28 @@
+{
+  "restore_from_snapshot_id": "09fd7cce-9664-47a2-9fc6-b50613955e5c",
+  "restore_from_version": 10,
+  "new_version": 15,
+  "invalidate_event_ids": [
+    "c5dd2bf7-3e8b-4f63-a6ac-90c639b314d6",
+    "53627668-8822-4da5-a4bb-7543d37e80c1"
+  ],
+  "monthly_values": {
+    "status": "in_progress",
+    "insurance_fee_huf": 10000.0,
+    "reserve_after_huf": 374705.0,
+    "reserve_before_huf": 350000.0,
+    "reserve_addition_huf": 24705.0,
+    "insurance_active_after": true,
+    "insurance_active_before": true,
+    "payable_after_insurance_huf": 212345.0,
+    "payable_before_insurance_huf": 247050.0
+  },
+  "master_values": {
+    "CT_Z_FT": "300000",
+    "current_reserve_huf": 300000,
+    "CT_NY_FT": "50000",
+    "reserve_deduction_huf": 50000
+  },
+  "master_prior_balance_evidence": "965000 - 350000 - 315000 = 300000; matched historical July close",
+  "note": "Master deduction fields reconstructed from the matching closed monthly row; no master row history exists."
+}

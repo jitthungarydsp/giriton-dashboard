@@ -11257,6 +11257,22 @@ def build_financial_breakdown_from_snapshot(
         detail = snapshot_card_detail_items(snapshot, label_by_card_key.get(card_key, ""), card_key)
         return detail if detail else nonzero_items(fallback_keys)
 
+    # Reserve drilldowns can contain the net movement (top-up minus releases).
+    # Use the booked finance items so the detail agrees with the card total.
+    insurance_items = []
+    for key, label in (
+        ("reserve", "Céltartalék feltöltés"),
+        ("insurance_fee", "Biztosítási díj"),
+        ("target_reserve_open", "Nyitó céltartalék"),
+        ("target_reserve_close", "Új nyitó egyenleg"),
+    ):
+        current = item(key)
+        if current is not None:
+            current["label"] = label
+            if key in {"target_reserve_open", "target_reserve_close"}:
+                current["excludeFromTotal"] = True
+            insurance_items.append(current)
+
     cards = [
         {
             "key": "payable",
@@ -11313,7 +11329,7 @@ def build_financial_breakdown_from_snapshot(
             "label": "Biztosítás",
             "amountHuf": amount("reserve") + amount("insurance_fee"),
             "tone": "deduction",
-            "items": detail_or_fallback("insurance", ["target_reserve_open", "reserve", "insurance_fee", "target_reserve_close"]),
+            "items": insurance_items,
         },
         {"key": "corrections", "label": "Korrekciók", "amountHuf": correction_total, "tone": "info", "items": detail_or_fallback("corrections", ["correction_income", "correction_deduction", "correction"])},
         {"key": "performance", "label": "Teljesítmény", "amountHuf": amount("orders"), "amountKind": "count", "tone": "info", "items": route_items},
