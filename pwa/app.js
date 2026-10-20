@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v242";
+const APP_VERSION = "v243";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -11229,7 +11229,7 @@ $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
     });
     return;
   }
-  const row = event.target.closest("[data-courier-id]");
+  const row = event.target.closest(".settlement-dashboard-row-main[data-courier-id]");
   if (!row) return;
   const courierId = row.dataset.courierId || "";
   if (state.settlementDashboardExpandedCourierId === courierId) {
