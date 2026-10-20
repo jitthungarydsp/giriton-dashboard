@@ -11378,7 +11378,7 @@ def build_financial_breakdown_from_snapshot(
         "snapshotId": str(snapshot.get("id") or ""),
         "snapshotVersion": money_int(snapshot.get("version")),
         "tigSnapshotRows": snapshot_items_by_section(snapshot, "tig"),
-        "worksheetTig": snapshot_source_payload(snapshot, "tig_breakdown") if metadata.get("source") in {"pwa_worksheet_pilot", "bonus_malus_refresh"} else None,
+        "worksheetTig": snapshot_source_payload(snapshot, "tig_breakdown") if metadata.get("source") == "pwa_worksheet_pilot" else None,
         "message": "",
     }
 

@@ -178,8 +178,6 @@ def worksheet_by_gid(sheet_id: str, gid: int):
 def rows_from_sheet(sheet_id: str, gid: int) -> list[dict[str, Any]]:
     worksheet = worksheet_by_gid(sheet_id, gid)
     values = worksheet.get_all_values()
-    if len(values) < 2:
-        raise RuntimeError("Üres vagy hiányos Google-tábla; a korábbi tételeket nem kapcsolom ki.")
     result: list[dict[str, Any]] = []
     for row_number, row in enumerate(values[1:], start=2):
         padded = row + [""] * (8 - len(row))
@@ -191,10 +189,8 @@ def rows_from_sheet(sheet_id: str, gid: int) -> list[dict[str, Any]]:
         bonus = money_int(padded[5])
         recorded_by = str(padded[6] or "").strip()
         transaction_id = str(padded[7] or "").strip()
-        if not any(str(value).strip() for value in row):
-            continue
         if not occurred_at or not name:
-            raise ValueError(f"Hibás dátum vagy futárnév a Google-tábla {row_number}. sorában.")
+            continue
         typed_amounts = adjustment_types_for_row(raw_type, malus, bonus)
         if not typed_amounts:
             continue
@@ -232,7 +228,7 @@ def existing_adjustments() -> dict[str, dict[str, Any]]:
         f"{supabase_url()}/rest/v1/courier_settlement_adjustment",
         headers=supabase_headers(),
         params={
-            "select": "*",
+            "select": "id,courier_id,source_key,valid_from,valid_to,is_active,deleted_at,deleted_by,updated_at",
             "source_key": f"like.{SOURCE_PREFIX}:%",
             "limit": "10000",
         },
@@ -281,16 +277,6 @@ def closed_months() -> set[tuple[str, str]]:
         period_start = str(row.get("period_start") or "").strip()[:10]
         if courier_id and period_start:
             result.add((courier_id, period_start))
-    paid = requests.get(
-        f"{supabase_url()}/rest/v1/peopleforce_card_statuses",
-        headers=supabase_headers(schema="public"),
-        params={"select": "courier_id,document_month", "action_key": "eq.invoice_payment", "status": "eq.done", "limit": "50000"},
-        timeout=60,
-    )
-    raise_for_response(paid, "paid courier months")
-    for row in paid.json() or []:
-        if row.get("courier_id") and row.get("document_month"):
-            result.add((str(row["courier_id"]), str(row["document_month"])[:10]))
     return result
 
 
@@ -355,54 +341,6 @@ def update_adjustment(row_id: str, payload: dict[str, Any]) -> None:
     raise_for_response(response, "courier_settlement_adjustment update")
 
 
-def payload_changed(current: dict[str, Any], payload: dict[str, Any]) -> bool:
-    """Timestamps alone are not source changes and must not enqueue work."""
-    fields = ("courier_id", "adjustment_type", "amount_huf", "effective_date", "valid_from", "valid_to", "note")
-    return any((current.get(k) or None) != (payload.get(k) or None) for k in fields)
-
-
-def reconcile_sheet_payloads(prepared, existing, closed, *, sheet_id, gid, eligible_ids,
-                             from_date=None, to_date=None, apply=False):
-    """Same reconciliation for automatic and selected-courier imports."""
-    stats = dict(inserted=0, updated=0, deactivated=0, protected_closed=0, protected_existing=0)
-    desired = dict(prepared)
-    for key, payload in desired.items():
-        if payload_month_key(payload) in closed:
-            stats["protected_closed"] += 1
-            continue
-        current = existing.get(key)
-        if current and (current.get("deleted_at") or current.get("is_active") is False):
-            stats["protected_existing"] += 1
-            continue
-        if not current:
-            if apply:
-                insert_adjustment(payload)
-            stats["inserted"] += 1
-        elif payload_changed(current, payload):
-            if apply:
-                update_adjustment(str(current["id"]), payload)
-            stats["updated"] += 1
-    prefix = f"{SOURCE_PREFIX}:{sheet_id}:{gid}:"
-    for key, current in existing.items():
-        if not key.startswith(prefix) or key in desired or str(current.get("courier_id")) not in eligible_ids:
-            continue
-        if current.get("deleted_at") or current.get("is_active") is False:
-            continue
-        try:
-            effective = date.fromisoformat(str(current.get("effective_date") or current.get("valid_from"))[:10])
-        except ValueError:
-            continue
-        if (from_date and effective < from_date) or (to_date and effective > to_date):
-            continue
-        if payload_month_key(current) in closed:
-            stats["protected_closed"] += 1
-            continue
-        if apply:
-            deactivate_adjustment(str(current["id"]))
-        stats["deactivated"] += 1
-    return stats
-
-
 def sync_courier_from_sheet(
     courier_id: str,
     courier_name: str,
@@ -431,20 +369,63 @@ def sync_courier_from_sheet(
         None,
     ) or {"courier_id": target_id, "courier_name": courier_name}
 
-    from scripts.refresh_bonus_malus_snapshots import require_refresh_schema, refresh_pending
-    require_refresh_schema()
-    prepared = []
+    existing = existing_adjustments()
+    closed = closed_months()
+    inserted = 0
+    updated = 0
+    deactivated = 0
+    protected_closed = 0
+
+    source_keys = {source_key(sheet_id, gid, row) for row in source_rows}
+
     for row in source_rows:
         key = source_key(sheet_id, gid, row)
-        prepared.append((key, adjustment_payload(row, courier, key)))
-    stats = reconcile_sheet_payloads(
-        prepared, existing_adjustments(), closed_months(), sheet_id=sheet_id, gid=gid,
-        eligible_ids={target_id}, from_date=period_start, to_date=period_end, apply=True,
-    )
-    results = refresh_pending(target_id)
-    return {"sheet_rows": len(source_rows), **stats,
-            "refreshed_snapshots": sum(bool(row.get("ok")) for row in results)}
+        payload = adjustment_payload(row, courier, key)
+        if payload_month_key(payload) in closed:
+            protected_closed += 1
+            continue
+        current = existing.get(key)
+        if current and current.get("id"):
+            if current.get("deleted_at") or current.get("is_active") is False:
+                continue
+            update_adjustment(str(current["id"]), payload)
+            updated += 1
+        else:
+            insert_adjustment(payload)
+            inserted += 1
 
+    if period_start is not None and period_end is not None:
+        source_prefix = f"{SOURCE_PREFIX}:{sheet_id}:{gid}:"
+        for current in existing.values():
+            current_id = str(current.get("id") or "").strip()
+            current_key = str(current.get("source_key") or "")
+            if not current_id or not current_key.startswith(source_prefix):
+                continue
+            if str(current.get("courier_id") or "").strip() != target_id:
+                continue
+            try:
+                current_date = date.fromisoformat(str(current.get("valid_from") or "")[:10])
+            except ValueError:
+                continue
+            if not (period_start <= current_date <= period_end):
+                continue
+            if current_key in source_keys:
+                continue
+            if current.get("deleted_at") or current.get("is_active") is False:
+                continue
+            if (target_id, current_date.replace(day=1).isoformat()) in closed:
+                protected_closed += 1
+                continue
+            deactivate_adjustment(current_id)
+            deactivated += 1
+
+    return {
+        "sheet_rows": len(source_rows),
+        "inserted": inserted,
+        "updated": updated,
+        "deactivated": deactivated,
+        "protected_closed": protected_closed,
+    }
 
 
 def main() -> int:
@@ -502,25 +483,39 @@ def main() -> int:
         payload = adjustment_payload(row, courier, key)
         prepared.append((key, payload))
 
-    from scripts.refresh_bonus_malus_snapshots import require_refresh_schema, refresh_pending
+    inserted = 0
+    updated = 0
     if args.apply:
-        require_refresh_schema()  # fail before changing sources when migration is missing
-    eligible_ids = {value["courier_id"] for name, value in couriers.items()
-                    if not args.name or normalize_text(args.name) in name}
-    if args.name:
-        prepared = [(key, payload) for key, payload in prepared if payload["courier_id"] in eligible_ids]
-    stats = reconcile_sheet_payloads(
-        prepared, existing, closed, sheet_id=args.sheet_id, gid=args.gid,
-        eligible_ids=eligible_ids, from_date=from_date, to_date=to_date, apply=args.apply,
-    )
-    inserted, updated = stats["inserted"], stats["updated"]
-    protected_existing, protected_closed = stats["protected_existing"], stats["protected_closed"]
-    if args.apply:
-        # Pending jobs survive a killed import or a failed publication; unchanged
-        # source rows do not create a new job or a new financial version.
-        results = refresh_pending()
-        print("Scoped financial snapshots refreshed:", sum(bool(row.get("ok")) for row in results))
-    print("Removed/replaced Google rows deactivated:", stats["deactivated"])
+        for key, payload in prepared:
+            if payload_month_key(payload) in closed:
+                protected_closed += 1
+                continue
+            current = existing.get(key)
+            if current and current.get("id"):
+                if current.get("deleted_at") or current.get("is_active") is False:
+                    protected_existing += 1
+                    continue
+                update_adjustment(str(current["id"]), payload)
+                updated += 1
+            else:
+                insert_adjustment(payload)
+                inserted += 1
+    else:
+        inserted = sum(1 for key, _payload in prepared if key not in existing)
+        protected_existing = sum(
+            1
+            for key, _payload in prepared
+            if key in existing and (existing[key].get("deleted_at") or existing[key].get("is_active") is False)
+        )
+        protected_closed = sum(1 for _key, payload in prepared if payload_month_key(payload) in closed)
+        inserted = sum(1 for key, payload in prepared if key not in existing and payload_month_key(payload) not in closed)
+        updated = sum(
+            1
+            for key, payload in prepared
+            if key in existing
+            and payload_month_key(payload) not in closed
+            and not (existing[key].get("deleted_at") or existing[key].get("is_active") is False)
+        )
 
     skipped = len(sheet_rows) - len(prepared)
     print("Google bonus/malus import")
