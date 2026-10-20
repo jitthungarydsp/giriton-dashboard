@@ -3755,7 +3755,7 @@ def load_reliable_devtest_finance_snapshot(courier_id: str, period_start: date) 
         if clear_cached_read:
             clear_cached_read(courier_id, period_start)  # Read-only refresh of this pilot's cache entry.
     snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
-    if (snapshot.get("metadata") or {}).get("source") == "pwa_worksheet_pilot":
+    if (snapshot.get("metadata") or {}).get("source") in {"pwa_worksheet_pilot", "bonus_malus_refresh"}:
         return snapshot  # A deliberately zeroed worksheet is a valid saved version.
     if _snapshot_has_core_finance_data(snapshot):
         return snapshot
@@ -3853,7 +3853,7 @@ def finance_snapshot_display_row(row, snapshot: dict[str, object]) -> dict[str, 
     result["Számolt túrák"] = result["Útvonalak"]
     result["Nettó bevétel"] = result["Alapdíj"]
     result["Korrekció"] = result["Korrekció +"] - result["Korrekció -"]
-    if (snapshot.get("metadata") or {}).get("source") == "pwa_worksheet_pilot":
+    if (snapshot.get("metadata") or {}).get("source") in {"pwa_worksheet_pilot", "bonus_malus_refresh"}:
         result["Korrekció"] = _snapshot_amount(snapshot, "correction")
     bonus_malus = result["JITT bónusz"]
     result["JITT bónusz"] = max(bonus_malus, 0)
@@ -3962,6 +3962,8 @@ def render_devtest_finance_snapshot_view(
     if metadata.get("source") == "pwa_worksheet_pilot":
         st.info("PWA munkalapon mentett közös pénzügyi verzió. Az összegek és a TIG-bontás ebből a mentésből származnak.")
         st.caption(f"Módosítás indoka: {metadata.get('worksheet_note') or '-'}")
+    elif metadata.get("source") == "bonus_malus_refresh":
+        st.caption("A megváltozott bónusz/malusz alapján automatikusan frissített pénzügyi mentés.")
     try:
         validate_loyalty_snapshot_consistency(
             [item for item in snapshot.get("items") or [] if item.get("section") == "finance"],
@@ -4348,7 +4350,16 @@ def render_devtest_finance_snapshot_view(
                     st.success(f"{saved_changes} kézi tétel mentve.")
                     st.rerun()
                 else:
-                    st.info("Nem volt mentendő változás.")
+                    # Reconcile only a pending source change for this month;
+                    # an unchanged save never triggers the full Finance engine.
+                    from scripts.refresh_bonus_malus_snapshots import refresh_pending
+                    refreshed = refresh_pending(courier_id, period_start.strftime("%Y-%m"))
+                    if any(result.get("ok") for result in refreshed):
+                        clear_devtest_finance_snapshot_cache()
+                        st.session_state["courier_refresh_notice"] = "A megváltozott bónusz/malusz alapján az érintett futár elszámolása frissítve."
+                        st.rerun()
+                    else:
+                        st.info("Nem volt mentendő tételváltozás; új pénzügyi verzió nem készült.")
             except Exception as exc:
                 st.error(f"A kézi tételek nem menthetők. Részlet: {exc}")
 
