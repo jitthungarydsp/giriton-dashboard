@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v241";
+const APP_VERSION = "v242";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5329,7 +5329,9 @@ function settlementDashboardManualPreviewRow() {
 }
 
 function settlementDashboardFinanceEditor(workflow = {}) {
-  if (state.settlementDashboardExpandedCourierId === "12345" && state.settlementDashboardMonth === "2026-09" && workflow.worksheetPilot) {
+  if (workflow.worksheetPilot
+      && workflow.worksheetPilot.courierId === state.settlementDashboardExpandedCourierId
+      && workflow.worksheetPilot.month === state.settlementDashboardMonth) {
     return settlementDashboardPilotFinanceEditor(workflow.worksheetPilot);
   }
   const rows = settlementDashboardEditorRows(workflow);
@@ -5367,21 +5369,24 @@ function settlementDashboardFinanceEditor(workflow = {}) {
 }
 
 function settlementDashboardPilotManualRow(row = {}) {
+  const month = state.settlementDashboardMonth || previousLocalMonth();
+  const firstDate = `${month}-01`;
+  const lastDate = `${month}-${String(new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate()).padStart(2, "0")}`;
   const id = row.id || `manual-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const types = [["bonus", "Bónusz"], ["malus", "Malus"], ["correction_income", "Korrekció +"], ["correction_deduction", "Korrekció −"], ["customer_rating", "Ügyfélértékelés"], ["atm_deduction", "ATM levonás"], ["other_expense", "Egyéb kiadás"]];
   return `<div class="settlement-worksheet-manual-row" data-dashboard-editor-row data-manual-id="${escapeHtml(id)}">
     <label>Típus<select data-manual-field="type">${types.map(([key, label]) => `<option value="${key}" ${row.type === key ? "selected" : ""}>${label}</option>`).join("")}</select></label>
     <label>Összeg (Ft)<input type="number" min="0" step="1" data-manual-field="amountHuf" value="${escapeHtml(String(row.amountHuf ?? 0))}"></label>
     <label class="settlement-worksheet-note">Megjegyzés<input data-manual-field="note" value="${escapeHtml(row.note || "")}" placeholder="Miért jár ez a tétel?"></label>
-    <label>Érvényes ettől<input type="date" data-manual-field="validFrom" value="${escapeHtml(row.validFrom || "2026-09-01")}" min="2026-09-01" max="2026-09-30"></label>
-    <label>Érvényes eddig<input type="date" data-manual-field="validTo" value="${escapeHtml(row.validTo || "2026-09-30")}" min="2026-09-01" max="2026-09-30"></label>
+    <label>Érvényes ettől<input type="date" data-manual-field="validFrom" value="${escapeHtml(row.validFrom || firstDate)}" min="${firstDate}" max="${lastDate}"></label>
+    <label>Érvényes eddig<input type="date" data-manual-field="validTo" value="${escapeHtml(row.validTo || lastDate)}" min="${firstDate}" max="${lastDate}"></label>
     <button type="button" class="secondary settlement-dashboard-editor-delete" data-dashboard-editor-delete aria-label="Kézi tétel eltávolítása">×</button>
   </div>`;
 }
 
 function settlementDashboardPilotFinanceEditor(pilot) {
-  return `<div class="settlement-dashboard-editor settlement-worksheet" data-pilot-worksheet data-snapshot-id="${escapeHtml(pilot.snapshotId)}">
-    <div class="settlement-dashboard-editor-head"><div><strong>Pénzügyi munkalap</strong><small>Bagoly Zoltán · #12345 · 2026. szeptember · mentett verzió: v${escapeHtml(String(pilot.version))}</small></div><span class="settlement-dashboard-editor-badge">Tesztfutár</span></div>
+  return `<div class="settlement-dashboard-editor settlement-worksheet" data-pilot-worksheet data-snapshot-id="${escapeHtml(pilot.snapshotId)}" data-courier-id="${escapeHtml(pilot.courierId)}" data-month="${escapeHtml(pilot.month)}">
+    <div class="settlement-dashboard-editor-head"><div><strong>Pénzügyi munkalap</strong><small>${escapeHtml(pilot.courierName || pilot.courierId)} · #${escapeHtml(pilot.courierId)} · ${escapeHtml(pilot.month)} · mentett verzió: v${escapeHtml(String(pilot.version))}</small></div><span class="settlement-dashboard-editor-badge">Szerkeszthető</span></div>
     <div class="notice">Csak ennek a futárnak a mentett tételeit módosítja. A mentés után ugyanaz az új verzió látszik a PWA-ban és a devtest.py-ban. A meglévő TIG PDF változatlan marad.</div>
     <section class="settlement-worksheet-section"><h4>Pénzügyi értékek</h4><small>A levonások negatív előjellel szerepelnek. A darabszám módosítása önmagában nem számolja újra a díjakat.</small>
       <table class="settlement-worksheet-table"><thead><tr><th>Tétel</th><th>Mentett alapérték</th><th>Új alapérték</th></tr></thead><tbody>${pilot.rows.map(row => `<tr><td><strong>${escapeHtml(row.label)}</strong><small>${escapeHtml(row.note || "")}</small></td><td>${escapeHtml(row.amountKind === "count" ? `${formatCount(row.amountHuf)} db` : formatHuf(row.amountHuf))}</td><td><label class="settlement-worksheet-value"><input type="number" step="1" data-worksheet-key="${escapeHtml(row.key)}" value="${escapeHtml(String(row.amountHuf))}" aria-label="${escapeHtml(row.label)} új értéke"><span>${row.amountKind === "count" ? "db" : "Ft"}</span></label></td></tr>`).join("")}</tbody></table>
@@ -5396,7 +5401,7 @@ function settlementDashboardPilotFinanceEditor(pilot) {
 }
 
 function readPilotWorksheet(editor) {
-  return { month: "2026-09", courierId: "12345", snapshotId: editor.dataset.snapshotId,
+  return { month: editor.dataset.month, courierId: editor.dataset.courierId, snapshotId: editor.dataset.snapshotId,
     note: editor.querySelector("[data-worksheet-note]").value.trim(),
     rows: [...editor.querySelectorAll("[data-worksheet-key]")].map(input => ({key: input.dataset.worksheetKey, amountHuf: Number(input.value)})),
     manualRows: [...editor.querySelectorAll("[data-manual-id]")].map(row => {
@@ -5417,7 +5422,7 @@ function invalidatePilotWorksheet(editor) {
 }
 
 async function submitPilotWorksheet(editor, commit) {
-  if (state.settlementDashboardExpandedCourierId !== "12345" || state.settlementDashboardMonth !== "2026-09") return;
+  if (state.settlementDashboardExpandedCourierId !== editor.dataset.courierId || state.settlementDashboardMonth !== editor.dataset.month) return;
   const payload = readPilotWorksheet(editor);
   const message = editor.querySelector("[data-worksheet-message]");
   if (!payload.note) { message.textContent = "A módosítás indoka kötelező."; return; }
@@ -5430,14 +5435,14 @@ async function submitPilotWorksheet(editor, commit) {
   try {
     const result = await api(`/api/admin/settlement-worksheet/${commit ? "commit" : "preview"}`, {
       method: "POST", body: JSON.stringify({...payload, previewHash: commit ? editor.worksheetPreview.hash : ""}),
-      loadingMessage: commit ? "Tesztfutár módosításainak mentése..." : "Tesztfutár előnézetének számítása...",
+      loadingMessage: commit ? "Futár módosításainak mentése..." : "Futár előnézetének számítása...",
     });
     if (commit) {
-      delete state.settlementDashboardDetailCache["2026-09:12345"];
+      delete state.settlementDashboardDetailCache[`${payload.month}:${payload.courierId}`];
       state.settlementDashboardPayment = null;
       await loadSettlementDashboard();
-      if (state.settlementDashboardExpandedCourierId === "12345" && state.settlementDashboardMonth === "2026-09") {
-        await loadSettlementDashboardCourierDetail("12345");
+      if (state.settlementDashboardExpandedCourierId === payload.courierId && state.settlementDashboardMonth === payload.month) {
+        await loadSettlementDashboardCourierDetail(payload.courierId);
         const savedMessage = document.querySelector("[data-pilot-worksheet] [data-worksheet-message]");
         if (savedMessage) savedMessage.textContent = `Mentve: v${result.version}. A devtest.py nézetet frissítve ugyanez a mentés jelenik meg. A korábbi TIG PDF nem frissült.`;
       }

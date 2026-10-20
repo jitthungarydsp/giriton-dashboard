@@ -66,7 +66,8 @@ class DashboardDetailLoadingTest(unittest.TestCase):
             "require_settlement_dashboard_admin": Mock(), "parse_month": lambda v: date.fromisoformat(v + "-01"),
             "read_courier_display_name": Mock(side_effect=AssertionError("Name already in snapshot")),
             "admin_finance_rows_from_snapshot": Mock(return_value=[{"key": "payable"}]),
-            "read_dashboard_detail_snapshot": Mock(return_value={"id": "saved", "courier_name": "Lulaj Brendon"}),
+            "read_dashboard_detail_snapshot": Mock(return_value={"id": "saved", "courier_name": "Lulaj Brendon",
+                "courier_id": "8001", "period_start": "2026-09-01", "version": 1, "items": [], "sources": []}),
             "read_mobile_breakdown_overrides": Mock(return_value={}),
             "read_workflow_rows": Mock(return_value=([], [], [])),
             "build_financial_breakdown_from_snapshot": Mock(return_value={"available": True, "snapshotId": "saved"}),
@@ -87,13 +88,15 @@ class DashboardDetailLoadingTest(unittest.TestCase):
                 barrier.wait()
                 return result
             return read
-        ns["read_dashboard_detail_snapshot"].side_effect = concurrent({"id": "saved", "courier_name": "Lulaj Brendon"})
+        ns["read_dashboard_detail_snapshot"].side_effect = concurrent(ns["read_dashboard_detail_snapshot"].return_value)
         ns["read_mobile_breakdown_overrides"].side_effect = concurrent({})
         ns["read_workflow_rows"].side_effect = concurrent(([], [], []))
         endpoint = load_function("admin_settlement_dashboard_detail", ns)
         result = endpoint(month="2026-09", courier="8001", include_tig=False, giriton_pwa_session="session")
         self.assertEqual(result["financialBreakdown"]["snapshotId"], "saved")
         self.assertEqual(result["viewingAs"]["username"], "Lulaj Brendon")
+        self.assertEqual(result["worksheetPilot"]["courierId"], "8001")
+        self.assertEqual(result["worksheetPilot"]["month"], "2026-09")
         ns["read_dashboard_detail_snapshot"].assert_called_once()
         ns["build_financial_breakdown_from_snapshot"].assert_called_once()
         ns["build_financial_breakdown"].assert_not_called()

@@ -1,4 +1,4 @@
-"""Snapshot-based worksheet pilot. No database access or source refreshes."""
+"""Snapshot-based financial worksheet. No database access or source refreshes."""
 from copy import deepcopy
 from datetime import date
 import hashlib
@@ -6,8 +6,6 @@ import json
 
 from resources.settlement_pdf import build_tig_breakdown
 
-PILOT_COURIER = "12345"
-PILOT_MONTH = "2026-09"
 MONEY_KEYS = {
     "base", "tip", "delay_bonus", "compliance_bonus", "address_bonus_kifli",
     "loyalty_bonus", "customer_rating", "monthly_bonus", "monthly_malus",
@@ -25,8 +23,18 @@ MANUAL_TYPES = {
 
 
 def require_pilot(courier_id, month):
-    if str(courier_id) != PILOT_COURIER or str(month)[:7] != PILOT_MONTH:
-        raise ValueError("A munkalap tesztje csak Bagoly Zoltán (#12345), 2026. szeptember hónapjára engedélyezett.")
+    """Validate one explicit target; legacy function name retained for callers."""
+    courier_id = str(courier_id or "").strip()
+    value = str(month or "")
+    if not courier_id or len(courier_id) > 80:
+        raise ValueError("A futár azonosítója kötelező.")
+    if len(value) not in {7, 10} or (len(value) == 10 and value[7:] != "-01"):
+        raise ValueError("A hónap formátuma ÉÉÉÉ-HH legyen.")
+    try:
+        period_start = date.fromisoformat(value[:7] + "-01")
+    except ValueError as exc:
+        raise ValueError("Érvénytelen elszámolási hónap.") from exc
+    return courier_id, period_start
 
 
 def source_payload(snapshot, key):
@@ -54,6 +62,8 @@ def worksheet_state(snapshot):
     if isinstance(previous_edit, dict) and isinstance(previous_edit.get("rows"), list):
         rows = deepcopy(previous_edit["rows"])
     return {
+        "courierId": str(snapshot["courier_id"]), "courierName": str(snapshot.get("courier_name") or snapshot["courier_id"]),
+        "month": str(snapshot["period_start"])[:7],
         "snapshotId": str(snapshot["id"]), "version": snapshot["version"], "rows": rows,
         "manualRows": source_payload(snapshot, "pwa_worksheet_manual_rows") or [],
         "savedTotal": int(next((i["amount_value"] for i in finance if i["item_key"] == "payable"), 0)),
@@ -63,7 +73,8 @@ def worksheet_state(snapshot):
 
 
 def prepare_worksheet(snapshot, rows, manual_rows, note):
-    require_pilot(snapshot.get("courier_id"), snapshot.get("period_start"))
+    courier_id, period_start = require_pilot(snapshot.get("courier_id"), snapshot.get("period_start"))
+    month = period_start.strftime("%Y-%m")
     if not str(note or "").strip():
         raise ValueError("A módosítás indoka kötelező.")
     baseline = worksheet_state(snapshot)
@@ -95,8 +106,8 @@ def prepare_worksheet(snapshot, rows, manual_rows, note):
             raise ValueError("A kézi tétel összege 0 és 1 milliárd közötti egész forint legyen.")
         start = date.fromisoformat(str(row.get("validFrom") or ""))
         end = date.fromisoformat(str(row.get("validTo") or ""))
-        if start > end or start.strftime("%Y-%m") != PILOT_MONTH or end.strftime("%Y-%m") != PILOT_MONTH:
-            raise ValueError("A kézi tétel érvényessége a teszt hónapján belül legyen.")
+        if start > end or start.strftime("%Y-%m") != month or end.strftime("%Y-%m") != month:
+            raise ValueError("A kézi tétel érvényessége a kiválasztott hónapon belül legyen.")
         if not str(row.get("note") or "").strip():
             raise ValueError("Minden kézi tételhez megjegyzés szükséges.")
         label, sign = MANUAL_TYPES[kind]
@@ -117,14 +128,14 @@ def prepare_worksheet(snapshot, rows, manual_rows, note):
             deductions += amount
     total = income + deductions + correction
     if total < 0:
-        raise ValueError("Negatív kifizetendő összeghez ebben a tesztben nem készíthető TIG.")
+        raise ValueError("Negatív kifizetendő összeghez nem készíthető TIG.")
     totals = {"income_total": income, "deduction_total": deductions, "correction_total": correction, "payable_total": total}
     by_key = {r["key"]: r["amountHuf"] for r in base}
     # Preserve the current profile as input; never refetch imports or run a batch.
     profile = deepcopy(source_payload(snapshot, "courier_profile") or {})
     cash = abs(by_key.get("atm_effect", 0) - sum(r["amountHuf"] for r in clean_manual if r["type"] == "atm_deduction"))
-    tig = build_tig_breakdown({**profile, "id": PILOT_COURIER, "name": snapshot.get("courier_name"),
-                               "document_month": date(2026, 9, 1)},
+    tig = build_tig_breakdown({**profile, "id": courier_id, "name": snapshot.get("courier_name"),
+                               "document_month": period_start},
                               {"payable": total, "tip": by_key.get("tip", 0), "cash": cash})
     tig_total = int(tig["finalTotalHuf"])
     # These identities are checked again inside the transactional DB function.
@@ -189,6 +200,7 @@ def prepare_worksheet(snapshot, rows, manual_rows, note):
     metadata = {**(snapshot.get("metadata") or {}), **totals, "tig_final_total": tig_total,
                 "order_count": by_key.get("orders", by_key.get("performance", 0)), "route_count": by_key.get("routes", 0),
                 "source": "pwa_worksheet_pilot", "worksheet_base_snapshot_id": baseline["snapshotId"], "worksheet_note": note.strip()}
+    metadata.update(worksheet_courier_id=courier_id, worksheet_period_start=period_start.isoformat())
     changes = [{"key": r["key"], "label": r["label"], "before": original[r["key"]]["amountHuf"], "after": r["amountHuf"]}
                for r in base if original[r["key"]]["amountHuf"] != r["amountHuf"]]
     prepared = {"items": items, "sources": sources, "metadata": metadata}

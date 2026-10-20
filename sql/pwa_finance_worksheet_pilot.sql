@@ -1,4 +1,5 @@
--- Installation changes no courier data. Runtime is restricted to #12345 / 2026-09.
+-- Installation changes no courier data. Runtime edits one explicit courier/month.
+-- The legacy RPC name is retained so existing callers need no endpoint migration.
 begin;
 create or replace function settlement.pwa_commit_worksheet_pilot(
     p_courier_id text, p_period_start date, p_base_snapshot_id uuid,
@@ -14,11 +15,14 @@ declare
     v_correction numeric;
     v_tig numeric;
 begin
-    if p_courier_id is distinct from '12345' or p_period_start is distinct from date '2026-09-01' then
-        raise exception 'A munkalap tesztje csak #12345 / 2026-09 hónapra engedélyezett.';
+    if nullif(trim(p_courier_id),'') is null or p_period_start is null
+       or p_period_start <> date_trunc('month',p_period_start)::date then
+        raise exception 'A futár és az elszámolási hónap kötelező.';
     end if;
     if nullif(trim(p_actor), '') is null or nullif(p_fingerprint, '') is null
        or p_prepared->'metadata'->>'source' is distinct from 'pwa_worksheet_pilot'
+       or p_prepared->'metadata'->>'worksheet_courier_id' is distinct from p_courier_id
+       or p_prepared->'metadata'->>'worksheet_period_start' is distinct from p_period_start::text
        or nullif(trim(p_prepared->'metadata'->>'worksheet_note'), '') is null then
         raise exception 'Hiányzó mentési adatok.';
     end if;

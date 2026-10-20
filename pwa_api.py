@@ -23045,7 +23045,7 @@ def admin_settlement_dashboard_detail(
         if preview_breakdown:
             financial_breakdown = preview_breakdown
     worksheet_pilot = None
-    if courier_id == "12345" and month_value == date(2026, 9, 1) and latest_snapshot:
+    if latest_snapshot:
         from resources.pwa_finance_worksheet import worksheet_state
         worksheet_pilot = worksheet_state(latest_snapshot)
     return {
@@ -23084,12 +23084,14 @@ def prepare_pilot_request(payload: WorksheetPilotRequest) -> tuple[dict[str, Any
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     month = parse_month(payload.month)
     snapshot = read_latest_courier_finance_snapshot(payload.courierId, month, include_sources=True)
-    if not snapshot or str(snapshot.get("id")) != payload.snapshotId:
+    if (not snapshot or str(snapshot.get("id")) != payload.snapshotId
+        or str(snapshot.get("courier_id")) != str(payload.courierId)
+        or str(snapshot.get("period_start"))[:10] != month.replace(day=1).isoformat()):
         raise HTTPException(status_code=409, detail="Az elszámolás verziója megváltozott. Töltsd újra a munkalapot.")
     closure = supabase_rest("GET", "courier_monthly_closure", schema="settlement",
-                            params={"select": "status", "courier_id": "eq.12345", "period_start": "eq.2026-09-01", "status": "eq.done", "limit": "1"})
+                            params={"select": "status", "courier_id": f"eq.{payload.courierId}", "period_start": f"eq.{month.replace(day=1).isoformat()}", "status": "eq.done", "limit": "1"})
     paid = supabase_rest("GET", "peopleforce_card_statuses",
-                         params={"select": "status", "courier_id": "eq.12345", "document_month": "eq.2026-09-01", "action_key": "eq.invoice_payment", "status": "eq.done", "limit": "1"})
+                         params={"select": "status", "courier_id": f"eq.{payload.courierId}", "document_month": f"eq.{month.replace(day=1).isoformat()}", "action_key": "eq.invoice_payment", "status": "eq.done", "limit": "1"})
     if closure or paid:
         raise HTTPException(status_code=409, detail="A kifizetés lezárt. A munkalap nem módosítható.")
     try:
@@ -23118,7 +23120,7 @@ def admin_worksheet_pilot_commit(payload: WorksheetPilotRequest,
     if not payload.previewHash or payload.previewHash != result["previewHash"]:
         raise HTTPException(status_code=409, detail="A módosításokhoz előbb készíts friss előnézetet.")
     saved = supabase_rest("POST", "rpc/pwa_commit_worksheet_pilot", schema="settlement", explain_workflow_error=True,
-                          payload={"p_courier_id": payload.courierId, "p_period_start": "2026-09-01",
+                          payload={"p_courier_id": payload.courierId, "p_period_start": str(snapshot["period_start"])[:10],
                                    "p_base_snapshot_id": snapshot["id"], "p_fingerprint": result["previewHash"],
                                    "p_actor": str(user.get("username") or "admin"), "p_prepared": result["prepared"]})
     if not isinstance(saved, dict) or not saved.get("ok"):

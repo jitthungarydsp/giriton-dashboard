@@ -59,8 +59,24 @@ class WorksheetCalculationTest(unittest.TestCase):
         deleted_one = prepare_worksheet(reopened, state["rows"], state["manualRows"][1:], "Egy sor törlése")
         self.assertEqual(deleted_one["totals"]["payable_total"], result["totals"]["payable_total"] - 2500)
 
-    def test_other_couriers_and_months_are_rejected(self):
-        for courier, month in [("6909", "2026-09"), ("7725", "2026-09"), ("12345", "2026-10")]:
+    def test_all_couriers_and_months_use_the_selected_scope(self):
+        for courier, month in [("7767", "2026-09"), ("7725", "2026-10"), ("12345", "2028-02")]:
+            with self.subTest(courier=courier, month=month):
+                saved = {**snapshot(), "courier_id": courier, "period_start": month + "-01"}
+                result = prepare_worksheet(saved, [], [], "Módosítás")
+                self.assertEqual(result["prepared"]["metadata"]["worksheet_courier_id"], courier)
+                self.assertEqual(result["tig"]["documentMeta"]["periodStart"], month + "-01")
+                self.assertEqual(result["tig"]["documentMeta"]["note"], "Futár ID: " + courier)
+
+    def test_manual_dates_follow_selected_month_and_leap_year(self):
+        saved = {**snapshot(), "courier_id": "7767", "period_start": "2028-02-01"}
+        entry = {**manual(), "validFrom": "2028-02-01", "validTo": "2028-02-29"}
+        self.assertEqual(prepare_worksheet(saved, [], [entry], "Teszt")["delta"], 2500)
+        with self.assertRaises(ValueError):
+            prepare_worksheet(saved, [], [manual()], "Másik hónap")
+
+    def test_invalid_target_is_rejected(self):
+        for courier, month in [("", "2026-09"), (None, "2026-09"), ("7767", "2026-13"), ("7767", "2026-09-02")]:
             with self.subTest(courier=courier, month=month), self.assertRaises(ValueError):
                 require_pilot(courier, month)
 
@@ -96,13 +112,36 @@ class WorksheetEndpointTest(unittest.TestCase):
         self.assertEqual(result["totals"]["payable_total"], 135500)
         self.assertTrue(all(c.args[0] == "GET" for c in self.rest.call_args_list))
 
-    def test_other_target_is_rejected_before_database_access(self):
-        self.payload.courierId = "6909"
+    def test_missing_target_is_rejected_before_database_access(self):
+        self.payload.courierId = ""
         with self.assertRaises(HTTPException) as caught:
             self.ns["admin_worksheet_pilot_preview"](self.payload)
         self.assertEqual(caught.exception.status_code, 403)
         self.read.assert_not_called()
         self.rest.assert_not_called()
+
+    def test_other_courier_and_month_scope_all_reads_and_writes(self):
+        self.payload.courierId, self.payload.month = "7767", "2026-10"
+        self.read.return_value = {**snapshot(), "courier_id": "7767", "period_start": "2026-10-01"}
+        preview = self.ns["admin_worksheet_pilot_preview"](self.payload)
+        self.read.assert_called_with("7767", date(2026, 10, 1), include_sources=True)
+        for call in self.rest.call_args_list:
+            self.assertEqual(call.kwargs["params"]["courier_id"], "eq.7767")
+            key = "period_start" if call.args[1] == "courier_monthly_closure" else "document_month"
+            self.assertEqual(call.kwargs["params"][key], "eq.2026-10-01")
+        self.payload.previewHash = preview["previewHash"]
+        self.rest.side_effect = lambda method, *a, **kw: {"ok": True, "version": 11} if method == "POST" else []
+        self.ns["admin_worksheet_pilot_commit"](self.payload)
+        post = next(c for c in self.rest.call_args_list if c.args[0] == "POST")
+        self.assertEqual(post.kwargs["payload"]["p_courier_id"], "7767")
+        self.assertEqual(post.kwargs["payload"]["p_period_start"], "2026-10-01")
+
+    def test_mismatched_snapshot_courier_or_month_cannot_be_edited(self):
+        for changed in [{"courier_id": "7767"}, {"period_start": "2026-10-01"}]:
+            self.read.return_value = {**snapshot(), **changed}
+            with self.assertRaises(HTTPException) as caught:
+                self.ns["admin_worksheet_pilot_preview"](self.payload)
+            self.assertEqual(caught.exception.status_code, 409)
 
     def test_stale_version_and_closed_payment_block_preview(self):
         self.payload.snapshotId = "old-id"

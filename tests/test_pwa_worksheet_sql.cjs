@@ -25,11 +25,14 @@ print(json.dumps(prepare_worksheet(s,[],[manual()],'SQL test')))`], {cwd: resolv
     const original='11111111-1111-4111-8111-111111111111';
     await db.query(`insert into settlement.courier_finance_snapshot(id,courier_id,period_start,version,fingerprint,metadata,courier_name)
       values ($1,'12345','2026-09-01',10,'original','{}','Bagoly Zoltán'),
-      ('22222222-2222-4222-8222-222222222222','6909','2026-09-01',10,'other','{}','Other')`,[original]);
+      ('22222222-2222-4222-8222-222222222222','6909','2026-09-01',10,'other','{}','Other'),
+      ('44444444-4444-4444-8444-444444444444','7767','2026-10-01',10,'october','{}','Kanyó Krisztián')`,[original]);
     const call=async({courier='12345',month='2026-09-01',base=original,hash='new',data=prepared}={}) =>
       (await db.query(`select settlement.pwa_commit_worksheet_pilot($1,$2,$3,$4,'admin',$5) as result`,[courier,month,base,hash,JSON.stringify(data)])).rows[0].result;
-    await assert.rejects(call({courier:'6909'}),/csak #12345/);
-    await assert.rejects(call({month:'2026-10-01'}),/csak #12345/);
+    await assert.rejects(call({courier:''}),/futár és/);
+    await assert.rejects(call({month:'2026-10-02'}),/futár és/);
+    await assert.rejects(call({courier:'6909'}),/Hiányzó mentési/); // prepared data belongs to a different target
+    await assert.rejects(call({month:'2026-10-01'}),/Hiányzó mentési/);
     await assert.rejects(call({base:'33333333-3333-4333-8333-333333333333'}),/verziója megváltozott/);
     const invalid=structuredClone(prepared);invalid.metadata.payable_total++;
     await assert.rejects(call({data:invalid}),/nem egyeznek/);
@@ -47,7 +50,15 @@ print(json.dumps(prepare_worksheet(s,[],[manual()],'SQL test')))`], {cwd: resolv
     await db.exec("insert into settlement.courier_monthly_closure values('12345','2026-09-01','done')");
     await assert.rejects(call({base:result.snapshotId,hash:'closed'}),/kifizetés lezárt/);
     assert.equal((await db.query("select count(*)::int as n from settlement.courier_finance_snapshot where courier_id='6909'")).rows[0].n,1);
+    const other=structuredClone(prepared);
+    other.metadata.worksheet_courier_id='7767';other.metadata.worksheet_period_start='2026-10-01';
+    const otherSaved=await call({courier:'7767',month:'2026-10-01',base:'44444444-4444-4444-8444-444444444444',hash:'other-new',data:other});
+    assert.equal(otherSaved.version,11);
+    const otherScope=(await db.query('select courier_id,period_start::text from settlement.courier_finance_snapshot where id=$1',[otherSaved.snapshotId])).rows[0];
+    assert.deepEqual(otherScope,{courier_id:'7767',period_start:'2026-10-01'});
+    await db.exec("insert into public.peopleforce_card_statuses values('7767','2026-10-01','invoice_payment','done')");
+    await assert.rejects(call({courier:'7767',month:'2026-10-01',base:otherSaved.snapshotId,hash:'paid',data:other}),/kifizetés lezárt/);
     assert.equal((await db.query("select has_function_privilege('authenticated','settlement.pwa_commit_worksheet_pilot(text,date,uuid,text,text,jsonb)','execute') as allowed")).rows[0].allowed,false);
-    console.log('Worksheet SQL passed: pilot isolation, atomic snapshot/items/sources, consistent totals, shared keys, retry, stale version, rollback, closed payment and service-role permissions.');
+    console.log('Worksheet SQL passed: multiple couriers/months, target isolation, atomic snapshots, consistent totals, retry, stale version, rollback, closure/payment guards and service-role permissions.');
   } finally { await db.close(); }
 })().catch(e=>{console.error(e);process.exitCode=1;});
