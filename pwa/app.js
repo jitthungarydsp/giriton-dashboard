@@ -110,7 +110,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v243";
+const APP_VERSION = "v244";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5151,6 +5151,7 @@ function settlementDashboardStatusOptions(statusCounts = {}) {
     "TIG elfogadásra vár",
     "Számlafeltöltésre vár",
     "Számla ellenőrzésre vár",
+    "Kifizetésre vár",
     "Reklamáció",
     "Kifizetve",
   ];
@@ -5164,7 +5165,7 @@ function renderSettlementStatusFilters(statusCounts = {}) {
   return `<div class="settlement-dashboard-filter-panel">
     <div class="settlement-dashboard-filter-title">
       <strong>Áttekintés</strong>
-      <small>${active ? `Aktív szűrés: ${escapeHtml(active)}` : "Nincs felső státuszszűrés: minden futár megjelenik."}</small>
+      <small>${active ? `Aktív szűrés: ${escapeHtml(active)}` : "Nincs státuszszűrés: minden futár megjelenik."}</small>
     </div>
     <div class="settlement-dashboard-filter-grid">
       ${options.map((label) => {
@@ -5636,7 +5637,11 @@ function renderSettlementDashboard() {
   }
   const rows = payload.rows || [];
   const summary = payload.summary || {};
-  const statusCounts = summary.statusCounts || {};
+  const statusCounts = {};
+  rows.forEach((row) => {
+    const label = String(row.status?.label || "Elszámolás készül");
+    statusCounts[label] = (statusCounts[label] || 0) + 1;
+  });
   const activeStatusFilter = String(state.settlementDashboardStatusFilter || "");
   const displayRows = activeStatusFilter
     ? rows.filter((row) => String(row.status?.label || "") === activeStatusFilter)
@@ -5655,15 +5660,6 @@ function renderSettlementDashboard() {
         <small>${escapeHtml(formatCount(summary.couriers || rows.length || 0))} futár</small>
       </div>
     </section>
-    ${renderOpsSummary(summary, [
-      ["Futár", summary.couriers || rows.length || 0, "elszámolással"],
-      ["Elfogadásra vár", statusCounts["Elszámolás elfogadásra vár"] || 0, "futár oldalon"],
-      ["Reklamáció", statusCounts["Reklamáció"] || 0, "nyitott ügy"],
-      ["Kifizetve", statusCounts["Kifizetve"] || 0, "lezárt"],
-      ["TIG-re vár", statusCounts["TIG-re vár"] || 0, "TIG elkészülésére vár"],
-      ["TIG elfogadásra vár", statusCounts["TIG elfogadásra vár"] || 0, "futár teendő"],
-      ["Számlára vár", (statusCounts["Számlafeltöltésre vár"] || 0) + (statusCounts["Számla ellenőrzésre vár"] || 0), "következő lépés"],
-    ])}
     ${renderSettlementStatusFilters(statusCounts)}
     <div class="settlement-dashboard-toolbar">
       <strong>${hasSearch ? "Keresési találatok" : "Futár elszámolások"}</strong>

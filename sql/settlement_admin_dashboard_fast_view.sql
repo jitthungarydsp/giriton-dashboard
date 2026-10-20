@@ -98,9 +98,13 @@ documents as (
         document_month::date as period_start,
         bool_or(lower(split_part(document_type, ':', 1)) = 'settlement') as has_settlement_document,
         bool_or(lower(split_part(document_type, ':', 1)) = 'tig') as has_tig_document,
+        bool_or(lower(split_part(document_type, ':', 1)) = 'invoice') as has_invoice_document,
         max(uploaded_at) as last_document_at
     from public.peopleforce_documents
     where document_month is not null
+      and coalesce(document_type, '') !~* '^process:[a-z0-9_-]+:'
+      and coalesce(lower(substring(note from '(?i)Folyamat azonosító:[[:space:]]*([a-z0-9_-]+)')), '')
+          in ('', 'havi', 'monthly', 'alap')
     group by courier_id::text, document_month::date
 ),
 latest_statuses as (
@@ -184,7 +188,7 @@ dashboard_rows as (
         coalesce(sp.tig_started, false) as tig_started,
         coalesce(sp.tig_done, false) as tig_done,
         coalesce(sp.invoice_submit_open, false) as invoice_submit_open,
-        coalesce(sp.invoice_submit_done, false) as invoice_submit_done,
+        (coalesce(sp.invoice_submit_done, false) or coalesce(d.has_invoice_document, false)) as invoice_submit_done,
         (coalesce(sp.invoice_check_open, false) or coalesce(cp.invoice_check_attention, false)) as invoice_check_open,
         coalesce(sp.invoice_check_done, false) as invoice_check_done,
         coalesce(sp.invoice_payment_done, false) as invoice_payment_done,
@@ -250,7 +254,8 @@ select
     updated_at,
     case
         when open_complaints > 0 then 'Reklamáció'
-        when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 'Elszámolás elfogadásra vár'
+        when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done
+             and not (invoice_submit_done or invoice_check_done or invoice_payment_done) then 'Elszámolás elfogadásra vár'
         when invoice_payment_done then 'Kifizetve'
         when invoice_submit_open then 'Számlafeltöltésre vár'
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 'Számla ellenőrzésre vár'
@@ -263,7 +268,8 @@ select
     end as dashboard_status_label,
     case
         when open_complaints > 0 then open_complaints::text || ' nyitott reklamáció'
-        when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 'Futár teendő'
+        when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done
+             and not (invoice_submit_done or invoice_check_done or invoice_payment_done) then 'Futár teendő'
         when invoice_payment_done then 'Folyamat lezárva'
         when invoice_submit_open then 'Futár teendő'
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 'Számla beérkezett'
@@ -276,7 +282,8 @@ select
     end as dashboard_status_detail,
     case
         when open_complaints > 0 then 'attention'
-        when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 'waiting'
+        when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done
+             and not (invoice_submit_done or invoice_check_done or invoice_payment_done) then 'waiting'
         when invoice_payment_done then 'done'
         when invoice_submit_open then 'waiting'
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 'warning'
@@ -289,7 +296,8 @@ select
     end as dashboard_status_tone,
     case
         when open_complaints > 0 then 20
-        when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done then 40
+        when (has_settlement_document or settlement_started or session_id is not null) and not settlement_done
+             and not (invoice_submit_done or invoice_check_done or invoice_payment_done) then 40
         when invoice_payment_done then 90
         when invoice_submit_open then 60
         when invoice_check_open or (invoice_submit_done and not invoice_check_done) then 70

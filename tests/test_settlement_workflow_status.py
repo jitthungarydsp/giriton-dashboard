@@ -31,6 +31,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         import copy
         data = {
             "peopleforce_documents": [
+                {"courier_id": "1", "document_type": "invoice", "note": "Folyamat azonosító: advance"},
                 {"courier_id": "2", "document_type": "tig"},
                 {"courier_id": "3", "document_type": "tig"},
             ],
@@ -38,8 +39,8 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
                 {"courier_id": "2", "action_key": "invoice_check", "status": "open", "status_note": "TIG összeg eltérés: 113 Ft", "updated_at": "2026-10-03"},
                 {"courier_id": "2", "action_key": "settlement", "status": "done", "updated_at": "2026-10-02"},
                 {"courier_id": "2", "action_key": "settlement", "status": "open", "updated_at": "2026-10-01"},
-                {"courier_id": "3", "action_key": "settlement", "status": "done"},
-                {"courier_id": "3", "action_key": "tig", "status": "done"},
+                {"courier_id": "3", "action_key": "settlement", "status": "open"},
+                {"courier_id": "3", "action_key": "tig", "status": "open"},
                 {"courier_id": "3", "action_key": "invoice_payment", "status": "done"},
                 {"courier_id": "1", "action_key": "settlement:advance", "status": "done"},
             ],
@@ -60,8 +61,10 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
               "dashboard_courier_id_key": str, "money_int": lambda v: int(v or 0),
               "base_action_key": lambda a: str(a).split(":")[0],
               "process_id_from_action_key": lambda a: str(a).partition(":")[2],
+              "document_belongs_to_process": lambda row, p: not row.get("note"),
               "settlement_dashboard_status": settlement_dashboard_status}
         load_functions("pwa_api.py", {"attach_readonly_dashboard_statuses", "_dashboard_status_from_bulk",
+                                     "read_dashboard_month_workflow",
                                      "workflow_done", "workflow_open", "workflow_status", "workflow_action_visible"}, ns)
         original = {"rows": [dict(courierId=str(i), snapshotVersion=7, totalPayableHuf=100*i,
                                  status={"label": "Devtest összesítés"}) for i in range(1, 6)],
@@ -94,6 +97,28 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
             self.assertEqual(settlement_dashboard_status(
                 settlement_ready=True, settlement_done=True, tig_ready=ready, tig_done=False,
             )["label"], expected)
+
+    def test_completed_invoice_progress_is_not_hidden_by_reopened_settlement(self):
+        flags = dict(settlement_ready=True, settlement_done=False, tig_ready=True, tig_done=False)
+        for later, expected in (
+            ({"invoice_payment_done": True}, "Kifizetve"),
+            ({"invoice_submit_done": True, "invoice_check_open": True}, "Számla ellenőrzésre vár"),
+            ({"invoice_check_done": True}, "Kifizetésre vár"),
+            ({"invoice_submit_done": True, "invoice_submit_open": True}, "Számlafeltöltésre vár"),
+        ):
+            with self.subTest(later=later):
+                self.assertEqual(settlement_dashboard_status(**flags, **later)["label"], expected)
+
+    def test_uploaded_invoice_is_evidence_but_prepared_tig_is_not(self):
+        ns = load_functions("pwa_api.py", {
+            "_dashboard_status_from_bulk", "workflow_status", "workflow_done", "workflow_open", "workflow_action_visible",
+        }, {"Any": Any, "settlement_dashboard_status": settlement_dashboard_status})
+        flags = dict(has_summary=True, has_settlement_document=True, has_tig_document=True,
+                     states={"settlement": {"status": "open"}}, open_complaints=0)
+        self.assertEqual(ns["_dashboard_status_from_bulk"](**flags)["label"], "Elszámolás elfogadásra vár")
+        self.assertEqual(ns["_dashboard_status_from_bulk"](**flags, has_invoice_document=True)["label"], "Számla ellenőrzésre vár")
+        flags["states"]["invoice_submit"] = {"status": "open"}
+        self.assertEqual(ns["_dashboard_status_from_bulk"](**flags, has_invoice_document=True)["label"], "Számlafeltöltésre vár")
 
     def test_old_database_label_and_open_tig_are_not_authoritative(self):
         row = dict(session_id="monthly", settlement_done=False, has_tig_document=True,
@@ -238,7 +263,8 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         self.assertIn("end as dashboard_status_sort,", sql)
         self.assertIn("    invoice_payment_open\nfrom dashboard_rows", sql)
         for block in sql.split("    case\n")[1:]:
-            self.assertLess(block.index("and not settlement_done then"), block.index("when invoice_payment_done"))
+            self.assertLess(block.index("and not settlement_done"), block.index("when invoice_payment_done"))
+            self.assertIn("and not (invoice_submit_done or invoice_check_done or invoice_payment_done)", block)
             self.assertNotIn("has_tig_document or tig_started", block)
 
     def test_missing_reply_fields_do_not_hide_open_complaints(self):

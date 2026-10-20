@@ -12,8 +12,10 @@ def settlement_dashboard_status(
 
     if open_complaints:
         return status("Reklamáció", f"{open_complaints} nyitott reklamáció", "attention", 20)
-    # A prepared TIG or reopened downstream action is not settlement acceptance.
-    if settlement_ready and not settlement_done:
+    # Prepared/open actions alone do not prove acceptance. An actual submitted,
+    # approved or paid invoice must remain visible after an earlier step reopens.
+    invoice_progress_recorded = invoice_submit_done or invoice_check_done or invoice_payment_done
+    if settlement_ready and not settlement_done and not invoice_progress_recorded:
         return status("Elszámolás elfogadásra vár", "Futár teendő", "waiting", 40)
     if invoice_payment_done:
         return status("Kifizetve", "Folyamat lezárva", "done", 90)

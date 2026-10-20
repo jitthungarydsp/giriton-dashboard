@@ -435,7 +435,7 @@ textarea { min-height: 96px; resize: vertical; }
 .settlement-dashboard-filter.active { background: #1fa64a; color: #fff; border-color: #15833a; box-shadow: 0 10px 22px #1fa64a2e; }
 .settlement-dashboard-filter .filter-dot { width: 11px; height: 11px; border: 1px solid var(--ink); border-radius: 999px; background: #f6e90b; }
 .settlement-dashboard-filter.active .filter-dot { border-color: #fff; background: #fff; }
-.settlement-dashboard-filter strong { min-width: 0; font-size: 11px; font-weight: 850; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settlement-dashboard-filter strong { min-width: 0; font-size: 11px; font-weight: 850; white-space: normal; overflow-wrap: anywhere; }
 .settlement-dashboard-filter small { grid-column: 2; color: var(--muted); font-size: 10px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settlement-dashboard-filter.active small { color: #e7f7e7; }
 .settlement-dashboard-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 2px 2px 0; }

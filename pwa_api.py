@@ -18500,7 +18500,10 @@ def workflow_dashboard_status(workflow: dict[str, Any]) -> dict[str, Any]:
         tig_ready=bool((steps.get("tig_document") or {}).get("done")),
         tig_done=bool((steps.get("tig") or {}).get("done")),
         invoice_submit_open=workflow_open(states, "invoice_submit"),
-        invoice_submit_done=bool((steps.get("invoice_submit") or {}).get("done")),
+        invoice_submit_done=(
+            bool((steps.get("invoice_submit") or {}).get("done"))
+            or bool((workflow.get("documents") or {}).get("invoice"))
+        ),
         invoice_check_open=invoice_check_attention or workflow_open(states, "invoice_check"),
         invoice_check_done=bool((steps.get("invoice_check") or {}).get("done")),
         invoice_payment_open=workflow_open(states, "invoice_payment"),
@@ -18633,6 +18636,7 @@ def _dashboard_status_from_bulk(
     has_tig_document: bool,
     states: dict[str, dict],
     open_complaints: int,
+    has_invoice_document: bool = False,
 ) -> dict[str, Any]:
     return settlement_dashboard_status(
         settlement_ready=has_summary or has_settlement_document or workflow_action_visible(states, "settlement"),
@@ -18640,7 +18644,7 @@ def _dashboard_status_from_bulk(
         tig_ready=has_tig_document,
         tig_done=workflow_done(states, "tig"),
         invoice_submit_open=workflow_open(states, "invoice_submit"),
-        invoice_submit_done=workflow_done(states, "invoice_submit"),
+        invoice_submit_done=workflow_done(states, "invoice_submit") or has_invoice_document,
         invoice_check_open=workflow_open(states, "invoice_check"),
         invoice_check_done=workflow_done(states, "invoice_check"),
         invoice_payment_open=workflow_open(states, "invoice_payment"),
@@ -19047,7 +19051,7 @@ def read_dashboard_month_workflow(month: date) -> tuple[list[dict], list[dict], 
     month_key = month.replace(day=1).isoformat()
     with ThreadPoolExecutor(max_workers=3) as executor:
         document_future = executor.submit(_workflow_month_rows, "peopleforce_documents", month_key,
-                                          "courier_id,document_type")
+                                          "courier_id,document_type,note")
         status_future = executor.submit(_workflow_month_rows, "peopleforce_card_statuses", month_key,
                                         "courier_id,action_key,status,status_note,updated_at")
         complaint_future = executor.submit(_workflow_month_rows, "peopleforce_complaints", month_key,
@@ -19072,7 +19076,7 @@ def attach_readonly_dashboard_statuses(
     )
     for row in document_rows:
         action = str(row.get("document_type") or "")
-        if process_id_from_action_key(action):
+        if not document_belongs_to_process(row, ""):
             continue
         courier_id = dashboard_courier_id_key(row.get("courier_id"))
         documents.setdefault(courier_id, set()).add(base_action_key(action))
@@ -19112,6 +19116,7 @@ def attach_readonly_dashboard_statuses(
                         or "summary" in (original.get("sources") or []),
             has_settlement_document="settlement" in document_types,
             has_tig_document="tig" in document_types,
+            has_invoice_document="invoice" in document_types,
             states=states.get(courier_id, {}), open_complaints=complaints.get(courier_id, 0),
         )
         check_state = states.get(courier_id, {}).get("invoice_check") or {}
@@ -19438,6 +19443,8 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
         "courier_id,document_type,document_month,uploaded_at,note",
         timeout=45,
     ):
+        if not document_belongs_to_process(document, ""):
+            continue
         courier_id = str(document.get("courier_id") or "").strip()
         if not courier_id:
             continue
@@ -19494,6 +19501,7 @@ def build_admin_settlement_dashboard(month: date, query: str = "") -> dict[str, 
             has_summary=bool(summary_row),
             has_settlement_document=("settlement" in document_types),
             has_tig_document=("tig" in document_types),
+            has_invoice_document=("invoice" in document_types),
             states=statuses_by_courier.get(courier_id, {}),
             open_complaints=open_complaints_by_courier.get(courier_id, 0),
         )
