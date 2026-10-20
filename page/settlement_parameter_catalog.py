@@ -559,24 +559,24 @@ def _show_periodic(client: Any) -> None:
 
 
 def _show_reserve_insurance(client: Any) -> None:
-    st.caption("Itt verziózottan állítható a biztosítás díja, az alap biztosítási végösszeg és a levonás százaléka.")
+    st.caption("A céltartalék célösszegének elérése után csak a biztosítás díját vonjuk. A havi levonást a százalék, a havi maximum és a célösszegből hiányzó rész korlátozza.")
     data = read_items(client, RESERVE_INSURANCE_TABLE)
     if not data.empty:
         view = data.copy()
         view["Biztosítás díja"] = view["insurance_fee_huf"].map(_money)
-        view["Alap biztosítás"] = view["base_insurance_total_huf"].map(_money)
+        view["Céltartalék célösszege"] = view["base_insurance_total_huf"].map(_money)
         if "reserve_target_huf" not in view.columns:
             view["reserve_target_huf"] = 50_000
-        view["Céltartalék maximum"] = view["reserve_target_huf"].map(_money)
+        view["Havi levonás maximuma"] = view["reserve_target_huf"].map(_money)
         view["Levonás"] = view["deduction_percent"].map(lambda value: f"{_number(value):g}%")
         view["Vége"] = view["valid_to"].fillna("Folyamatos")
-        st.dataframe(view[["Biztosítás díja", "Alap biztosítás", "Céltartalék maximum", "Levonás", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+        st.dataframe(view[["Biztosítás díja", "Céltartalék célösszege", "Havi levonás maximuma", "Levonás", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
     row = _editor_row(data, "reserve_insurance", "valid_from")
     with st.form(f"reserve_insurance_form_{_text((row or {}).get('id')) or 'new'}"):
         left, right, target_col, third = st.columns(4)
         insurance_fee = left.number_input("Biztosítás díja (Ft)", min_value=0, value=_int((row or {}).get("insurance_fee_huf")), step=100)
-        base_total = right.number_input("Alap biztosítási végösszeg (Ft)", min_value=0, value=_int((row or {}).get("base_insurance_total_huf")), step=100)
-        reserve_target = target_col.number_input("Céltartalék maximum (Ft)", min_value=0, value=_int((row or {}).get("reserve_target_huf"), 50_000), step=1000)
+        base_total = right.number_input("Céltartalék célösszege (Ft)", min_value=0, value=_int((row or {}).get("base_insurance_total_huf")), step=100)
+        reserve_target = target_col.number_input("Havi levonás maximuma (Ft)", min_value=0, value=_int((row or {}).get("reserve_target_huf"), 50_000), step=1000)
         deduction = third.number_input("Levonás (%)", min_value=0.0, max_value=100.0, value=_number((row or {}).get("deduction_percent")), step=0.1)
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "reserve_insurance")
         saved = st.form_submit_button("Módosítás mentése" if row else "Biztosítási szabály mentése", type="primary")

@@ -3956,6 +3956,7 @@ def render_devtest_finance_snapshot_view(
     session_id: str | None = None,
 ) -> None:
     metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+    reserve_funding_status = target_reserve_funding_status(_snapshot_amount(snapshot, "target_reserve_close"), period_start)
     version = int(parse_huf_value(snapshot.get("version")))
     created_at = str(snapshot.get("created_at") or "")
     st.caption(f"DB-ből betöltött pénzügyi verzió: v{version} | {created_at}")
@@ -3996,7 +3997,7 @@ def render_devtest_finance_snapshot_view(
         ("Fizetés előleg", _snapshot_amount(snapshot, "salary_advance"), "huf", "", ""),
         ("Céltartalék 10%", _snapshot_amount(snapshot, "reserve"), "huf", "", ""),
         ("Biztosítási díj", _snapshot_amount(snapshot, "insurance_fee"), "huf", "", ""),
-        ("CT státusz", 0, "text", "", str(metadata.get("reserve_month_status") or "In progress")),
+        ("CT státusz", 0, "text", "", reserve_funding_status),
         ("Előző havi egyenleg", _snapshot_amount(snapshot, "previous_excel_balance"), "huf", "", ""),
     ]
 
@@ -4150,7 +4151,7 @@ def render_devtest_finance_snapshot_view(
     reserve_columns[0].metric("CT nyitó", format_huf(reserve_open))
     reserve_columns[1].metric("Havi levonás", format_huf(reserve_deduction))
     reserve_columns[2].metric("CT záró", format_huf(reserve_close))
-    st.caption(f"Céltartalék státusz: {metadata.get('reserve_month_status') or 'In progress'}")
+    st.caption(f"Céltartalék státusz: {reserve_funding_status}")
 
     finance_frame = _snapshot_section_frame(snapshot, "finance")
     tig_frame = _snapshot_section_frame(snapshot, "tig")
@@ -6439,14 +6440,17 @@ def calculate_target_reserve_month(
     reserve_row = reserve_status.get("row") or {}
     insurance_active_before = bool(reserve_status.get("insurance_active"))
     rule = load_active_reserve_insurance_rule(period_start or date.today().replace(day=1))
-    reserve_target = parse_huf_value(rule.get("reserve_target_huf")) or RESERVE_TARGET_HUF
+    # The legacy reserve_target_huf field is the monthly cap, not the balance goal.
+    reserve_monthly_limit = parse_huf_value(rule.get("reserve_target_huf", RESERVE_TARGET_HUF))
+    reserve_balance_limit = parse_huf_value(rule.get("base_insurance_total_huf", 350_000))
     reserve_rate = (parse_huf_value(rule.get("deduction_percent")) / 100.0) if rule else RESERVE_RATE
     insurance_fee_rule = parse_huf_value(rule.get("insurance_fee_huf")) if rule else INSURANCE_FEE_HUF
     reserve_before = resolve_target_reserve_opening_balance(courier_id, period_start, reserve_row, previous_month)
 
-    should_top_up_reserve = insurance_active_before and reserve_target > 0
+    remaining_to_target = max(reserve_balance_limit - reserve_before, 0)
+    should_top_up_reserve = insurance_active_before and reserve_monthly_limit > 0 and remaining_to_target > 0
     calculated_addition = round(max(float(payable_before_insurance), 0.0) * reserve_rate) if should_top_up_reserve else 0
-    reserve_addition = min(calculated_addition, int(round(reserve_target))) if should_top_up_reserve else 0
+    reserve_addition = min(calculated_addition, int(round(reserve_monthly_limit)), int(round(remaining_to_target))) if should_top_up_reserve else 0
     manual_events = manual_events if manual_events is not None else (
         load_target_reserve_event_totals(courier_id, period_start, month_bounds(period_start)[1])
         if courier_id and period_start
@@ -6467,6 +6471,13 @@ def calculate_target_reserve_month(
         "insurance_active_before": insurance_active_before,
         "insurance_active_after": insurance_active_after,
     }
+
+
+def target_reserve_funding_status(reserve_after_huf: float, period_start: date | None = None) -> str:
+    """Funding completion is independent of the monthly payment closure."""
+    rule = load_active_reserve_insurance_rule(period_start or date.today().replace(day=1))
+    reserve_balance_limit = parse_huf_value(rule.get("base_insurance_total_huf", 350_000))
+    return "Done" if parse_huf_value(reserve_after_huf) >= reserve_balance_limit else "In progress"
 
 
 def resolve_target_reserve_opening_balance(
@@ -18988,7 +18999,7 @@ def render_courier_detail_page() -> None:
             ("Fizetés előleg", format_huf(-salary_advance_total), "", ""),
             ("Céltartalék 10%", format_huf(-reserve_addition_total), "", ""),
             ("Biztosítási díj", format_huf(-insurance_fee_total), "", ""),
-            ("CT státusz", "Done" if reserve_month_status == "done" else "In progress", "", ""),
+            ("CT státusz", target_reserve_funding_status(reserve_after_total, period_start), "", ""),
             ("Előző havi egyenleg", format_huf(previous_excel_balance.get("payable_huf")), "", previous_excel_note),
         ]
 

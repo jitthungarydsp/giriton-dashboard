@@ -195,13 +195,125 @@ class ReserveReleaseTest(unittest.TestCase):
                      "load_active_reserve_insurance_rule": lambda *a: {},
                      "RESERVE_TARGET_HUF": 50000, "RESERVE_RATE": .1,
                      "INSURANCE_FEE_HUF": 10000,
-                     "resolve_target_reserve_opening_balance": lambda *a: 350000}
+                     "resolve_target_reserve_opening_balance": lambda *a: 300000}
         exec(compile(ast.Module(body=[node], type_ignores=[]), "devtest.py", "exec"), namespace)
         result = namespace["calculate_target_reserve_month"](
             {"insurance_active": True}, 247050,
             manual_events={"payment": 100000, "deduction": 50000})
-        self.assertEqual(result["reserve_after_huf"], 224705)
+        self.assertEqual(result["reserve_after_huf"], 174705)
         self.assertEqual(result["payable_after_insurance_huf"], 362345)
+
+
+class ReserveCalculationTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tree = ast.parse((Path(__file__).resolve().parents[1] / "devtest.py").read_text(encoding="utf-8"))
+
+    def setUp(self):
+        self.rule = {"base_insurance_total_huf": 350000, "insurance_fee_huf": 10000,
+                     "deduction_percent": 10}
+        names = {"calculate_target_reserve_month", "target_reserve_funding_status", "resolve_target_reserve_month"}
+        nodes = [n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+        self.ns = {"date": date, "parse_huf_value": lambda v: float(v or 0),
+                   "RESERVE_TARGET_HUF": 50000, "RESERVE_RATE": .1, "INSURANCE_FEE_HUF": 10000,
+                   "load_active_reserve_insurance_rule": Mock(side_effect=lambda *a: self.rule),
+                   "resolve_target_reserve_opening_balance": lambda *a: self.opening}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "devtest.py", "exec"), self.ns)
+
+    def calculate(self, opening, payable=409113, active=True, events=None):
+        self.opening = opening
+        return self.ns["calculate_target_reserve_month"](
+            {"insurance_active": active}, payable, date(2026, 9, 1),
+            manual_events=events or {})
+
+    def funding_status(self, amount):
+        return self.ns["target_reserve_funding_status"](amount, date(2026, 9, 1))
+
+    def test_reached_target_stops_topup_keeps_insurance_and_opening(self):
+        for opening in (350000, 361310, 399540):
+            with self.subTest(opening=opening):
+                result = self.calculate(opening)
+                self.assertEqual(result["reserve_addition_huf"], 0)
+                self.assertEqual(result["insurance_fee_huf"], 10000)
+                self.assertEqual(result["reserve_after_huf"], opening)
+                self.assertEqual(result["payable_after_insurance_huf"], 399113)
+                self.assertEqual(self.funding_status(result["reserve_after_huf"]), "Done")
+                self.assertTrue(result["insurance_active_after"])
+                self.assertNotIn("status", result)  # Reaching the goal must not close the payment month.
+
+    def test_last_topup_only_fills_missing_balance(self):
+        for opening, expected in ((340000, 10000), (349999, 1)):
+            with self.subTest(opening=opening):
+                result = self.calculate(opening)
+                self.assertEqual(result["reserve_addition_huf"], expected)
+                self.assertEqual(result["reserve_after_huf"], 350000)
+                self.assertEqual(self.funding_status(result["reserve_after_huf"]), "Done")
+
+    def test_rate_and_monthly_cap_apply_below_goal(self):
+        self.assertEqual(self.calculate(100000, payable=100000)["reserve_addition_huf"], 10000)
+        self.assertEqual(self.calculate(100000, payable=900000)["reserve_addition_huf"], 50000)
+        self.assertEqual(self.funding_status(150000), "In progress")
+        self.rule.update(deduction_percent=5, reserve_target_huf=7000, insurance_fee_huf=12345)
+        result = self.calculate(100000, payable=200000)
+        self.assertEqual(result["reserve_addition_huf"], 7000)
+        self.assertEqual(result["insurance_fee_huf"], 12345)
+        self.assertEqual(result["payable_after_insurance_huf"], 180655)
+
+    def test_goal_comes_from_parameters_and_zero_settings_are_honored(self):
+        self.rule["base_insurance_total_huf"] = 400000
+        result = self.calculate(361310)
+        self.assertEqual(result["reserve_addition_huf"], 38690)
+        self.assertEqual(self.funding_status(361310), "In progress")
+        self.assertEqual(self.funding_status(400000), "Done")
+        self.rule["reserve_target_huf"] = 0
+        self.assertEqual(self.calculate(100000)["reserve_addition_huf"], 0)
+        self.rule.update(base_insurance_total_huf=0, reserve_target_huf=50000)
+        self.assertEqual(self.calculate(0)["reserve_addition_huf"], 0)
+        self.assertEqual(self.funding_status(0), "Done")
+        self.ns["load_active_reserve_insurance_rule"].assert_called_with(date(2026, 9, 1))
+
+    def test_no_active_insurance_means_no_deductions(self):
+        result = self.calculate(100000, active=False)
+        self.assertEqual(result["reserve_addition_huf"], 0)
+        self.assertEqual(result["insurance_fee_huf"], 0)
+        self.assertEqual(result["payable_after_insurance_huf"], 409113)
+
+    def test_manual_release_does_not_restart_topup_in_same_month(self):
+        result = self.calculate(350000, events={"payment": 100000, "deduction": 50000})
+        self.assertEqual(result["reserve_addition_huf"], -150000)
+        self.assertEqual(result["reserve_after_huf"], 200000)
+        self.assertEqual(result["payable_after_insurance_huf"], 549113)
+        self.assertEqual(self.funding_status(200000), "In progress")
+
+    def test_closed_month_is_preserved_independently_of_funding_status(self):
+        saved = {"status": "done", "reserve_before_huf": 100000, "reserve_addition_huf": 10000,
+                 "reserve_after_huf": 110000, "payable_after_insurance_huf": 80000}
+        self.ns.update(load_target_reserve_monthly=Mock(return_value=saved),
+                       load_latest_devtest_finance_snapshot=Mock(return_value={}),
+                       _snapshot_amount=lambda *a: 0,
+                       calculate_target_reserve_month=Mock(side_effect=AssertionError("Closed month")),
+                       save_target_reserve_monthly=Mock())
+        result = self.ns["resolve_target_reserve_month"](
+            None, "7056", date(2026, 9, 1), date(2026, 9, 30), {}, 999999)
+        self.assertEqual(result["status"], "done")
+        self.assertEqual(result["payable_after_insurance_huf"], 80000)
+        self.assertEqual(self.funding_status(result["reserve_after_huf"]), "In progress")
+        self.ns["save_target_reserve_monthly"].assert_not_called()
+
+    def test_saved_view_ct_status_uses_balance_instead_of_month_closure(self):
+        render = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef)
+                      and n.name == "render_devtest_finance_snapshot_view")
+        names = {"metadata", "reserve_funding_status", "kpi_items"}
+        nodes = [n for n in render.body if isinstance(n, ast.Assign)
+                 and any(isinstance(t, ast.Name) and t.id in names for t in n.targets)]
+        for closing, month_status, expected in ((361310, "in_progress", "Done"), (100000, "done", "In progress")):
+            with self.subTest(closing=closing):
+                self.ns.update(snapshot={"metadata": {"reserve_month_status": month_status}},
+                               period_start=date(2026, 9, 1),
+                               _snapshot_amount=lambda s, key: closing if key == "target_reserve_close" else 0)
+                exec(compile(ast.Module(body=nodes, type_ignores=[]), "devtest.py", "exec"), self.ns)
+                card = next(row for row in self.ns["kpi_items"] if row[0] == "CT státusz")
+                self.assertEqual(card[-1], expected)
 
 
 if __name__ == "__main__":
