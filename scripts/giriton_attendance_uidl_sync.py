@@ -498,26 +498,33 @@ def capture_attendance_day(driver, work_date: date) -> list[Any]:
     scroll_script = r"""
 const grid = document.querySelector('.v-grid');
 if (!grid) throw new Error('Attendance grid not found');
-const candidates = [grid, ...grid.querySelectorAll('*')];
-const scroller = candidates.filter(el => el.scrollHeight > el.clientHeight + 20)
-  .sort((a,b) => (b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight))[0];
+const visible = el => el.clientHeight > 20 && el.clientWidth > 0 && el.getClientRects().length;
+const vertical = [...grid.querySelectorAll('.v-grid-scroller-vertical')].filter(visible);
+const candidates = [grid, ...grid.querySelectorAll('*')].filter(el => visible(el) && el.scrollHeight > el.clientHeight + 20);
+const scroller = vertical[0] || candidates.sort((a,b) => (b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight))[0];
 if (!scroller) return {bottom:true};
 const before = scroller.scrollTop;
 scroller.scrollTop = arguments[0] === 'top' ? 0 : Math.min(before + Math.max(120, scroller.clientHeight * .75), scroller.scrollHeight);
-return {bottom:scroller.scrollTop >= scroller.scrollHeight-scroller.clientHeight-3};
+return {bottom:scroller.scrollTop >= scroller.scrollHeight-scroller.clientHeight-3,
+  top:scroller.scrollTop, maxTop:scroller.scrollHeight-scroller.clientHeight,
+  moved:scroller.scrollTop !== before, scroller:scroller.className};
 """
     driver.execute_script(scroll_script, "top")
     time.sleep(.5)
     responses.extend(captured_vaadin_responses(driver))
-    for _ in range(200):
+    for page_index in range(200):
         position = driver.execute_script(scroll_script, "down") or {}
+        if page_index == 0:
+            print("GIRITON_ATTENDANCE_SCROLL=" + json.dumps(position, ensure_ascii=True), flush=True)
         time.sleep(.4)
         responses.extend(captured_vaadin_responses(driver))
         if position.get("bottom"):
             time.sleep(.6)
             responses.extend(captured_vaadin_responses(driver))
             return responses
-    raise RuntimeError("Nem sikerult az Attendance lista vegeig eljutni; nem mentunk reszleges napot.")
+    error = RuntimeError("Nem sikerult az Attendance lista vegeig eljutni; nem mentunk reszleges napot.")
+    error.attendance_payloads = responses
+    raise error
 
 
 def sync_attendance_range(start_date: date, end_date: date, *, timeout: int = 60, debug_dir: str = "") -> dict[str, Any]:
@@ -546,6 +553,8 @@ def sync_attendance_range(start_date: date, end_date: date, *, timeout: int = 60
                     raise RuntimeError(f"Sikertelen DB-mentes: {result.get('status')}")
                 day = {"work_date": current.isoformat(), "status": "ok", "rows": result["rows"], "stored_rows": result["stored_rows"]}
             except Exception as error:
+                if getattr(error, "attendance_payloads", None):
+                    write_debug_payloads(error.attendance_payloads, debug_dir, current)
                 day = {"work_date": current.isoformat(), "status": "error", "error": f"{type(error).__name__}: {error}"[:600]}
             days.append(day)
             print("GIRITON_ATTENDANCE_DAY=" + json.dumps(day, ensure_ascii=True), flush=True)

@@ -61,6 +61,18 @@ class AttendanceSyncTest(unittest.TestCase):
             result = sync.parse_payload_rows([{}], date(2026, 9, 21))
         self.assertEqual([r["work_date"] for r in result], ["2026-09-21"])
 
+    def test_capture_discards_old_date_and_reads_through_grid_end(self):
+        driver = Mock()
+        driver.execute_script.side_effect = ["20/10/2026", {}, {"bottom": False}, {"bottom": True}]
+        with patch.object(sync, "install_vaadin_response_capture"), \
+             patch.object(sync, "set_giriton_date") as set_date, \
+             patch.object(sync.time, "sleep"), \
+             patch.object(sync, "captured_vaadin_responses", side_effect=[["old"], ["new"], [], ["page2"], ["page3"], []]):
+            result = sync.capture_attendance_day(driver, date(2026, 10, 21))
+        self.assertEqual(result, ["new", "page2", "page3"])
+        set_date.assert_called_once_with(driver, date(2026, 10, 21))
+        self.assertIn(".v-grid-scroller-vertical", driver.execute_script.call_args.args[0])
+
     def test_range_records_each_day_and_reports_failures_without_claiming_success(self):
         driver = Mock()
         def capture(_driver, day):
