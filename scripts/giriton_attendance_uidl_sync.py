@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import html
 import json
 import os
@@ -481,16 +481,84 @@ def fetch_attendance_browser_payloads(work_date: date, *, timeout: int = 60) -> 
             select_all_departments(driver, timeout)
         except Exception as error:
             print(f"GIRITON_ATTENDANCE_SELECT_ALL_SKIPPED={type(error).__name__}: {error}", flush=True)
-        install_vaadin_response_capture(driver)
-        set_giriton_date(driver, work_date)
-        time.sleep(3)
-        responses = captured_vaadin_responses(driver)
-        if not responses:
-            time.sleep(2)
-            responses = captured_vaadin_responses(driver)
-        return responses
+        return capture_attendance_day(driver, work_date)
     finally:
         driver.quit()
+
+
+def capture_attendance_day(driver, work_date: date) -> list[Any]:
+    install_vaadin_response_capture(driver)
+    current_date = driver.execute_script("return [...document.querySelectorAll('input.v-datefield-textfield')].find(el => el.offsetWidth > 0 && el.offsetHeight > 0)?.value || '';")
+    if current_date.strip() == work_date.strftime("%d/%m/%Y"):
+        set_giriton_date(driver, work_date - timedelta(days=1))
+    # Initial page/department responses belong to the previously displayed day.
+    captured_vaadin_responses(driver)
+    set_giriton_date(driver, work_date)
+    responses = captured_vaadin_responses(driver)
+    scroll_script = r"""
+const grid = document.querySelector('.v-grid');
+if (!grid) throw new Error('Attendance grid not found');
+const candidates = [grid, ...grid.querySelectorAll('*')];
+const scroller = candidates.filter(el => el.scrollHeight > el.clientHeight + 20)
+  .sort((a,b) => (b.scrollHeight-b.clientHeight)-(a.scrollHeight-a.clientHeight))[0];
+if (!scroller) return {bottom:true};
+const before = scroller.scrollTop;
+scroller.scrollTop = arguments[0] === 'top' ? 0 : Math.min(before + Math.max(120, scroller.clientHeight * .75), scroller.scrollHeight);
+return {bottom:scroller.scrollTop >= scroller.scrollHeight-scroller.clientHeight-3};
+"""
+    driver.execute_script(scroll_script, "top")
+    time.sleep(.5)
+    responses.extend(captured_vaadin_responses(driver))
+    for _ in range(200):
+        position = driver.execute_script(scroll_script, "down") or {}
+        time.sleep(.4)
+        responses.extend(captured_vaadin_responses(driver))
+        if position.get("bottom"):
+            time.sleep(.6)
+            responses.extend(captured_vaadin_responses(driver))
+            return responses
+    raise RuntimeError("Nem sikerult az Attendance lista vegeig eljutni; nem mentunk reszleges napot.")
+
+
+def sync_attendance_range(start_date: date, end_date: date, *, timeout: int = 60, debug_dir: str = "") -> dict[str, Any]:
+    if end_date < start_date or (end_date - start_date).days > 365:
+        raise ValueError("Ervenytelen idoszak: legfeljebb 366 nap kerheto le.")
+    user, password = giriton_login_credentials()
+    if not user or not password:
+        raise RuntimeError("Az idoszakos letolteshez Giriton bejelentkezesi beallitas szukseges.")
+    driver = create_driver(False, "")
+    days = []
+    try:
+        login(driver, user, password, timeout)
+        install_vaadin_response_capture(driver)
+        open_attendance(driver, timeout)
+        select_all_departments(driver, timeout)
+        current = start_date
+        while current <= end_date:
+            try:
+                payloads = capture_attendance_day(driver, current)
+                write_debug_payloads(payloads, debug_dir, current)
+                rows = parse_payload_rows(payloads, current)
+                if not rows:
+                    raise RuntimeError("Nem erkezett Attendance sor a kert napra.")
+                result = upsert_giriton_attendance_rows(rows)
+                if result.get("status") != "ok":
+                    raise RuntimeError(f"Sikertelen DB-mentes: {result.get('status')}")
+                day = {"work_date": current.isoformat(), "status": "ok", "rows": result["rows"], "stored_rows": result["stored_rows"]}
+            except Exception as error:
+                day = {"work_date": current.isoformat(), "status": "error", "error": f"{type(error).__name__}: {error}"[:600]}
+            days.append(day)
+            print("GIRITON_ATTENDANCE_DAY=" + json.dumps(day, ensure_ascii=True), flush=True)
+            current += timedelta(days=1)
+    finally:
+        driver.quit()
+    report = {"status": "ok" if all(d["status"] == "ok" for d in days) else "partial",
+              "start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
+              "rows": sum(d.get("rows", 0) for d in days), "days": days}
+    if debug_dir:
+        Path(debug_dir).mkdir(parents=True, exist_ok=True)
+        (Path(debug_dir) / "backfill-summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    return report
 
 
 def payload_debug_summary(payloads: list[Any]) -> list[dict[str, Any]]:
@@ -576,6 +644,7 @@ def parse_payload_rows(payloads: list[Any], target_date: date) -> list[dict[str,
                 payload,
                 default_work_date=target_date.isoformat(),
             )
+            if clean(row.get("work_date")) == target_date.isoformat()
         ]
     )
 
@@ -665,6 +734,7 @@ def parse_date(value: str) -> date:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Giriton Attendance direkt UIDL POST szinkron.")
     parser.add_argument("--date", default="", help="Nap YYYY-MM-DD. Üresen ma.")
+    parser.add_argument("--end-date", default="", help="Idoszak vege, a --date az elso nap. Uresen egy nap.")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--require-rows",
@@ -680,6 +750,14 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=60)
     args = parser.parse_args()
 
+    if args.end_date:
+        if args.dry_run:
+            parser.error("Az idoszakos letoltes nem hasznalhato --dry-run kapcsoloval.")
+        result = sync_attendance_range(parse_date(args.date), parse_date(args.end_date), timeout=args.timeout, debug_dir=args.debug_dir)
+        print("GIRITON_ATTENDANCE_UIDL_SYNC=" + json.dumps(result, ensure_ascii=True, sort_keys=True))
+        if result["status"] != "ok":
+            raise SystemExit(2)
+        return
     result = sync_giriton_attendance_uidl_direct(
         parse_date(args.date),
         dry_run=args.dry_run,

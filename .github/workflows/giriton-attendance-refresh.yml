@@ -7,6 +7,10 @@ on:
         description: "Opcionális dátum YYYY-MM-DD formátumban. Üresen a mai nap."
         required: false
         default: ""
+      end_date:
+        description: "Opcionális utolsó nap YYYY-MM-DD. Üresen csak a kezdőnap."
+        required: false
+        default: ""
   repository_dispatch:
     types:
       - giriton-attendance-refresh
@@ -87,18 +91,17 @@ jobs:
 
       - name: Run attendance refresh
         shell: bash
+        env:
+          ATTENDANCE_START_DATE: ${{ inputs.start_date }}
+          ATTENDANCE_END_DATE: ${{ inputs.end_date }}
         run: |
-          START_DATE="${{ github.event.inputs.start_date }}"
-          START_DATE="${START_DATE:-}"
-
-          CMD=(robot --outputdir results/giriton-attendance)
-
-          if [ -n "$START_DATE" ]; then
-            CMD+=(--variable "RUN_START_DATE:$START_DATE")
+          CMD=(python scripts/giriton_attendance_uidl_sync.py --require-rows --debug-dir results/giriton-attendance)
+          if [ -n "$ATTENDANCE_START_DATE" ]; then
+            CMD+=(--date "$ATTENDANCE_START_DATE")
           fi
-
-          CMD+=(giriton_attendance_github.robot)
-
+          if [ -n "$ATTENDANCE_END_DATE" ]; then
+            CMD+=(--end-date "$ATTENDANCE_END_DATE")
+          fi
           echo "Running: ${CMD[*]}"
           "${CMD[@]}"
 

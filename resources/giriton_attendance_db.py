@@ -1,4 +1,6 @@
 from datetime import datetime
+from copy import deepcopy
+import json
 import re
 from urllib.parse import urlparse
 
@@ -116,7 +118,48 @@ def _build_db_rows(rows):
             "updated_at": fetched_at,
         })
 
-    return db_rows
+    return _merge_daily_rows(db_rows)
+
+
+def _merge_daily_rows(rows):
+    """Match the DB unique key without discarding repeated UIDL details."""
+    merged = {}
+    for original in rows:
+        key = tuple(original[field] for field in ("source_name", "work_date", "courier_name"))
+        row = deepcopy(original)
+        if key not in merged:
+            merged[key] = row
+            continue
+        previous = merged[key]
+        variants = previous["response_json"].get("merged_responses", [deepcopy(previous["response_json"])])
+        candidate = row["response_json"]
+        if candidate not in variants:
+            variants.append(candidate)
+        combined = {**previous, **{k: v for k, v in row.items() if v not in (None, "")}}
+        for field, choose in (("checkin_start", min), ("checkin_end", max)):
+            values = [item[field] for item in (previous, row) if item.get(field)]
+            combined[field] = choose(values) if values else None
+        for field, response_field in (("shift_text", "shift"), ("raw_details", "raw_details")):
+            values = list(dict.fromkeys(variant[response_field] for variant in variants if variant.get(response_field)))
+            combined[field] = " | ".join(values)
+        response = {**previous["response_json"], **candidate}
+        for field in ("activity_entries", "planned_shifts"):
+            entries = {}
+            for variant in variants:
+                for entry in variant.get(field) or []:
+                    entries[json.dumps(entry, sort_keys=True, ensure_ascii=False)] = entry
+            if entries:
+                response[field] = list(entries.values())
+        response.update({
+            "merged_responses": variants,
+            "checkin_start": combined["checkin_start"],
+            "checkin_end": combined["checkin_end"],
+            "raw_details": combined["raw_details"],
+            "shift": combined["shift_text"],
+        })
+        combined["response_json"] = response
+        merged[key] = combined
+    return list(merged.values())
 
 
 def _count_stored_rows(supabase_url, service_role_key, work_dates):
@@ -140,6 +183,7 @@ def _count_stored_rows(supabase_url, service_role_key, work_dates):
     headers = {
         "apikey": service_role_key,
         "Authorization": f"Bearer {service_role_key}",
+        "Prefer": "count=exact",
     }
     response = requests.get(
         endpoint,
@@ -148,7 +192,8 @@ def _count_stored_rows(supabase_url, service_role_key, work_dates):
     )
     raise_for_supabase_error(response)
 
-    return len(response.json())
+    total = response.headers.get("Content-Range", "").partition("/")[2]
+    return int(total) if total.isdigit() else len(response.json())
 
 
 def _read_existing_rows_for_dates(supabase_url, service_role_key, work_dates):
