@@ -151,6 +151,14 @@ jobs:
           if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
           "${CMD[@]}"
 
+      - name: HUB_JOB sync Courier Hub vehicles history and documents
+        continue-on-error: true
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_hub_vehicles.py --warehouse-ids "2" --dsp-id 8 --page-size 2000)
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
       - name: HUB_JOB export robot ids sheet
         continue-on-error: true
         shell: bash

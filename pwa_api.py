@@ -15553,6 +15553,66 @@ def is_city_route(item: dict[str, Any]) -> bool:
     )
 
 
+def build_attendance_work_time_rows(
+    attendance_rows: list[dict[str, Any]],
+    route_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Calculate daily work time, using depot return when Giriton has no logout."""
+    returns_by_key: dict[tuple[str, str], datetime] = {}
+    return_names: dict[tuple[str, str], str] = {}
+    for route in route_rows:
+        work_date = str(route.get("date") or "")[:10]
+        name_key = normalize_person_match_text(route.get("courierName"))
+        returned = local_datetime(route.get("returnedAt"))
+        if not work_date or not name_key or not returned:
+            continue
+        key = (work_date, name_key)
+        if returned.date().isoformat() != work_date:
+            continue
+        if returned > returns_by_key.get(key, datetime.min.replace(tzinfo=LOCAL_TIMEZONE)):
+            returns_by_key[key] = returned
+            return_names[key] = str(route.get("courierName") or "").strip()
+
+    result: list[dict[str, Any]] = []
+    for row in attendance_rows:
+        work_date = str(row.get("work_date") or "")[:10]
+        courier_name = str(row.get("courier_name") or "").strip()
+        name_key = normalize_person_match_text(courier_name)
+        start_text = normalize_time(row.get("checkin_start"))
+        if not work_date or not name_key or not start_text:
+            continue
+        try:
+            start = datetime.fromisoformat(f"{work_date}T{start_text}:00").replace(tzinfo=LOCAL_TIMEZONE)
+        except ValueError:
+            continue
+
+        end_text = normalize_time(row.get("checkin_end"))
+        end = None
+        end_source = "giriton"
+        if end_text:
+            try:
+                end = datetime.fromisoformat(f"{work_date}T{end_text}:00").replace(tzinfo=LOCAL_TIMEZONE)
+                if end < start:
+                    end += timedelta(days=1)
+            except ValueError:
+                end = None
+        if end is None:
+            end = returns_by_key.get((work_date, name_key))
+            end_source = "raktári visszaérkezés" if end else "hiányzik"
+        minutes = None
+        if end and end >= start:
+            minutes = int((end - start).total_seconds() // 60)
+        result.append({
+            "work_date": work_date,
+            "courier_name": courier_name or return_names.get((work_date, name_key), ""),
+            "work_start": start.isoformat(),
+            "work_end": end.isoformat() if end else "",
+            "work_minutes": minutes,
+            "work_end_source": end_source,
+        })
+    return result
+
+
 def build_monthly_shift_route_report(month_value: date) -> dict[str, Any]:
     names = courier_name_lookup()
     muszakpro_rows = read_route_report_muszakpro_rows(month_value)
@@ -15560,6 +15620,8 @@ def build_monthly_shift_route_report(month_value: date) -> dict[str, Any]:
     route_rows = route_details_for_all_couriers(month_value).get("rows") or []
     if not route_rows:
         route_rows = read_route_report_financial_route_rows(month_value)
+    attendance_rows = read_giriton_attendance_login_rows(*route_report_month_range(month_value))
+    work_time_rows = build_attendance_work_time_rows(attendance_rows, route_rows)
     summary: dict[str, dict[str, Any]] = {}
     daily: dict[tuple[str, str, str], dict[str, Any]] = {}
 
@@ -15647,6 +15709,7 @@ def build_monthly_shift_route_report(month_value: date) -> dict[str, Any]:
         "muszakpro_rows": muszakpro_rows,
         "hub_rows": hub_rows,
         "route_rows": route_rows,
+        "work_time_rows": work_time_rows,
         "city_over_5h_rows": sorted(city_over_5h_rows, key=lambda item: (item.get("date") or "", normalize_text(item.get("courierName")), item.get("plannedDepotToDepotMinutes") or 0), reverse=True),
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
@@ -15757,6 +15820,10 @@ def filtered_monthly_shift_route_report(
         if route_report_courier_matches(row, courier)
         and route_report_warehouse_matches(row, warehouse)
     ]
+    work_time_rows = [
+        row for row in payload.get("work_time_rows") or []
+        if route_report_courier_matches(row, courier)
+    ]
     total_muszakpro = sum(safe_int(row.get("muszakpro_booked")) for row in summary)
     total_hub = sum(safe_int(row.get("hub_uploaded")) for row in summary)
     total_routes = sum(safe_int(row.get("routes_delivered")) for row in summary)
@@ -15790,6 +15857,7 @@ def filtered_monthly_shift_route_report(
         result["muszakpro_rows"] = muszakpro_rows
         result["hub_rows"] = hub_rows
         result["route_rows"] = route_rows
+        result["work_time_rows"] = work_time_rows
     return result
 
 

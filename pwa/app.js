@@ -2909,6 +2909,19 @@ function routeShiftReportDailyRows(rows = []) {
   `).join("");
 }
 
+function routeShiftReportWorkTimeRows(rows = []) {
+  return rows.slice(0, 300).map((row) => `
+    <tr>
+      <td><strong>${escapeHtml(row.work_date || "-")}</strong></td>
+      <td>${escapeHtml(row.courier_name || "-")}</td>
+      <td>${escapeHtml(row.work_start ? shortDateTime(row.work_start) : "-")}</td>
+      <td>${escapeHtml(row.work_end ? shortDateTime(row.work_end) : "-")}</td>
+      <td>${escapeHtml(durationText(row.work_minutes))}</td>
+      <td>${escapeHtml(row.work_end_source || "-")}</td>
+    </tr>
+  `).join("");
+}
+
 function routeShiftReportCityRows(rows = []) {
   return rows.slice(0, 120).map((row) => `
     <tr>
@@ -3004,6 +3017,7 @@ function renderRouteShiftReport() {
   const daily = payload.daily || [];
   const cityRows = payload.cityOver5hRows || payload.city_over_5h_rows || [];
   const sourceRows = routeShiftReportSourceRows(payload);
+  const workTimeRows = payload.work_time_rows || [];
   const sourceCounts = payload.sourceCounts || {};
   const totals = payload.totals || {};
   panel.innerHTML = `
@@ -3025,6 +3039,21 @@ function renderRouteShiftReport() {
       <div class="stat-card"><span>Kivitt / HUB</span><strong>${routeShiftPercent(totals.routeToHubRatio || 0)}</strong><small>arány</small></div>
       <div class="stat-card"><span>City 5 óra felett</span><strong>${formatCount(totals.cityOver5h || 0)}</strong><small>ellenőrzéshez</small></div>
     </div>
+    <details class="daily-route-details route-shift-daily" open>
+      <summary class="route-details-head">
+        <div>
+          <span>Giriton jelenléti tábla</span>
+          <strong>Ledolgozott idő naponta</strong>
+          <small>${formatCount(workTimeRows.length)} Giriton sor${workTimeRows.length > 300 ? " · első 300 megjelenítve" : ""}</small>
+        </div>
+      </summary>
+      <div class="route-details-table-wrap route-stat-table-wrap">
+        <table class="route-details-table route-shift-report-table">
+          <thead><tr><th>Dátum</th><th>Futár</th><th>Giriton kezdés</th><th>Giriton vége / raktári vissza</th><th>Ledolgozott idő</th><th>Végidő forrása</th></tr></thead>
+          <tbody>${workTimeRows.length ? routeShiftReportWorkTimeRows(workTimeRows) : `<tr><td colspan="6">Nincs Giriton jelenléti adat.</td></tr>`}</tbody>
+        </table>
+      </div>
+    </details>
     <div class="route-details-table-wrap route-stat-table-wrap">
       <table class="route-details-table route-shift-report-table">
         <thead>
