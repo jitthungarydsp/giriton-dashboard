@@ -377,6 +377,8 @@ async function loadCourierMasterOptions() {
     renderCourierMasterOptions();
     return;
   }
+  if (state.couriersLoadingPromise) return state.couriersLoadingPromise;
+  state.couriersLoadingPromise = (async () => {
   try {
     const payload = await api("/api/couriers");
     state.couriers = payload.couriers || [];
@@ -384,6 +386,10 @@ async function loadCourierMasterOptions() {
   } catch (error) {
     console.warn("Courier master list failed", error);
   }
+  })().finally(() => {
+    state.couriersLoadingPromise = null;
+  });
+  return state.couriersLoadingPromise;
 }
 
 function localDate(offset = 0) {
@@ -7550,6 +7556,7 @@ function toggleVehicleConfigConditionalFields() {
 
 function fillVehicleConfigForm(item = {}) {
   $("#vehicle-config-jitt-id").value = item.jittCarId || "";
+  $("#vehicle-config-hub-id").value = item.hubVehicleId || "";
   $("#vehicle-config-license-plate").value = item.licensePlate || "";
   $("#vehicle-config-brand").value = item.brand || "";
   $("#vehicle-config-model").value = item.model || "";
@@ -7655,10 +7662,11 @@ async function loadVehicleConfigurations() {
     return;
   }
   if (target) target.innerHTML = `<div class="empty-card">Autó konfigurációk betöltése...</div>`;
-  await loadCourierMasterOptions();
-  renderVehicleConfigSetup();
   try {
-    const payload = await api("/api/vehicles/configurations");
+    const [, payload] = await Promise.all([
+      loadCourierMasterOptions(),
+      api("/api/vehicles/configurations"),
+    ]);
     state.vehicleConfigurations = payload.items || [];
     state.vehicleConfigurationSetup = payload.setup || null;
     renderVehicleConfigSetup();

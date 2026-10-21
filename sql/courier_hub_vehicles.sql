@@ -55,6 +55,8 @@ create table if not exists public.courier_hub_vehicle_documents_raw (
 
 create index if not exists courier_hub_vehicle_raw_registration_idx
     on public.courier_hub_vehicle_raw (registration_number);
+create index if not exists courier_hub_vehicle_raw_list_idx
+    on public.courier_hub_vehicle_raw (warehouse_code, registration_number, vehicle_id);
 create index if not exists courier_hub_vehicle_raw_updated_idx
     on public.courier_hub_vehicle_raw (updated_at desc);
 create index if not exists courier_hub_vehicle_history_vehicle_idx

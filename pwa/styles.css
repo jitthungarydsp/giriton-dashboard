@@ -1134,10 +1134,11 @@ textarea { min-height: 96px; resize: vertical; }
 .vehicle-config-summary-card strong { display: block; margin-top: 6px; color: var(--ink); font-size: 24px; font-weight: 950; }
 .vehicle-config-toolbar { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(150px, .7fr) minmax(170px, .8fr); gap: 10px; margin: 14px 0; }
 .vehicle-config-list { display: grid; gap: 10px; margin-top: 14px; }
-.vehicle-config-row { display: grid; grid-template-columns: minmax(120px, .9fr) minmax(120px, 1fr) minmax(120px, .9fr) minmax(120px, .9fr) minmax(140px, 1.1fr) auto; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #f8faf6; }
-.vehicle-config-row strong { display: block; font-size: 14px; font-weight: 950; overflow-wrap: anywhere; }
+.vehicle-config-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(88px, auto); gap: 10px; width: 100%; min-width: 0; box-sizing: border-box; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #f8faf6; }
+.vehicle-config-row > * { min-width: 0; }
+.vehicle-config-row strong { display: block; min-width: 0; font-size: 14px; font-weight: 950; overflow-wrap: anywhere; word-break: break-word; }
 .vehicle-config-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
-.vehicle-config-row button { min-height: 38px; }
+.vehicle-config-row button { width: 100%; min-width: 0; min-height: 38px; padding-inline: 10px; white-space: normal; }
 .ai-comparison { display: grid; gap: 5px; padding: 10px; border: 1px solid #cddbc7; border-radius: 12px; background: #eff8ed; }
 .ai-comparison.possible_new_damage, .ai-comparison.failed { border-color: #e2aaa5; background: #fff0ef; }
 .ai-comparison strong { font-size: 12px; }

@@ -21230,32 +21230,71 @@ def list_vehicle_configurations(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     require_vehicle_history_manager(require_user(giriton_pwa_session))
-    rows = supabase_rest(
-        "GET",
-        "vw_pwa_vehicle_configurations_latest",
-        params={
-            "select": "*",
-            "order": "warehouse_code.asc,license_plate.asc",
-            "limit": "1000",
-        },
-        timeout=30,
-    )
-    # A Courier Hub vehicle is the source record.  The JITT configuration is
-    # layered on top of it, so an imported vehicle is visible even before an
-    # admin has added local maintenance/status data.
-    try:
-        hub_rows = supabase_rest(
+    def read_local_configurations():
+        return supabase_rest(
             "GET",
-            "courier_hub_vehicle_raw",
+            "vw_pwa_vehicle_configurations_latest",
             params={
-                "select": "warehouse_code,vehicle_id,registration_number,vehicle_type,status,removed,updated_at",
-                "order": "warehouse_code.asc,registration_number.asc,vehicle_id.asc",
-                "limit": "5000",
+                "select": "*",
+                "order": "warehouse_code.asc,license_plate.asc",
+                "limit": "1000",
             },
             timeout=30,
         ) or []
-    except HTTPException:
-        hub_rows = []
+
+    # The Hub source and the JITT overlay are independent reads. Fetch them
+    # concurrently so the vehicle screen does not wait for them in sequence.
+    def read_hub_vehicles():
+        try:
+            rows = supabase_rest(
+                "GET",
+                "courier_hub_vehicle_raw",
+                params={
+                    "select": "warehouse_code,vehicle_id,registration_number,vehicle_type,status,removed,updated_at",
+                    "order": "warehouse_code.asc,registration_number.asc,vehicle_id.asc",
+                    "limit": "5000",
+                },
+                timeout=30,
+            ) or []
+        except HTTPException:
+            rows = []
+        if rows:
+            return rows
+        # Backward-compatible fallback while the new vehicle raw table is
+        # being installed: the existing Hub master roster also carries the
+        # vehicle id and registration number.
+        try:
+            master_rows = supabase_rest(
+                "GET",
+                "courier_hub_master_latest",
+                params={
+                    "select": "warehouse_code,vehicle_id,vehicle_registration_number,vehicle_type,status,active,updated_at",
+                    "order": "warehouse_code.asc,vehicle_registration_number.asc,vehicle_id.asc",
+                    "limit": "5000",
+                },
+                timeout=30,
+            ) or []
+        except HTTPException:
+            return []
+        return [
+            {
+                "warehouse_code": row.get("warehouse_code"),
+                "vehicle_id": row.get("vehicle_id"),
+                "registration_number": row.get("vehicle_registration_number"),
+                "vehicle_type": row.get("vehicle_type"),
+                "status": row.get("status"),
+                "removed": False if row.get("active") is not False else True,
+                "updated_at": row.get("updated_at"),
+            }
+            for row in master_rows
+            if row.get("vehicle_id") and row.get("vehicle_registration_number")
+        ]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        local_future = executor.submit(read_local_configurations)
+        hub_future = executor.submit(read_hub_vehicles)
+        rows = local_future.result()
+        hub_rows = hub_future.result()
 
     def vehicle_key(value: Any) -> str:
         return normalize_vehicle_license_plate(value or "")

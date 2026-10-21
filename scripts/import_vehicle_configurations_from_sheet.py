@@ -146,6 +146,15 @@ def read_sheet_cars(sheet_id: str, gid: int) -> list[dict[str, Any]]:
                 "company": clean_text(padded[0], 160),
                 "warehouse_code": sheet_warehouse,
                 "license_plate": plate,
+                "model": clean_text(padded[4], 120),
+                "ownership_type": ownership_from_company(padded[0])[0],
+                "rental_company": ownership_from_company(padded[0])[1],
+                "toll_vignette_type": toll_payload(padded[5])[0],
+                "toll_counties": toll_payload(padded[5])[1],
+                "toll_valid_to": parse_date(padded[6]),
+                "condition_description": " · ".join(
+                    value for value in (clean_text(padded[7], 80), clean_text(padded[8], 80), clean_text(padded[9], 80)) if value
+                ),
                 "car_status": "assignable" if sheet_warehouse in {"BUD1", "BUD2"} else "other",
                 "created_by": SOURCE_BY,
                 "updated_by": SOURCE_BY,
