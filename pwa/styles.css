@@ -1128,8 +1128,13 @@ textarea { min-height: 96px; resize: vertical; }
 .vehicle-last-usage small { color: var(--muted); font-size: 12px; font-weight: 750; }
 .vehicle-config-active { align-self: end; display: flex; min-height: 46px; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: #f8faf6; font-weight: 900; }
 .vehicle-config-active input { width: auto; }
+.vehicle-config-overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+.vehicle-config-summary-card { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #f8faf6; }
+.vehicle-config-summary-card small { display: block; color: var(--muted); font-size: 10px; font-weight: 950; letter-spacing: .04em; }
+.vehicle-config-summary-card strong { display: block; margin-top: 6px; color: var(--ink); font-size: 24px; font-weight: 950; }
+.vehicle-config-toolbar { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(150px, .7fr) minmax(170px, .8fr); gap: 10px; margin: 14px 0; }
 .vehicle-config-list { display: grid; gap: 10px; margin-top: 14px; }
-.vehicle-config-row { display: grid; grid-template-columns: minmax(96px, .7fr) minmax(0, .9fr) minmax(0, .9fr) minmax(0, 1.4fr) auto; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #f8faf6; }
+.vehicle-config-row { display: grid; grid-template-columns: minmax(120px, .9fr) minmax(120px, 1fr) minmax(120px, .9fr) minmax(120px, .9fr) minmax(140px, 1.1fr) auto; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #f8faf6; }
 .vehicle-config-row strong { display: block; font-size: 14px; font-weight: 950; overflow-wrap: anywhere; }
 .vehicle-config-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
 .vehicle-config-row button { min-height: 38px; }
@@ -1220,6 +1225,8 @@ textarea { min-height: 96px; resize: vertical; }
   .tig-row span:nth-child(4)::before { content: "Brutto: "; color: var(--muted); font-weight: 750; }
   .vehicle-assignment-row { grid-template-columns: minmax(0, 1fr); }
   .vehicle-assignment-row > span { justify-self: start; max-width: none; text-align: left; }
+  .vehicle-config-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vehicle-config-toolbar { grid-template-columns: 1fr; }
   .vehicle-config-row { grid-template-columns: minmax(0, 1fr); }
   .vehicle-config-row button { width: 100%; }
   .route-report-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); border-radius: 20px; }

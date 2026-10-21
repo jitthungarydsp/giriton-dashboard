@@ -19995,6 +19995,11 @@ def safe_vehicle_configuration(row: dict[str, Any]) -> dict[str, Any]:
         "dedicatedCourierName": row.get("dedicated_courier_name") or "",
         "active": safe_bool(row.get("active")),
         "updatedAt": row.get("updated_at") or "",
+        "hubVehicleId": safe_int(row.get("hub_vehicle_id")) or "",
+        "hubStatus": row.get("hub_status") or "",
+        "hubRemoved": safe_bool(row.get("hub_removed")),
+        "hubUpdatedAt": row.get("hub_updated_at") or "",
+        "source": row.get("vehicle_source") or "JITT",
     }
 
 
@@ -21235,8 +21240,68 @@ def list_vehicle_configurations(
         },
         timeout=30,
     )
+    # A Courier Hub vehicle is the source record.  The JITT configuration is
+    # layered on top of it, so an imported vehicle is visible even before an
+    # admin has added local maintenance/status data.
+    try:
+        hub_rows = supabase_rest(
+            "GET",
+            "courier_hub_vehicle_raw",
+            params={
+                "select": "warehouse_code,vehicle_id,registration_number,vehicle_type,status,removed,updated_at",
+                "order": "warehouse_code.asc,registration_number.asc,vehicle_id.asc",
+                "limit": "5000",
+            },
+            timeout=30,
+        ) or []
+    except HTTPException:
+        hub_rows = []
+
+    def vehicle_key(value: Any) -> str:
+        return normalize_vehicle_license_plate(value or "")
+
+    local_by_plate = {vehicle_key(row.get("license_plate")): row for row in (rows or []) if vehicle_key(row.get("license_plate"))}
+    merged_rows: list[dict[str, Any]] = []
+    seen_plates: set[str] = set()
+    for hub in hub_rows:
+        plate = vehicle_key(hub.get("registration_number"))
+        local = local_by_plate.get(plate)
+        if local:
+            merged = dict(local)
+            merged.update({
+                "hub_vehicle_id": hub.get("vehicle_id"),
+                "hub_status": hub.get("status"),
+                "hub_removed": hub.get("removed"),
+                "hub_updated_at": hub.get("updated_at"),
+                "vehicle_source": "Courier Hub + JITT",
+            })
+            merged_rows.append(merged)
+            seen_plates.add(plate)
+            continue
+        if not plate:
+            continue
+        merged_rows.append({
+            "license_plate": hub.get("registration_number"),
+            "warehouse_code": hub.get("warehouse_code") or "",
+            "model": hub.get("vehicle_type") or "",
+            "ownership_type": "own",
+            "car_status": "retired" if hub.get("removed") else "assignable",
+            "condition_status": "ok",
+            "active": not bool(hub.get("removed")),
+            "hub_vehicle_id": hub.get("vehicle_id"),
+            "hub_status": hub.get("status"),
+            "hub_removed": hub.get("removed"),
+            "hub_updated_at": hub.get("updated_at"),
+            "vehicle_source": "Courier Hub",
+        })
+        seen_plates.add(plate)
+    for row in rows or []:
+        plate = vehicle_key(row.get("license_plate"))
+        if plate not in seen_plates:
+            merged_rows.append({**row, "vehicle_source": "JITT"})
+    merged_rows.sort(key=lambda row: (str(row.get("warehouse_code") or ""), str(row.get("license_plate") or "")))
     return {
-        "items": [safe_vehicle_configuration(row) for row in rows or []],
+        "items": [safe_vehicle_configuration(row) for row in merged_rows],
         "setup": {
             "tollTypes": [{"value": key, "label": label} for key, label in VEHICLE_TOLL_TYPES.items()],
             "statuses": [{"value": key, "label": label} for key, label in VEHICLE_CONFIGURATION_STATUSES.items()],

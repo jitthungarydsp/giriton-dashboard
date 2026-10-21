@@ -7584,30 +7584,63 @@ function vehicleConfigStatusClass(item) {
   return "done";
 }
 
+function vehicleConfigFilteredItems() {
+  const search = String($("#vehicle-config-search")?.value || "").trim().toLocaleLowerCase("hu-HU");
+  const warehouse = $("#vehicle-config-filter-warehouse")?.value || "";
+  const status = $("#vehicle-config-filter-status")?.value || "";
+  return (state.vehicleConfigurations || []).filter((item) => {
+    if (warehouse && item.warehouseCode !== warehouse) return false;
+    if (status && item.carStatus !== status) return false;
+    if (!search) return true;
+    return [item.licensePlate, item.jittCarId, item.hubVehicleId, item.dedicatedCourierName, item.dedicatedCourierId]
+      .some((value) => String(value || "").toLocaleLowerCase("hu-HU").includes(search));
+  });
+}
+
+function renderVehicleConfigSummary(items) {
+  const setCount = (key, value) => {
+    const target = document.querySelector(`[data-vehicle-config-count="${key}"]`);
+    if (target) target.textContent = formatCount(value);
+  };
+  setCount("all", items.length);
+  setCount("assignable", items.filter((item) => item.carStatus === "assignable" && item.conditionStatus === "ok").length);
+  setCount("attention", items.filter((item) => ["service", "out_of_order"].includes(item.carStatus) || ["attention", "faulty"].includes(item.conditionStatus)).length);
+  setCount("dedicated", items.filter((item) => item.dedicatedCourierId).length);
+}
+
 function renderVehicleConfigurations() {
   const target = $("#vehicle-config-list");
   if (!target) return;
   const items = state.vehicleConfigurations || [];
+  renderVehicleConfigSummary(items);
+  const filteredItems = vehicleConfigFilteredItems();
   if (!items.length) {
-    target.innerHTML = `<div class="empty-card">Még nincs autó konfiguráció.</div>`;
+    target.innerHTML = `<div class="empty-card">Még nem érkezett jármű a Courier Hubból.</div>`;
     return;
   }
-  target.innerHTML = items.map((item) => `
+  if (!filteredItems.length) {
+    target.innerHTML = `<div class="empty-card">A szűrésnek megfelelő jármű nincs.</div>`;
+    return;
+  }
+  target.innerHTML = filteredItems.map((item) => `
     <article class="vehicle-config-row">
       <div>
         <strong>${escapeHtml(item.licensePlate || "-")}</strong>
-        <small>${escapeHtml(item.jittCarId || "-")} · ${escapeHtml(item.warehouseCode || "-")} · ${escapeHtml([item.brand, item.model].filter(Boolean).join(" ") || "-")}</small>
+        <small>${escapeHtml(item.warehouseCode || "-")} · Hub #${escapeHtml(item.hubVehicleId || "-")} · ${escapeHtml([item.brand, item.model].filter(Boolean).join(" ") || "-")}</small>
       </div>
       <div>
         <span class="settlement-dashboard-status ${vehicleConfigStatusClass(item)}">${escapeHtml(item.carStatusLabel || "-")}</span>
-        <small>${escapeHtml(item.conditionLabel || "-")}${item.conditionDescription ? ` · ${escapeHtml(item.conditionDescription)}` : ""}</small>
+        <small>${escapeHtml(item.conditionLabel || "-")}${item.conditionDescription ? ` · ${escapeHtml(item.conditionDescription)}` : ""}${item.hubStatus ? ` · Hub: ${escapeHtml(item.hubStatus)}` : ""}</small>
+      </div>
+      <div>
+        <strong>${item.dedicatedCourierId ? escapeHtml(`${item.dedicatedCourierName || "Futár"} · #${item.dedicatedCourierId}`) : "Nincs kiosztva"}</strong>
+        <small>${escapeHtml(item.source || "JITT")}</small>
       </div>
       <div>
         <strong>${escapeHtml(item.tollVignetteLabel || "-")} · ${escapeHtml(item.ownershipLabel || "-")}</strong>
         <small>${escapeHtml((item.tollCounties || []).join(", ") || [item.tollValidFrom, item.tollValidTo].filter(Boolean).join(" - ") || "-")}</small>
       </div>
       <div>
-        <strong>${item.dedicatedCourierId ? escapeHtml(`${item.dedicatedCourierName || "Futár"} · #${item.dedicatedCourierId}`) : "Nincs dedikálás"}</strong>
         <small>${item.enforceMinimumDailyRounds ? `Min. napi kör: ${escapeHtml(item.minimumDailyRounds || 0)} ` : "Minimum kör nincs figyelve"}${item.serviceFrom || item.serviceTo ? ` · Szervíz: ${escapeHtml([item.serviceFrom, item.serviceTo].filter(Boolean).join(" - "))}` : ""}${item.serviceLocation ? ` · ${escapeHtml(item.serviceLocation)}` : ""}</small>
       </div>
       <button class="secondary" type="button" data-vehicle-config-edit="${escapeHtml(item.licensePlate || "")}">Szerkesztés</button>
@@ -7727,6 +7760,9 @@ $("#vehicle-hr-search-form")?.addEventListener("submit", (event) => {
 });
 
 $("#vehicle-config-refresh")?.addEventListener("click", () => loadVehicleConfigurations());
+$("#vehicle-config-search")?.addEventListener("input", () => renderVehicleConfigurations());
+$("#vehicle-config-filter-warehouse")?.addEventListener("change", () => renderVehicleConfigurations());
+$("#vehicle-config-filter-status")?.addEventListener("change", () => renderVehicleConfigurations());
 $("#vehicle-config-toll-type")?.addEventListener("change", toggleVehicleConfigConditionalFields);
 $("#vehicle-config-ownership")?.addEventListener("change", toggleVehicleConfigConditionalFields);
 toggleVehicleConfigConditionalFields();

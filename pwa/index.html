@@ -515,18 +515,31 @@
         <section class="workflow-header">
           <div>
             <p class="eyebrow">AUTÓ</p>
-            <h2>Autó konfigurálása</h2>
-            <p class="muted">Autó törzsadatok, matrica, szervízablak, állapot és dedikált futár beállítása.</p>
+            <h2>Járműpark kezelése</h2>
+            <p class="muted">A Courier Hub járművei egy helyen: karbantartás, státusz, állapot és futárhoz kiosztás.</p>
           </div>
           <button id="vehicle-config-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+
+        <section id="vehicle-config-overview" class="vehicle-config-overview" aria-label="Járműpark összesítő">
+          <div class="vehicle-config-summary-card"><small>ÖSSZES JÁRMŰ</small><strong data-vehicle-config-count="all">–</strong></div>
+          <div class="vehicle-config-summary-card"><small>KIOSZTHATÓ</small><strong data-vehicle-config-count="assignable">–</strong></div>
+          <div class="vehicle-config-summary-card"><small>KARBANTARTÁS / HIBA</small><strong data-vehicle-config-count="attention">–</strong></div>
+          <div class="vehicle-config-summary-card"><small>DEDIKÁLT FUTÁR</small><strong data-vehicle-config-count="dedicated">–</strong></div>
+        </section>
+
+        <section class="vehicle-config-toolbar" aria-label="Járműpark szűrése">
+          <input id="vehicle-config-search" type="search" placeholder="Keresés rendszám, Hub ID vagy futár szerint" autocomplete="off" />
+          <select id="vehicle-config-filter-warehouse"><option value="">Minden raktár</option><option value="BUD1">BUD1</option><option value="BUD2">BUD2</option></select>
+          <select id="vehicle-config-filter-status"><option value="">Minden státusz</option><option value="assignable">Kiosztható</option><option value="service">Szervízben</option><option value="garage_master">Garázsmesternél</option><option value="out_of_order">Üzemen kívül</option><option value="retired">Kivezetve</option></select>
         </section>
 
         <section class="process-card">
           <div class="process-title">
             <span class="step-code">CAR</span>
             <div>
-              <h3>Új autó / módosítás</h3>
-              <p>A rendszám alapján meglévő autót frissít, új rendszámnál új rekordot hoz létre.</p>
+              <h3>JITT adatlap / karbantartás</h3>
+              <p>A Courier Hubból érkező alapadatokat egészítsd ki JITT-es státusszal, állapottal és kiosztással.</p>
             </div>
           </div>
           <form id="vehicle-config-form" class="process-form two-column">
@@ -598,8 +611,8 @@
           <div class="process-title">
             <span class="step-code">LISTA</span>
             <div>
-              <h3>Autó konfigurációk</h3>
-              <p>Az aktív és korábban felvett autók törzsadatai.</p>
+              <h3>Járműpark</h3>
+              <p>A Hub-forrás és a JITT-ben kezelt állapot egy sorban látszik.</p>
             </div>
           </div>
           <section id="vehicle-config-list" class="vehicle-config-list">
