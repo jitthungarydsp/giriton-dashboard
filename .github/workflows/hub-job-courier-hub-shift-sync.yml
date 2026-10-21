@@ -320,6 +320,33 @@ jobs:
           if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
           "${CMD[@]}"
 
+      - name: HUB_JOB persist daily courier vehicle assignments
+        continue-on-error: true
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_daily_vehicle_assignments.py --days-back 14)
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
+      - name: HUB_JOB refresh PWA vehicle configurations from Google Sheet
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, PWA vehicle configuration import skipped."
+            exit 0
+          fi
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
+            python scripts/import_vehicle_configurations_from_sheet.py \
+              --sheet-id "1zcLlf4VzkKAVrODbbpS4-bYjvu9vaZuR2tIWUUqwLzU" \
+              --gid "321601566"
+          else
+            python scripts/import_vehicle_configurations_from_sheet.py \
+              --sheet-id "1zcLlf4VzkKAVrODbbpS4-bYjvu9vaZuR2tIWUUqwLzU" \
+              --gid "321601566" \
+              --apply
+          fi
+
       - name: HUB_JOB sync financial overview raw
         continue-on-error: true
         shell: bash

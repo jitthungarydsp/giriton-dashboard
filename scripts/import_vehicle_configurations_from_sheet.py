@@ -5,7 +5,7 @@ import argparse
 import re
 import sys
 import unicodedata
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -129,8 +129,79 @@ def worksheet_by_gid(sheet_id: str, gid: int):
     return worksheet
 
 
+def column_letter(index: int) -> str:
+    result = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def sheet_period_start(title: str) -> tuple[int, int]:
+    match = re.search(r"(20\d{2})[_-](0?[1-9]|1[0-2])", title)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    today = date.today()
+    return today.year, today.month
+
+
+def assignment_dates(worksheet, values: list[list[str]]) -> dict[int, list[date]]:
+    """Return red (service) assignment cells by source row.
+
+    The sheet uses a red cell background for days on which a vehicle is in
+    service.  Values alone cannot carry that information, so read only the
+    used assignment grid with Google Sheets grid data.
+    """
+    last_row = max((i + 1 for i, row in enumerate(values) if normalize_plate((row + [""] * 3)[2])), default=2)
+    first_assignment_col = 11
+    last_assignment_col = max(first_assignment_col, max((len(row) for row in values), default=first_assignment_col))
+    end_cell = f"{column_letter(last_assignment_col)}{last_row}"
+    metadata = worksheet.spreadsheet.fetch_sheet_metadata(
+        params={"includeGridData": "true", "ranges": [f"'{worksheet.title}'!K1:{end_cell}"]}
+    )
+    grid = (metadata.get("sheets") or [{}])[0].get("data") or [{}]
+    row_data = grid[0].get("rowData") or []
+    year, start_month = sheet_period_start(worksheet.title)
+    header = values[0] if values else []
+    dates_by_row: dict[int, list[date]] = {}
+    previous_month = start_month
+    year_offset = 0
+    date_by_col: dict[int, date] = {}
+    for col in range(first_assignment_col, last_assignment_col + 1):
+        raw = (header[col - 1] if col <= len(header) else "").strip()
+        match = re.match(r"^(\d{1,2})\.(\d{1,2})\.?$", raw)
+        if not match:
+            continue
+        month, day = int(match.group(1)), int(match.group(2))
+        if month < previous_month:
+            year_offset += 1
+        previous_month = month
+        try:
+            date_by_col[col] = date(year + year_offset, month, day)
+        except ValueError:
+            continue
+    for grid_row_index, grid_row in enumerate(row_data, start=1):
+        source_row = grid_row_index
+        cells = grid_row.get("values") or []
+        for offset, cell in enumerate(cells):
+            col = first_assignment_col + offset
+            service_date = date_by_col.get(col)
+            if not service_date:
+                continue
+            background = (cell.get("effectiveFormat") or {}).get("backgroundColor") or {}
+            red = float(background.get("red", 0) or 0)
+            green = float(background.get("green", 0) or 0)
+            blue = float(background.get("blue", 0) or 0)
+            if red >= 0.85 and green <= 0.55 and blue <= 0.55:
+                dates_by_row.setdefault(source_row, []).append(service_date)
+    return dates_by_row
+
+
 def read_sheet_cars(sheet_id: str, gid: int) -> list[dict[str, Any]]:
-    values = worksheet_by_gid(sheet_id, gid).get_all_values()
+    worksheet = worksheet_by_gid(sheet_id, gid)
+    values = worksheet.get_all_values()
+    service_dates = assignment_dates(worksheet, values)
+    today = date.today()
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     for row_number, row in enumerate(values[2:], start=3):
@@ -140,6 +211,10 @@ def read_sheet_cars(sheet_id: str, gid: int) -> list[dict[str, Any]]:
             continue
         seen.add(plate)
         sheet_warehouse = normalize_warehouse(padded[1])
+        red_dates = service_dates.get(row_number, [])
+        service_from = min(red_dates).isoformat() if red_dates else None
+        service_to = max(red_dates).isoformat() if red_dates else None
+        in_service = today in red_dates
         rows.append(
             {
                 "source_row": row_number,
@@ -152,10 +227,17 @@ def read_sheet_cars(sheet_id: str, gid: int) -> list[dict[str, Any]]:
                 "toll_vignette_type": toll_payload(padded[5])[0],
                 "toll_counties": toll_payload(padded[5])[1],
                 "toll_valid_to": parse_date(padded[6]),
+                "service_from": service_from,
+                "service_to": service_to,
                 "condition_description": " · ".join(
-                    value for value in (clean_text(padded[7], 80), clean_text(padded[8], 80), clean_text(padded[9], 80)) if value
+                    value for value in (
+                        clean_text(padded[7], 80),
+                        clean_text(padded[8], 80),
+                        clean_text(padded[9], 80),
+                        f"Sheet szerviz: {service_from}–{service_to}" if red_dates else "",
+                    ) if value
                 ),
-                "car_status": "assignable" if sheet_warehouse in {"BUD1", "BUD2"} else "other",
+                "car_status": "service" if in_service else ("assignable" if sheet_warehouse in {"BUD1", "BUD2"} else "other"),
                 "created_by": SOURCE_BY,
                 "updated_by": SOURCE_BY,
             }
@@ -204,13 +286,13 @@ def supabase_get(table: str, params: dict[str, str], *, page_size: int = 1000, m
     return rows
 
 
-def existing_config_plates() -> set[str]:
+def existing_config_rows() -> dict[str, dict[str, Any]]:
     rows = supabase_get(
         "vw_pwa_vehicle_configurations_latest",
-        {"select": "license_plate", "limit": "10000"},
+        {"select": "license_plate,warehouse_code,model,ownership_type,rental_company,toll_vignette_type,toll_counties,toll_valid_to,service_from,service_to,condition_description,car_status", "limit": "10000"},
         max_rows=10000,
     )
-    return {normalize_plate(row.get("license_plate")) for row in rows if normalize_plate(row.get("license_plate"))}
+    return {normalize_plate(row.get("license_plate")): row for row in rows if normalize_plate(row.get("license_plate"))}
 
 
 def db_vehicle_plate_warehouses() -> dict[str, str]:
@@ -237,12 +319,13 @@ def db_vehicle_plate_warehouses() -> dict[str, str]:
     return result
 
 
-def build_payloads(sheet_rows: list[dict[str, Any]], plate_warehouses: dict[str, str], existing_configs: set[str], *, replace_existing: bool) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def build_payloads(sheet_rows: list[dict[str, Any]], plate_warehouses: dict[str, str], existing_configs: dict[str, dict[str, Any]], *, replace_existing: bool) -> tuple[list[dict[str, Any]], dict[str, int]]:
     stats = {
         "sheet_rows": len(sheet_rows),
         "not_in_db": 0,
         "missing_warehouse": 0,
         "already_configured": 0,
+        "unchanged": 0,
         "ready": 0,
     }
     payloads: list[dict[str, Any]] = []
@@ -250,9 +333,6 @@ def build_payloads(sheet_rows: list[dict[str, Any]], plate_warehouses: dict[str,
         plate = row["license_plate"]
         if plate not in plate_warehouses:
             stats["not_in_db"] += 1
-            continue
-        if plate in existing_configs and not replace_existing:
-            stats["already_configured"] += 1
             continue
         warehouse = row.get("warehouse_code") or plate_warehouses.get(plate) or ""
         if warehouse not in {"BUD1", "BUD2"}:
@@ -262,6 +342,17 @@ def build_payloads(sheet_rows: list[dict[str, Any]], plate_warehouses: dict[str,
         payload["warehouse_code"] = warehouse
         payload.pop("source_row", None)
         payload.pop("company", None)
+        existing = existing_configs.get(plate)
+        if existing and not replace_existing:
+            compare_keys = (
+                "warehouse_code", "model", "ownership_type", "rental_company",
+                "toll_vignette_type", "toll_counties", "toll_valid_to", "service_from",
+                "service_to", "condition_description", "car_status",
+            )
+            if all((existing.get(key) or None) == (payload.get(key) or None) for key in compare_keys):
+                stats["unchanged"] += 1
+                continue
+            stats["already_configured"] += 1
         payloads.append(payload)
     stats["ready"] = len(payloads)
     return payloads, stats
@@ -295,7 +386,7 @@ def main() -> int:
 
     sheet_rows = read_sheet_cars(args.sheet_id, args.gid)
     plate_warehouses = db_vehicle_plate_warehouses()
-    existing_configs = existing_config_plates()
+    existing_configs = existing_config_rows()
     payloads, stats = build_payloads(
         sheet_rows,
         plate_warehouses,
@@ -305,7 +396,7 @@ def main() -> int:
     print(
         "PWA_VEHICLE_CONFIG_IMPORT "
         f"sheet_rows={stats['sheet_rows']} db_plates={len(plate_warehouses)} "
-        f"already_configured={stats['already_configured']} not_in_db={stats['not_in_db']} "
+        f"already_configured={stats['already_configured']} unchanged={stats['unchanged']} not_in_db={stats['not_in_db']} "
         f"missing_warehouse={stats['missing_warehouse']} ready={stats['ready']} dry_run={not args.apply}"
     )
     for row in payloads[:20]:

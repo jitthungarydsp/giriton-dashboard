@@ -1,0 +1,32 @@
+name: Backfill courier daily vehicle assignments
+
+on:
+  workflow_dispatch:
+    inputs:
+      since_date:
+        description: "Kezdő helyi dátum (YYYY-MM-DD). Üresen az elmúlt 10 év."
+        required: false
+        default: ""
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Backfill from retained Live Monitoring snapshots
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.since_date }}" ]; then
+            python scripts/sync_courier_daily_vehicle_assignments.py --since-date "${{ inputs.since_date }}"
+          else
+            python scripts/sync_courier_daily_vehicle_assignments.py --days-back 3650
+          fi
