@@ -1458,18 +1458,20 @@ function renderQualitySummaryChart(payload = {}) {
         ${items.map((item) => {
           const width = Math.max(4, Math.round((item.value / maxValue) * 100));
           return `
-            <button class="quality-bar-row ${activeTopic === item.key ? "active" : ""}" type="button" data-quality-topic="${escapeHtml(item.key)}">
-              <div>
-                <strong>${escapeHtml(item.label)}</strong>
-                <small>${escapeHtml(item.note)}</small>
-              </div>
-              <div class="quality-bar-track"><span style="width: ${width}%"></span></div>
-              <b>${formatCount(item.value)}</b>
-            </button>
+            <div class="quality-item">
+              <button class="quality-bar-row ${activeTopic === item.key ? "active" : ""}" type="button" data-quality-topic="${escapeHtml(item.key)}">
+                <div>
+                  <strong>${escapeHtml(item.label)}</strong>
+                  <small>${escapeHtml(item.note)}</small>
+                </div>
+                <div class="quality-bar-track"><span style="width: ${width}%"></span></div>
+                <b>${formatCount(item.value)}</b>
+              </button>
+              ${activeTopic === item.key ? renderQualitySummaryDetails(item.key, details) : ""}
+            </div>
           `;
         }).join("")}
       </div>
-      ${renderQualitySummaryDetails(activeTopic, details)}
     </section>
   `;
 }
