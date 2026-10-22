@@ -1774,7 +1774,7 @@ function renderDailyHistory(payload) {
       <summary class="daily-route-row">
         <div>
           <strong>Route ${escapeHtml(row.routeId || "-")}</strong>
-          <small>WH${escapeHtml(row.warehouseId || "-")} · ${escapeHtml(routeTypeLabel(row.routeType))} · ${formatCount(row.orders)} cím · ${formatCount(row.stops)} stop · ${formatAverage(row.mileageKm)} km</small>
+          <small>WH${escapeHtml(row.warehouseId || "-")} · Műszak: ${escapeHtml((row.routeStory || {}).shiftName || shortDateTime(row.plannedStartAt) || "-")} · ${escapeHtml(routeTypeLabel(row.routeType))} · ${formatCount(row.orders)} cím · ${formatCount(row.stops)} stop · ${formatAverage(row.mileageKm)} km</small>
         </div>
         <div>
           <span>${escapeHtml(row.vehiclePlate || "-")}</span>
