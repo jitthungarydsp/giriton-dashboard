@@ -1487,7 +1487,7 @@ function renderQualitySummaryDetails(topic, details = {}) {
     <div class="quality-detail-list">
       <h4>${escapeHtml(labels[topic] || "Vizsgálandó tételek")}</h4>
       ${rows.length ? rows.map((row) => `
-        <div class="quality-detail-row">
+        <div class="quality-detail-row" role="button" tabindex="0" data-quality-date="${escapeHtml(row.date || "")}">
           <strong>${escapeHtml(row.date || "-")}</strong>
           <span>${escapeHtml(row.label || "-")}</span>
           <small>${escapeHtml(row.note || "")}${row.routeId ? ` · Route ${escapeHtml(row.routeId)}` : ""}</small>
@@ -10662,11 +10662,28 @@ $("#statistics-refresh").addEventListener("click", () => {
 });
 
 $("#statistics-quality")?.addEventListener("click", (event) => {
+  const dateRow = event.target.closest("[data-quality-date]");
+  if (dateRow) {
+    const date = dateRow.getAttribute("data-quality-date") || "";
+    if (date) {
+      state.statisticsDay = date;
+      state.statisticsHistoryDate = date;
+      renderStatistics();
+      window.setTimeout(() => $("#daily-history-card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+    }
+    return;
+  }
   const button = event.target.closest("[data-quality-topic]");
   if (!button) return;
   const topic = button.getAttribute("data-quality-topic") || "";
   state.statisticsQualityTopic = state.statisticsQualityTopic === topic ? "" : topic;
   renderStatistics();
+});
+
+$("#statistics-quality")?.addEventListener("keydown", (event) => {
+  if (!event.target.closest("[data-quality-date]") || !["Enter", " "].includes(event.key)) return;
+  event.preventDefault();
+  event.target.closest("[data-quality-date]")?.click();
 });
 
 $("#statistics-breakdown").addEventListener("submit", (event) => {
