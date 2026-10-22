@@ -1400,6 +1400,16 @@ function qualityDetailCount(row = {}) {
   return match ? Number(match[1]) : 1;
 }
 
+function qualityProblemDates(payload = {}) {
+  const details = payload.qualitySummary?.details || {};
+  const rows = [
+    ...(details.lateShift || []),
+    ...(details.uncleanedTimeWindowLate || []),
+    ...pastQualityDetails(details.noShow || []),
+  ];
+  return new Set(rows.map((row) => String(row?.date || "").slice(0, 10)).filter(Boolean));
+}
+
 function renderQualitySummaryChart(payload = {}) {
   const sourceSummary = payload.qualitySummary || qualitySummaryFromDailyHistory(payload.dailyHistory || []);
   const activeTopic = state.statisticsQualityTopic || "";
@@ -1761,6 +1771,8 @@ function renderDailyHistory(payload) {
   }
   const index = Math.max(0, dates.indexOf(state.statisticsHistoryDate));
   const selectedRows = byDate[state.statisticsHistoryDate] || [];
+  const problemDates = qualityProblemDates(payload);
+  const selectedDateHasIssue = problemDates.has(state.statisticsHistoryDate);
   const plates = uniqueText(selectedRows.map((row) => row.vehiclePlate));
   const models = uniqueText(selectedRows.map((row) => row.vehicleModel));
   const orders = selectedRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
@@ -1790,7 +1802,7 @@ function renderDailyHistory(payload) {
     </details>
   `).join("");
   return `
-    <section class="daily-history-card" id="daily-history-card">
+    <section class="daily-history-card ${selectedDateHasIssue ? "quality-problem-day" : ""}" id="daily-history-card">
       <div class="daily-history-head">
         <button class="icon-button" id="daily-history-next" type="button" ${index >= dates.length - 1 ? "disabled" : ""}>‹</button>
         <div>
