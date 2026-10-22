@@ -1482,7 +1482,6 @@ function renderQualitySummaryChart(payload = {}) {
                 <div class="quality-bar-track"><span style="width: ${width}%"></span></div>
                 <b>${formatCount(item.value)}</b>
               </button>
-              ${item.value > 0 ? `<button type="button" class="secondary quality-reclamation-trigger" data-quality-reclamation-topic="${escapeHtml(item.key)}">Reklamáció</button>` : ""}
               ${activeTopic === item.key ? renderQualitySummaryDetails(item.key, details) : ""}
             </div>
           `;

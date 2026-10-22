@@ -947,7 +947,8 @@ textarea { min-height: 96px; resize: vertical; }
   }
 
   .daily-route-status {
-    justify-items: start;
+    justify-self: center;
+    justify-items: center;
   }
 
   .daily-route-row small,
@@ -973,6 +974,7 @@ textarea { min-height: 96px; resize: vertical; }
 .route-quality-head small { display: block; color: var(--muted); font-size: 11px; font-weight: 750; margin-top: 2px; }
 .shift-quality-row > span:last-child { color: var(--muted); font-size: 12px; font-weight: 900; }
 .route-status-badge { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 999px; color: #fff; font-weight: 950; line-height: 1; }
+.daily-route-row .route-status-badge { display: grid; width: 34px; height: 34px; box-sizing: border-box; font-size: 16px; }
 .route-status-badge.ok { background: var(--green); }
 .route-status-badge.bad { background: var(--danger); font-size: 12px; }
 .quality-summary-card { display: grid; gap: 13px; margin-bottom: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
