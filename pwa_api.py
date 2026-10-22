@@ -14899,8 +14899,8 @@ def route_details_for_range(start: date, end: date) -> tuple[list[dict[str, Any]
 
 
 def route_statistics_type_key(row: dict[str, Any]) -> str:
-    route_type = normalize_text(row.get("routeType"))
-    route_label = normalize_text(row.get("routeTypeLabel"))
+    route_type = normalize_text(row.get("routeType") or row.get("route_type"))
+    route_label = normalize_text(row.get("routeTypeLabel") or row.get("route_type_label"))
     if "express" in route_type or "express" in route_label:
         return "express"
     if "regional" in route_type or "regional" in route_label or "regio" in route_type or "regio" in route_label or "régio" in route_label:
@@ -16864,10 +16864,8 @@ def build_monthly_courier_statistics(
         highlighted_express_routes = 0
         normal_express_routes = 0
         for row in daily_history_rows:
-            route_type = str(row.get("route_type") or "").strip() or "normal"
-            if not row.get("route_type"):
-                route_type = str(row.get("routeType") or "").strip() or "normal"
-            if route_type not in route_types:
+            route_type = route_statistics_type_key(row)
+            if route_type == "city":
                 route_type = "normal"
             route_types[route_type] = route_types.get(route_type, 0) + 1
             is_highlighted = day_type_for_date(parse_date_value(row.get("date")), day_rules) == "highlighted"
@@ -17070,7 +17068,9 @@ def build_monthly_courier_statistics(
                 normal_day_routes += 1
     elif route_rows:
         for route in route_rows:
-            route_type = route.get("route_type") or "normal"
+            route_type = route_statistics_type_key(route)
+            if route_type == "city":
+                route_type = "normal"
             route_types[route_type] = route_types.get(route_type, 0) + 1
             is_highlighted = day_type_for_date(route.get("work_date"), day_rules) == "highlighted"
             if route_type == "express":
