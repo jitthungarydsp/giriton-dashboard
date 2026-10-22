@@ -6781,15 +6781,16 @@ def supabase_work_date_filter(start: date, end: date) -> str:
 
 
 def read_giriton_attendance_login_rows(start: date, end: date) -> list[dict[str, Any]]:
-    rows = optional_supabase_rows(
+    rows = optional_supabase_rows_paged(
         "giriton_attendance_raw",
         params={
             "select": "work_date,courier_name,shift_text,activity_status,checkin_start,checkin_end,updated_at",
             "work_date": supabase_work_date_filter(start, end),
             "order": "work_date.asc,courier_name.asc",
-            "limit": "10000",
         },
         timeout=30,
+        page_size=1000,
+        max_rows=50000,
     )
     return [
         row for row in rows
