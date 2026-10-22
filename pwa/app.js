@@ -47,6 +47,7 @@ const state = {
   game: null,
   gameStartedAt: null,
   statistics: null,
+  statisticsPrevious: null,
   openMuszakproShifts: null,
   serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
@@ -1961,6 +1962,7 @@ function bindDailyHistoryControls() {
 function renderStatistics() {
   const payload = state.statistics;
   const grid = $("#statistics-grid");
+  const comparison = $("#statistics-comparison");
   const message = $("#statistics-message");
   const qualityPanel = $("#statistics-quality");
   const breakdown = $("#statistics-breakdown");
@@ -1968,6 +1970,7 @@ function renderStatistics() {
 
   if (!payload) {
     grid.innerHTML = "";
+    if (comparison) comparison.innerHTML = "";
     qualityPanel.innerHTML = "";
     breakdown.innerHTML = "";
     message.innerHTML = `<div class="notice">Válassz hónapot, majd frissítsd a statisztikát.</div>`;
@@ -1975,6 +1978,10 @@ function renderStatistics() {
   }
 
   const summary = payload.summary || {};
+  const previousPayload = state.statisticsPrevious || {};
+  const previousSummary = previousPayload.summary || {};
+  const currentQuality = payload.qualitySummary || {};
+  const previousQuality = previousPayload.qualitySummary || {};
   const routes = Number(summary.routes || 0);
   const orders = Number(summary.orders || 0);
   const average = Number(summary.averageOrdersPerRoute || 0);
@@ -1998,6 +2005,18 @@ function renderStatistics() {
       ${escapeHtml(payload.month || state.statisticsMonth)} havi adatok. ${escapeHtml(payload.amountsNote || "A teljes bevétel rejtve a mobil nézetben.")}
     </div>
   `;
+  const personalComparison = `
+    <section class="courier-statistics-compare">
+      <div class="process-title"><span class="step-code">↗</span><div><h3>Havi összehasonlítás</h3><p>Az aktuális hónap eredménye az előző hónaphoz képest.</p></div></div>
+      <div class="admin-stat-donut-grid">
+        ${adminDonutCard("Összes kör", "Kivitt túrák", routes, previousSummary.routes)}
+        ${adminDonutCard("Összes cím", "Teljesített rendelések", orders, previousSummary.orders)}
+        ${adminDonutCard("No-show", "Nem jelent meg műszakban", currentQuality.noShowCount, previousQuality.noShowCount)}
+        ${adminDonutCard("Műszakkésés", "Késő sorba állás / műszakkezdés", currentQuality.lateShiftCount, previousQuality.lateShiftCount)}
+      </div>
+    </section>
+  `;
+  if (comparison) comparison.innerHTML = personalComparison;
   grid.innerHTML = [
     statisticCard("Kör", formatCount(routes), "kivitt túrák"),
     statisticCard("Műszakok", formatCount(summary.shiftCount), "foglalt / teljesített"),
@@ -2068,9 +2087,17 @@ async function loadStatistics(options = {}) {
     if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
       params.set("courier", state.workflowPreviewCourierId);
     }
-    const payload = await api(`/api/statistics/monthly?${params.toString()}`);
+    const previousParams = new URLSearchParams({ month: previousMonthValue(state.statisticsMonth), _: String(Date.now()) });
+    if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
+      previousParams.set("courier", state.workflowPreviewCourierId);
+    }
+    const [payload, previousPayload] = await Promise.all([
+      api(`/api/statistics/monthly?${params.toString()}`),
+      api(`/api/statistics/monthly?${previousParams.toString()}`),
+    ]);
     if (requestSeq !== state.statisticsRequestSeq) return;
     state.statistics = payload;
+    state.statisticsPrevious = previousPayload;
     const dates = Object.keys(dailyHistoryByDate(payload.dailyHistory || [])).sort().reverse();
     if (!options.resetHistory && requestedHistoryDate && dates.includes(requestedHistoryDate)) {
       state.statisticsHistoryDate = requestedHistoryDate;
@@ -2079,6 +2106,8 @@ async function loadStatistics(options = {}) {
   } catch (error) {
     if (requestSeq !== state.statisticsRequestSeq) return;
     state.statistics = null;
+    state.statisticsPrevious = null;
+    if ($("#statistics-comparison")) $("#statistics-comparison").innerHTML = "";
     $("#statistics-grid").innerHTML = "";
     $("#statistics-quality").innerHTML = "";
     $("#statistics-breakdown").innerHTML = "";
@@ -10768,6 +10797,7 @@ function updatePreviewCourier(value) {
   state.workflowMonths = [];
   state.workflow = null;
   state.statistics = null;
+  state.statisticsPrevious = null;
   state.routeDetails = null;
   state.routeShiftReport = null;
   state.routeStatistics = null;
@@ -11190,7 +11220,12 @@ $("#refresh").addEventListener("click", loadShifts);
 $("#open-muszakpro-refresh").addEventListener("click", toggleOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
-$("#nav-statistics").addEventListener("click", () => showSection(state.user?.canViewSettlementDashboard || ["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase()) ? "admin-statistics" : "statistics"));
+$("#nav-statistics").addEventListener("click", () => {
+  const role = String(state.user?.role || "").toLowerCase();
+  const viewingCourier = Boolean(state.user?.canPreviewCouriers && state.workflowPreviewCourierId);
+  const canOpenAdmin = Boolean(state.user?.canViewSettlementDashboard) || ["admin", "superadmin"].includes(role);
+  showSection(viewingCourier || !canOpenAdmin ? "statistics" : "admin-statistics");
+});
 $("#nav-financial-statistics")?.addEventListener("click", () => showSection("financial-statistics"));
 $("#admin-statistics-refresh")?.addEventListener("click", () => loadAdminStatistics());
 $("#financial-statistics-refresh")?.addEventListener("click", () => loadFinancialStatistics());

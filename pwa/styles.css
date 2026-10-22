@@ -877,6 +877,9 @@ textarea { min-height: 96px; resize: vertical; }
 .notice { margin: 12px 0; padding: 14px; border-radius: 14px; background: #e8f2e3; color: #315b37; font-size: 13px; font-weight: 750; }
 .notice.error { background: #f9dfdd; color: var(--danger); }
 .statistics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.courier-statistics-compare { display: grid; gap: 12px; margin-top: 14px; padding: 15px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
+.courier-statistics-compare:empty { display: none; }
+.courier-statistics-compare .admin-stat-donut-grid { margin-top: 0; }
 .admin-statistics-panel { display: grid; gap: 14px; margin-top: 14px; }
 .admin-stat-filter-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .admin-stat-filter { min-height: 38px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font-weight: 900; cursor: pointer; }
