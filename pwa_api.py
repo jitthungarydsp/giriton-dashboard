@@ -15057,6 +15057,122 @@ def build_route_statistics(start: date, end: date, warehouse: str = "all") -> di
     }
 
 
+def load_admin_daily_performance_rows(month: date, warehouse: str = "all") -> list[dict[str, Any]]:
+    month_start = month.replace(day=1)
+    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    rows = optional_supabase_rows_paged(
+        "raw_jitt_invoice_perf_couriers_daily",
+        params={
+            "select": "warehouse_id,warehouse_code,work_date,courier_id,order_count,route_count,delayed_order_count,shift_count,late_count,did_not_come_count",
+            "work_date": f"gte.{month_start.isoformat()}",
+            "and": f"(work_date.lte.{month_end.isoformat()})",
+            "order": "work_date.asc,courier_id.asc",
+        },
+        timeout=60,
+        page_size=1000,
+        max_rows=100000,
+    )
+    requested = normalize_warehouse(warehouse)
+    if not requested or requested in {"ALL", "ÖSSZES"}:
+        return rows
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        warehouse_key = normalize_warehouse(row.get("warehouse_code"))
+        if warehouse_key not in {"BUD1", "BUD2"}:
+            warehouse_key = "BUD1" if safe_int(row.get("warehouse_id")) == 1 else "BUD2" if safe_int(row.get("warehouse_id")) == 2 else warehouse_key
+        if warehouse_key == requested:
+            result.append(row)
+    return result
+
+
+def build_admin_financial_statistics(month: date, warehouse: str = "all") -> dict[str, Any]:
+    month_start = month.replace(day=1)
+    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    route_stats = build_route_statistics(month_start, month_end, warehouse)
+    performance_rows = load_admin_daily_performance_rows(month_start, warehouse)
+    route_summary = route_stats.get("summary") or {}
+    snapshots = read_dashboard_latest_finance_snapshots(month_start)
+    requested = normalize_warehouse(warehouse)
+    if requested in {"ALL", "ÖSSZES"}:
+        requested = ""
+
+    selected_snapshots = []
+    for snapshot in snapshots:
+        snapshot_warehouse = normalize_warehouse(snapshot.get("warehouse_label"))
+        if not requested or snapshot_warehouse == requested:
+            selected_snapshots.append(snapshot)
+
+    snapshot_ids = [str(row.get("id") or "").strip() for row in selected_snapshots if row.get("id")]
+    item_rows: list[dict[str, Any]] = []
+    for index in range(0, len(snapshot_ids), 150):
+        chunk = snapshot_ids[index:index + 150]
+        if not chunk:
+            continue
+        item_rows.extend(optional_supabase_rows_paged(
+            "courier_finance_snapshot_item",
+            schema="settlement",
+            params={
+                "select": "snapshot_id,item_key,item_label,amount_value,section",
+                "snapshot_id": f"in.({','.join(chunk)})",
+                "section": "eq.finance",
+                "order": "snapshot_id.asc,item_key.asc",
+            },
+            timeout=45,
+            page_size=1000,
+            max_rows=50000,
+        ))
+    item_by_snapshot: dict[str, dict[str, int]] = {}
+    breakdown: dict[str, dict[str, Any]] = {}
+    for item in item_rows:
+        snapshot_id = str(item.get("snapshot_id") or "").strip()
+        key = str(item.get("item_key") or "").strip()
+        label = str(item.get("item_label") or key or "Egyéb").strip()
+        amount = money_int(item.get("amount_value"))
+        item_by_snapshot.setdefault(snapshot_id, {})[key] = amount
+        if key and key != "payable" and amount:
+            entry = breakdown.setdefault(key, {"key": key, "label": label, "amountHuf": 0})
+            entry["amountHuf"] += amount
+
+    total_cost = 0
+    for snapshot in selected_snapshots:
+        snapshot_id = str(snapshot.get("id") or "").strip()
+        items = item_by_snapshot.get(snapshot_id) or {}
+        metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+        total_cost += items.get("payable", money_int(metadata.get("payable_total")))
+
+    route_count = safe_int(route_summary.get("routes"))
+    weekly_route_counts: dict[str, int] = {}
+    for row in route_stats.get("rows") or []:
+        work_date = parse_date_value(row.get("date"))
+        if work_date:
+            iso = work_date.isocalendar()
+            week_key = f"W{iso.week:02d}"
+            weekly_route_counts[week_key] = weekly_route_counts.get(week_key, 0) + 1
+    weekly = [
+        {"week": week, "routes": count, "costHuf": round(total_cost * count / route_count) if route_count else 0}
+        for week, count in sorted(weekly_route_counts.items())
+    ]
+    return {
+        "month": month_start.strftime("%Y-%m"),
+        "warehouse": requested or "all",
+        "summary": {
+            "totalCostHuf": total_cost,
+            "routes": route_count,
+            "orders": safe_int(route_summary.get("orders")),
+            "costPerRouteHuf": round(total_cost / route_count) if route_count else 0,
+            "noShow": sum(safe_int(row.get("did_not_come_count")) for row in performance_rows),
+            "lateShift": sum(safe_int(row.get("late_count")) for row in performance_rows),
+            "lateAddresses": sum(safe_int(row.get("delayed_order_count")) for row in performance_rows),
+            "shifts": sum(safe_int(row.get("shift_count")) for row in performance_rows),
+        },
+        "routeTypes": route_stats.get("routeTypes") or [],
+        "weekly": weekly,
+        "breakdown": sorted(breakdown.values(), key=lambda item: abs(money_int(item.get("amountHuf"))), reverse=True),
+        "source": {"routes": route_stats.get("source") or "", "finance": "settlement.courier_finance_snapshot"},
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allow_unpublished: bool = True) -> dict[str, Any]:
     courier_id = str(user_courier_id(view_user))
     courier_name = str(view_user.get("courierName") or view_user.get("courier_name") or view_user.get("username") or "")
@@ -22051,6 +22167,17 @@ def route_statistics(
     start_value = parse_date_query(start, default=month_value.replace(day=1), label="kezdő dátum")
     end_value = parse_date_query(end, default=month_end(start_value), label="záró dátum")
     return build_route_statistics(start_value, end_value, warehouse)
+
+
+@app.get("/api/admin/statistics/monthly")
+def admin_monthly_statistics(
+    month: str = Query(default=""),
+    warehouse: str = Query(default="all"),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month_value = parse_month(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
+    return build_admin_financial_statistics(month_value, warehouse)
 
 
 @app.get("/api/routes/statistics.xlsx")

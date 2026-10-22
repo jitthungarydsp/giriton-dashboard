@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest?v=244" />
     <link rel="icon" href="/icon.svg?v=244" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg?v=244" />
-    <link rel="stylesheet" href="/styles.css?v=244" />
+    <link rel="stylesheet" href="/styles.css?v=245" />
     <title>Jitt</title>
   </head>
   <body>
@@ -188,6 +188,36 @@
         <section id="statistics-grid" class="statistics-grid"></section>
         <section id="statistics-quality"></section>
         <section id="statistics-breakdown" class="process-card"></section>
+      </div>
+
+      <div id="admin-statistics-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">ADMIN · STATISZTIKA</p>
+            <h2>Havi teljesítmény dashboard</h2>
+            <p class="muted">Az összes raktár összehasonlítása az előző hónappal, BUD1 és BUD2 szűrővel.</p>
+          </div>
+          <div class="workflow-controls">
+            <label class="month-picker">Hónap<input id="admin-statistics-month" type="month" /></label>
+            <button id="admin-statistics-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
+        </section>
+        <section id="admin-statistics-panel" class="admin-statistics-panel"></section>
+      </div>
+
+      <div id="financial-statistics-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">ADMIN · PÉNZÜGY</p>
+            <h2>Pénzügyi statisztika</h2>
+            <p class="muted">Havi költségek, útvonalak és díjtételek raktáranként.</p>
+          </div>
+          <div class="workflow-controls">
+            <label class="month-picker">Hónap<input id="financial-statistics-month" type="month" /></label>
+            <button id="financial-statistics-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
+        </section>
+        <section id="financial-statistics-panel" class="admin-statistics-panel"></section>
       </div>
 
       <div id="phonebook-content" class="hidden">
@@ -789,6 +819,7 @@
         <button id="nav-settlement-dashboard" class="hidden"><span>ED</span>Admin elszámolás</button>
         <button id="nav-settlement-import-config" class="hidden"><span>EF</span>Elszámolás feltöltés</button>
         <button id="nav-statistics"><span>∑</span>Statisztika</button>
+        <button id="nav-financial-statistics" class="hidden"><span>₣</span>Pénzügyi stat.</button>
         <button id="nav-phonebook"><span>☎</span>Telefonszámok</button>
         <button id="nav-atm"><span>ATM</span>ATM</button>
         <button id="nav-salary-advance"><span>Ft</span>Előleg</button>
@@ -883,6 +914,6 @@
         </section>
       </dialog>
     </main>
-    <script src="/app.js?v=244" defer></script>
+    <script src="/app.js?v=245" defer></script>
   </body>
 </html>

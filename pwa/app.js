@@ -62,6 +62,14 @@ const state = {
   statisticsHistoryDate: "",
   statisticsQualityTopic: "",
   statisticsRequestSeq: 0,
+  adminStatistics: null,
+  adminStatisticsMonth: new Date().toISOString().slice(0, 7),
+  adminStatisticsWarehouse: "all",
+  adminStatisticsRequestSeq: 0,
+  financialStatistics: null,
+  financialStatisticsMonth: new Date().toISOString().slice(0, 7),
+  financialStatisticsWarehouse: "all",
+  financialStatisticsRequestSeq: 0,
   loadingCount: 0,
   loadingTimer: null,
   loadingVisible: false,
@@ -110,7 +118,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v244";
+const APP_VERSION = "v245";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -571,6 +579,7 @@ function showApp() {
   $("#nav-route-details").classList.toggle("hidden", !state.user.canPreviewCouriers);
   $("#nav-settlement-dashboard").classList.toggle("hidden", !canViewAdminSettlement);
   $("#nav-settlement-import-config").classList.toggle("hidden", !canViewAdminSettlement);
+  $("#nav-financial-statistics")?.classList.toggle("hidden", !canViewAdminSettlement);
   $("#nav-vehicle-config").classList.toggle("hidden", !state.user.canManageVehicles);
   const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
@@ -603,6 +612,8 @@ function showSection(section) {
   $("#home-content").classList.toggle("hidden", section !== "home");
   $("#settlement-content").classList.toggle("hidden", section !== "settlement");
   $("#statistics-content").classList.toggle("hidden", section !== "statistics");
+  $("#admin-statistics-content")?.classList.toggle("hidden", section !== "admin-statistics");
+  $("#financial-statistics-content")?.classList.toggle("hidden", section !== "financial-statistics");
   $("#route-details-content").classList.toggle("hidden", section !== "route-details");
   $("#phonebook-content").classList.toggle("hidden", section !== "phonebook");
   $("#atm-content").classList.toggle("hidden", section !== "atm");
@@ -627,6 +638,8 @@ function showSection(section) {
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
   $("#nav-statistics").classList.toggle("active", section === "statistics");
+  $("#nav-statistics").classList.toggle("active", section === "admin-statistics");
+  $("#nav-financial-statistics")?.classList.toggle("active", section === "financial-statistics");
   $("#nav-route-details").classList.toggle("active", section === "route-details");
   $("#nav-phonebook").classList.toggle("active", section === "phonebook");
   $("#nav-atm").classList.toggle("active", section === "atm");
@@ -652,6 +665,8 @@ function showSection(section) {
   if (section === "settlement-dashboard") loadSettlementDashboard();
   if (section === "settlement-import-config") renderSettlementImportConfig();
   if (section === "statistics" && !state.statistics) loadStatistics();
+  if (section === "admin-statistics" && !state.adminStatistics) loadAdminStatistics();
+  if (section === "financial-statistics" && !state.financialStatistics) loadFinancialStatistics();
   if (section === "route-details") {
     loadCourierMasterOptions().then(() => {
       if (!$("#route-details-month")?.value) $("#route-details-month").value = state.statisticsMonth;
@@ -2068,6 +2083,125 @@ async function loadStatistics(options = {}) {
     $("#statistics-quality").innerHTML = "";
     $("#statistics-breakdown").innerHTML = "";
     $("#statistics-message").innerHTML = `<div class="notice error">A statisztika nem tölthető be: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function previousMonthValue(month) {
+  const [year, monthNumber] = String(month || localMonth()).split("-").map(Number);
+  const value = new Date(year || new Date().getFullYear(), (monthNumber || 1) - 2, 1);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function adminWarehouseFilters(active, target) {
+  return `<div class="admin-stat-filter-row" role="group" aria-label="Raktár szűrő">
+    ${[["all", "Összes raktár"], ["BUD1", "BUD1"], ["BUD2", "BUD2"]].map(([value, label]) => `<button type="button" class="admin-stat-filter ${active === value ? "active" : ""}" data-admin-warehouse="${value}" data-admin-target="${target}" aria-pressed="${active === value ? "true" : "false"}">${label}</button>`).join("")}
+  </div>`;
+}
+
+function adminDelta(current, previous) {
+  const now = Number(current || 0);
+  const before = Number(previous || 0);
+  if (!before && !now) return { text: "Nincs változás", className: "neutral" };
+  if (!before) return { text: "▲ új érték", className: "up" };
+  const percent = ((now - before) / before) * 100;
+  return { text: `${percent >= 0 ? "▲" : "▼"} ${Math.abs(percent).toFixed(1).replace(".", ",")}%`, className: percent >= 0 ? "up" : "down" };
+}
+
+function adminDonutCard(label, note, current, previous) {
+  const now = Number(current || 0);
+  const before = Number(previous || 0);
+  const ratio = Math.max(8, Math.min(92, before || now ? Math.round((now / Math.max(now, before, 1)) * 100) : 8));
+  const delta = adminDelta(now, before);
+  return `<article class="admin-stat-donut-card">
+    <h3>${escapeHtml(label)}</h3><p>${escapeHtml(note)}</p>
+    <div class="admin-stat-donut-wrap"><div class="admin-stat-donut ${delta.className}" style="--admin-donut-fill:${ratio}%"><div><strong>${formatCount(now)}</strong><span>${escapeHtml(label === "Összes cím" || label === "Címről késés" ? "cím" : label === "Összes kör" ? "kör" : "eset")}</span></div></div></div>
+    <span class="admin-stat-delta ${delta.className}">${delta.text}</span>
+    <div class="admin-stat-compare"><span>Előző hónap</span><b>${formatCount(before)}</b></div>
+  </article>`;
+}
+
+function renderAdminStatisticsPanel(current, previous) {
+  const currentSummary = current?.summary || {};
+  const previousSummary = previous?.summary || {};
+  const currentTypes = current?.routeTypes || [];
+  const maxType = Math.max(1, ...currentTypes.map((item) => Number(item.routes || 0)));
+  const typeRows = currentTypes.map((item) => `<div class="admin-stat-type-row"><span>${escapeHtml(item.label || item.key || "-")}</span><div class="admin-stat-track"><i class="${escapeHtml(item.key || "city")}" style="width:${Math.max(3, Math.round((Number(item.routes || 0) / maxType) * 100))}%"></i></div><b>${formatCount(item.routes)}</b></div>`).join("");
+  return `${adminWarehouseFilters(current?.warehouse || state.adminStatisticsWarehouse, "admin")}
+    <div class="admin-stat-subtitle">${escapeHtml(current?.month || state.adminStatisticsMonth)} · Összes raktárra vagy kiválasztott raktárra szűrve</div>
+    <div class="admin-stat-donut-grid">
+      ${adminDonutCard("Összes kör", "Kivitt túrák", currentSummary.routes, previousSummary.routes)}
+      ${adminDonutCard("Összes cím", "Teljesített rendelések", currentSummary.orders, previousSummary.orders)}
+      ${adminDonutCard("No-show", "Nem jelent meg műszakban", currentSummary.noShow, previousSummary.noShow)}
+      ${adminDonutCard("Címről késés", "Késő címek összesen", currentSummary.lateAddresses, previousSummary.lateAddresses)}
+    </div>
+    <section class="admin-stat-section"><h3>Túratípus szerinti bontás</h3><div class="admin-stat-type-list">${typeRows || `<div class="notice">Nincs túratípus adat.</div>`}</div><p class="updated-at">Műszakkésés: ${formatCount(currentSummary.lateShift)} · Műszakok: ${formatCount(currentSummary.shifts)}</p></section>`;
+}
+
+function renderFinancialStatisticsPanel(payload) {
+  const summary = payload?.summary || {};
+  const weekly = payload?.weekly || [];
+  const breakdown = payload?.breakdown || [];
+  const maxWeekly = Math.max(1, ...weekly.map((item) => Number(item.costHuf || 0)));
+  const weeklyRows = weekly.map((item) => `<div class="financial-stat-week"><span>${escapeHtml(item.week || "-")}</span><div class="financial-stat-track"><i style="width:${Math.max(3, Math.round((Number(item.costHuf || 0) / maxWeekly) * 100))}%"></i></div><b>${formatHuf(item.costHuf || 0)}</b></div>`).join("");
+  const breakdownRows = breakdown.map((item) => `<div class="financial-stat-breakdown-row"><span>${escapeHtml(item.label || item.key || "Egyéb")}</span><b>${formatHuf(item.amountHuf || 0)}</b></div>`).join("");
+  return `${adminWarehouseFilters(payload?.warehouse || state.financialStatisticsWarehouse, "financial")}
+    <div class="admin-stat-subtitle">${escapeHtml(payload?.month || state.financialStatisticsMonth)} · Pénzügyi snapshot és Courier Hub route adatok</div>
+    <div class="financial-stat-kpi-grid"><div><span>Teljes költség</span><strong>${formatHuf(summary.totalCostHuf || 0)}</strong></div><div><span>Útvonalak</span><strong>${formatCount(summary.routes)}</strong></div><div><span>Rendelések</span><strong>${formatCount(summary.orders)}</strong></div><div><span>Költség / útvonal</span><strong>${formatHuf(summary.costPerRouteHuf || 0)}</strong></div></div>
+    <div class="financial-stat-grid"><section class="admin-stat-section"><h3>Heti költségtrend</h3><div class="financial-stat-weeks">${weeklyRows || `<div class="notice">Nincs heti adat.</div>`}</div></section><section class="admin-stat-section"><h3>Díjbontás</h3><div class="financial-stat-breakdown">${breakdownRows || `<div class="notice">Nincs pénzügyi tétel.</div>`}</div></section></div>`;
+}
+
+function bindAdminStatisticsFilters(panel) {
+  panel?.querySelectorAll("[data-admin-warehouse]").forEach((button) => button.addEventListener("click", () => {
+    const target = button.getAttribute("data-admin-target");
+    const warehouse = button.getAttribute("data-admin-warehouse") || "all";
+    if (target === "financial") {
+      state.financialStatisticsWarehouse = warehouse;
+      loadFinancialStatistics();
+    } else {
+      state.adminStatisticsWarehouse = warehouse;
+      loadAdminStatistics();
+    }
+  }));
+}
+
+async function loadAdminStatistics() {
+  const monthInput = $("#admin-statistics-month");
+  if (monthInput?.value) state.adminStatisticsMonth = monthInput.value;
+  const panel = $("#admin-statistics-panel");
+  if (!panel) return;
+  const requestSeq = ++state.adminStatisticsRequestSeq;
+  panel.innerHTML = `<div class="notice">Admin statisztika betöltése...</div>`;
+  const previous = previousMonthValue(state.adminStatisticsMonth);
+  try {
+    const query = (month) => api(`/api/admin/statistics/monthly?${new URLSearchParams({ month, warehouse: state.adminStatisticsWarehouse, _: String(Date.now()) })}`);
+    const [currentPayload, previousPayload] = await Promise.all([query(state.adminStatisticsMonth), query(previous)]);
+    if (requestSeq !== state.adminStatisticsRequestSeq) return;
+    state.adminStatistics = { current: currentPayload, previous: previousPayload };
+    panel.innerHTML = renderAdminStatisticsPanel(currentPayload, previousPayload);
+    bindAdminStatisticsFilters(panel);
+  } catch (error) {
+    if (requestSeq !== state.adminStatisticsRequestSeq) return;
+    panel.innerHTML = `<div class="notice error">Az admin statisztika nem tölthető be: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadFinancialStatistics() {
+  const monthInput = $("#financial-statistics-month");
+  if (monthInput?.value) state.financialStatisticsMonth = monthInput.value;
+  const panel = $("#financial-statistics-panel");
+  if (!panel) return;
+  const requestSeq = ++state.financialStatisticsRequestSeq;
+  panel.innerHTML = `<div class="notice">Pénzügyi statisztika betöltése...</div>`;
+  try {
+    const params = new URLSearchParams({ month: state.financialStatisticsMonth, warehouse: state.financialStatisticsWarehouse, _: String(Date.now()) });
+    const payload = await api(`/api/admin/statistics/monthly?${params}`);
+    if (requestSeq !== state.financialStatisticsRequestSeq) return;
+    state.financialStatistics = payload;
+    panel.innerHTML = renderFinancialStatisticsPanel(payload);
+    bindAdminStatisticsFilters(panel);
+  } catch (error) {
+    if (requestSeq !== state.financialStatisticsRequestSeq) return;
+    panel.innerHTML = `<div class="notice error">A pénzügyi statisztika nem tölthető be: ${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -10593,6 +10727,8 @@ const adminPreviewCourierInput = $("#admin-preview-courier");
 if (adminPreviewCourierInput) adminPreviewCourierInput.value = state.workflowPreviewCourierId;
 renderWorkflowProcessPicker();
 $("#statistics-month").value = state.statisticsMonth;
+if ($("#admin-statistics-month")) $("#admin-statistics-month").value = state.adminStatisticsMonth;
+if ($("#financial-statistics-month")) $("#financial-statistics-month").value = state.financialStatisticsMonth;
 if ($("#route-details-month")) $("#route-details-month").value = state.statisticsMonth;
 if ($("#route-stats-start")) $("#route-stats-start").value = monthStartDate(state.statisticsMonth);
 if ($("#route-stats-end")) $("#route-stats-end").value = monthEndDate(state.statisticsMonth);
@@ -11054,7 +11190,12 @@ $("#refresh").addEventListener("click", loadShifts);
 $("#open-muszakpro-refresh").addEventListener("click", toggleOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
-$("#nav-statistics").addEventListener("click", () => showSection("statistics"));
+$("#nav-statistics").addEventListener("click", () => showSection(state.user?.canViewSettlementDashboard || ["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase()) ? "admin-statistics" : "statistics"));
+$("#nav-financial-statistics")?.addEventListener("click", () => showSection("financial-statistics"));
+$("#admin-statistics-refresh")?.addEventListener("click", () => loadAdminStatistics());
+$("#financial-statistics-refresh")?.addEventListener("click", () => loadFinancialStatistics());
+$("#admin-statistics-month")?.addEventListener("change", () => loadAdminStatistics());
+$("#financial-statistics-month")?.addEventListener("change", () => loadFinancialStatistics());
 $("#nav-phonebook").addEventListener("click", () => showSection("phonebook"));
 $("#nav-atm").addEventListener("click", () => showSection("atm"));
 $("#nav-salary-advance").addEventListener("click", () => showSection("salary-advance"));
