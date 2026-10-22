@@ -1321,6 +1321,11 @@ function renderStatusBadge(ok) {
   return `<span class="route-status-badge ${ok ? "ok" : "bad"}">${ok ? ":)" : ":("}</span>`;
 }
 
+function dailyRouteStatusOk(row = {}) {
+  const story = row.routeStory || {};
+  return uncleanedLateStopCount(row) <= 0 && routeShiftLateMinutes(row, story) <= 0;
+}
+
 function renderDailyShiftReport(rows = []) {
   const report = buildDailyShiftReport(rows);
   if (!report.length) return "";
@@ -1744,11 +1749,9 @@ function renderRouteStoryDetails(row) {
   return `
     <div class="daily-route-story">
       <div class="route-quality-head">
-        ${renderStatusBadge(routeOk)}
         <div><strong>${routeOk ? "Időkapun belül" : "Időkapun kívül"}</strong><small>Időablak szerinti ellenőrzés</small></div>
       </div>
       <div class="route-quality-head">
-        ${renderStatusBadge(shiftOk)}
         <div><strong>${shiftOk ? "Műszak időben" : "Késett a műszakból"}</strong><small>${shiftOk ? "Sorba állás rendben" : `${formatCount(shiftLateMinutes)} perc késés a műszakhoz képest`}</small></div>
       </div>
       ${story.shiftName ? `<p class="updated-at">${escapeHtml(story.shiftName)}</p>` : ""}
@@ -1831,7 +1834,7 @@ function renderDailyHistory(payload) {
   const muszakproBookings = selectedRows.reduce((max, row) => Math.max(max, Number(row.muszakproBookingCount || 0)), 0);
   const hubShifts = selectedRows.reduce((max, row) => Math.max(max, Number(row.hubShiftCount || 0)), 0);
   const routeRows = selectedRows.map((row) => row.qualityStatus === "NO_SHOW"
-    ? `<div class="daily-route-row daily-quality-exception"><div><strong>No-show műszak</strong><small>Műszak: ${escapeHtml(row.qualityLabel || (row.routeStory || {}).shiftName || "-")}</small></div><div><span>${escapeHtml(row.qualityNote || "Nem jelent meg a műszakban")}</span></div></div>`
+    ? `<div class="daily-route-row daily-quality-exception"><div><strong>No-show műszak</strong><small>Műszak: ${escapeHtml(row.qualityLabel || (row.routeStory || {}).shiftName || "-")}</small></div><div class="daily-route-status">${renderStatusBadge(false)}</div><div><span>${escapeHtml(row.qualityNote || "Nem jelent meg a műszakban")}</span></div></div>`
     : `
     <details class="daily-route-details">
       <summary class="daily-route-row">
@@ -1839,6 +1842,7 @@ function renderDailyHistory(payload) {
           <strong>Route ${escapeHtml(row.routeId || "-")}</strong>
           <small>WH${escapeHtml(row.warehouseId || "-")} · Műszak: ${escapeHtml((row.routeStory || {}).shiftName || shortDateTime(row.plannedStartAt) || "-")} · ${escapeHtml(routeTypeLabel(row.routeType))} · ${formatCount(row.orders)} cím · ${formatCount(row.stops)} stop · ${formatAverage(row.mileageKm)} km</small>
         </div>
+        <div class="daily-route-status">${renderStatusBadge(dailyRouteStatusOk(row))}</div>
         <div>
           <span>${escapeHtml(row.vehiclePlate || "-")}</span>
           <small>${escapeHtml(row.vehicleModel || "")}</small>

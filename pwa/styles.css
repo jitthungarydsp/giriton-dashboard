@@ -911,12 +911,13 @@ textarea { min-height: 96px; resize: vertical; }
 .daily-route-details { border: 1px solid var(--line); border-radius: 14px; background: #fff; overflow: hidden; }
 .daily-route-details summary { list-style: none; cursor: pointer; }
 .daily-route-details summary::-webkit-details-marker { display: none; }
-.daily-route-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
+.daily-route-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
 .daily-route-details .daily-route-row { border: 0; border-radius: 0; }
 .daily-route-row strong,
 .daily-route-row span { display: block; font-size: 14px; font-weight: 900; }
 .daily-route-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; }
 .daily-route-row > div:last-child { text-align: right; }
+.daily-route-status { display: grid; place-items: center; }
 .daily-route-story { display: grid; gap: 8px; padding: 0 12px 12px; }
 .daily-route-story .stat-row { align-items: flex-start; }
 .daily-route-story .stat-row strong { max-width: 100%; text-align: right; }
@@ -945,6 +946,10 @@ textarea { min-height: 96px; resize: vertical; }
     text-align: left;
   }
 
+  .daily-route-status {
+    justify-items: start;
+  }
+
   .daily-route-row small,
   .daily-route-row strong,
   .daily-route-row span {
@@ -961,7 +966,7 @@ textarea { min-height: 96px; resize: vertical; }
 .shift-quality-list { display: grid; gap: 8px; margin: 10px 0; }
 .shift-quality-row,
 .route-quality-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 14px; background: #f5f7f3; }
-.route-quality-head { grid-template-columns: auto minmax(0, 1fr); }
+.route-quality-head { grid-template-columns: minmax(0, 1fr); }
 .shift-quality-row strong,
 .route-quality-head strong { display: block; font-size: 13px; font-weight: 900; }
 .shift-quality-row small,
