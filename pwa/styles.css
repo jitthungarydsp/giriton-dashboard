@@ -944,6 +944,8 @@ textarea { min-height: 96px; resize: vertical; }
 .quality-summary-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; font-weight: 750; }
 .quality-bars { display: grid; gap: 10px; }
 .quality-item { display: grid; gap: 8px; }
+.quality-reclamation-trigger { justify-self: start; padding: 7px 12px; font-size: 12px; }
+.quality-reclamation-list { display: grid; gap: 6px; }
 .daily-quality-exception { border: 1px solid #e8b8b4; background: #fff7f6; }
 .daily-history-card.quality-problem-day { border-color: #e8b8b4; box-shadow: 0 0 0 2px #f3c9c5; }
 .quality-bar-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(96px, 1fr) auto; gap: 10px; align-items: center; width: 100%; padding: 8px; border: 0; border-radius: 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; }

@@ -1477,6 +1477,7 @@ function renderQualitySummaryChart(payload = {}) {
                 <div class="quality-bar-track"><span style="width: ${width}%"></span></div>
                 <b>${formatCount(item.value)}</b>
               </button>
+              ${item.value > 0 ? `<button type="button" class="secondary quality-reclamation-trigger" data-quality-reclamation-topic="${escapeHtml(item.key)}">Reklamáció</button>` : ""}
               ${activeTopic === item.key ? renderQualitySummaryDetails(item.key, details) : ""}
             </div>
           `;
@@ -1507,6 +1508,51 @@ function renderQualitySummaryDetails(topic, details = {}) {
       `).join("") : `<p>Nincs külön vizsgálandó sor ehhez a jelzéshez.</p>`}
     </div>
   `;
+}
+
+function ensureQualityReclamationDialog() {
+  let dialog = $("#quality-reclamation-dialog");
+  if (dialog) return dialog;
+  dialog = document.createElement("dialog");
+  dialog.id = "quality-reclamation-dialog";
+  dialog.className = "worker-shift-dialog quality-reclamation-dialog";
+  dialog.innerHTML = `
+    <form method="dialog" class="worker-shift-dialog-card">
+      <div class="worker-shift-dialog-head">
+        <div><span>MINŐSÉGI ELLENŐRZÉS</span><strong data-quality-reclamation-title>Reklamáció</strong><small data-quality-reclamation-subtitle></small></div>
+        <button type="button" class="icon-button" data-quality-reclamation-close aria-label="Bezárás">×</button>
+      </div>
+      <div data-quality-reclamation-body></div>
+      <label>Reklamáció indoka<textarea data-quality-reclamation-note placeholder="Ide írható a reklamáció rövid indoklása..."></textarea></label>
+      <div class="dialog-actions"><button type="button" class="secondary" data-quality-reclamation-close>Bezárás</button></div>
+    </form>
+  `;
+  document.body.appendChild(dialog);
+  dialog.querySelectorAll("[data-quality-reclamation-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  return dialog;
+}
+
+function openQualityReclamation(topic) {
+  const dialog = ensureQualityReclamationDialog();
+  const summary = state.statistics?.qualitySummary || {};
+  const details = summary.details || {};
+  const rows = topic === "noShow" ? pastQualityDetails(details.noShow || []) : (details[topic] || []);
+  const labels = {
+    lateShift: "Műszakkésés reklamáció",
+    uncleanedTimeWindowLate: "Nem mentesített címkésés reklamáció",
+    cleanedTimeWindowLate: "Mentesített címkésés reklamáció",
+    noShow: "No-show reklamáció",
+  };
+  dialog.querySelector("[data-quality-reclamation-title]").textContent = labels[topic] || "Reklamáció";
+  dialog.querySelector("[data-quality-reclamation-subtitle]").textContent = `${rows.length} érintett tétel`;
+  dialog.querySelector("[data-quality-reclamation-body]").innerHTML = rows.length
+    ? `<div class="quality-reclamation-list">${rows.map((row) => `<div class="stat-row"><span>${escapeHtml(row.date || "-")} · ${escapeHtml(row.label || "Műszak")}</span><strong>${escapeHtml(row.note || "")}</strong></div>`).join("")}</div>`
+    : `<p class="updated-at">Ehhez a jelzéshez nincs részletes adat.</p>`;
+  dialog.querySelector("[data-quality-reclamation-note]").value = "";
+  dialog.showModal();
 }
 
 function routeStoryDistance(label, value) {
@@ -10679,6 +10725,11 @@ $("#statistics-refresh").addEventListener("click", () => {
 });
 
 $("#statistics-quality")?.addEventListener("click", (event) => {
+  const reclamationButton = event.target.closest("[data-quality-reclamation-topic]");
+  if (reclamationButton) {
+    openQualityReclamation(reclamationButton.getAttribute("data-quality-reclamation-topic") || "");
+    return;
+  }
   const dateRow = event.target.closest("[data-quality-date]");
   if (dateRow) {
     const date = dateRow.getAttribute("data-quality-date") || "";
