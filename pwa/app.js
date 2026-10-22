@@ -1766,12 +1766,15 @@ function renderDailyHistory(payload) {
   const orders = selectedRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
   const stops = selectedRows.reduce((sum, row) => sum + Number(row.stops || 0), 0);
   const mileage = selectedRows.reduce((sum, row) => sum + Number(row.mileageKm || 0), 0);
-  const routes = selectedRows.length;
+  const routeRowsOnly = selectedRows.filter((row) => !row.qualityStatus);
+  const routes = routeRowsOnly.length;
   const apiShifts = selectedRows.reduce((max, row) => Math.max(max, Number(row.apiShiftCount || 0)), 0);
   const shifts = apiShifts || buildDailyShiftReport(selectedRows).length;
   const muszakproBookings = selectedRows.reduce((max, row) => Math.max(max, Number(row.muszakproBookingCount || 0)), 0);
   const hubShifts = selectedRows.reduce((max, row) => Math.max(max, Number(row.hubShiftCount || 0)), 0);
-  const routeRows = selectedRows.map((row) => `
+  const routeRows = selectedRows.map((row) => row.qualityStatus === "NO_SHOW"
+    ? `<div class="daily-route-row daily-quality-exception"><div><strong>No-show műszak</strong><small>Műszak: ${escapeHtml(row.qualityLabel || (row.routeStory || {}).shiftName || "-")}</small></div><div><span>${escapeHtml(row.qualityNote || "Nem jelent meg a műszakban")}</span></div></div>`
+    : `
     <details class="daily-route-details">
       <summary class="daily-route-row">
         <div>

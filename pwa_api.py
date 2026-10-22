@@ -16661,6 +16661,73 @@ def build_monthly_courier_statistics(
             history_row["hubShiftCount"] = len(hub_shift_keys_by_date.get(history_date, set()))
         return rows
 
+    def append_no_show_history(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Create calendar rows for no-show shifts that have no route row."""
+        today = datetime.now(LOCAL_TIMEZONE).date().isoformat()
+        existing = {
+            (str(row.get("date") or "")[:10], str((row.get("routeStory") or {}).get("shiftName") or "").strip())
+            for row in rows
+        }
+        for detail in (shift_overview_quality.get("noShowDetails") or []):
+            if not isinstance(detail, dict):
+                continue
+            work_date = str(detail.get("date") or "")[:10]
+            shift_label = str(detail.get("label") or "Műszak").strip() or "Műszak"
+            key = (work_date, shift_label)
+            if not work_date or work_date >= today or key in existing:
+                continue
+            start_text = shift_label.split("-", 1)[0].strip()
+            planned_start = f"{work_date}T{start_text}:00" if re.match(r"^\d{2}:\d{2}$", start_text) else ""
+            rows.append({
+                "date": work_date,
+                "routeId": "",
+                "warehouseId": 0,
+                "orders": 0,
+                "stops": 0,
+                "plannedStartAt": planned_start,
+                "actualStartAt": "",
+                "shiftAvailableAt": "",
+                "routeAssignedAt": "",
+                "plannedDepartureAt": "",
+                "departedAt": "",
+                "lastOrderFinishedAt": "",
+                "warehouseArrivedAt": "",
+                "plannedReturnAt": "",
+                "plannedStartDelayMinutes": 0,
+                "departureDelayMinutes": 0,
+                "returnDelayMinutes": 0,
+                "apiShiftCount": 1,
+                "apiLateCount": 0,
+                "apiDidNotComeCount": 1,
+                "apiDelayedOrderCount": 0,
+                "timeWindowLateCount": 0,
+                "timeWindowLateMinutes": 0,
+                "maxDelayMinutes": 0,
+                "cleanedDelayCount": 0,
+                "uncleanedDelayCount": 0,
+                "cleanedDelayMinutes": 0,
+                "uncleanedDelayMinutes": 0,
+                "hasDelayCleaning": False,
+                "cleanedReasons": [],
+                "routeType": "normal",
+                "routeNote": "",
+                "routeNoteUpdatedAt": "",
+                "vehicleModel": "",
+                "vehiclePlate": "",
+                "mileageKm": 0,
+                "vehicleOwnership": "",
+                "qualityStatus": "NO_SHOW",
+                "qualityLabel": shift_label,
+                "qualityNote": str(detail.get("note") or "Nem jelent meg a műszakban"),
+                "routeStory": {
+                    "shiftName": shift_label,
+                    "shiftStart": planned_start,
+                    "storyText": "Nem jelent meg a műszakban.",
+                },
+            })
+            existing.add(key)
+        return rows
+
     muszakpro_by_date: dict[str, list[dict[str, Any]]] = {}
     courier_id_key = str(courier_id or "").strip()
     courier_name_key = normalize_person_match_text(courier_name)
@@ -16767,6 +16834,7 @@ def build_monthly_courier_statistics(
             daily_history_rows.append(hub_detail_daily_history_row(detail_row, route_notes))
             known_hub_routes.add(detail_key)
         daily_history_rows = enrich_daily_history_with_financial_route_delays(daily_history_rows, route_rows)
+        daily_history_rows = append_no_show_history(daily_history_rows)
         daily_history_rows = attach_giriton_login_history(daily_history_rows)
         daily_history_rows = attach_muszakpro_booking_history(daily_history_rows)
         daily_history_rows = attach_hub_shift_history(daily_history_rows)
@@ -17266,6 +17334,7 @@ def build_monthly_courier_statistics(
         route_notes,
     )
     daily_history_rows = enrich_daily_history_with_financial_route_delays(daily_history_rows, route_rows)
+    daily_history_rows = append_no_show_history(daily_history_rows)
     daily_history_rows = attach_giriton_login_history(daily_history_rows)
     daily_history_rows = attach_muszakpro_booking_history(daily_history_rows)
     daily_history_rows = attach_hub_shift_history(daily_history_rows)
