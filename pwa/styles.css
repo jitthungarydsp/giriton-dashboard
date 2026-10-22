@@ -920,6 +920,40 @@ textarea { min-height: 96px; resize: vertical; }
 .daily-route-story { display: grid; gap: 8px; padding: 0 12px 12px; }
 .daily-route-story .stat-row { align-items: flex-start; }
 .daily-route-story .stat-row strong { max-width: 100%; text-align: right; }
+
+/* Stack daily route summaries on narrow screens so long shift and vehicle
+   details stay inside the card instead of overflowing horizontally. */
+@media (max-width: 640px) {
+  .daily-history-card,
+  .daily-route-details,
+  .daily-route-row { min-width: 0; }
+
+  .daily-route-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 9px;
+    align-items: start;
+  }
+
+  .daily-route-row > div {
+    min-width: 0;
+  }
+
+  .daily-route-row > div:last-child {
+    display: grid;
+    gap: 2px;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .daily-route-row small,
+  .daily-route-row strong,
+  .daily-route-row span {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
+
 @media (max-width: 520px) {
   .stat-row { grid-template-columns: minmax(0, 1fr); }
   .stat-row strong { text-align: left; }
