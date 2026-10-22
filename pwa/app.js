@@ -1379,10 +1379,44 @@ function qualitySummaryFromDailyHistory(rows = []) {
   };
 }
 
+function localTodayIsoDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function pastQualityDetails(rows = []) {
+  const today = localTodayIsoDate();
+  return rows.filter((row) => {
+    const date = String(row?.date || "").slice(0, 10);
+    return date && date < today;
+  });
+}
+
+function qualityDetailCount(row = {}) {
+  const match = String(row.note || "").match(/^(\d+)\s/);
+  return match ? Number(match[1]) : 1;
+}
+
 function renderQualitySummaryChart(payload = {}) {
-  const summary = payload.qualitySummary || qualitySummaryFromDailyHistory(payload.dailyHistory || []);
+  const sourceSummary = payload.qualitySummary || qualitySummaryFromDailyHistory(payload.dailyHistory || []);
   const activeTopic = state.statisticsQualityTopic || "";
-  const details = summary.details || {};
+  const sourceDetails = sourceSummary.details || {};
+  const visibleNoShowDetails = pastQualityDetails(sourceDetails.noShow || []);
+  const sourceNoShowDetails = sourceDetails.noShow || [];
+  const visibleNoShowCount = sourceNoShowDetails.length
+    ? visibleNoShowDetails.reduce((sum, row) => sum + qualityDetailCount(row), 0)
+    : Number(sourceSummary.noShowCount || 0);
+  const hiddenFutureNoShows = Math.max(0, Number(sourceSummary.noShowCount || 0) - visibleNoShowCount);
+  const summary = {
+    ...sourceSummary,
+    noShowCount: visibleNoShowCount,
+    totalProblems: Math.max(0, Number(sourceSummary.totalProblems || 0) - hiddenFutureNoShows),
+  };
+  summary.ok = summary.totalProblems <= 0;
+  const details = { ...sourceDetails, noShow: visibleNoShowDetails };
   const items = [
     {
       key: "lateShift",
@@ -1661,6 +1695,7 @@ function renderRouteStoryDetails(row) {
       </div>
       ${story.shiftName ? `<p class="updated-at">${escapeHtml(story.shiftName)}</p>` : ""}
       ${routeStoryTime("Műszak kezdete", story.shiftStart || row.plannedStartAt)}
+      ${routeStoryTime("Giriton-bejelentkezés", story.giritonLoginAt || row.giritonLoginAt)}
       <div class="stat-row"><span>Túratípus</span><strong>${escapeHtml(routeTypeLabel(row.routeType))}</strong></div>
       ${routeStoryTime("Elérhető volt", story.availableForShiftSince || story.availableAt || story.courierRegisteredAt || row.shiftAvailableAt)}
       ${routeStoryTime("Sorba állt", queueStartedAt)}
@@ -1732,6 +1767,8 @@ function renderDailyHistory(payload) {
   const routes = selectedRows.length;
   const apiShifts = selectedRows.reduce((max, row) => Math.max(max, Number(row.apiShiftCount || 0)), 0);
   const shifts = apiShifts || buildDailyShiftReport(selectedRows).length;
+  const muszakproBookings = selectedRows.reduce((max, row) => Math.max(max, Number(row.muszakproBookingCount || 0)), 0);
+  const hubShifts = selectedRows.reduce((max, row) => Math.max(max, Number(row.hubShiftCount || 0)), 0);
   const routeRows = selectedRows.map((row) => `
     <details class="daily-route-details">
       <summary class="daily-route-row">
@@ -1760,6 +1797,8 @@ function renderDailyHistory(payload) {
       <div class="daily-history-summary">
         <div><span>Kör</span><strong>${formatCount(routes)}</strong></div>
         <div><span>Műszakok</span><strong>${formatCount(shifts)}</strong></div>
+        <div><span>MűszakPRO foglalás</span><strong>${formatCount(muszakproBookings)}</strong></div>
+        <div><span>Hub műszak</span><strong>${formatCount(hubShifts)}</strong></div>
         <div><span>Cím</span><strong>${formatCount(orders)}</strong></div>
         <div><span>Km</span><strong>${formatAverage(mileage)}</strong></div>
       </div>

@@ -14045,8 +14045,23 @@ def match_attendance_shift_for_route(row: dict[str, Any], lookup: dict[tuple[str
 def apply_attendance_shift_to_route_result(
     result: dict[str, Any],
     attendance_by_shift: dict[tuple[str, str], dict[str, Any]],
+    giriton_by_date: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     attendance_shift = match_attendance_shift_for_route(result, attendance_by_shift)
+    if not attendance_shift:
+        attendance_shift = {}
+
+    work_date = str(result.get("date") or "")[:10]
+    giriton_row = (giriton_by_date or {}).get(work_date, {})
+    result["giritonLoginAt"] = str(giriton_row.get("checkin_start") or result.get("giritonLoginAt") or "")
+    result["giritonLoginEnd"] = str(giriton_row.get("checkin_end") or result.get("giritonLoginEnd") or "")
+    result["giritonStatus"] = str(giriton_row.get("activity_status") or result.get("giritonStatus") or "")
+    if giriton_row:
+        result.setdefault("routeStory", {})
+        result["routeStory"]["giritonLoginAt"] = result["giritonLoginAt"]
+        result["routeStory"]["giritonLoginEnd"] = result["giritonLoginEnd"]
+        result["routeStory"]["giritonStatus"] = result["giritonStatus"]
+
     if not attendance_shift:
         return result
 
@@ -16599,6 +16614,8 @@ def build_monthly_courier_statistics(
         hub_stat_future = executor.submit(load_courier_hub_route_stat_rows_for_courier, courier_id, period_start)
         hub_detail_future = executor.submit(load_courier_hub_route_detail_rows_for_courier, courier_id, period_start)
         attendance_future = executor.submit(load_attendance_shift_rows_for_courier, courier_id, period_start, period_end)
+        giriton_login_future = executor.submit(read_giriton_attendance_login_rows, period_start, period_end)
+        muszakpro_booking_future = executor.submit(read_route_report_muszakpro_rows, period_start)
         shift_overview_quality_future = executor.submit(load_shift_overview_raw_quality_for_courier, courier_id, period_start)
         notes_future = executor.submit(load_route_notes_for_courier, courier_id, period_start, period_end)
         settlement_future = executor.submit(
@@ -16615,10 +16632,103 @@ def build_monthly_courier_statistics(
         hub_stat_rows = hub_stat_future.result()
         hub_detail_rows = hub_detail_future.result()
         attendance_shift_rows = attendance_future.result()
+        giriton_login_rows = giriton_login_future.result()
+        muszakpro_booking_rows = muszakpro_booking_future.result()
         shift_overview_quality = shift_overview_quality_future.result()
         route_notes = notes_future.result()
         settlement_summary_row = settlement_future.result()
     can_show_amounts = can_view_financial_amounts(user)
+    hub_shift_keys_by_date: dict[str, set[str]] = {}
+    for hub_row in [*(hub_stat_rows or []), *(hub_detail_rows or [])]:
+        hub_date = str(hub_row.get("work_date") or hub_row.get("date") or "")[:10]
+        hub_shift = str(
+            hub_row.get("shift_name")
+            or hub_row.get("shiftName")
+            or hub_row.get("planned_start_at")
+            or hub_row.get("plannedStartAt")
+            or hub_row.get("route_id")
+            or hub_row.get("routeId")
+            or ""
+        ).strip()
+        if hub_date and hub_shift:
+            hub_shift_keys_by_date.setdefault(hub_date, set()).add(hub_shift)
+
+    def attach_hub_shift_history(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Add the actual unique Hub shift count to every daily detail row."""
+        for history_row in rows:
+            history_date = str(history_row.get("date") or "")[:10]
+            history_row["hubShiftCount"] = len(hub_shift_keys_by_date.get(history_date, set()))
+        return rows
+
+    muszakpro_by_date: dict[str, list[dict[str, Any]]] = {}
+    courier_id_key = str(courier_id or "").strip()
+    courier_name_key = normalize_person_match_text(courier_name)
+    seen_muszakpro: set[tuple[str, str, str, str]] = set()
+    for booking_row in muszakpro_booking_rows:
+        booking_date = str(booking_row.get("work_date") or "")[:10]
+        booking_courier_id = str(booking_row.get("courier_id") or "").strip()
+        booking_courier_name = normalize_person_match_text(booking_row.get("courier_name"))
+        if not booking_date:
+            continue
+        if booking_courier_id:
+            if courier_id_key and booking_courier_id != courier_id_key:
+                continue
+        elif booking_courier_name and booking_courier_name != courier_name_key:
+            continue
+        identity = (
+            booking_date,
+            booking_courier_id or booking_courier_name,
+            str(booking_row.get("shift_text") or "").strip(),
+            str(booking_row.get("booking_code") or "").strip(),
+        )
+        if identity in seen_muszakpro:
+            continue
+        seen_muszakpro.add(identity)
+        muszakpro_by_date.setdefault(booking_date, []).append(booking_row)
+
+    def attach_muszakpro_booking_history(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Add the actual MűszakPRO booking count to every daily detail row."""
+        for history_row in rows:
+            booking_date = str(history_row.get("date") or "")[:10]
+            booking_rows = muszakpro_by_date.get(booking_date, [])
+            history_row["muszakproBookingCount"] = len(booking_rows)
+            history_row["muszakproBookingTimes"] = [
+                str(row.get("shift_text") or "").strip()
+                for row in booking_rows
+                if str(row.get("shift_text") or "").strip()
+            ]
+        return rows
+
+    giriton_by_date: dict[str, dict[str, Any]] = {}
+    for login_row in giriton_login_rows:
+        login_date = str(login_row.get("work_date") or "")[:10]
+        login_name = normalize_person_match_text(login_row.get("courier_name"))
+        if not login_date or (login_name and login_name != normalize_person_match_text(courier_name)):
+            continue
+        previous = giriton_by_date.get(login_date)
+        if not previous or str(login_row.get("updated_at") or "") >= str(previous.get("updated_at") or ""):
+            giriton_by_date[login_date] = login_row
+
+    def attach_giriton_login_history(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Add the courier's historical Giriton login to every daily detail row."""
+        for history_row in rows:
+            login_date = str(history_row.get("date") or "")[:10]
+            login_row = giriton_by_date.get(login_date, {})
+            if not login_row:
+                continue
+            login_time = str(login_row.get("checkin_start") or "")
+            login_end = str(login_row.get("checkin_end") or "")
+            login_status = str(login_row.get("activity_status") or "")
+            history_row["giritonLoginAt"] = login_time
+            history_row["giritonLoginEnd"] = login_end
+            history_row["giritonStatus"] = login_status
+            story = dict(history_row.get("routeStory") or {})
+            story["giritonLoginAt"] = login_time
+            story["giritonLoginEnd"] = login_end
+            story["giritonStatus"] = login_status
+            history_row["routeStory"] = story
+        return rows
+
     if hub_stat_rows or hub_detail_rows:
         daily_history_rows = [hub_stat_daily_history_row(row, route_notes) for row in hub_stat_rows]
         detail_history_by_key = {
@@ -16656,6 +16766,9 @@ def build_monthly_courier_statistics(
             daily_history_rows.append(hub_detail_daily_history_row(detail_row, route_notes))
             known_hub_routes.add(detail_key)
         daily_history_rows = enrich_daily_history_with_financial_route_delays(daily_history_rows, route_rows)
+        daily_history_rows = attach_giriton_login_history(daily_history_rows)
+        daily_history_rows = attach_muszakpro_booking_history(daily_history_rows)
+        daily_history_rows = attach_hub_shift_history(daily_history_rows)
         total_routes = len({
             (str(row.get("date") or "")[:10], str(row.get("routeId") or "").strip())
             for row in daily_history_rows
@@ -17032,7 +17145,7 @@ def build_monthly_courier_statistics(
         }
         if story:
             result["routeStory"] = story
-        return apply_attendance_shift_to_route_result(result, attendance_by_shift)
+        return apply_attendance_shift_to_route_result(result, attendance_by_shift, giriton_by_date)
 
     def compact_route_story_history_row(row: dict[str, Any]) -> dict[str, Any]:
         work_date, route_id = story_route_key(row)
@@ -17083,7 +17196,7 @@ def build_monthly_courier_statistics(
         }
         if story:
             result["routeStory"] = story
-        return apply_attendance_shift_to_route_result(result, attendance_by_shift)
+        return apply_attendance_shift_to_route_result(result, attendance_by_shift, giriton_by_date)
 
     def compact_route_fallback_row(route: dict[str, Any]) -> dict[str, Any]:
         work_date = str(route.get("work_date") or "")[:10]
@@ -17136,7 +17249,7 @@ def build_monthly_courier_statistics(
         }
         if story:
             result["routeStory"] = story
-        return apply_attendance_shift_to_route_result(result, attendance_by_shift)
+        return apply_attendance_shift_to_route_result(result, attendance_by_shift, giriton_by_date)
 
     delay_detail_rows: list[dict[str, Any]] = [compact_delay_row(item) for item in delay_rows]
     compliance_detail_rows: list[dict[str, Any]] = [compact_compliance_row(item) for item in compliance_rows]
@@ -17152,6 +17265,9 @@ def build_monthly_courier_statistics(
         route_notes,
     )
     daily_history_rows = enrich_daily_history_with_financial_route_delays(daily_history_rows, route_rows)
+    daily_history_rows = attach_giriton_login_history(daily_history_rows)
+    daily_history_rows = attach_muszakpro_booking_history(daily_history_rows)
+    daily_history_rows = attach_hub_shift_history(daily_history_rows)
     route_quality_records = build_route_quality_records(
         courier_id=courier_id,
         courier_name=courier_name,
