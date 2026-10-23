@@ -1520,10 +1520,11 @@ function renderQualitySummaryDetails(topic, details = {}) {
     <div class="quality-detail-list">
       <h4>${escapeHtml(labels[topic] || "Vizsgálandó tételek")}</h4>
       ${rows.length ? rows.map((row) => `
-        <div class="quality-detail-row" role="button" tabindex="0" data-quality-date="${escapeHtml(row.date || "")}">
+        <div class="quality-detail-row" role="button" tabindex="0" data-quality-date="${escapeHtml(row.date || "")}" data-quality-topic-row="${escapeHtml(topic)}">
           <strong>${escapeHtml(row.date || "-")}</strong>
           <span>${escapeHtml(row.label || "-")}</span>
           <small>${escapeHtml(row.note || "")}${row.routeId ? ` · Route ${escapeHtml(row.routeId)}` : ""}</small>
+          <button class="secondary quality-reclamation-trigger" type="button" data-quality-reclamation-topic="${escapeHtml(topic)}">Reklamáció</button>
         </div>
       `).join("") : `<p>Nincs külön vizsgálandó sor ehhez a jelzéshez.</p>`}
     </div>
@@ -2005,6 +2006,7 @@ function renderStatistics() {
         ${adminDonutCard("No-show", "Nem jelent meg műszakban", currentQuality.noShowCount, previousQuality.noShowCount)}
         ${adminDonutCard("Műszakkésés", "Késő sorba állás / műszakkezdés", currentQuality.lateShiftCount, previousQuality.lateShiftCount)}
         ${adminMoneyDonutCard("Borravaló", "Összes borravaló", summary.tipsTotalHuf, previousSummary.tipsTotalHuf)}
+        ${adminPlaceholderDonutCard("Várható bevétel", "Havi várható kifizetés")}
       </div>
     </section>
   `;
@@ -2134,6 +2136,15 @@ function adminMoneyDonutCard(label, note, current, previous) {
     <div class="admin-stat-donut-wrap"><div class="admin-stat-donut ${delta.className}" style="--admin-donut-fill:${ratio}%"><div><strong>${formatHuf(now)}</strong><span>összesen</span></div></div></div>
     <span class="admin-stat-delta ${delta.className}">${delta.text}</span>
     <div class="admin-stat-compare"><span>Előző hónap</span><b>${formatHuf(before)}</b></div>
+  </article>`;
+}
+
+function adminPlaceholderDonutCard(label, note) {
+  return `<article class="admin-stat-donut-card admin-stat-donut-placeholder">
+    <h3>${escapeHtml(label)}</h3><p>${escapeHtml(note)}</p>
+    <div class="admin-stat-donut-wrap"><div class="admin-stat-donut neutral" style="--admin-donut-fill:8%"><div><strong>—</strong><span>Később</span></div></div></div>
+    <span class="admin-stat-delta neutral">Hamarosan</span>
+    <div class="admin-stat-compare"><span>Adatfeltöltés után</span><b>—</b></div>
   </article>`;
 }
 

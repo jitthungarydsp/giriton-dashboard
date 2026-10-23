@@ -976,7 +976,7 @@ textarea { min-height: 96px; resize: vertical; }
   .daily-route-row { min-width: 0; }
 
   .daily-route-row {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 9px;
     align-items: start;
   }
@@ -988,12 +988,15 @@ textarea { min-height: 96px; resize: vertical; }
   .daily-route-row > div:last-child {
     display: grid;
     gap: 2px;
+    grid-column: 1 / -1;
     justify-items: start;
     text-align: left;
   }
 
   .daily-route-status {
-    justify-self: center;
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
     justify-items: center;
   }
 
@@ -1051,6 +1054,7 @@ textarea { min-height: 96px; resize: vertical; }
 .quality-detail-row strong { font-size: 12px; }
 .quality-detail-row span { font-size: 12px; font-weight: 900; overflow-wrap: anywhere; }
 .quality-detail-row small { grid-column: 1 / -1; color: var(--muted); font-size: 11px; font-weight: 750; }
+.quality-detail-row .quality-reclamation-trigger { grid-column: 1 / -1; justify-self: end; padding: 6px 10px; border-radius: 999px; font-size: 11px; }
 .route-note-form { display: grid; gap: 8px; padding-top: 6px; }
 .route-note-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 850; }
 .route-note-form textarea { min-height: 76px; border-radius: 12px; }
