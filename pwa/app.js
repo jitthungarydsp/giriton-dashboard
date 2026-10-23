@@ -10865,6 +10865,13 @@ $("#admin-preview-open")?.addEventListener("click", () => {
 
 $("#admin-preview-clear")?.addEventListener("click", () => {
   updatePreviewCourier("");
+  const role = String(state.user?.role || "").toLowerCase();
+  const canOpenAdmin = Boolean(state.user?.canViewSettlementDashboard)
+    || ["admin", "superadmin"].includes(role);
+  if (canOpenAdmin) {
+    showSection("admin-statistics");
+    loadAdminStatistics();
+  }
 });
 
 $("#workflow-refresh").addEventListener("click", () => {
