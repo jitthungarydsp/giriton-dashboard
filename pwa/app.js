@@ -1984,15 +1984,6 @@ function renderStatistics() {
   const previousQuality = previousPayload.qualitySummary || {};
   const routes = Number(summary.routes || 0);
   const orders = Number(summary.orders || 0);
-  const average = Number(summary.averageOrdersPerRoute || 0);
-  const amountsHidden = Boolean(payload.amountsHidden);
-  const rating = payload.customerRating || {};
-  const expectedQuality = payload.expectedQuality || {};
-  const ratingValue = rating.available && rating.averageRating !== null
-    ? formatAverage(rating.averageRating)
-    : "Előkészítve";
-  const delayLevel = Number(expectedQuality.delayLevel || 0);
-  const routeQualityLevel = Number(expectedQuality.routeQualityLevel || 0);
 
   const viewedUser = payload.viewingAs || payload.courier || state.workflow?.viewingAs || {};
   const previewNotice = state.user?.canPreviewCouriers && state.workflowPreviewCourierId
@@ -2008,34 +1999,18 @@ function renderStatistics() {
   const personalComparison = `
     <section class="courier-statistics-compare">
       <div class="process-title"><span class="step-code">↗</span><div><h3>Havi összehasonlítás</h3><p>Az aktuális hónap eredménye az előző hónaphoz képest.</p></div></div>
-      <div class="admin-stat-donut-grid">
+      <div class="admin-stat-donut-grid courier-stat-donut-grid">
         ${adminDonutCard("Összes kör", "Kivitt túrák", routes, previousSummary.routes)}
         ${adminDonutCard("Összes cím", "Teljesített rendelések", orders, previousSummary.orders)}
         ${adminDonutCard("No-show", "Nem jelent meg műszakban", currentQuality.noShowCount, previousQuality.noShowCount)}
         ${adminDonutCard("Műszakkésés", "Késő sorba állás / műszakkezdés", currentQuality.lateShiftCount, previousQuality.lateShiftCount)}
+        ${adminMoneyDonutCard("Borravaló", "Összes borravaló", summary.tipsTotalHuf, previousSummary.tipsTotalHuf)}
       </div>
     </section>
   `;
   if (comparison) comparison.innerHTML = personalComparison;
-  grid.innerHTML = [
-    statisticCard("Kör", formatCount(routes), "kivitt túrák"),
-    statisticCard("Műszakok", formatCount(summary.shiftCount), "foglalt / teljesített"),
-    statisticCard("Cím", formatCount(orders), "rendelések"),
-    statisticCard("Átlag", formatAverage(average), "cím / kör"),
-    statisticCard("Borravaló", formatHuf(summary.tipsTotalHuf), "összesen"),
-    statisticCard(
-      "Késési mutató",
-      delayLevel ? `${formatCount(delayLevel)}. szint` : "-",
-      `${formatPercent(expectedQuality.delayPercent)} | ${formatCount(expectedQuality.uncleanedDelayCount)} / ${formatCount(expectedQuality.orderCount)} cím`
-    ),
-    statisticCard(
-      "Túramegfelelés",
-      routeQualityLevel ? `${formatCount(routeQualityLevel)}. szint` : "-",
-      `${formatPercent(expectedQuality.complianceScorePercent)} | ${formatCount(expectedQuality.noShowCount)} no-show, ${formatCount(expectedQuality.lateShiftCount)} késői`
-    ),
-    statisticCard("Futár bevétele", "Rejtve", "mobil nézetben"),
-    statisticCard("Ügyfélértékelés", ratingValue, rating.available ? `${formatCount(rating.ratingCount)} értékelés` : "későbbi kimutatáshoz"),
-  ].join("");
+  grid.innerHTML = "";
+  grid.classList.add("hidden");
   qualityPanel.innerHTML = renderQualitySummaryChart(payload);
 
   const routeBreakdown = payload.routeBreakdown || {};
@@ -2146,6 +2121,19 @@ function adminDonutCard(label, note, current, previous) {
     <div class="admin-stat-donut-wrap"><div class="admin-stat-donut ${delta.className}" style="--admin-donut-fill:${ratio}%"><div><strong>${formatCount(now)}</strong><span>${escapeHtml(label === "Összes cím" || label === "Címről késés" ? "cím" : label === "Összes kör" ? "kör" : "eset")}</span></div></div></div>
     <span class="admin-stat-delta ${delta.className}">${delta.text}</span>
     <div class="admin-stat-compare"><span>Előző hónap</span><b>${formatCount(before)}</b></div>
+  </article>`;
+}
+
+function adminMoneyDonutCard(label, note, current, previous) {
+  const now = Number(current || 0);
+  const before = Number(previous || 0);
+  const ratio = Math.max(8, Math.min(92, before || now ? Math.round((now / Math.max(now, before, 1)) * 100) : 8));
+  const delta = adminDelta(now, before);
+  return `<article class="admin-stat-donut-card">
+    <h3>${escapeHtml(label)}</h3><p>${escapeHtml(note)}</p>
+    <div class="admin-stat-donut-wrap"><div class="admin-stat-donut ${delta.className}" style="--admin-donut-fill:${ratio}%"><div><strong>${formatHuf(now)}</strong><span>összesen</span></div></div></div>
+    <span class="admin-stat-delta ${delta.className}">${delta.text}</span>
+    <div class="admin-stat-compare"><span>Előző hónap</span><b>${formatHuf(before)}</b></div>
   </article>`;
 }
 

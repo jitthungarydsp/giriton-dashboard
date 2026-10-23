@@ -886,6 +886,7 @@ textarea { min-height: 96px; resize: vertical; }
 .admin-stat-filter.active { border-color: var(--green-dark); background: var(--green-dark); color: #fff; }
 .admin-stat-subtitle { color: var(--muted); font-size: 12px; font-weight: 800; }
 .admin-stat-donut-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.courier-stat-donut-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .admin-stat-donut-card { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); }
 .admin-stat-donut-card h3 { margin: 0; font-size: 13px; }
 .admin-stat-donut-card p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
