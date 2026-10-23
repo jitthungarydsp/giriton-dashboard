@@ -6447,11 +6447,40 @@ def read_schedule_contact_rows(workers: list[dict[str, Any]]) -> list[dict[str, 
     }
     if courier_ids and len(courier_ids) <= 500:
         params["courier_id"] = f"in.({','.join(courier_ids)})"
-    return optional_supabase_rows(
+    rows = optional_supabase_rows(
         "courier_master",
         params=params,
         timeout=30,
     )
+    # A Hub/gyors nézetben előfordul, hogy a courier_master még nem tartalmaz
+    # minden frissen importált futárt. Ilyenkor a másik, névvel rendelkező
+    # műszakforrásokból egészítjük ki az ID -> név feloldást.
+    if courier_ids:
+        id_filter = f"in.({','.join(courier_ids)})"
+        for table, name_column in (
+            ("pwa_users", "username"),
+            ("raw_muszakpro_bookings", "courier_name"),
+            ("giriton_future_shifts_latest", "courier_name"),
+        ):
+            source_rows = optional_supabase_rows(
+                table,
+                params={
+                    "select": f"courier_id,{name_column}",
+                    "courier_id": id_filter,
+                    "limit": "10000",
+                },
+                timeout=20,
+            )
+            rows.extend(
+                {
+                    "courier_id": row.get("courier_id"),
+                    "courier_name": row.get(name_column),
+                    "phone_number": row.get("phone_number") or "",
+                }
+                for row in source_rows
+                if str(row.get(name_column) or "").strip()
+            )
+    return rows
 
 
 def attach_schedule_contacts(workers: list[dict[str, Any]], rows: list[dict[str, Any]] | None = None) -> None:
@@ -6463,9 +6492,9 @@ def attach_schedule_contacts(workers: list[dict[str, Any]], rows: list[dict[str,
         courier_id = str(row.get("courier_id") or "").strip()
         name_key = normalize_person_match_text(row.get("courier_name"))
         if courier_id:
-            by_id[courier_id] = row
+            by_id.setdefault(courier_id, row)
         if name_key:
-            by_name[name_key] = row
+            by_name.setdefault(name_key, row)
     for worker in workers:
         courier_id = str(worker.get("courierId") or "").strip()
         name_key = normalize_person_match_text(worker.get("courierName"))
