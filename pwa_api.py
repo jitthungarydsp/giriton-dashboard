@@ -6470,6 +6470,10 @@ def attach_schedule_contacts(workers: list[dict[str, Any]], rows: list[dict[str,
         courier_id = str(worker.get("courierId") or "").strip()
         name_key = normalize_person_match_text(worker.get("courierName"))
         contact = by_id.get(courier_id) or by_name.get(name_key) or {}
+        contact_name = str(contact.get("courier_name") or "").strip()
+        current_name = str(worker.get("courierName") or "").strip()
+        if contact_name and (not current_name or current_name.casefold() in {"futár", "futar", "ismeretlen futár"}):
+            worker["courierName"] = contact_name
         worker["phoneNumber"] = str(contact.get("phone_number") or "").strip()
 
 
@@ -7159,6 +7163,9 @@ def read_coordinator_schedule(
                 ],
                 key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
             )
+            # A mobil/gyors nézet eddig csak az ID-t kapta meg a Hub-foglalásból.
+            # A törzsadatból oldjuk fel hozzá a megjelenítendő futárnevet is.
+            attach_schedule_contacts(workers)
         else:
             with ThreadPoolExecutor(max_workers=8) as executor:
                 futures = {
