@@ -3237,6 +3237,9 @@ def request_courier_finance_refresh(courier_id: str) -> None:
         return
     target_menu = str(st.session_state.get(f"courier_menu_{courier_id}") or "Pénzügy")
     st.session_state[f"courier_rebuild_request_{courier_id}"] = {"target_menu": target_menu}
+    # A kézi tétel módosítása nem írhatja felül a függetlenül számolt
+    # teljesítmény- és lojalitási adatokat egy hiányos újraszámítással.
+    st.session_state[f"preserve_snapshot_components_{courier_id}"] = True
 
 
 def save_mobile_breakdown_overrides(
@@ -17461,6 +17464,9 @@ def render_courier_detail_page() -> None:
                 st.session_state["current_filtered_context"] = saved_filtered_context
             if google_refresh_requested:
                 st.session_state[f"force_fresh_google_adjustments_{courier_id}_{period_start:%Y%m}"] = True
+                # A Sheet-frissítés teljes újraszámítás: ilyenkor a korábbi
+                # snapshotból ne örökítsünk át részadatokat.
+                st.session_state.pop(f"preserve_snapshot_components_{courier_id}", None)
             st.session_state["selected_courier_id"] = courier_id
             st.session_state[menu_key] = "Pénzügy"
             st.session_state[finance_preflight_key] = True
@@ -17469,6 +17475,9 @@ def render_courier_detail_page() -> None:
         except Exception as exc:
             st.error(f"A futár frissítése nem sikerült: {exc}")
     finance_preflight_active = bool(st.session_state.get(finance_preflight_key))
+    preserve_snapshot_components = bool(
+        st.session_state.get(f"preserve_snapshot_components_{courier_id}")
+    )
     finance_preflight_target = str(st.session_state.get(finance_preflight_target_key) or "Pénzügy")
     if finance_preflight_active:
         st.session_state.pop(finance_preflight_key, None)
@@ -18434,6 +18443,33 @@ def render_courier_detail_page() -> None:
         loyalty_status = str(row.get("Lojalitás státusz") or "").strip()
         loyalty_values = resolve_profile_loyalty_values(row, order_total, route_total)
         loyalty_total = parse_huf_value(loyalty_values.get("total"))
+        if preserve_snapshot_components and loyalty_total <= 0:
+            # Kézi tétel mentésekor a lojalitás külön számításból érkezik.
+            # Ha az aktuális forrásnézet hiányos, egy új snapshot ne nullázza
+            # le a legutóbb ténylegesen kiszámolt értéket.
+            previous_loyalty_total = _snapshot_amount(
+                existing_finance_snapshot, "loyalty_bonus"
+            )
+            if previous_loyalty_total <= 0:
+                current_snapshot_id = str(existing_finance_snapshot.get("id") or "")
+                for version_row in load_devtest_finance_snapshot_versions(
+                    courier_id, period_start
+                ):
+                    snapshot_id = str(version_row.get("id") or "")
+                    if not snapshot_id or snapshot_id == current_snapshot_id:
+                        continue
+                    previous_snapshot = load_devtest_finance_snapshot_by_id(
+                        courier_id, period_start, snapshot_id
+                    )
+                    previous_loyalty_total = _snapshot_amount(
+                        previous_snapshot, "loyalty_bonus"
+                    )
+                    if previous_loyalty_total > 0:
+                        break
+            if previous_loyalty_total > 0:
+                loyalty_total = previous_loyalty_total
+                loyalty_values = dict(loyalty_values)
+                loyalty_values["total"] = previous_loyalty_total
         loyalty_previous_routes = int(parse_huf_value(loyalty_values.get("previous_routes")))
         loyalty_current_routes = int(parse_huf_value(loyalty_values.get("current_routes")))
         loyalty_rate = parse_huf_value(loyalty_values.get("rate"))
@@ -19492,6 +19528,7 @@ def render_courier_detail_page() -> None:
             )
             st.session_state.pop(finance_preflight_key, None)
             st.session_state.pop(finance_preflight_target_key, None)
+            st.session_state.pop(f"preserve_snapshot_components_{courier_id}", None)
             st.session_state[menu_target_key] = target_menu_after_finance
             st.session_state["selected_courier_id"] = courier_id
             st.rerun()
