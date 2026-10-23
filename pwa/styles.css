@@ -322,6 +322,7 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-slot-card.open { border-color: #e0a39e; background: #fff0ef; }
 .schedule-slot-card.closed { border-color: #d7ded4; background: #eef1eb; color: #6a756b; opacity: .78; }
 .schedule-slot-card.missing { border-color: #29362d; background: #102018; color: #fff; }
+.schedule-slot-card.booking-mismatch { border-color: #b63d38; box-shadow: 0 0 0 2px #f1b4af, 0 7px 20px #3141340a; }
 .schedule-slot-card strong { display: block; font-size: 16px; line-height: 1.2; overflow-wrap: anywhere; }
 .schedule-slot-card small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
 .schedule-slot-card.closed small { color: #7c887f; }
@@ -353,6 +354,8 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-slot-details { display: grid; gap: 10px; padding: 0 12px 12px; }
 .schedule-slot-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .schedule-slot-detail-grid div { padding: 9px; border-radius: 10px; background: #ffffffa8; }
+.schedule-slot-details-mismatch { border-top: 3px solid #b63d38; }
+.schedule-slot-mismatch-note { padding: 8px 10px; border: 1px solid #efb1ac; border-radius: 10px; background: #fff3f2; color: #a52d28; font-size: 12px; font-weight: 900; }
 .schedule-slot-card.closed .schedule-slot-detail-grid div { background: #f8faf7; }
 .schedule-slot-card.missing .schedule-slot-detail-grid div { background: #ffffff12; }
 .schedule-slot-detail-grid strong { font-size: 13px; }

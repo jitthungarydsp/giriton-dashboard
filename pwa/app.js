@@ -9890,16 +9890,27 @@ function renderScheduleSlotBookingPrep(slot = {}, day = {}) {
 
 function renderScheduleSlotDetails(slot = {}, day = {}) {
   const workers = slot.workers || [];
-  const muszakproCount = workers.filter((worker) => worker.muszakproTone === "ok").length;
-  const hubCount = workers.filter((worker) => worker.hubTone === "ok").length;
+  const workerRoundCount = (worker = {}) => {
+    const text = `${worker.shiftName || ""} ${worker.bookingCode || ""}`.toLocaleLowerCase("hu-HU");
+    const match = text.match(/(\d+)\s*[- ]?\s*kör/);
+    return match ? Math.max(1, Number(match[1])) : 1;
+  };
+  const muszakproCount = workers
+    .filter((worker) => worker.muszakproTone === "ok")
+    .reduce((total, worker) => total + workerRoundCount(worker), 0);
+  const hubCount = workers
+    .filter((worker) => worker.hubTone === "ok")
+    .reduce((total, worker) => total + workerRoundCount(worker), 0);
+  const bookingMismatch = muszakproCount !== hubCount;
   const hubFallbackTime = shortDateTime(slot.updatedAt || slot.fetchedAt || "");
   return `
-    <div class="schedule-slot-details">
+    <div class="schedule-slot-details${bookingMismatch ? " schedule-slot-details-mismatch" : ""}">
       <div class="schedule-slot-detail-grid">
         <div><span>Állapot</span><strong>${escapeHtml(scheduleSlotPreparedText(slot))}</strong></div>
-        <div><span>MűszakPro foglalás</span><strong>${muszakproCount ? `${formatCount(muszakproCount)} futár` : "-"}</strong></div>
-        <div><span>Hub felvezetés</span><strong>${hubCount ? `${formatCount(hubCount)} futár` : escapeHtml(hubFallbackTime || "-")}</strong></div>
+        <div><span>MűszakPro foglalt kör</span><strong>${muszakproCount ? `${formatCount(muszakproCount)} kör` : "-"}</strong></div>
+        <div><span>Courier Hub / Kifli foglalt kör</span><strong>${hubCount ? `${formatCount(hubCount)} kör` : escapeHtml(hubFallbackTime || "-")}</strong></div>
       </div>
+      ${bookingMismatch ? `<div class="schedule-slot-mismatch-note">Eltérés: MűszakPro ${formatCount(muszakproCount)} kör · Hub/Kifli ${formatCount(hubCount)} kör</div>` : ""}
       ${workers.length
         ? `<div class="schedule-slot-worker-list">${workers.map((worker) => renderScheduleSlotWorker(worker, slot, day)).join("")}</div>`
         : `<div class="empty-card compact">Nincs ehhez az idősávhoz kapcsolt futáradat.</div>`}
@@ -9951,8 +9962,17 @@ function renderScheduleSlotCard(slot = {}, day = {}) {
   const recommendations = slot.recommendations || [];
   const workerPreview = renderScheduleSlotWorkerPreview(slot);
   const routeAlert = renderScheduleSlotRouteAlert(slot);
+  const workers = slot.workers || [];
+  const rounds = (worker) => {
+    const text = `${worker.shiftName || ""} ${worker.bookingCode || ""}`.toLocaleLowerCase("hu-HU");
+    const match = text.match(/(\d+)\s*[- ]?\s*kör/);
+    return match ? Math.max(1, Number(match[1])) : 1;
+  };
+  const muszakproRounds = workers.filter((worker) => worker.muszakproTone === "ok").reduce((total, worker) => total + rounds(worker), 0);
+  const hubRounds = workers.filter((worker) => worker.hubTone === "ok").reduce((total, worker) => total + rounds(worker), 0);
+  const bookingMismatch = muszakproRounds !== hubRounds;
   return `
-    <details class="schedule-slot-card ${tone}" data-schedule-slot="${escapeHtml(scheduleSlotDomKey(slot))}">
+    <details class="schedule-slot-card ${tone}${bookingMismatch ? " booking-mismatch" : ""}" data-schedule-slot="${escapeHtml(scheduleSlotDomKey(slot))}">
       <summary>
         <div>
           <strong>${escapeHtml(slot.start || "-")}${slot.end ? `-${escapeHtml(slot.end)}` : ""}</strong>
