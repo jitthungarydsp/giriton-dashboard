@@ -17494,6 +17494,12 @@ def render_courier_detail_page() -> None:
         row = row.copy()
         row["JITT bónusz"] = 0
         row["JITT malus"] = 0
+    # Minden helyi snapshot-újraépítésnél őrizzük meg az előző, már
+    # kiszámolt lojalitást is. Kivétel az explicit Google Sheet-frissítés,
+    # amelynek célja a forrásadat teljes újraszámítása.
+    preserve_snapshot_components = (
+        preserve_snapshot_components or not force_fresh_google_adjustments
+    )
     menu_target = st.session_state.pop(menu_target_key, None)
     if menu_target:
         st.session_state[menu_key] = menu_target
