@@ -2156,7 +2156,40 @@ function adminPlaceholderDonutCard(label, note) {
   </article>`;
 }
 
-function renderAdminStatisticsPanel(current, previous) {
+function renderAdminShiftBookingComparison(report = {}) {
+  const summary = report?.summary || [];
+  const groups = new Map();
+  const add = (label, muszakpro, hub) => {
+    const current = groups.get(label) || { label, muszakpro: 0, hub: 0 };
+    current.muszakpro += Number(muszakpro || 0);
+    current.hub += Number(hub || 0);
+    groups.set(label, current);
+  };
+  summary.forEach((row) => add(row.warehouse || "Ismeretlen raktár", row.muszakpro_booked, row.hub_uploaded));
+  const rows = [
+    { label: "Összesen", muszakpro: Number(report?.totals?.muszakproBooked || 0), hub: Number(report?.totals?.hubUploaded || 0) },
+    ...["BUD1", "BUD2"].map((label) => groups.get(label) || { label, muszakpro: 0, hub: 0 }),
+  ];
+  return `
+    <section class="admin-stat-section admin-shift-compare-section">
+      <h3>Műszakfoglalás összevetése</h3>
+      <p class="admin-stat-note">A MűszakProban foglalt műszakok és a Courier Hub / Kifli felvezetett műszakok összehasonlítása.</p>
+      <div class="admin-shift-compare-table-wrap">
+        <table class="admin-shift-compare-table">
+          <thead><tr><th>Raktár</th><th>MűszakPro foglalt</th><th>Courier Hub / Kifli foglalt</th><th>Különbség</th><th>Hub / MűszakPro</th></tr></thead>
+          <tbody>${rows.map((row) => {
+            const difference = row.hub - row.muszakpro;
+            const ratio = row.muszakpro ? Math.round((row.hub / row.muszakpro) * 100) : 0;
+            const tone = difference === 0 ? "neutral" : difference > 0 ? "positive" : "negative";
+            return `<tr><td><strong>${escapeHtml(row.label)}</strong></td><td>${formatCount(row.muszakpro)}</td><td>${formatCount(row.hub)}</td><td class="${tone}">${difference > 0 ? "+" : ""}${formatCount(difference)}</td><td>${row.muszakpro ? `${formatCount(ratio)}%` : "-"}</td></tr>`;
+          }).join("")}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderAdminStatisticsPanel(current, previous, shiftReport = {}) {
   const currentSummary = current?.summary || {};
   const previousSummary = previous?.summary || {};
   const currentTypes = current?.routeTypes || [];
@@ -2170,7 +2203,8 @@ function renderAdminStatisticsPanel(current, previous) {
       ${adminDonutCard("No-show", "Nem jelent meg műszakban", currentSummary.noShow, previousSummary.noShow)}
       ${adminDonutCard("Címről késés", "Késő címek összesen", currentSummary.lateAddresses, previousSummary.lateAddresses)}
     </div>
-    <section class="admin-stat-section"><h3>Túratípus szerinti bontás</h3><div class="admin-stat-type-list">${typeRows || `<div class="notice">Nincs túratípus adat.</div>`}</div><p class="updated-at">Műszakkésés: ${formatCount(currentSummary.lateShift)} · Műszakok: ${formatCount(currentSummary.shifts)}</p></section>`;
+    <section class="admin-stat-section"><h3>Túratípus szerinti bontás</h3><div class="admin-stat-type-list">${typeRows || `<div class="notice">Nincs túratípus adat.</div>`}</div><p class="updated-at">Műszakkésés: ${formatCount(currentSummary.lateShift)} · Műszakok: ${formatCount(currentSummary.shifts)}</p></section>
+    ${renderAdminShiftBookingComparison(shiftReport)}`;
 }
 
 function renderFinancialStatisticsPanel(payload) {
@@ -2210,10 +2244,11 @@ async function loadAdminStatistics() {
   const previous = previousMonthValue(state.adminStatisticsMonth);
   try {
     const query = (month) => api(`/api/admin/statistics/monthly?${new URLSearchParams({ month, warehouse: state.adminStatisticsWarehouse, _: String(Date.now()) })}`);
-    const [currentPayload, previousPayload] = await Promise.all([query(state.adminStatisticsMonth), query(previous)]);
+    const shiftReportPromise = api(`/api/routes/monthly-shift-report?${new URLSearchParams({ month: state.adminStatisticsMonth, warehouse: state.adminStatisticsWarehouse, _: String(Date.now()) })}`);
+    const [currentPayload, previousPayload, shiftReport] = await Promise.all([query(state.adminStatisticsMonth), query(previous), shiftReportPromise]);
     if (requestSeq !== state.adminStatisticsRequestSeq) return;
-    state.adminStatistics = { current: currentPayload, previous: previousPayload };
-    panel.innerHTML = renderAdminStatisticsPanel(currentPayload, previousPayload);
+    state.adminStatistics = { current: currentPayload, previous: previousPayload, shiftReport };
+    panel.innerHTML = renderAdminStatisticsPanel(currentPayload, previousPayload, shiftReport);
     bindAdminStatisticsFilters(panel);
   } catch (error) {
     if (requestSeq !== state.adminStatisticsRequestSeq) return;

@@ -904,6 +904,15 @@ textarea { min-height: 96px; resize: vertical; }
 .admin-stat-compare b { color: var(--ink); }
 .admin-stat-section { padding: 15px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); }
 .admin-stat-section h3 { margin: 0 0 12px; font-size: 15px; }
+.admin-stat-note { margin: -4px 0 12px; color: var(--muted); font-size: 12px; }
+.admin-shift-compare-table-wrap { overflow-x: auto; }
+.admin-shift-compare-table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 12px; }
+.admin-shift-compare-table th, .admin-shift-compare-table td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.admin-shift-compare-table th:first-child, .admin-shift-compare-table td:first-child { text-align: left; }
+.admin-shift-compare-table th { color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.admin-shift-compare-table td.positive { color: var(--green-dark); font-weight: 900; }
+.admin-shift-compare-table td.negative { color: var(--danger); font-weight: 900; }
+.admin-shift-compare-table td.neutral { color: var(--muted); }
 .admin-stat-type-list { display: grid; gap: 11px; }
 .admin-stat-type-row { display: grid; grid-template-columns: 100px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
 .admin-stat-type-row span, .financial-stat-week span { font-size: 12px; font-weight: 850; }
