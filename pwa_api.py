@@ -6461,6 +6461,8 @@ def read_schedule_contact_rows(workers: list[dict[str, Any]]) -> list[dict[str, 
             ("pwa_users", "username"),
             ("raw_muszakpro_bookings", "courier_name"),
             ("giriton_future_shifts_latest", "courier_name"),
+            ("ops_shift_comparison", "courier_name"),
+            ("courier_shift_overview", "courier_name"),
         ):
             source_rows = optional_supabase_rows(
                 table,
