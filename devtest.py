@@ -4308,6 +4308,87 @@ def render_devtest_finance_snapshot_view(
                             clear_devtest_finance_snapshot_cache()
                             st.success("A tétel mentve. Az oldal frissül.")
                             st.rerun()
+                with add_adjustment("Tétel bontása"):
+                    st.markdown("##### Tétel havi részletekre bontása")
+                    if adjustments.empty:
+                        st.info("Nincs bontható kézi tétel.")
+                    else:
+                        split_options = {}
+                        for _, split_row in adjustments.iterrows():
+                            split_id = str(split_row.get("id") or "").strip()
+                            if not split_id:
+                                continue
+                            split_options[split_id] = (
+                                f"{split_row.get('adjustment_type', '')} · "
+                                f"{format_huf(parse_huf_value(split_row.get('amount_huf')))} · "
+                                f"{str(split_row.get('note') or '').strip() or 'Megjegyzés nélkül'}"
+                            )
+                        if not split_options:
+                            st.info("Nincs bontható kézi tétel.")
+                        else:
+                            with st.form(f"split_adjustment_form_{courier_id}_{period_start:%Y%m}", clear_on_submit=False):
+                                split_id = st.selectbox(
+                                    "Bontandó tétel", options=list(split_options),
+                                    format_func=lambda value: split_options[value],
+                                    key=f"split_adjustment_id_{courier_id}_{period_start:%Y%m}",
+                                )
+                                split_count = st.number_input(
+                                    "Havi részletek száma", min_value=2, max_value=24,
+                                    value=2, step=1,
+                                    key=f"split_adjustment_count_{courier_id}_{period_start:%Y%m}",
+                                )
+                                split_start = st.date_input(
+                                    "Kezdés dátuma", value=period_start,
+                                    key=f"split_adjustment_start_{courier_id}_{period_start:%Y%m}",
+                                )
+                                split_submitted = st.form_submit_button("Bontás mentése és frissítés", type="primary", use_container_width=True)
+                            if split_submitted:
+                                original = next((row for _, row in adjustments.iterrows() if str(row.get("id") or "").strip() == split_id), None)
+                                if original is None:
+                                    st.error("A kiválasztott tétel már nem található. Frissítsd az oldalt.")
+                                else:
+                                    total_amount = int(round(parse_huf_value(original.get("amount_huf"))))
+                                    count = int(split_count)
+                                    if total_amount <= 0:
+                                        st.error("A bontandó tétel összege nem lehet nulla.")
+                                    else:
+                                        base_amount, remainder = divmod(total_amount, count)
+                                        original_type = str(original.get("adjustment_type") or "").strip()
+                                        original_note = str(original.get("note") or "").strip()
+                                        for index in range(count):
+                                            installment_month = add_months(split_start.replace(day=1), index)
+                                            _, installment_end = month_bounds(installment_month)
+                                            installment_amount = base_amount + (1 if index < remainder else 0)
+                                            installment_note = (
+                                                f"{original_note} | {index + 1}/{count}. havi részlet"
+                                                if original_note else f"{index + 1}/{count}. havi részlet"
+                                            )
+                                            save_courier_adjustment(
+                                                session_id,
+                                                courier_id,
+                                                original_type,
+                                                float(installment_amount),
+                                                installment_note,
+                                                installment_month,
+                                                installment_end,
+                                            )
+                                        delete_courier_adjustment(
+                                            session_id,
+                                            courier_id,
+                                            split_id,
+                                            original_type,
+                                            total_amount,
+                                            original_note or "Eredeti tétel havi részletekre bontva",
+                                            (pd.to_datetime(original.get("valid_from"), errors="coerce").date()
+                                             if pd.notna(pd.to_datetime(original.get("valid_from"), errors="coerce"))
+                                             else period_start),
+                                            (pd.to_datetime(original.get("valid_to"), errors="coerce").date()
+                                             if pd.notna(pd.to_datetime(original.get("valid_to"), errors="coerce"))
+                                             else period_end),
+                                        )
+                                        clear_devtest_finance_snapshot_cache()
+                                        st.success(f"A tétel {count} havi részletre bontva. Az oldal frissül.")
+                                        st.rerun()
         edited_adjustments = st.data_editor(
             adjustment_editor,
             use_container_width=True,
