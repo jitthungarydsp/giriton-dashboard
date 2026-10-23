@@ -4257,6 +4257,57 @@ def render_devtest_finance_snapshot_view(
         closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
         st.markdown("#### Kézi tételek")
         st.caption("Itt lehet új tételt hozzáadni, meglévőt módosítani, vagy a Törlés oszlopban kijelölni.")
+        # Az inline data_editor új sor funkciója mobilon és egyes Streamlit
+        # verziókban nehezen észrevehető. Külön felugró űrlapot adunk az új
+        # tételhez, így a kötelező mezők és a dátumtartomány egyértelmű.
+        if not closure_done:
+            add_adjustment = getattr(st, "popover", None)
+            if callable(add_adjustment):
+                with add_adjustment("+ Új tétel"):
+                    st.markdown("##### Új kézi tétel")
+                    with st.form(f"new_adjustment_form_{courier_id}_{period_start:%Y%m}", clear_on_submit=False):
+                        new_type_label = st.selectbox(
+                            "Típus",
+                            options=list(adjustment_type_values.keys()),
+                            key=f"new_adjustment_type_{courier_id}_{period_start:%Y%m}",
+                        )
+                        new_amount = st.number_input(
+                            "Összeg (Ft)", min_value=0, step=100, value=0,
+                            key=f"new_adjustment_amount_{courier_id}_{period_start:%Y%m}",
+                        )
+                        new_note = st.text_input(
+                            "Megnevezés / megjegyzés",
+                            key=f"new_adjustment_note_{courier_id}_{period_start:%Y%m}",
+                        )
+                        new_valid_from = st.date_input(
+                            "Érvényes ettől", value=period_start,
+                            min_value=period_start, max_value=period_end,
+                            key=f"new_adjustment_from_{courier_id}_{period_start:%Y%m}",
+                        )
+                        new_valid_to = st.date_input(
+                            "Érvényes eddig", value=period_end,
+                            min_value=period_start, max_value=period_end,
+                            key=f"new_adjustment_to_{courier_id}_{period_start:%Y%m}",
+                        )
+                        add_submitted = st.form_submit_button("Mentés és frissítés", type="primary", use_container_width=True)
+                    if add_submitted:
+                        if new_amount <= 0:
+                            st.error("Az összegnek nullánál nagyobbnak kell lennie.")
+                        elif new_valid_to < new_valid_from:
+                            st.error("A végdátum nem lehet korábbi a kezdődátumnál.")
+                        else:
+                            save_courier_adjustment(
+                                session_id,
+                                courier_id,
+                                adjustment_type_values[new_type_label],
+                                float(new_amount),
+                                new_note,
+                                new_valid_from,
+                                new_valid_to,
+                            )
+                            clear_devtest_finance_snapshot_cache()
+                            st.success("A tétel mentve. Az oldal frissül.")
+                            st.rerun()
         edited_adjustments = st.data_editor(
             adjustment_editor,
             use_container_width=True,
