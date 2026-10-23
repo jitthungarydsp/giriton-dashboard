@@ -2244,7 +2244,7 @@ async function loadAdminStatistics() {
   const previous = previousMonthValue(state.adminStatisticsMonth);
   try {
     const query = (month) => api(`/api/admin/statistics/monthly?${new URLSearchParams({ month, warehouse: state.adminStatisticsWarehouse, _: String(Date.now()) })}`);
-    const shiftReportPromise = api(`/api/routes/monthly-shift-report?${new URLSearchParams({ month: state.adminStatisticsMonth, warehouse: state.adminStatisticsWarehouse, _: String(Date.now()) })}`);
+    const shiftReportPromise = api(`/api/routes/monthly-shift-report?${new URLSearchParams({ month: state.adminStatisticsMonth, warehouse: state.adminStatisticsWarehouse, _: String(Date.now()) })}`).catch(() => ({}));
     const [currentPayload, previousPayload, shiftReport] = await Promise.all([query(state.adminStatisticsMonth), query(previous), shiftReportPromise]);
     if (requestSeq !== state.adminStatisticsRequestSeq) return;
     state.adminStatistics = { current: currentPayload, previous: previousPayload, shiftReport };
