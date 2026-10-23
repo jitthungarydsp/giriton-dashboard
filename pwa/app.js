@@ -1421,6 +1421,14 @@ function qualityDetailCount(row = {}) {
   return match ? Number(match[1]) : 1;
 }
 
+function visibleQualityCount(summary = {}, key) {
+  const details = summary.details || {};
+  const rows = Array.isArray(details[key]) ? details[key] : [];
+  if (!rows.length) return Number(summary[`${key}Count`] || 0);
+  const visibleRows = key === "noShow" ? pastQualityDetails(rows) : rows;
+  return visibleRows.reduce((sum, row) => sum + qualityDetailCount(row), 0);
+}
+
 function qualityProblemDates(payload = {}) {
   const details = payload.qualitySummary?.details || {};
   const rows = [
@@ -2003,8 +2011,8 @@ function renderStatistics() {
       <div class="admin-stat-donut-grid courier-stat-donut-grid">
         ${adminDonutCard("Összes kör", "Kivitt túrák", routes, previousSummary.routes)}
         ${adminDonutCard("Összes cím", "Teljesített rendelések", orders, previousSummary.orders)}
-        ${adminDonutCard("No-show", "Nem jelent meg műszakban", currentQuality.noShowCount, previousQuality.noShowCount)}
-        ${adminDonutCard("Műszakkésés", "Késő sorba állás / műszakkezdés", currentQuality.lateShiftCount, previousQuality.lateShiftCount)}
+        ${adminDonutCard("No-show", "Nem jelent meg műszakban", visibleQualityCount(currentQuality, "noShow"), visibleQualityCount(previousQuality, "noShow"))}
+        ${adminDonutCard("Műszakkésés", "Késő sorba állás / műszakkezdés", visibleQualityCount(currentQuality, "lateShift"), visibleQualityCount(previousQuality, "lateShift"))}
         ${adminMoneyDonutCard("Borravaló", "Összes borravaló", summary.tipsTotalHuf, previousSummary.tipsTotalHuf)}
         ${adminPlaceholderDonutCard("Várható bevétel", "Havi várható kifizetés")}
       </div>
