@@ -8017,12 +8017,21 @@ def shift_will_miss_return(shift: dict[str, Any], route_detail: dict[str, Any]) 
 def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]:
     target_date = datetime.now(LOCAL_TIMEZONE).date()
     target_key = target_date.isoformat()
-    live_map = read_coordinator_live_map(warehouse_ids)
+    # Ezek egymástól független Supabase-lekérések. Korábban sorban futottak,
+    # ezért a „Ki jön ma?” oldal több hálózati round-trip idejét összeadta.
+    # Párhuzamosan kérjük le őket, így a teljes időt a leglassabb lekérés adja.
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        live_future = executor.submit(read_coordinator_live_map, warehouse_ids)
+        detail_future = executor.submit(latest_today_hub_details_by_courier)
+        checkins_future = executor.submit(latest_today_shift_checkins)
+        attendance_future = executor.submit(read_today_worker_attendance_statuses, target_date)
+        comparison_future = executor.submit(read_schedule_comparison_rows, target_date, target_date)
+        live_map = live_future.result()
+        detail_by_courier = detail_future.result()
+        checkins_by_courier = checkins_future.result()
+        attendance_by_key = attendance_future.result()
+        comparison_rows = comparison_future.result()
     live_by_courier = {str(item.get("courierId") or ""): item for item in live_map.get("couriers", [])}
-    detail_by_courier = latest_today_hub_details_by_courier()
-    checkins_by_courier = latest_today_shift_checkins()
-    attendance_by_key = read_today_worker_attendance_statuses(target_date)
-    comparison_rows = read_schedule_comparison_rows(target_date, target_date)
     if comparison_rows:
         scheduled_workers = [schedule_worker_from_comparison(row) for row in comparison_rows]
         if warehouse_ids:
@@ -8034,11 +8043,18 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
         attach_giriton_attendance_logins(scheduled_workers, target_date, target_date)
     else:
         workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
-        for row in read_schedule_hub_rows(target_date, target_date):
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            hub_rows_future = executor.submit(read_schedule_hub_rows, target_date, target_date)
+            giriton_rows_future = executor.submit(read_schedule_giriton_rows, target_date, target_date)
+            muszakpro_rows_future = executor.submit(read_schedule_muszakpro_rows, target_date, target_date)
+            hub_rows = hub_rows_future.result()
+            giriton_rows = giriton_rows_future.result()
+            muszakpro_rows = muszakpro_rows_future.result()
+        for row in hub_rows:
             worker = schedule_worker_from_hub(row)
             key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
             workers_by_key[key] = worker
-        for row in read_schedule_giriton_rows(target_date, target_date):
+        for row in giriton_rows:
             worker = schedule_worker_from_giriton(row)
             key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
             existing = workers_by_key.get(key)
@@ -8046,7 +8062,7 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
                 merge_schedule_worker(existing, worker)
             else:
                 workers_by_key[key] = worker
-        for row in read_schedule_muszakpro_rows(target_date, target_date):
+        for row in muszakpro_rows:
             worker = schedule_worker_from_muszakpro(row)
             key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
             existing = workers_by_key.get(key)
