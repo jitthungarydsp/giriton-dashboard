@@ -6223,6 +6223,8 @@ def schedule_slot_worker_payload(worker: dict[str, Any]) -> dict[str, Any]:
         "muszakproBookedAt": str(worker.get("muszakproBookedAt") or ""),
         "hubUploadedAt": str(worker.get("hubUploadedAt") or ""),
         "dailyRouteCount": safe_int(worker.get("dailyRouteCount")),
+        "dailyMuszakproShiftCount": safe_int(worker.get("dailyMuszakproShiftCount")),
+        "dailyHubShiftCount": safe_int(worker.get("dailyHubShiftCount")),
         "source": str(worker.get("source") or ""),
     }
 
@@ -6344,6 +6346,8 @@ def schedule_daily_shift_identity(worker: dict[str, Any]) -> str:
 
 def attach_schedule_daily_shift_counts(workers: list[dict[str, Any]]) -> None:
     shifts_by_worker: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
+    muszakpro_shifts_by_worker: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
+    hub_shifts_by_worker: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
     for worker in workers:
         day = str(worker.get("date") or "")[:10]
         identity = schedule_daily_shift_identity(worker)
@@ -6356,6 +6360,10 @@ def attach_schedule_daily_shift_counts(workers: list[dict[str, Any]]) -> None:
             str(worker.get("bookingCode") or worker.get("shiftName") or "").strip(),
         )
         shifts_by_worker.setdefault((day, identity), set()).add(shift_key)
+        if worker.get("muszakproTone") == "ok":
+            muszakpro_shifts_by_worker.setdefault((day, identity), set()).add(shift_key)
+        if worker.get("hubTone") == "ok":
+            hub_shifts_by_worker.setdefault((day, identity), set()).add(shift_key)
     for worker in workers:
         day = str(worker.get("date") or "")[:10]
         identity = schedule_daily_shift_identity(worker)
@@ -6365,10 +6373,18 @@ def attach_schedule_daily_shift_counts(workers: list[dict[str, Any]]) -> None:
             safe_int(worker.get("dailyRouteCount")),
             len(shifts_by_worker.get((day, identity), set())),
         )
+        worker["dailyMuszakproShiftCount"] = len(
+            muszakpro_shifts_by_worker.get((day, identity), set())
+        )
+        worker["dailyHubShiftCount"] = len(
+            hub_shifts_by_worker.get((day, identity), set())
+        )
 
 
 def attach_schedule_slot_daily_shift_counts(slots_by_day: dict[str, list[dict[str, Any]]]) -> None:
     shifts_by_worker: dict[tuple[str, str], set[tuple[str, str, str, str]]] = {}
+    muszakpro_shifts_by_worker: dict[tuple[str, str], set[tuple[str, str, str, str]]] = {}
+    hub_shifts_by_worker: dict[tuple[str, str], set[tuple[str, str, str, str]]] = {}
     for day_key, day_slots in slots_by_day.items():
         day = str(day_key or "")[:10]
         for slot in day_slots:
@@ -6383,6 +6399,10 @@ def attach_schedule_slot_daily_shift_counts(slots_by_day: dict[str, list[dict[st
                 identity = schedule_daily_shift_identity(worker)
                 if slot_day and identity and slot_key[1]:
                     shifts_by_worker.setdefault((slot_day, identity), set()).add(slot_key)
+                    if worker.get("muszakproTone") == "ok":
+                        muszakpro_shifts_by_worker.setdefault((slot_day, identity), set()).add(slot_key)
+                    if worker.get("hubTone") == "ok":
+                        hub_shifts_by_worker.setdefault((slot_day, identity), set()).add(slot_key)
     for day_key, day_slots in slots_by_day.items():
         day = str(day_key or "")[:10]
         for slot in day_slots:
@@ -6394,6 +6414,12 @@ def attach_schedule_slot_daily_shift_counts(slots_by_day: dict[str, list[dict[st
                 worker["dailyRouteCount"] = max(
                     safe_int(worker.get("dailyRouteCount")),
                     len(shifts_by_worker.get((slot_day, identity), set())),
+                )
+                worker["dailyMuszakproShiftCount"] = len(
+                    muszakpro_shifts_by_worker.get((slot_day, identity), set())
+                )
+                worker["dailyHubShiftCount"] = len(
+                    hub_shifts_by_worker.get((slot_day, identity), set())
                 )
 
 

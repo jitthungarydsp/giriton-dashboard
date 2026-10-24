@@ -9890,22 +9890,28 @@ function renderScheduleSlotBookingPrep(slot = {}, day = {}) {
 
 function renderScheduleSlotDetails(slot = {}, day = {}) {
   const workers = slot.workers || [];
-  const workerRoundCount = (worker = {}) => {
-    const dailyRoutes = Number(worker.dailyRouteCount || 0);
-    if (dailyRoutes > 0) return dailyRoutes;
+  const workerRoundCount = (worker = {}, source = "") => {
+    const sourceCount = source === "muszakpro"
+      ? Number(worker.dailyMuszakproShiftCount || 0)
+      : source === "hub"
+        ? Number(worker.dailyHubShiftCount || 0)
+        : Number(worker.dailyRouteCount || 0);
+    if (sourceCount > 0) return sourceCount;
     const text = `${worker.shiftName || ""} ${worker.bookingCode || ""}`.toLocaleLowerCase("hu-HU");
     const match = text.match(/(\d+)\s*[- ]?\s*kör/);
     return match ? Math.max(1, Number(match[1])) : 1;
   };
   const muszakproCount = workers
     .filter((worker) => worker.muszakproTone === "ok")
-    .reduce((total, worker) => total + workerRoundCount(worker), 0);
+    .reduce((total, worker) => total + workerRoundCount(worker, "muszakpro"), 0);
   const hubCount = workers
     .filter((worker) => worker.hubTone === "ok")
-    .reduce((total, worker) => total + workerRoundCount(worker), 0);
+    .reduce((total, worker) => total + workerRoundCount(worker, "hub"), 0);
   const muszakproKnown = workers.some((worker) => worker.muszakproTone && worker.muszakproTone !== "unknown");
   const hubKnown = workers.some((worker) => worker.hubTone && worker.hubTone !== "unknown");
-  const bookingMismatch = muszakproKnown && hubKnown && muszakproCount !== hubCount;
+  const dailyRouteCount = Math.max(0, ...workers.map((worker) => Number(worker.dailyRouteCount || 0)));
+  const routeCountMismatch = muszakproKnown && dailyRouteCount > 0 && muszakproCount !== dailyRouteCount;
+  const bookingMismatch = routeCountMismatch || (muszakproKnown && hubKnown && muszakproCount !== hubCount);
   return `
     <div class="schedule-slot-details${bookingMismatch ? " schedule-slot-details-mismatch" : ""}">
       <div class="schedule-slot-detail-grid">
@@ -9913,7 +9919,7 @@ function renderScheduleSlotDetails(slot = {}, day = {}) {
         <div><span>MűszakPro foglalt kör</span><strong>${muszakproCount ? `${formatCount(muszakproCount)} kör` : "-"}</strong></div>
         <div><span>Courier Hub / Kifli foglalt kör</span><strong>${hubKnown ? `${formatCount(hubCount)} kör` : "-"}</strong></div>
       </div>
-      ${bookingMismatch ? `<div class="schedule-slot-mismatch-note">Eltérés: MűszakPro ${formatCount(muszakproCount)} kör · Hub/Kifli ${formatCount(hubCount)} kör</div>` : ""}
+      ${bookingMismatch ? `<div class="schedule-slot-mismatch-note">Eltérés: napi kör ${formatCount(dailyRouteCount)} · MűszakPro ${formatCount(muszakproCount)} kör${hubKnown ? ` · Hub/Kifli ${formatCount(hubCount)} kör` : ""}</div>` : ""}
       ${workers.length
         ? `<div class="schedule-slot-worker-list">${workers.map((worker) => renderScheduleSlotWorker(worker, slot, day)).join("")}</div>`
         : `<div class="empty-card compact">Nincs ehhez az idősávhoz kapcsolt futáradat.</div>`}
@@ -9966,18 +9972,24 @@ function renderScheduleSlotCard(slot = {}, day = {}) {
   const workerPreview = renderScheduleSlotWorkerPreview(slot);
   const routeAlert = renderScheduleSlotRouteAlert(slot);
   const workers = slot.workers || [];
-  const rounds = (worker) => {
-    const dailyRoutes = Number(worker.dailyRouteCount || 0);
-    if (dailyRoutes > 0) return dailyRoutes;
+  const rounds = (worker, source = "") => {
+    const sourceCount = source === "muszakpro"
+      ? Number(worker.dailyMuszakproShiftCount || 0)
+      : source === "hub"
+        ? Number(worker.dailyHubShiftCount || 0)
+        : Number(worker.dailyRouteCount || 0);
+    if (sourceCount > 0) return sourceCount;
     const text = `${worker.shiftName || ""} ${worker.bookingCode || ""}`.toLocaleLowerCase("hu-HU");
     const match = text.match(/(\d+)\s*[- ]?\s*kör/);
     return match ? Math.max(1, Number(match[1])) : 1;
   };
-  const muszakproRounds = workers.filter((worker) => worker.muszakproTone === "ok").reduce((total, worker) => total + rounds(worker), 0);
-  const hubRounds = workers.filter((worker) => worker.hubTone === "ok").reduce((total, worker) => total + rounds(worker), 0);
+  const muszakproRounds = workers.filter((worker) => worker.muszakproTone === "ok").reduce((total, worker) => total + rounds(worker, "muszakpro"), 0);
+  const hubRounds = workers.filter((worker) => worker.hubTone === "ok").reduce((total, worker) => total + rounds(worker, "hub"), 0);
   const muszakproKnown = workers.some((worker) => worker.muszakproTone && worker.muszakproTone !== "unknown");
   const hubKnown = workers.some((worker) => worker.hubTone && worker.hubTone !== "unknown");
-  const bookingMismatch = muszakproKnown && hubKnown && muszakproRounds !== hubRounds;
+  const dailyRouteCount = Math.max(0, ...workers.map((worker) => Number(worker.dailyRouteCount || 0)));
+  const routeCountMismatch = muszakproKnown && dailyRouteCount > 0 && muszakproRounds !== dailyRouteCount;
+  const bookingMismatch = routeCountMismatch || (muszakproKnown && hubKnown && muszakproRounds !== hubRounds);
   return `
     <details class="schedule-slot-card ${tone}${bookingMismatch ? " booking-mismatch" : ""}" data-schedule-slot="${escapeHtml(scheduleSlotDomKey(slot))}">
       <summary>
