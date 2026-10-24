@@ -246,7 +246,6 @@ select
     muszakpro_email,
     normalized_email,
     muszakpro_entry_count,
-    hub_shift_count,
     muszakpro_booking_rows,
     nullif(hub_robot_id, '') as robot_id,
     robot_courier_id,
@@ -264,7 +263,8 @@ select
         when robot_courier_id is not null or hub_courier_id is not null then 'partial'
         when muszakpro_email is not null then 'unmatched'
         else 'ambiguous'
-    end as match_status
+    end as match_status,
+    hub_shift_count
 from hub_match;
 
 grant select on public.vw_muszakpro_booking_identity_matches to service_role;
