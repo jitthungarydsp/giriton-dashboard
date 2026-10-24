@@ -62,14 +62,17 @@ def dedupe_key(candidate: dict[str, str]) -> tuple[str, str, str, str, str]:
     )
 
 
-def fallback_candidates(records: list[dict[str, Any]]) -> tuple[list[dict[str, str]], int, int]:
+def fallback_candidates(
+    records: list[dict[str, Any]],
+    reason_token: str = FALLBACK_REASON_TOKEN,
+) -> tuple[list[dict[str, str]], int, int]:
     candidates: list[dict[str, str]] = []
     seen: set[tuple[str, str, str, str, str]] = set()
     skipped_reason = 0
     skipped_invalid = 0
 
     for record in records:
-        if not is_fallback_reason(record.get("reason")):
+        if reason_token.casefold() not in clean(record.get("reason")).casefold():
             skipped_reason += 1
             continue
 
@@ -96,12 +99,17 @@ def main() -> None:
     )
     parser.add_argument("--input", default="results/hub-job-autobooking/failures.json")
     parser.add_argument("--output", default="results/hub-job-autobooking/giriton-fallback-candidates.json")
+    parser.add_argument(
+        "--reason-token",
+        default=FALLBACK_REASON_TOKEN,
+        help="A failure reason részszövege, amelyből Giriton-jelölt készüljön.",
+    )
     args = parser.parse_args()
 
     input_path = Path(args.input)
     output_path = Path(args.output)
     records = load_failure_records(input_path)
-    candidates, skipped_reason, skipped_invalid = fallback_candidates(records)
+    candidates, skipped_reason, skipped_invalid = fallback_candidates(records, args.reason_token)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(candidates, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -109,7 +117,8 @@ def main() -> None:
     print(
         "HUB_JOB_AUTOBOOKING_GIRITON_FALLBACK "
         f"input={input_path} records={len(records)} candidates={len(candidates)} "
-        f"skipped_reason={skipped_reason} skipped_invalid={skipped_invalid} output={output_path}"
+        f"reason_token={args.reason_token} skipped_reason={skipped_reason} "
+        f"skipped_invalid={skipped_invalid} output={output_path}"
     )
 
 

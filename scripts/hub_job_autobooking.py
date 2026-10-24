@@ -28,6 +28,7 @@ from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
 from scripts.courier_hub_api_book_shift import (  # noqa: E402
     build_assign_url,
     hub_request,
+    HubApiBookingRejected,
     log_result,
     normalize_time,
     normalize_warehouse_id,
@@ -969,7 +970,10 @@ def main() -> int:
                 )
             except Exception as exc:
                 failed_booking_rows += 1
-                reason_text = f"api_booking_failed {type(exc).__name__}: {str(exc)[:500]}"
+                if isinstance(exc, HubApiBookingRejected):
+                    reason_text = f"hub_api_rejected_{exc.reason}"
+                else:
+                    reason_text = f"api_booking_failed {type(exc).__name__}: {str(exc)[:500]}"
                 failure_records.extend(
                     failure_records_for_group(
                         [row],
@@ -1087,7 +1091,10 @@ def main() -> int:
             )
         except Exception as exc:
             failed_booking_rows += 1
-            reason_text = f"api_booking_failed {type(exc).__name__}: {str(exc)[:500]}"
+            if isinstance(exc, HubApiBookingRejected):
+                reason_text = f"hub_api_rejected_{exc.reason}"
+            else:
+                reason_text = f"api_booking_failed {type(exc).__name__}: {str(exc)[:500]}"
             failure_records.extend(
                 failure_records_for_group([row], reason_text, [(row, block, False, "mismatch_missing_active", 0)])
             )

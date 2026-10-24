@@ -28,6 +28,15 @@ from scripts.sync_courier_financial_overview import (  # noqa: E402
 from scripts.sync_courier_hub_master import DEFAULT_BASE_URL, clean_text, int_or_none  # noqa: E402
 
 
+class HubApiBookingRejected(RuntimeError):
+    """A Hub API válasza HTTP-szinten sikeres, de a foglalást elutasította."""
+
+    def __init__(self, reason: str, payload: Any):
+        self.reason = clean_text(reason).casefold() or "unknown"
+        self.payload = payload
+        super().__init__(f"Hub API booking rejected: {self.reason}")
+
+
 WAREHOUSE_IDS = {
     "BUD1": 1,
     "BUD2": 2,
@@ -225,6 +234,23 @@ def main() -> int:
     response = hub_request("POST", url, json=request_body)
     payload = response_payload(response)
     if response.ok:
+        # A Courier Hub endpoint HTTP 200 mellett is visszaadhat üzleti
+        # elutasítást (például OVERLAP). Ezt nem tekintjük sikeres foglalásnak.
+        decisions = payload.get("results") if isinstance(payload, dict) else None
+        rejected = [
+            item for item in (decisions or [])
+            if isinstance(item, dict) and clean_text(item.get("decision")).upper() == "REJECTED"
+        ]
+        if rejected:
+            reason = clean_text(rejected[0].get("reason")).casefold() or "unknown"
+            log_result(args, f"HUB_API_REJECTED_{reason.upper()}", f"Hub API rejected booking: {reason}", payload)
+            print(
+                "HUB_API_BOOK_REJECTED "
+                f"status={response.status_code} at={datetime.now(timezone.utc).isoformat()} "
+                f"reason={reason} response={json.dumps(payload, ensure_ascii=False)[:2000]}",
+                flush=True,
+            )
+            raise HubApiBookingRejected(reason, payload)
         log_result(args, "COURIER_ADDED", "HUB API booking accepted.", payload)
         print(
             "HUB_API_BOOK_OK "

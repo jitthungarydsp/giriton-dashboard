@@ -221,6 +221,32 @@ jobs:
             --input results/hub-job-autobooking/failures.json \
             --output results/hub-job-autobooking/giriton-fallback-candidates.json
 
+      - name: HUB_JOB_AUTOBOOKING build OVERLAP Giriton candidates
+        shell: bash
+        run: |
+          python scripts/build_hub_autobooking_giriton_fallback.py \
+            --input results/hub-job-autobooking/failures.json \
+            --reason-token hub_api_rejected_overlap \
+            --output results/hub-job-autobooking/giriton-overlap-candidates.json
+
+      - name: HUB_JOB_AUTOBOOKING run OVERLAP Giriton fallback
+        shell: bash
+        run: |
+          CMD=(
+            python scripts/run_shift_auto_booking_candidates.py
+            --candidate-file results/hub-job-autobooking/giriton-overlap-candidates.json
+            --output-root results/hub-job-autobooking/giriton-overlap
+            --phase hub-overlap-fallback
+            --engine uidl
+            --continue-on-error
+          )
+
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
+
       - name: HUB_JOB_AUTOBOOKING run old Giriton fallback
         shell: bash
         run: |
