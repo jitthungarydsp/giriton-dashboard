@@ -64,10 +64,11 @@ def robot_command(candidate: dict, output_dir: Path, dry_run: bool) -> list[str]
 
 def uidl_command(candidate: dict, output_dir: Path, dry_run: bool) -> list[str]:
     courier_id = normalize_courier_id(candidate.get("courier_id")) or courier_id_from_serial(candidate.get("serial"))
-    # A Giriton picker gyakran azonosítóval együtt jeleníti meg a nevet
-    # (például „Gáspár 8937 Csongor”), ezért ha van e-mailünk, azzal keressünk.
-    # A UIDL foglaló ezután az ID/e-mail alapján ugyanúgy ellenőrzi a sort.
-    search_name = "" if clean(candidate.get("email")) else clean(candidate.get("courier_name"))
+    # A Giriton picker e-mail alapján nem minden esetben ad sort. A név/ID
+    # keresés stabilabb; az e-mailt továbbra is átadjuk a sorazonosításhoz.
+    # A picker gyakran azonosítóval együtt jeleníti meg a nevet
+    # (például „Gáspár 8937 Csongor”), ezért az ID-ellenőrzés is megmarad.
+    search_name = clean(candidate.get("courier_name"))
     command = [
         sys.executable,
         str(UIDL_FAST_BOOK_FILE),
