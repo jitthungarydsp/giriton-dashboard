@@ -9901,14 +9901,15 @@ function renderScheduleSlotDetails(slot = {}, day = {}) {
   const hubCount = workers
     .filter((worker) => worker.hubTone === "ok")
     .reduce((total, worker) => total + workerRoundCount(worker), 0);
-  const bookingMismatch = muszakproCount !== hubCount;
-  const hubFallbackTime = shortDateTime(slot.updatedAt || slot.fetchedAt || "");
+  const muszakproKnown = workers.some((worker) => worker.muszakproTone && worker.muszakproTone !== "unknown");
+  const hubKnown = workers.some((worker) => worker.hubTone && worker.hubTone !== "unknown");
+  const bookingMismatch = muszakproKnown && hubKnown && muszakproCount !== hubCount;
   return `
     <div class="schedule-slot-details${bookingMismatch ? " schedule-slot-details-mismatch" : ""}">
       <div class="schedule-slot-detail-grid">
         <div><span>Állapot</span><strong>${escapeHtml(scheduleSlotPreparedText(slot))}</strong></div>
         <div><span>MűszakPro foglalt kör</span><strong>${muszakproCount ? `${formatCount(muszakproCount)} kör` : "-"}</strong></div>
-        <div><span>Courier Hub / Kifli foglalt kör</span><strong>${hubCount ? `${formatCount(hubCount)} kör` : escapeHtml(hubFallbackTime || "-")}</strong></div>
+        <div><span>Courier Hub / Kifli foglalt kör</span><strong>${hubKnown ? `${formatCount(hubCount)} kör` : "-"}</strong></div>
       </div>
       ${bookingMismatch ? `<div class="schedule-slot-mismatch-note">Eltérés: MűszakPro ${formatCount(muszakproCount)} kör · Hub/Kifli ${formatCount(hubCount)} kör</div>` : ""}
       ${workers.length
@@ -9970,7 +9971,9 @@ function renderScheduleSlotCard(slot = {}, day = {}) {
   };
   const muszakproRounds = workers.filter((worker) => worker.muszakproTone === "ok").reduce((total, worker) => total + rounds(worker), 0);
   const hubRounds = workers.filter((worker) => worker.hubTone === "ok").reduce((total, worker) => total + rounds(worker), 0);
-  const bookingMismatch = muszakproRounds !== hubRounds;
+  const muszakproKnown = workers.some((worker) => worker.muszakproTone && worker.muszakproTone !== "unknown");
+  const hubKnown = workers.some((worker) => worker.hubTone && worker.hubTone !== "unknown");
+  const bookingMismatch = muszakproKnown && hubKnown && muszakproRounds !== hubRounds;
   return `
     <details class="schedule-slot-card ${tone}${bookingMismatch ? " booking-mismatch" : ""}" data-schedule-slot="${escapeHtml(scheduleSlotDomKey(slot))}">
       <summary>
