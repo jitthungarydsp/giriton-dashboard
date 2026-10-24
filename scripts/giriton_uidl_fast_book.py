@@ -552,7 +552,28 @@ def main() -> int:
             "open_courier_picker",
             [[add_button, "com.vaadin.shared.ui.button.ButtonServerRpc", "click", [mouse_event(1)]]],
         )
-        search_node, grid_node, select_node, confirm_node = find_picker_parts(picker)
+        # A picker UIDL-válasza néha több részben érkezik meg. Ne tekintsük
+        # hibának az első részleges választ, kérjük le újra rövid várakozással.
+        picker_error = None
+        for picker_attempt in range(1, 4):
+            try:
+                search_node, grid_node, select_node, confirm_node = find_picker_parts(picker)
+                break
+            except RuntimeError as error:
+                picker_error = error
+                if picker_attempt == 3:
+                    raise
+                print(
+                    f"GIRITON_UIDL_PICKER_RETRY attempt={picker_attempt} reason={error}",
+                    file=sys.stderr,
+                )
+                time.sleep(1.0)
+                picker = client.post(
+                    "picker_state_refresh",
+                    [[add_button, "com.vaadin.shared.ui.button.ButtonServerRpc", "click", [mouse_event(1)]]],
+                )
+        else:  # pragma: no cover - a break or raise always occurs above
+            raise picker_error or RuntimeError("A futárválasztó nem töltődött be.")
         search_text = courier_name or email or courier_id
         client.post(
             "courier_search_text",
@@ -563,11 +584,27 @@ def main() -> int:
                 [search_text, len(search_text)],
             ]],
         )
-        rows_payload = client.post(
-            "grid_rows_request",
-            [[grid_node, "com.vaadin.shared.data.DataRequestRpc", "requestRows", [0, 10, 0, 0]]],
-        )
-        row_key = find_courier_row_key(rows_payload, courier_id, courier_name, email)
+        row_key = ""
+        row_error = None
+        for search_attempt in range(1, 4):
+            rows_payload = client.post(
+                "grid_rows_request",
+                [[grid_node, "com.vaadin.shared.data.DataRequestRpc", "requestRows", [0, 10, 0, 0]]],
+            )
+            try:
+                row_key = find_courier_row_key(rows_payload, courier_id, courier_name, email)
+                break
+            except RuntimeError as error:
+                row_error = error
+                if search_attempt == 3:
+                    raise
+                print(
+                    f"GIRITON_UIDL_COURIER_RETRY attempt={search_attempt} reason={error}",
+                    file=sys.stderr,
+                )
+                time.sleep(1.0)
+        if not row_key:  # pragma: no cover - guarded by the raise above
+            raise row_error or RuntimeError("A futárkeresés nem adott találatot.")
         print(f"GIRITON_UIDL_FAST_COURIER_ROW key={row_key}")
         selected_payload = client.post(
             "courier_grid_select",
