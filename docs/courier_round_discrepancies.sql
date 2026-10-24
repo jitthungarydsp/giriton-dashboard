@@ -137,3 +137,115 @@ comment on column public.muszakpro_booking_identity_matches.muszakpro_entry_coun
     'Az adott napon az adott e-mail címmel talált MűszakPro bejegyzések száma';
 
 grant select, insert, update on public.muszakpro_booking_identity_matches to service_role;
+
+-- Élő ellenőrző nézet: a forrásadatokból újraszámolja a napi e-mail-sorokat.
+-- A nézet nem módosít adatot; a materializált naplóba később ugyanennek az
+-- eredménynek a frissített snapshotja írható be.
+
+create or replace view public.vw_muszakpro_booking_identity_matches as
+with booking_rows as (
+    select
+        b.work_date,
+        nullif(trim(b.email), '') as muszakpro_email,
+        lower(regexp_replace(trim(b.email), '\s+', '', 'g')) as normalized_email,
+        count(*)::integer as muszakpro_entry_count,
+        jsonb_agg(
+            jsonb_build_object(
+                'id', b.id,
+                'shift_text', b.shift_text,
+                'warehouse', b.warehouse,
+                'booking_code', b.booking_code,
+                'courier_id', b.courier_id,
+                'courier_name', b.courier_name,
+                'status', b.status,
+                'updated_at', b.updated_at
+            ) order by b.shift_text, b.booking_code, b.id
+        ) as muszakpro_booking_rows
+    from muszakpro.bookings b
+    where b.work_date is not null
+      and nullif(trim(b.email), '') is not null
+      and upper(coalesce(b.status, 'ACTIVE')) not in (
+          'CANCELLED', 'CANCELED', 'TOROLVE', 'TÖRÖLVE',
+          'TOROLT', 'TÖRÖLT', 'DELETED', 'INACTIVE'
+      )
+    group by
+        b.work_date,
+        nullif(trim(b.email), ''),
+        lower(regexp_replace(trim(b.email), '\s+', '', 'g'))
+), robot_match as (
+    select
+        r.*,
+        cm.courier_id::text as robot_courier_id,
+        cm.courier_name as robot_courier_name,
+        cm.email as robot_email,
+        case when cm.courier_id is not null then 'email' else 'unmatched' end as robot_match_method
+    from booking_rows r
+    left join lateral (
+        select cm.*
+        from public.courier_master cm
+        where lower(regexp_replace(trim(coalesce(cm.email, '')), '\s+', '', 'g')) = r.normalized_email
+        order by cm.active desc nulls last, cm.updated_at desc nulls last
+        limit 1
+    ) cm on true
+), hub_match as (
+    select
+        r.*,
+        hi.courier_id::text as hub_courier_id,
+        hi.name_without_identifier as hub_courier_name,
+        hi.email as hub_email,
+        hi.jitt_internal_id as hub_robot_id,
+        hi.warehouse_code as hub_warehouse,
+        case
+            when hi.courier_id is not null and hi.courier_id::text = r.robot_courier_id then 'courier_id'
+            when hi.email is not null and lower(regexp_replace(trim(hi.email), '\s+', '', 'g')) = r.normalized_email then 'email'
+            when hi.name_without_identifier is not null then 'name'
+            else 'unmatched'
+        end as hub_match_method
+    from robot_match r
+    left join lateral (
+        select hi.*
+        from public.courier_hub_courier_identity_raw hi
+        where (
+            r.robot_courier_id is not null
+            and hi.courier_id::text = r.robot_courier_id
+        ) or (
+            hi.email is not null
+            and lower(regexp_replace(trim(hi.email), '\s+', '', 'g')) = r.normalized_email
+        ) or (
+            r.robot_courier_name is not null
+            and lower(regexp_replace(trim(coalesce(hi.name_without_identifier, '')), '\s+', '', 'g')) =
+                lower(regexp_replace(trim(r.robot_courier_name), '\s+', '', 'g'))
+        )
+        order by
+            case when r.robot_courier_id is not null and hi.courier_id::text = r.robot_courier_id then 0 else 1 end,
+            case when lower(regexp_replace(trim(coalesce(hi.email, '')), '\s+', '', 'g')) = r.normalized_email then 0 else 1 end,
+            hi.last_seen_at desc nulls last
+        limit 1
+    ) hi on true
+)
+select
+    work_date,
+    muszakpro_email,
+    normalized_email,
+    muszakpro_entry_count,
+    muszakpro_booking_rows,
+    nullif(hub_robot_id, '') as robot_id,
+    robot_courier_id,
+    robot_courier_name,
+    robot_email,
+    hub_courier_id,
+    hub_courier_name,
+    hub_email,
+    hub_robot_id,
+    hub_warehouse,
+    robot_match_method,
+    hub_match_method,
+    case
+        when robot_courier_id is not null and hub_courier_id is not null then 'matched'
+        when robot_courier_id is not null or hub_courier_id is not null then 'partial'
+        when muszakpro_email is not null then 'unmatched'
+        else 'ambiguous'
+    end as match_status
+from hub_match;
+
+grant select on public.vw_muszakpro_booking_identity_matches to service_role;
