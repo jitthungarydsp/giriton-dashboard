@@ -200,7 +200,8 @@ with booking_rows as (
             when hi.email is not null and lower(regexp_replace(trim(hi.email), '\s+', '', 'g')) = r.normalized_email then 'email'
             when hi.name_without_identifier is not null then 'name'
             else 'unmatched'
-        end as hub_match_method
+        end as hub_match_method,
+        hub_counts.hub_shift_count
     from robot_match r
     left join lateral (
         select hi.*
@@ -222,12 +223,27 @@ with booking_rows as (
             hi.last_seen_at desc nulls last
         limit 1
     ) hi on true
+    left join lateral (
+        select count(distinct coalesce(hb.block_key, concat_ws('|', hb.shift_template_id::text, hb.slot_from::text)))::integer as hub_shift_count
+        from public.courier_hub_shift_bookings_raw hb
+        where hb.work_date = r.work_date
+          and hb.active is true
+          and (
+              (hi.courier_id is not null and hb.courier_id = hi.courier_id)
+              or (hi.jitt_internal_id is not null and hb.jitt_internal_id = hi.jitt_internal_id)
+              or (
+                  hb.email is not null
+                  and lower(regexp_replace(trim(hb.email), '\\s+', '', 'g')) = r.normalized_email
+              )
+          )
+    ) hub_counts on true
 )
 select
     work_date,
     muszakpro_email,
     normalized_email,
     muszakpro_entry_count,
+    hub_shift_count,
     muszakpro_booking_rows,
     nullif(hub_robot_id, '') as robot_id,
     robot_courier_id,
