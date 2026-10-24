@@ -5143,6 +5143,14 @@ def live_ops_courier_payload(
     checkins_by_courier: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     courier_id = str(row.get("courier_id") or "").strip()
+    courier_json = row.get("courier_json")
+    if isinstance(courier_json, str):
+        try:
+            courier_json = json.loads(courier_json)
+        except json.JSONDecodeError:
+            courier_json = {}
+    if not isinstance(courier_json, dict):
+        courier_json = {}
     route_ids = live_map_route_ids(row.get("route_ids"))
     stop_summary = live_map_stop_summary(stop_rows_by_courier.get(courier_id, []), route_ids)
     total_stops = safe_int(row.get("stops_total")) or len(stop_summary["stops"])
@@ -5184,6 +5192,9 @@ def live_ops_courier_payload(
         "shiftStatus": str(row.get("shift_status") or ""),
         "routeIds": route_ids,
         "activeRouteId": route_ids[0] if route_ids else "",
+        "cargoRouteId": str(courier_json.get("cargoRouteId") or courier_json.get("cargo_route_id") or (route_ids[0] if route_ids else "")),
+        "routeExternalId": str(courier_json.get("routeExternalId") or courier_json.get("route_external_id") or ""),
+        "plannedKm": safe_float_value(courier_json.get("plannedKm") or courier_json.get("planned_km")),
         "vehiclePlate": str(row.get("vehicle_plate") or ""),
         "fridgeConfig": str(row.get("fridge_config") or ""),
         "temperatureCelsius": safe_float_value(row.get("temperature_celsius")),
