@@ -807,6 +807,30 @@ def book_one(
     log_payload = dict(match_log_payload)
     log_payload["hubResponse"] = payload
     if response.ok:
+        # A HUB 200-as válasz üzleti elutasítást is tartalmazhat. A tömeges
+        # foglalási ágban is ugyanúgy kezeljük, mint az önálló API-szkriptben,
+        # hogy az OVERLAP sor Giriton-fallback jelöltté váljon.
+        decisions = payload.get("results") if isinstance(payload, dict) else None
+        rejected = [
+            item for item in (decisions or [])
+            if isinstance(item, dict) and clean_text(item.get("decision")).upper() == "REJECTED"
+        ]
+        if rejected:
+            reason = clean_text(rejected[0].get("reason")).casefold() or "unknown"
+            log_result(
+                log_args,
+                f"HUB_API_REJECTED_{reason.upper()}",
+                f"Hub API rejected booking: {reason}",
+                log_payload,
+            )
+            print(
+                "HUB_API_BOOK_REJECTED "
+                f"status={response.status_code} date={row.work_date} courier={row.courier_id} "
+                f"warehouse={row.warehouse} muszakpro_slot={row.shift_start} "
+                f"hub_slot={block.slot_from} template={block.shift_template_id} reason={reason}",
+                flush=True,
+            )
+            raise HubApiBookingRejected(reason, payload)
         log_result(log_args, "COURIER_ADDED", "HUB_JOB_AUTOBOOKING API booking accepted.", log_payload)
         print(
             "HUB_JOB_AUTOBOOKING_BOOKED "
