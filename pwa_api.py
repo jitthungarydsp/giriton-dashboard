@@ -5785,6 +5785,23 @@ def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]
     ]
 
 
+def read_schedule_booking_identity_matches(start: date, end: date) -> list[dict[str, Any]]:
+    """Read the persisted daily MuszakPro/Hub identity reconciliation snapshot."""
+    return optional_supabase_rows(
+        "muszakpro_booking_identity_matches",
+        params={
+            "select": (
+                "work_date,muszakpro_entry_count,hub_shift_count,robot_courier_id,"
+                "hub_courier_id,match_status,robot_match_method,hub_match_method"
+            ),
+            "work_date": supabase_work_date_filter(start, end),
+            "order": "work_date.asc",
+            "limit": "20000",
+        },
+        timeout=40,
+    )
+
+
 def schedule_capacity_source_key(row: dict[str, Any]) -> tuple[str, int, int]:
     day_key = str(row.get("work_date") or "")[:10]
     warehouse_id = warehouse_id_for_hub(row.get("warehouse_id") or row.get("warehouse_code"))
@@ -6379,6 +6396,50 @@ def attach_schedule_daily_shift_counts(workers: list[dict[str, Any]]) -> None:
         worker["dailyHubShiftCount"] = len(
             hub_shifts_by_worker.get((day, identity), set())
         )
+
+
+def attach_schedule_identity_match_counts(
+    workers: list[dict[str, Any]],
+    match_rows: list[dict[str, Any]],
+) -> None:
+    """Prefer the DB reconciliation counts when a courier identity is known."""
+    by_day_courier: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in match_rows or []:
+        day = str(row.get("work_date") or "")[:10]
+        if not day:
+            continue
+        identities = {
+            str(row.get("robot_courier_id") or "").strip(),
+            str(row.get("hub_courier_id") or "").strip(),
+        }
+        identities.discard("")
+        for courier_id in identities:
+            key = (day, courier_id)
+            current = by_day_courier.setdefault(
+                key,
+                {"muszakpro": 0, "hub": None, "status": "unmatched", "robotMethod": "unmatched", "hubMethod": "unmatched"},
+            )
+            current["muszakpro"] += safe_int(row.get("muszakpro_entry_count"))
+            if row.get("hub_shift_count") is not None:
+                current["hub"] = safe_int(row.get("hub_shift_count"))
+            current["status"] = str(row.get("match_status") or current["status"])
+            current["robotMethod"] = str(row.get("robot_match_method") or current["robotMethod"])
+            current["hubMethod"] = str(row.get("hub_match_method") or current["hubMethod"])
+
+    for worker in workers:
+        day = str(worker.get("date") or "")[:10]
+        courier_id = str(worker.get("courierId") or "").strip()
+        match = by_day_courier.get((day, courier_id)) if day and courier_id else None
+        if not match:
+            continue
+        worker["dailyMuszakproShiftCount"] = int(match["muszakpro"])
+        if match["hub"] is not None:
+            worker["dailyHubShiftCount"] = int(match["hub"])
+        worker["identityMatchStatus"] = match["status"]
+        worker["identityMatchMethods"] = {
+            "robot": match["robotMethod"],
+            "hub": match["hubMethod"],
+        }
 
 
 def attach_schedule_slot_daily_shift_counts(slots_by_day: dict[str, list[dict[str, Any]]]) -> None:
@@ -7306,6 +7367,8 @@ def read_coordinator_schedule(
         attach_schedule_attendance_statuses(workers, detail_start)
         route_counts = attach_schedule_daily_route_counts(workers, detail_start, warehouse_ids, fast=fast_detail)
         attach_schedule_daily_shift_counts(workers)
+        identity_match_rows = read_schedule_booking_identity_matches(detail_start, detail_end)
+        attach_schedule_identity_match_counts(workers, identity_match_rows)
         for row in slot_rows:
             if not warehouse_allowed(row.get("warehouse_code") or row.get("warehouse_id"), warehouse_ids):
                 continue
@@ -7346,6 +7409,13 @@ def read_coordinator_schedule(
         )
         attach_schedule_slot_daily_route_counts(slots_by_day, route_counts)
         attach_schedule_slot_daily_shift_counts(slots_by_day)
+        slot_workers = [
+            worker
+            for day_slots in slots_by_day.values()
+            for slot in day_slots
+            for worker in slot.get("workers") or []
+        ]
+        attach_schedule_identity_match_counts(slot_workers, identity_match_rows)
         if not fast_detail:
             attach_schedule_slot_recommendations(slots_by_day, workers)
 
