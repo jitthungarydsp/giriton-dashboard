@@ -224,7 +224,10 @@ with booking_rows as (
         limit 1
     ) hi on true
     left join lateral (
-        select count(distinct coalesce(hb.block_key, concat_ws('|', hb.shift_template_id::text, hb.slot_from::text)))::integer as hub_shift_count
+        select case
+            when hi.courier_id is null and hi.jitt_internal_id is null then null
+            else count(distinct coalesce(hb.block_key, concat_ws('|', hb.shift_template_id::text, hb.slot_from::text)))::integer
+        end as hub_shift_count
         from public.courier_hub_shift_bookings_raw hb
         where hb.work_date = r.work_date
           and hb.active is true
