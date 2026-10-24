@@ -8032,6 +8032,11 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
         attendance_by_key = attendance_future.result()
         comparison_rows = comparison_future.result()
     live_by_courier = {str(item.get("courierId") or ""): item for item in live_map.get("couriers", [])}
+    live_by_name = {
+        normalize_person_match_text(item.get("courierName")): item
+        for item in live_map.get("couriers", [])
+        if normalize_person_match_text(item.get("courierName"))
+    }
     if comparison_rows:
         scheduled_workers = [schedule_worker_from_comparison(row) for row in comparison_rows]
         if warehouse_ids:
@@ -8092,7 +8097,14 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
         schedule_worker = ordered_shifts[0]
         shifts = [today_worker_shift_payload(worker) for worker in ordered_shifts]
         courier_id = str(schedule_worker.get("courierId") or "").strip()
-        live = live_by_courier.get(courier_id) or {}
+        live = live_by_courier.get(courier_id) or live_by_name.get(
+            normalize_person_match_text(schedule_worker.get("courierName"))
+        ) or {}
+        # Egyes importált beosztássorokból hiányzik a courier_id. Ha a név
+        # alapján találtunk élő Hub-sort, annak ID-ja legyen a további
+        # részletező lekérések kulcsa.
+        if not courier_id:
+            courier_id = str(live.get("courierId") or "").strip()
         route_detail = today_worker_route_detail(courier_id, live, detail_by_courier.get(courier_id))
         checkin = checkins_by_courier.get(courier_id) or {}
         vehicle_payload = today_worker_vehicle_payload(schedule_worker.get("vehicle"), live, route_detail)
