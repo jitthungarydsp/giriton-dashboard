@@ -9891,6 +9891,8 @@ function renderScheduleSlotBookingPrep(slot = {}, day = {}) {
 function renderScheduleSlotDetails(slot = {}, day = {}) {
   const workers = slot.workers || [];
   const workerRoundCount = (worker = {}) => {
+    const dailyRoutes = Number(worker.dailyRouteCount || 0);
+    if (dailyRoutes > 0) return dailyRoutes;
     const text = `${worker.shiftName || ""} ${worker.bookingCode || ""}`.toLocaleLowerCase("hu-HU");
     const match = text.match(/(\d+)\s*[- ]?\s*kör/);
     return match ? Math.max(1, Number(match[1])) : 1;
@@ -9965,6 +9967,8 @@ function renderScheduleSlotCard(slot = {}, day = {}) {
   const routeAlert = renderScheduleSlotRouteAlert(slot);
   const workers = slot.workers || [];
   const rounds = (worker) => {
+    const dailyRoutes = Number(worker.dailyRouteCount || 0);
+    if (dailyRoutes > 0) return dailyRoutes;
     const text = `${worker.shiftName || ""} ${worker.bookingCode || ""}`.toLocaleLowerCase("hu-HU");
     const match = text.match(/(\d+)\s*[- ]?\s*kör/);
     return match ? Math.max(1, Number(match[1])) : 1;
