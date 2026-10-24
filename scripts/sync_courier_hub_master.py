@@ -342,20 +342,31 @@ def is_missing_table_error(error: Exception) -> bool:
     )
 
 
-def supabase_upsert(rows: list[dict[str, Any]]) -> int:
+def supabase_upsert(rows: list[dict[str, Any]], *, chunk_size: int = 250) -> int:
     if not rows:
         return 0
 
     supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    response = requests.post(
-        f"{supabase_url}/rest/v1/courier_hub_master",
-        headers=supabase_headers("resolution=merge-duplicates,return=minimal"),
-        params={"on_conflict": "courier_id,warehouse_id,dsp_id,roster_date"},
-        json=rows,
-        timeout=60,
-    )
-    raise_for_response(response, "courier_hub_master upsert")
-    return len(rows)
+    endpoint = f"{supabase_url}/rest/v1/courier_hub_master"
+    chunk_size = max(int(chunk_size), 1)
+    written = 0
+    for index in range(0, len(rows), chunk_size):
+        chunk = rows[index:index + chunk_size]
+        response = requests.post(
+            endpoint,
+            headers=supabase_headers("resolution=merge-duplicates,return=minimal"),
+            params={"on_conflict": "courier_id,warehouse_id,dsp_id,roster_date"},
+            json=chunk,
+            timeout=60,
+        )
+        raise_for_response(response, "courier_hub_master upsert")
+        written += len(chunk)
+        print(
+            f"COURIER_HUB_MASTER_UPSERT progress={written}/{len(rows)} "
+            f"chunk_size={chunk_size}",
+            flush=True,
+        )
+    return written
 
 
 def dedupe_rows(rows: list[dict[str, Any]], key_columns: list[str]) -> list[dict[str, Any]]:
@@ -470,7 +481,11 @@ def main() -> int:
         )
         return 1 if failures else 0
 
-    written = supabase_upsert(rows)
+    master_chunk_size = max(
+        int(os.getenv("COURIER_HUB_MASTER_UPSERT_CHUNK_SIZE") or "250"),
+        1,
+    )
+    written = supabase_upsert(rows, chunk_size=master_chunk_size)
     identities_written = 0
     try:
         identities_written = supabase_upsert_identities(identity_rows_deduped)
