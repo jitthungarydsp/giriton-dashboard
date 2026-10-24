@@ -214,56 +214,13 @@ jobs:
 
           "${CMD[@]}"
 
-      - name: HUB_JOB_AUTOBOOKING build Giriton fallback candidates
+      - name: HUB_JOB_AUTOBOOKING export OVERLAP Excel
+        if: always()
         shell: bash
         run: |
-          python scripts/build_hub_autobooking_giriton_fallback.py \
+          python scripts/export_hub_overlap_failures_xlsx.py \
             --input results/hub-job-autobooking/failures.json \
-            --output results/hub-job-autobooking/giriton-fallback-candidates.json
-
-      - name: HUB_JOB_AUTOBOOKING build OVERLAP Giriton candidates
-        shell: bash
-        run: |
-          python scripts/build_hub_autobooking_giriton_fallback.py \
-            --input results/hub-job-autobooking/failures.json \
-            --reason-token hub_api_rejected_overlap \
-            --output results/hub-job-autobooking/giriton-overlap-candidates.json
-
-      - name: HUB_JOB_AUTOBOOKING run OVERLAP Giriton fallback
-        shell: bash
-        run: |
-          CMD=(
-            python scripts/run_shift_auto_booking_candidates.py
-            --candidate-file results/hub-job-autobooking/giriton-overlap-candidates.json
-            --output-root results/hub-job-autobooking/giriton-overlap
-            --phase hub-overlap-fallback
-            --engine uidl
-            --continue-on-error
-          )
-
-          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
-            CMD+=(--dry-run)
-          fi
-
-          "${CMD[@]}"
-
-      - name: HUB_JOB_AUTOBOOKING run old Giriton fallback
-        shell: bash
-        run: |
-          CMD=(
-            python scripts/run_shift_auto_booking_candidates.py
-            --candidate-file results/hub-job-autobooking/giriton-fallback-candidates.json
-            --output-root results/hub-job-autobooking/giriton-fallback
-            --phase hub-fallback
-            --engine robot
-            --continue-on-error
-          )
-
-          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
-            CMD+=(--dry-run)
-          fi
-
-          "${CMD[@]}"
+            --output results/hub-job-autobooking/hub-overlap-failures.xlsx
 
       - name: HUB_JOB_AUTOBOOKING refresh PWA schedule capacity calendar
         if: ${{ steps.window.outputs.dry_run == 'true' }}
@@ -369,13 +326,13 @@ jobs:
             echo "## HUB_JOB_AUTOBOOKING"
             echo ""
             echo "- Engine: Courier Hub API"
-            echo "- Rule: one courier-day is booked only when every MuszakPro shift has an exact or alternative HUB block with free capacity, and the shifts are at least the configured gap apart."
+            echo "- Rule: one courier-day is booked only when every MuszakPro shift has an exact HUB block with free capacity, and the shifts are at least the configured gap apart."
             echo "- Priority: MuszakPro booking timestamp, earliest first."
             echo "- Window start: ${{ steps.window.outputs.start_date }}"
             echo "- Window end: ${{ steps.window.outputs.end_date }}"
             echo "- Days: ${{ steps.window.outputs.days }}"
             echo "- Max courier-days: ${{ steps.window.outputs.max_courier_days }}"
-            echo "- Alternative tolerance minutes: ${{ steps.window.outputs.tolerance_minutes }}"
+            echo "- Alternative tolerance minutes: disabled"
             echo "- Minimum gap minutes: ${{ steps.window.outputs.min_gap_minutes }}"
             echo "- Dry run: ${{ steps.window.outputs.dry_run }}"
           } >> "$GITHUB_STEP_SUMMARY"
