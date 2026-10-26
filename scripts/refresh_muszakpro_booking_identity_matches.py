@@ -80,6 +80,10 @@ def persist_rows(rows: list[dict[str, Any]], dry_run: bool = False) -> int:
             "muszakpro_email": row.get("muszakpro_email"),
             "normalized_email": row.get("normalized_email"),
             "muszakpro_entry_count": row.get("muszakpro_entry_count") or 0,
+            # Keep the live Hub count from the reconciliation view.  The PWA
+            # uses this persisted value for the daily MűszakPro-vs-Hub
+            # comparison and the red mismatch indicator.
+            "hub_shift_count": row.get("hub_shift_count"),
             "muszakpro_booking_rows": row.get("muszakpro_booking_rows") or [],
             "robot_id": row.get("robot_id"),
             "robot_courier_id": row.get("robot_courier_id"),
