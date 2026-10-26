@@ -422,6 +422,35 @@ def response_contains_selected(payload: Any) -> bool:
     return any("Selected 1" in clean(node.get("text")) for node in state.values())
 
 
+def courier_search_candidates(courier_id: str, courier_name: str, email: str) -> list[str]:
+    """Return the Hub/Giriton identity forms in the safest search order.
+
+    Courier Hub stores names both without an identifier (``Nagy István``)
+    and with the numeric identifier in the middle (``Nagy 7725 István``).
+    Giriton may index either form, so a failed name search must fall back to
+    the display-name variant and finally the stable D/number identifier.
+    """
+    candidates: list[str] = []
+
+    def add(value: str) -> None:
+        value = clean(value)
+        if value and value.casefold() not in {item.casefold() for item in candidates}:
+            candidates.append(value)
+
+    add(courier_name)
+    if courier_name and courier_id:
+        parts = courier_name.split()
+        if len(parts) >= 2:
+            middle = " ".join(parts[1:])
+            add(f"{parts[0]} {courier_id} {middle}")
+            add(f"{parts[0]} D{courier_id} {middle}")
+    if courier_id:
+        add(f"D{courier_id}")
+        add(courier_id)
+    add(email)
+    return candidates
+
+
 def response_mentions_courier(payload: Any, courier_id: str, courier_name: str, email: str) -> bool:
     text = json.dumps(payload, ensure_ascii=False)
     folded = fold_text(text)
@@ -574,35 +603,39 @@ def main() -> int:
                 )
         else:  # pragma: no cover - a break or raise always occurs above
             raise picker_error or RuntimeError("A futárválasztó nem töltődött be.")
-        search_text = courier_name or email or courier_id
-        client.post(
-            "courier_search_text",
-            [[
-                search_node,
-                "com.vaadin.shared.ui.textfield.AbstractTextFieldServerRpc",
-                "setText",
-                [search_text, len(search_text)],
-            ]],
-        )
         row_key = ""
         row_error = None
-        for search_attempt in range(1, 4):
-            rows_payload = client.post(
-                "grid_rows_request",
-                [[grid_node, "com.vaadin.shared.data.DataRequestRpc", "requestRows", [0, 10, 0, 0]]],
+        search_candidates = courier_search_candidates(courier_id, courier_name, email)
+        for search_text in search_candidates:
+            print(f"GIRITON_UIDL_COURIER_SEARCH term={search_text}")
+            client.post(
+                "courier_search_text",
+                [[
+                    search_node,
+                    "com.vaadin.shared.ui.textfield.AbstractTextFieldServerRpc",
+                    "setText",
+                    [search_text, len(search_text)],
+                ]],
             )
-            try:
-                row_key = find_courier_row_key(rows_payload, courier_id, courier_name, email)
-                break
-            except RuntimeError as error:
-                row_error = error
-                if search_attempt == 3:
-                    raise
-                print(
-                    f"GIRITON_UIDL_COURIER_RETRY attempt={search_attempt} reason={error}",
-                    file=sys.stderr,
+            for search_attempt in range(1, 4):
+                rows_payload = client.post(
+                    "grid_rows_request",
+                    [[grid_node, "com.vaadin.shared.data.DataRequestRpc", "requestRows", [0, 10, 0, 0]]],
                 )
-                time.sleep(1.0)
+                try:
+                    row_key = find_courier_row_key(rows_payload, courier_id, courier_name, email)
+                    break
+                except RuntimeError as error:
+                    row_error = error
+                    if search_attempt == 3:
+                        break
+                    print(
+                        f"GIRITON_UIDL_COURIER_RETRY term={search_text} attempt={search_attempt} reason={error}",
+                        file=sys.stderr,
+                    )
+                    time.sleep(1.0)
+            if row_key:
+                break
         if not row_key:  # pragma: no cover - guarded by the raise above
             raise row_error or RuntimeError("A futárkeresés nem adott találatot.")
         print(f"GIRITON_UIDL_FAST_COURIER_ROW key={row_key}")
