@@ -248,6 +248,27 @@ jobs:
             --start-date "${{ inputs.start_date }}" \
             --end-date "${{ inputs.end_date }}"
 
+      - name: Refresh Giriton data for PWA after UIDL booking
+        if: ${{ inputs.booking_engine == 'uidl' && inputs.dry_run != 'true' && success() }}
+        shell: bash
+        run: |
+          # A successful UIDL booking changes Giriton's shift list, but the
+          # PWA reads the persisted raw export/comparison tables. Refresh the
+          # booked day immediately so the new Giriton state is visible there.
+          python scripts/live_giriton_shift_list.py \
+            --start-date "${{ inputs.start_date }}" \
+            --days 1 \
+            --source uidl \
+            --fast-uidl \
+            --uidl-dir results/giriton-auto-booking/uidl-refresh-trace \
+            --csv results/giriton-auto-booking/giriton-live-shifts-refresh.csv \
+            --continue-on-day-error \
+            --write-raw-export
+
+          python scripts/refresh_shift_comparison.py \
+            --start-date "${{ inputs.start_date }}" \
+            --days 1
+
       - name: Upload Robot artifacts
         if: always()
         uses: actions/upload-artifact@v4
