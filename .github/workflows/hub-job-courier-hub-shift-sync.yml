@@ -37,7 +37,10 @@ concurrency:
 jobs:
   HUB_JOB_courier_hub_sync:
     name: HUB_JOB Courier Hub full sync
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # A törlési job részleges törlési hibával is módosíthatott foglalásokat és
+    # státuszokat, ezért ilyenkor is kell a Hub/PWA/összehasonlítás frissítése.
+    # Megszakított (cancelled) futás után ne indítsunk újabb teljes szinkront.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
