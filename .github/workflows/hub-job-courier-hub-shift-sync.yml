@@ -26,6 +26,9 @@ on:
   schedule:
     # GitHub cron UTC-ben fut. A Courier Hub teljes szinkron óránként indul.
     - cron: "7 * * * *"
+  workflow_run:
+    workflows: ["HUB_JOB_AUTODELETE"]
+    types: [completed]
 
 concurrency:
   group: hub-job-courier-hub-sync
@@ -34,6 +37,7 @@ concurrency:
 jobs:
   HUB_JOB_courier_hub_sync:
     name: HUB_JOB Courier Hub full sync
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
