@@ -137,6 +137,7 @@ jobs:
             echo "- Sheet: KULSO_TORLES_LOG gid=965356959"
             echo "- Pending status: TÖRLÉSRE_VAR"
             echo "- Success writeback: F oszlop = törölve"
+            echo "- No active booking writeback: F oszlop = nincs aktív foglalás"
             echo "- Dry run: ${{ inputs.dry_run }}"
             echo "- Manual date: ${{ inputs.manual_work_date }}"
             echo "- Manual shift: ${{ inputs.manual_shift }}"
