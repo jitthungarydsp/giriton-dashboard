@@ -337,6 +337,18 @@ jobs:
             echo "- Dry run: ${{ steps.window.outputs.dry_run }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: HUB_JOB_AUTOBOOKING write run configuration
+        if: always()
+        shell: bash
+        run: |
+          cat > results/hub-job-autobooking/run-config.json <<EOF
+          {
+            "dry_run": "${{ steps.window.outputs.dry_run }}",
+            "start_date": "${{ steps.window.outputs.start_date }}",
+            "end_date": "${{ steps.window.outputs.end_date }}"
+          }
+          EOF
+
       - name: Upload HUB_JOB_AUTOBOOKING artifacts
         if: always()
         uses: actions/upload-artifact@v4

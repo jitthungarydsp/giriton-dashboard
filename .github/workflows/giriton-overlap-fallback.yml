@@ -80,14 +80,20 @@ jobs:
             --output-dir results/giriton-overlap-fallback \
             --trace-dir results/giriton-overlap-fallback/uidl-trace)
           if [ -n "${{ inputs.max_items }}" ]; then CMD+=(--max-items "${{ inputs.max_items }}"); fi
-          if [ "${{ inputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          SOURCE_DRY_RUN="$(python -c 'import json; from pathlib import Path; p=Path("results/hub-job-autobooking/run-config.json"); print(json.loads(p.read_text()).get("dry_run", "false") if p.exists() else "false")')"
+          if [ "${{ inputs.dry_run }}" = "true" ] || [ "$SOURCE_DRY_RUN" = "true" ]; then CMD+=(--dry-run); fi
           echo "Running: ${CMD[*]}"
           "${CMD[@]}"
 
       - name: Sync ROBOTLOG sheet
-        if: ${{ inputs.dry_run != 'true' }}
+        if: always()
         shell: bash
         run: |
+          DRY_RUN="$(python -c 'import json; from pathlib import Path; print(str(json.loads(Path("results/giriton-overlap-fallback/summary.json").read_text()).get("dry_run", False)).lower())')"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run; ROBOTLOG sync skipped."
+            exit 0
+          fi
           COUNT="$(python -c 'import json; from pathlib import Path; print(json.loads(Path("results/giriton-overlap-fallback/summary.json").read_text())["candidate_count"])')"
           if [ "$COUNT" = "0" ]; then
             echo "No OVERLAP candidates; ROBOTLOG sync skipped."
@@ -162,6 +168,11 @@ jobs:
               print(min(dates), max(dates), len(dates))
           PY
           )
+          DRY_RUN="$(python -c 'import json; from pathlib import Path; print(str(json.loads(Path("results/giriton-overlap-fallback/summary.json").read_text()).get("dry_run", False)).lower())')"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run; Hub/PWA refresh skipped."
+            exit 0
+          fi
           if [ "$COUNT" = "0" ] || [ -z "$START_DATE" ] || [ -z "$END_DATE" ]; then
             echo "No Giriton fallback candidates; Hub/PWA refresh skipped."
             exit 0
