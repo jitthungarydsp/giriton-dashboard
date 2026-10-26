@@ -443,7 +443,6 @@ def courier_search_candidates(courier_id: str, courier_name: str, email: str) ->
         if len(parts) >= 2:
             middle = " ".join(parts[1:])
             add(f"{parts[0]} {courier_id} {middle}")
-            add(f"{parts[0]} D{courier_id} {middle}")
     if courier_id:
         add(f"D{courier_id}")
         add(courier_id)
