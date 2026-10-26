@@ -103,3 +103,92 @@ jobs:
         with:
           name: giriton-overlap-fallback-results
           path: results/giriton-overlap-fallback
+
+  refresh_hub_after_giriton:
+    name: Refresh Hub and PWA after Giriton fallback
+    needs: fallback
+    if: ${{ needs.fallback.result == 'success' && (github.event_name == 'workflow_run' || inputs.dry_run != 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
+      COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      COURIER_HUB_AUTH_CACHE_FILE: /tmp/giriton-overlap-hub-auth.json
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/giriton-overlap-hub-auth.json --debug-dir results/giriton-overlap-after-hub/auth
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download fallback summary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ github.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --name giriton-overlap-fallback-results \
+            --dir results/giriton-overlap-fallback
+          test -f results/giriton-overlap-fallback/summary.json
+
+      - name: Refresh Hub tables and PWA comparison
+        shell: bash
+        run: |
+          read -r START_DATE END_DATE COUNT < <(python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("results/giriton-overlap-fallback/summary.json").read_text())
+          dates = [str(row["date"]) for row in data.get("results", []) if row.get("date")]
+          if not dates:
+              print("  0")
+          else:
+              print(min(dates), max(dates), len(dates))
+          PY
+          )
+          if [ "$COUNT" = "0" ] || [ -z "$START_DATE" ] || [ -z "$END_DATE" ]; then
+            echo "No Giriton fallback candidates; Hub/PWA refresh skipped."
+            exit 0
+          fi
+
+          python scripts/refresh_ops_shift_comparison_from_hub.py \
+            --start-date "$START_DATE" \
+            --end-date "$END_DATE" \
+            --warehouse-ids "1,2" \
+            --dsp-id 8 \
+            --limit 100 \
+            --output-dir results/giriton-overlap-after-hub/shift-auto-candidates
+
+          python scripts/refresh_pwa_schedule_capacity_calendar.py \
+            --warehouse-ids "1,2" \
+            --dsp-id 8 \
+            --start-date "$START_DATE" \
+            --end-date "$END_DATE" \
+            --refresh-source "GIRITON_OVERLAP_AFTER_HUB_REFRESH"
+
+          python scripts/refresh_muszakpro_booking_identity_matches.py \
+            --start-date "$START_DATE" \
+            --end-date "$END_DATE"
+
+      - name: Upload Hub refresh artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: giriton-overlap-after-hub-refresh-results
+          path: results/giriton-overlap-after-hub
