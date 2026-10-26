@@ -112,6 +112,10 @@ create table if not exists public.muszakpro_booking_identity_matches (
         check (match_status in ('matched', 'partial', 'unmatched', 'ambiguous'))
 );
 
+-- A meglévő telepítéseken is biztosítsuk a Hub-műszakkörök mentését.
+alter table public.muszakpro_booking_identity_matches
+    add column if not exists hub_shift_count integer;
+
 create index if not exists idx_muszakpro_booking_identity_matches_date
     on public.muszakpro_booking_identity_matches (work_date);
 
