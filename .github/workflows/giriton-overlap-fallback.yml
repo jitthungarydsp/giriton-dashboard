@@ -1,0 +1,105 @@
+name: GIRITON_OVERLAP_FALLBACK
+
+on:
+  workflow_run:
+    workflows: ["HUB_JOB_AUTOBOOKING"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Opcionális HUB_JOB_AUTOBOOKING run ID újrafeldolgozáshoz"
+        required: true
+        default: ""
+      max_items:
+        description: "Maximális OVERLAP jelölt; üresen mind"
+        required: false
+        default: ""
+      dry_run:
+        description: "true = csak ellenőrzés, false = éles Giriton foglalás"
+        required: true
+        default: "false"
+
+concurrency:
+  group: giriton-overlap-fallback-${{ github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  fallback:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GIRITON_USER: ${{ secrets.GIRITON_USER }}
+      GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate secrets
+        shell: bash
+        run: |
+          test -n "$GIRITON_USER" || (echo "Missing GIRITON_USER secret" && exit 1)
+          test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
+
+      - name: Download Hub overlap artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID="${{ github.event.workflow_run.id || inputs.source_run_id }}"
+          test -n "$RUN_ID" || (echo "Missing source HUB_JOB_AUTOBOOKING run ID" && exit 1)
+          gh run download "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name hub-job-autobooking-results \
+            --dir results/hub-job-autobooking
+          test -f results/hub-job-autobooking/failures.json
+
+      - name: Run Giriton overlap fallback batch
+        shell: bash
+        run: |
+          CMD=(python scripts/run_giriton_overlap_fallback.py \
+            --input results/hub-job-autobooking/failures.json \
+            --output-dir results/giriton-overlap-fallback \
+            --trace-dir results/giriton-overlap-fallback/uidl-trace)
+          if [ -n "${{ inputs.max_items }}" ]; then CMD+=(--max-items "${{ inputs.max_items }}"); fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Sync ROBOTLOG sheet
+        if: ${{ inputs.dry_run != 'true' }}
+        shell: bash
+        run: |
+          COUNT="$(python -c 'import json; from pathlib import Path; print(json.loads(Path("results/giriton-overlap-fallback/summary.json").read_text())["candidate_count"])')"
+          if [ "$COUNT" = "0" ]; then
+            echo "No OVERLAP candidates; ROBOTLOG sync skipped."
+            exit 0
+          fi
+          python scripts/sync_giriton_robotlog_sheet.py \
+            --start-date "$(python -c 'import json; from pathlib import Path; d=json.loads(Path("results/giriton-overlap-fallback/summary.json").read_text()); print(min((x["date"] for x in d["results"]), default=""))')" \
+            --end-date "$(python -c 'import json; from pathlib import Path; d=json.loads(Path("results/giriton-overlap-fallback/summary.json").read_text()); print(max((x["date"] for x in d["results"]), default=""))')"
+
+      - name: Upload overlap fallback artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: giriton-overlap-fallback-results
+          path: results/giriton-overlap-fallback
