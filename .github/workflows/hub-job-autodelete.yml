@@ -8,9 +8,9 @@ on:
         required: false
         default: "false"
       limit:
-        description: "Maximum feldolgozandó TÖRLÉSRE_VAR sor."
+        description: "Maximum feldolgozandó TÖRLÉSRE_VAR sor. A teljes Sheethez 1000-es keret van beállítva."
         required: false
-        default: "100"
+        default: "1000"
       manual_work_date:
         description: "Teszt kézi törlés dátuma, pl. 2026-10-09. Ha üres, a sheetből olvas."
         required: false
