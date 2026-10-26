@@ -1,0 +1,48 @@
+name: DB change watcher
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
+
+concurrency:
+  group: db-change-watcher
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  detect:
+    name: Detect recent database changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Check database changes
+        id: changes
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/check_db_changes.py --window-minutes 10
+
+      - name: Start Hub/PWA refresh
+        if: ${{ steps.changes.outputs.changed == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run hub-job-courier-hub-shift-sync.yml \
+            --repo "${{ github.repository }}" \
+            --ref main \
+            -f start_date="$(TZ=Europe/Budapest date +%Y-%m-01)" \
+            -f dry_run=false
