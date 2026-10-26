@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import requests
+
+from resources.supabase_raw import get_supabase_config
+
 
 def clean(value: Any) -> str:
     return str(value or "").strip()
@@ -48,6 +52,67 @@ def read_candidates(path: Path) -> list[dict[str, Any]]:
     return candidates
 
 
+def enrich_candidates_from_hub_identity(candidates: list[dict[str, Any]]) -> int:
+    """Use the Hub roster's exact Giriton display name for each candidate.
+
+    The overlap artifact may contain the short MuszakPro name.  The Hub
+    identity table contains the name Giriton actually searches, including the
+    numeric courier ID (for example ``Komjáti 8185 Ákos``).
+    """
+    if not candidates:
+        return 0
+
+    supabase_url, service_role_key = get_supabase_config()
+    if not supabase_url or not service_role_key:
+        print("GIRITON_OVERLAP_IDENTITY_ENRICH_SKIPPED missing_supabase_config", flush=True)
+        return 0
+
+    courier_ids = sorted({clean(item.get("courier_id")) for item in candidates if clean(item.get("courier_id"))})
+    if not courier_ids:
+        return 0
+
+    response = requests.get(
+        f"{supabase_url.rstrip('/')}/rest/v1/courier_hub_courier_identity_raw",
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+        },
+        params={
+            "select": "courier_id,name_json,name_without_identifier,giriton_person_id,email",
+            "dsp_id": "eq.8",
+            "courier_id": f"in.({','.join(courier_ids)})",
+            "limit": "1000",
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    identities = response.json()
+    by_id = {
+        clean(row.get("courier_id")): row
+        for row in identities
+        if isinstance(row, dict) and clean(row.get("courier_id"))
+    }
+
+    enriched = 0
+    for candidate in candidates:
+        identity = by_id.get(clean(candidate.get("courier_id")))
+        if not identity:
+            continue
+        exact_name = clean(identity.get("name_json"))
+        if exact_name and exact_name != clean(candidate.get("courier_name")):
+            candidate["courier_name"] = exact_name
+            enriched += 1
+        if clean(identity.get("email")):
+            candidate["email"] = clean(identity["email"])
+        candidate["giriton_person_id"] = clean(identity.get("giriton_person_id"))
+
+    print(
+        f"GIRITON_OVERLAP_IDENTITY_ENRICH matched={len(by_id)} enriched={enriched}",
+        flush=True,
+    )
+    return enriched
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
@@ -62,6 +127,15 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     trace_dir.mkdir(parents=True, exist_ok=True)
     candidates = read_candidates(Path(args.input))
+    try:
+        enrich_candidates_from_hub_identity(candidates)
+    except Exception as exc:
+        # Keep the batch running with the artifact's values if the optional
+        # identity lookup is temporarily unavailable.
+        print(
+            f"GIRITON_OVERLAP_IDENTITY_ENRICH_FAILED {type(exc).__name__}: {exc}",
+            flush=True,
+        )
     if args.max_items > 0:
         candidates = candidates[: args.max_items]
 
