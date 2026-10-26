@@ -43,6 +43,10 @@ REQUEST_TABLE = "external_shift_deletion_requests"
 HUB_BOOKINGS_TABLE = "courier_hub_shift_bookings_raw"
 HUB_IDENTITY_TABLE = "courier_hub_courier_identity_raw"
 SHEET_DONE_STATUS = "törölve"
+# A törlési kérés akkor is lezárható, ha a futárnak már nincs aktív Hub-
+# foglalása azon a napon/műszakban. Így nem marad újra és újra
+# TÖRLÉSRE_VÁR állapotban egy olyan sor, amin nincs mit törölni.
+SHEET_NOT_FOUND_STATUS = "nincs aktív foglalás"
 SHEET_DIAGNOSTIC_COLUMNS = ("G", "H", "I")
 SHEET_RETRY_DELAYS_SECONDS = (70, 95, 130, 180, 240)
 
@@ -736,6 +740,7 @@ def main() -> int:
                     update_request(source_key, "not_found", match_message)
                     if not manual_mode:
                         sheet_updates[row.row_number] = {
+                            "sheet_status": SHEET_NOT_FOUND_STATUS,
                             "job_status": "not_found",
                             "message": match_message,
                             "processed_at": datetime.now(timezone.utc).isoformat(),
