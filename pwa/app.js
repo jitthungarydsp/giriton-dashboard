@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v245";
+const APP_VERSION = "v246";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -2125,12 +2125,12 @@ function adminDonutCard(label, note, current, previous) {
   const now = Number(current || 0);
   const before = Number(previous || 0);
   const ratio = Math.max(8, Math.min(92, before || now ? Math.round((now / Math.max(now, before, 1)) * 100) : 8));
-  const delta = adminDelta(now, before);
+  const delta = previous == null ? { text: "Összehasonlítás nem érhető el", className: "neutral" } : adminDelta(now, before);
   return `<article class="admin-stat-donut-card">
     <h3>${escapeHtml(label)}</h3><p>${escapeHtml(note)}</p>
     <div class="admin-stat-donut-wrap"><div class="admin-stat-donut ${delta.className}" style="--admin-donut-fill:${ratio}%"><div><strong>${formatCount(now)}</strong><span>${escapeHtml(label === "Összes cím" || label === "Címről késés" ? "cím" : label === "Összes kör" ? "kör" : "eset")}</span></div></div></div>
     <span class="admin-stat-delta ${delta.className}">${delta.text}</span>
-    <div class="admin-stat-compare"><span>Előző hónap</span><b>${formatCount(before)}</b></div>
+    <div class="admin-stat-compare"><span>Előző hónap</span><b>${previous == null ? "—" : formatCount(before)}</b></div>
   </article>`;
 }
 
@@ -2189,7 +2189,7 @@ function renderAdminShiftBookingComparison(report = {}) {
   `;
 }
 
-function renderAdminStatisticsPanel(current, previous, shiftReport = {}) {
+function renderAdminStatisticsPanel(current, previous, shiftReport = null) {
   const currentSummary = current?.summary || {};
   const previousSummary = previous?.summary || {};
   const currentTypes = current?.routeTypes || [];
@@ -2204,7 +2204,7 @@ function renderAdminStatisticsPanel(current, previous, shiftReport = {}) {
       ${adminDonutCard("Címről késés", "Késő címek összesen", currentSummary.lateAddresses, previousSummary.lateAddresses)}
     </div>
     <section class="admin-stat-section"><h3>Túratípus szerinti bontás</h3><div class="admin-stat-type-list">${typeRows || `<div class="notice">Nincs túratípus adat.</div>`}</div><p class="updated-at">Műszakkésés: ${formatCount(currentSummary.lateShift)} · Műszakok: ${formatCount(currentSummary.shifts)}</p></section>
-    ${renderAdminShiftBookingComparison(shiftReport)}`;
+    ${shiftReport ? renderAdminShiftBookingComparison(shiftReport) : ""}`;
 }
 
 function renderFinancialStatisticsPanel(payload) {
@@ -2234,6 +2234,19 @@ function bindAdminStatisticsFilters(panel) {
   }));
 }
 
+async function statisticsApi(path) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    return await api(path, { signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("A lekérdezés túllépte a 30 másodperces időkorlátot. Próbáld újra a Frissítés gombbal.");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function loadAdminStatistics() {
   const monthInput = $("#admin-statistics-month");
   if (monthInput?.value) state.adminStatisticsMonth = monthInput.value;
@@ -2241,19 +2254,44 @@ async function loadAdminStatistics() {
   if (!panel) return;
   const requestSeq = ++state.adminStatisticsRequestSeq;
   panel.innerHTML = `<div class="notice">Admin statisztika betöltése...</div>`;
-  const previous = previousMonthValue(state.adminStatisticsMonth);
-  try {
-    const query = (month) => api(`/api/admin/statistics/monthly?${new URLSearchParams({ month, warehouse: state.adminStatisticsWarehouse, _: String(Date.now()) })}`);
-    const shiftReportPromise = api(`/api/routes/monthly-shift-report?${new URLSearchParams({ month: state.adminStatisticsMonth, warehouse: state.adminStatisticsWarehouse, _: String(Date.now()) })}`).catch(() => ({}));
-    const [currentPayload, previousPayload, shiftReport] = await Promise.all([query(state.adminStatisticsMonth), query(previous), shiftReportPromise]);
+  state.adminStatistics = null;
+  const month = state.adminStatisticsMonth;
+  const warehouse = state.adminStatisticsWarehouse;
+  const loaded = { current: null, previous: null, shiftReport: null };
+  const errors = {};
+  const pending = new Set(["current", "previous", "shiftReport"]);
+  const render = () => {
     if (requestSeq !== state.adminStatisticsRequestSeq) return;
-    state.adminStatistics = { current: currentPayload, previous: previousPayload, shiftReport };
-    panel.innerHTML = renderAdminStatisticsPanel(currentPayload, previousPayload, shiftReport);
+    const notices = [];
+    if (loaded.current) {
+      state.adminStatistics = { ...loaded };
+      notices.push(renderAdminStatisticsPanel(loaded.current, loaded.previous, loaded.shiftReport));
+    } else {
+      notices.push(`<div class="notice ${errors.current ? "error" : ""}">${errors.current ? `Az admin statisztika nem tölthető be: ${escapeHtml(errors.current)}` : "Admin statisztika betöltése..."}</div>`);
+    }
+    for (const [key, label] of [["previous", "Előző havi összehasonlítás"], ["shiftReport", "Műszakfoglalás összevetése"]]) {
+      if (errors[key]) notices.push(`<div class="notice error">${label}: ${escapeHtml(errors[key])}</div>`);
+      else if (pending.has(key)) notices.push(`<div class="notice">${label} betöltése...</div>`);
+    }
+    panel.innerHTML = notices.join("");
     bindAdminStatisticsFilters(panel);
-  } catch (error) {
-    if (requestSeq !== state.adminStatisticsRequestSeq) return;
-    panel.innerHTML = `<div class="notice error">Az admin statisztika nem tölthető be: ${escapeHtml(error.message)}</div>`;
-  }
+  };
+  const load = async (key, path) => {
+    try {
+      loaded[key] = await statisticsApi(path);
+    } catch (error) {
+      errors[key] = error.message;
+    } finally {
+      pending.delete(key);
+      render();
+    }
+  };
+  const params = (value) => new URLSearchParams({ month: value, warehouse, _: String(Date.now()) });
+  await Promise.all([
+    load("current", `/api/admin/statistics/monthly?${params(month)}`),
+    load("previous", `/api/admin/statistics/monthly?${params(previousMonthValue(month))}`),
+    load("shiftReport", `/api/routes/monthly-shift-report?${params(month)}`),
+  ]);
 }
 
 async function loadFinancialStatistics() {
@@ -2265,7 +2303,7 @@ async function loadFinancialStatistics() {
   panel.innerHTML = `<div class="notice">Pénzügyi statisztika betöltése...</div>`;
   try {
     const params = new URLSearchParams({ month: state.financialStatisticsMonth, warehouse: state.financialStatisticsWarehouse, _: String(Date.now()) });
-    const payload = await api(`/api/admin/statistics/monthly?${params}`);
+    const payload = await statisticsApi(`/api/admin/statistics/monthly?${params}`);
     if (requestSeq !== state.financialStatisticsRequestSeq) return;
     state.financialStatistics = payload;
     panel.innerHTML = renderFinancialStatisticsPanel(payload);
