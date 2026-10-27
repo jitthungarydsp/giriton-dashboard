@@ -77,8 +77,8 @@ textarea { min-height: 96px; resize: vertical; }
 .topbar h1 { margin: 0; font-size: 28px; letter-spacing: -.04em; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
 .fullscreen-toggle { min-height: 44px; padding: 0 12px; white-space: nowrap; }
-.fullscreen-mode .app-shell { width: min(100%, 1180px); }
-.fullscreen-mode .bottom-nav { max-width: 1180px; }
+.fullscreen-mode .app-shell { width: 100%; max-width: none; }
+.fullscreen-mode .bottom-nav { max-width: none; }
 .icon-button { width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--ink); font-size: 20px; }
 .admin-preview-bar { display: grid; gap: 10px; margin: 0 0 16px; padding: 14px; border: 1px solid #b8d5b4; border-radius: 18px; background: #eff8ed; box-shadow: 0 7px 20px #3141340a; }
 .admin-preview-bar label { color: var(--green-dark); }

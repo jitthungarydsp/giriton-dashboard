@@ -11311,29 +11311,17 @@ $("#logout").addEventListener("click", async () => {
 
 const fullscreenToggle = $("#fullscreen-toggle");
 function updateFullscreenToggle() {
-  const active = Boolean(document.fullscreenElement) || document.body.classList.contains("fullscreen-mode");
+  const active = document.body.classList.contains("fullscreen-mode");
   document.body.classList.toggle("fullscreen-mode", active);
   if (!fullscreenToggle) return;
   fullscreenToggle.setAttribute("aria-pressed", String(active));
-  fullscreenToggle.textContent = active ? "Kilépés teljes képernyőből" : "Teljes képernyő";
+  fullscreenToggle.textContent = active ? "Normál szélesség" : "Teljes szélesség";
 }
 
-fullscreenToggle?.addEventListener("click", async () => {
-  try {
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-    } else if (document.documentElement.requestFullscreen) {
-      await document.documentElement.requestFullscreen();
-    } else {
-      document.body.classList.toggle("fullscreen-mode");
-    }
-  } catch (error) {
-    document.body.classList.toggle("fullscreen-mode");
-  }
+fullscreenToggle?.addEventListener("click", () => {
+  document.body.classList.toggle("fullscreen-mode");
   updateFullscreenToggle();
 });
-
-document.addEventListener("fullscreenchange", updateFullscreenToggle);
 updateFullscreenToggle();
 
 $("#refresh").addEventListener("click", loadShifts);
