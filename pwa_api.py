@@ -13929,6 +13929,26 @@ def parse_shift_overview_quality_rows(rows: list[dict[str, Any]]) -> dict[str, A
     }
 
 
+def attach_quality_shift_times(
+    summary: dict[str, Any],
+    route_records: list[dict[str, Any]],
+    giriton_by_date: dict[str, dict[str, Any]],
+) -> None:
+    """Keep attendance check-in separate from the matching shift's queue event."""
+    for detail in (summary.get("details") or {}).get("lateShift") or []:
+        work_date = str(detail.get("date") or "")[:10]
+        login = giriton_by_date.get(work_date) or {}
+        detail["giritonLoginAt"] = normalize_time(login.get("checkin_start"))
+        planned_clock = quality_shift_clock(detail.get("label"))
+        candidates = [row for row in route_records
+                      if str(row.get("work_date") or "")[:10] == work_date
+                      and planned_clock
+                      and quality_shift_clock(row.get("shift_start_at")) == planned_clock]
+        queue_times = [local_datetime(row.get("queue_started_at")) for row in candidates]
+        queue_times = [value for value in queue_times if value is not None]
+        detail["queueStartedAt"] = min(queue_times).isoformat() if queue_times else ""
+
+
 def load_route_delay_rows_for_courier(
     courier_id: str,
     period_start: date,
@@ -17188,6 +17208,7 @@ def build_monthly_courier_statistics(
             shift_rows=attendance_shift_rows,
             shift_overview_quality=shift_overview_quality,
         )
+        attach_quality_shift_times(route_quality_summary, route_quality_records, giriton_by_date)
         expected_quality = build_expected_quality_payload(route_quality_summary, total_orders)
         return {
             "month": period_start.strftime("%Y-%m"),
@@ -17640,6 +17661,7 @@ def build_monthly_courier_statistics(
         shift_rows=attendance_shift_rows,
         shift_overview_quality=shift_overview_quality,
     )
+    attach_quality_shift_times(route_quality_summary, route_quality_records, giriton_by_date)
     expected_quality = build_expected_quality_payload(route_quality_summary, total_orders)
 
     return {

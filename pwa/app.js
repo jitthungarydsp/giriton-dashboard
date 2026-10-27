@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v246";
+const APP_VERSION = "v247";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1515,6 +1515,17 @@ function renderQualitySummaryChart(payload = {}) {
   `;
 }
 
+function qualityShiftTimes(row, topic) {
+  if (topic !== "lateShift") return "";
+  const clock = (value) => {
+    if (!value) return "Nincs adat";
+    if (/^\d{2}:\d{2}(?::\d{2})?$/.test(value)) return value.slice(0, 5);
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "Nincs adat" : new Intl.DateTimeFormat("hu-HU", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Budapest" }).format(date);
+  };
+  return `<small>Giriton-bejelentkezés: ${escapeHtml(clock(row.giritonLoginAt))}</small><small>Sorba állás: ${escapeHtml(clock(row.queueStartedAt))}</small>`;
+}
+
 function renderQualitySummaryDetails(topic, details = {}) {
   if (!topic) return "";
   const labels = {
@@ -1532,6 +1543,7 @@ function renderQualitySummaryDetails(topic, details = {}) {
           <strong>${escapeHtml(row.date || "-")}</strong>
           <span>${escapeHtml(row.label || "-")}</span>
           <small>${escapeHtml(row.note || "")}${row.routeId ? ` · Route ${escapeHtml(row.routeId)}` : ""}</small>
+          ${qualityShiftTimes(row, topic)}
           <button class="secondary quality-reclamation-trigger" type="button" data-quality-reclamation-topic="${escapeHtml(topic)}">Reklamáció</button>
         </div>
       `).join("") : `<p>Nincs külön vizsgálandó sor ehhez a jelzéshez.</p>`}
@@ -1578,7 +1590,7 @@ function openQualityReclamation(topic) {
   dialog.querySelector("[data-quality-reclamation-title]").textContent = labels[topic] || "Reklamáció";
   dialog.querySelector("[data-quality-reclamation-subtitle]").textContent = `${rows.length} érintett tétel`;
   dialog.querySelector("[data-quality-reclamation-body]").innerHTML = rows.length
-    ? `<div class="quality-reclamation-list">${rows.map((row) => `<div class="stat-row"><span>${escapeHtml(row.date || "-")} · ${escapeHtml(row.label || "Műszak")}</span><strong>${escapeHtml(row.note || "")}</strong></div>`).join("")}</div>`
+    ? `<div class="quality-reclamation-list">${rows.map((row) => `<div class="stat-row"><span>${escapeHtml(row.date || "-")} · ${escapeHtml(row.label || "Műszak")}${qualityShiftTimes(row, topic)}</span><strong>${escapeHtml(row.note || "")}</strong></div>`).join("")}</div>`
     : `<p class="updated-at">Ehhez a jelzéshez nincs részletes adat.</p>`;
   dialog.querySelector("[data-quality-reclamation-note]").value = "";
   dialog.showModal();
