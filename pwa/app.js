@@ -10929,12 +10929,16 @@ adminPreviewCourierInput?.addEventListener("change", (event) => {
 adminPreviewCourierInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
-    updatePreviewCourier(event.currentTarget.value);
+    const value = event.currentTarget.value || "";
+    updatePreviewCourier(value);
+    if (String(value).trim()) showSection("statistics");
   }
 });
 
 $("#admin-preview-open")?.addEventListener("click", () => {
-  updatePreviewCourier(adminPreviewCourierInput?.value || "");
+  const value = adminPreviewCourierInput?.value || "";
+  updatePreviewCourier(value);
+  if (String(value).trim()) showSection("statistics");
 });
 
 $("#admin-preview-clear")?.addEventListener("click", () => {
@@ -11304,6 +11308,34 @@ $("#logout").addEventListener("click", async () => {
   renderQueueStatus();
   showLogin();
 });
+
+const fullscreenToggle = $("#fullscreen-toggle");
+function updateFullscreenToggle() {
+  const active = Boolean(document.fullscreenElement) || document.body.classList.contains("fullscreen-mode");
+  document.body.classList.toggle("fullscreen-mode", active);
+  if (!fullscreenToggle) return;
+  fullscreenToggle.setAttribute("aria-pressed", String(active));
+  fullscreenToggle.textContent = active ? "Kilépés teljes képernyőből" : "Teljes képernyő";
+}
+
+fullscreenToggle?.addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else if (document.documentElement.requestFullscreen) {
+      await document.documentElement.requestFullscreen();
+    } else {
+      document.body.classList.toggle("fullscreen-mode");
+    }
+  } catch (error) {
+    document.body.classList.toggle("fullscreen-mode");
+  }
+  updateFullscreenToggle();
+});
+
+document.addEventListener("fullscreenchange", updateFullscreenToggle);
+updateFullscreenToggle();
+
 $("#refresh").addEventListener("click", loadShifts);
 $("#open-muszakpro-refresh").addEventListener("click", toggleOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
