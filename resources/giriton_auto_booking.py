@@ -372,8 +372,28 @@ def _legacy_candidate_serial(candidate):
     return legacy_serial or clean(candidate.get("serial"))
 
 
+def booking_rejection_reason(payload):
+    """HTTP success does not override a rejected Hub business decision."""
+    if not isinstance(payload, dict):
+        return ""
+    reason = clean(payload.get("reason")).upper()
+    if clean(payload.get("decision")).upper() == "REJECTED" or reason == "OVERLAP":
+        return reason or "UNKNOWN"
+    for key in ("results", "hub_response", "hubResponse", "response_json"):
+        value = payload.get(key)
+        for item in value if isinstance(value, list) else [value]:
+            rejected = booking_rejection_reason(item)
+            if rejected:
+                return rejected
+    return ""
+
+
+def robotlog_row_allowed(row):
+    return clean(row.get("status")) in ROBOTLOG_SHEET_STATUSES and not booking_rejection_reason(row)
+
+
 def _append_success_robotlog(candidate, status):
-    if clean(status) not in ROBOTLOG_SHEET_STATUSES:
+    if not robotlog_row_allowed({"status": status, "response_json": candidate}):
         return "SKIPPED_STATUS"
 
     from resources.google_sheets_values import append_values
@@ -437,6 +457,10 @@ def log_giriton_booking_result(candidate, status, message=""):
     """Append one auto-booking robot result row to Supabase when the log table exists."""
 
     candidate = candidate or {}
+    rejected = booking_rejection_reason(candidate)
+    if rejected and clean(status) in ROBOTLOG_SUCCESS_STATUSES:
+        status = f"HUB_API_REJECTED_{rejected}"
+        message = f"Hub API rejected booking: {rejected.lower()}"
     supabase_url, headers = _supabase_headers()
 
     if not supabase_url:
@@ -492,7 +516,7 @@ def read_giriton_booking_log(start_date="", end_date="", limit=500):
     params = {
         "select": (
             "created_at,work_date,courier_id,courier_name,email,warehouse,"
-            "shift_text,shift_start,booking_code,serial,status,message"
+            "shift_text,shift_start,booking_code,serial,status,message,response_json"
         ),
         "order": "created_at.desc",
         "limit": str(int(limit)),

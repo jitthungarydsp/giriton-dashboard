@@ -318,6 +318,12 @@ jobs:
             --start-date "${{ steps.window.outputs.start_date }}" \
             --end-date "${{ steps.window.outputs.end_date }}"
 
+          sheet_pause
+
+          run_with_retry python scripts/export_booking_diagnostics_sheet.py \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --end-date "${{ steps.window.outputs.end_date }}"
+
       - name: HUB_JOB_AUTOBOOKING summary
         if: always()
         shell: bash

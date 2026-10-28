@@ -28,6 +28,7 @@ from resources.giriton_auto_booking import (  # noqa: E402
     _robotlog_action_type,
     clean,
     read_giriton_booking_log,
+    robotlog_row_allowed,
 )
 from resources.google_auth import SCOPES, load_service_account_info, resolve_service_account_file  # noqa: E402
 
@@ -174,6 +175,8 @@ def sync_robotlog_sheet(start_date: date, end_date: date, *, limit: int, dry_run
         log_df["status"].fillna("").astype(str).str.strip().isin(ROBOTLOG_SHEET_STATUSES)
         & log_df["serial"].fillna("").astype(str).str.strip().ne("")
     ].copy()
+    if not success_df.empty:
+        success_df = success_df[success_df.apply(lambda row: robotlog_row_allowed(row.to_dict()), axis=1)].copy()
     if success_df.empty:
         print(f"ROBOTLOG_SYNC source_rows={len(log_df)} missing=0 written=0")
         return 0, 0
