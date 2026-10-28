@@ -30,7 +30,7 @@ def read_candidates(path: Path) -> list[dict[str, Any]]:
     seen: set[str] = set()
     for row in payload:
         reason = clean(row.get("reason")).lower()
-        if "overlap" not in reason:
+        if reason != "hub_api_rejected_overlap":
             continue
         date = clean(row.get("work_date"))
         warehouse = clean(row.get("warehouse"))
@@ -38,6 +38,14 @@ def read_candidates(path: Path) -> list[dict[str, Any]]:
         courier_id = clean(row.get("courier_id"))
         serial = clean(row.get("serial"))
         if not (date and warehouse and start and courier_id):
+            continue
+        hub_start = clean(row.get("hub_slot_from"))
+        try:
+            if hub_start and tuple(map(int, start.split(":")[:2])) != tuple(map(int, hub_start.split(":")[:2])):
+                continue
+        except ValueError:
+            continue
+        if row.get("match_diff_minutes") not in (None, "", 0, "0"):
             continue
         key = serial or "|".join((date, warehouse, courier_id, start))
         if key in seen:

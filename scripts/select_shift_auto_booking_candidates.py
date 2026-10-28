@@ -538,6 +538,9 @@ def select_candidates(
     limit: int,
     source_limit: int,
 ) -> list[dict]:
+    if match_kind != "exact":
+        print("SHIFT_AUTO_SELECT alternatives_disabled candidates=0")
+        return []
     summary_df = load_summary(start_date, end_date, tolerance_minutes, source_limit)
     if summary_df.empty:
         return []
@@ -550,12 +553,7 @@ def select_candidates(
     if rows.empty:
         return []
 
-    if match_kind == "exact":
-        rows = rows[rows.apply(is_strict_exact_booking_row, axis=1)].copy()
-    elif match_kind == "alternative":
-        rows = rows[rows["Állapot"].astype(str).eq("Alternatíva")].copy()
-    else:
-        raise ValueError(f"Ismeretlen match_kind: {match_kind}")
+    rows = rows[rows.apply(is_strict_exact_booking_row, axis=1)].copy()
 
     if rows.empty:
         return []

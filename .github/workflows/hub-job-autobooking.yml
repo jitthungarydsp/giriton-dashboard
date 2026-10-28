@@ -20,13 +20,13 @@ on:
         required: false
         default: ""
       tolerance_minutes:
-        description: "Alternativ egyezes turese percben."
+        description: "Kompatibilitási mező: csak 0, pontos egyezés engedélyezett."
         required: false
-        default: "30"
+        default: "0"
       min_gap_minutes:
-        description: "Minimum ido ket foglalt muszak kozott percben."
+        description: "Kompatibilitási mező; nincs helyi műszakköz-szabály."
         required: false
-        default: "270"
+        default: "0"
       dry_run:
         description: "true = csak ellenorzes, false = eles HUB API foglalas"
         required: false
@@ -98,15 +98,13 @@ jobs:
           DAYS="${{ inputs.days }}"
           MAX_COURIER_DAYS="${{ inputs.max_courier_days }}"
           COURIER_IDS="${{ inputs.courier_ids }}"
-          TOLERANCE_MINUTES="${{ inputs.tolerance_minutes }}"
-          MIN_GAP_MINUTES="${{ inputs.min_gap_minutes }}"
+          TOLERANCE_MINUTES="0"
+          MIN_GAP_MINUTES="0"
           DRY_RUN="${{ inputs.dry_run }}"
 
           START_DATE="${START_DATE:-$(TZ=Europe/Budapest date +%F)}"
           DAYS="${DAYS:-30}"
           MAX_COURIER_DAYS="${MAX_COURIER_DAYS:-300}"
-          TOLERANCE_MINUTES="${TOLERANCE_MINUTES:-30}"
-          MIN_GAP_MINUTES="${MIN_GAP_MINUTES:-270}"
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
             DRY_RUN="${DRY_RUN:-false}"
           else
@@ -115,8 +113,6 @@ jobs:
 
           if ! [[ "$DAYS" =~ ^[0-9]+$ ]]; then DAYS="30"; fi
           if ! [[ "$MAX_COURIER_DAYS" =~ ^[0-9]+$ ]]; then MAX_COURIER_DAYS="300"; fi
-          if ! [[ "$TOLERANCE_MINUTES" =~ ^[0-9]+$ ]]; then TOLERANCE_MINUTES="30"; fi
-          if ! [[ "$MIN_GAP_MINUTES" =~ ^[0-9]+$ ]]; then MIN_GAP_MINUTES="270"; fi
           HUB_LOOKAHEAD_DAYS=$((DAYS - 1))
           if [ "$HUB_LOOKAHEAD_DAYS" -lt 0 ]; then HUB_LOOKAHEAD_DAYS="0"; fi
           END_DATE="$(date -d "$START_DATE + $HUB_LOOKAHEAD_DAYS days" +%F)"
@@ -191,7 +187,7 @@ jobs:
             --start-date "${{ steps.window.outputs.start_date }}" \
             --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
 
-      - name: HUB_JOB_AUTOBOOKING run exact full-day API booking
+      - name: HUB_JOB_AUTOBOOKING run exact per-row API booking
         shell: bash
         run: |
           CMD=(
@@ -332,14 +328,14 @@ jobs:
             echo "## HUB_JOB_AUTOBOOKING"
             echo ""
             echo "- Engine: Courier Hub API"
-            echo "- Rule: one courier-day is booked only when every MuszakPro shift has an exact HUB block with free capacity, and the shifts are at least the configured gap apart."
+            echo "- Rule: each active MuszakPro row is booked independently at the exact same HUB start time; no alternative, full-day or minimum-gap rule."
             echo "- Priority: MuszakPro booking timestamp, earliest first."
             echo "- Window start: ${{ steps.window.outputs.start_date }}"
             echo "- Window end: ${{ steps.window.outputs.end_date }}"
             echo "- Days: ${{ steps.window.outputs.days }}"
             echo "- Max courier-days: ${{ steps.window.outputs.max_courier_days }}"
             echo "- Alternative tolerance minutes: disabled"
-            echo "- Minimum gap minutes: ${{ steps.window.outputs.min_gap_minutes }}"
+            echo "- Minimum gap rule: disabled; Hub decides business acceptance"
             echo "- Dry run: ${{ steps.window.outputs.dry_run }}"
           } >> "$GITHUB_STEP_SUMMARY"
 

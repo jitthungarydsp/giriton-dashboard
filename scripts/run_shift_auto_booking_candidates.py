@@ -97,6 +97,16 @@ def uidl_command(candidate: dict, output_dir: Path, dry_run: bool) -> list[str]:
 
 def validate_candidate(candidate: dict) -> list[str]:
     missing = []
+    if clean(candidate.get("status")).casefold() in {"alternatíva", "alternative"}:
+        missing.append("exact_match_required")
+    mp_start = clean(candidate.get("muszakpro_shift_start"))
+    target = clean(candidate.get("shift_start"))
+    if mp_start:
+        try:
+            if tuple(map(int, mp_start.split(":")[:2])) != tuple(map(int, target.split(":")[:2])):
+                missing.append("exact_match_required")
+        except ValueError:
+            missing.append("exact_match_required")
     for key in ["work_date", "serial", "warehouse", "shift_start"]:
         if not clean(candidate.get(key)):
             missing.append(key)

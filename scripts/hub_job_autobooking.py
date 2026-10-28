@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Courier Hub API autobooking by full courier-day matches.
+"""Book each active MuszakPro row at exactly the same Hub start time.
 
-One candidate is one courier on one work day. The script only books a candidate
-when every MuszakPro shift for that courier-day has an exact or allowed
-alternative open Courier Hub shift block at the same warehouse.
+No alternative times or courier-day/gap rules. Hub OVERLAP rejections are
+exported for the existing exact-time Giriton fallback.
 """
 
 from __future__ import annotations
@@ -591,115 +590,6 @@ def build_groups(rows: list[MuszakProRow]) -> list[tuple[tuple[str, int], list[M
     return sorted(grouped.items(), key=lambda item: booking_order_key(item[1]))
 
 
-def group_is_exact_full_day(
-    rows: list[MuszakProRow],
-    blocks: dict[tuple[str, str, str], HubBlock],
-    existing_subscriptions: set[tuple[str, int, str, str]],
-    planned_by_block: dict[str, int],
-    tolerance_minutes: int,
-    min_gap_minutes: int,
-) -> tuple[bool, str, list[tuple[MuszakProRow, HubBlock, bool, str, int]]]:
-    shift_rows = unique_shift_rows(rows)
-    if len(shift_rows) < 2:
-        return False, "single_shift_day", []
-
-    all_blocks = sorted(
-        blocks.values(),
-        key=lambda block: (
-            block.work_date,
-            block.warehouse,
-            time_minutes(block.slot_from) or 0,
-            block.block_key,
-        ),
-    )
-    matches: list[tuple[MuszakProRow, HubBlock, bool, str, int]] = []
-    used_block_keys: set[str] = set()
-
-    for row in shift_rows:
-        candidates: list[tuple[int, int, HubBlock, str, int]] = []
-        exact_block = blocks.get((row.work_date, row.warehouse, row.shift_start))
-        if exact_block:
-            candidates.append((0, time_minutes(exact_block.slot_from) or 0, exact_block, "exact", 0))
-
-        for candidate in all_blocks:
-            if candidate.work_date != row.work_date or candidate.warehouse != row.warehouse:
-                continue
-            if exact_block and candidate.block_key == exact_block.block_key:
-                continue
-            current_diff = diff_minutes(row.shift_start, candidate.slot_from)
-            if current_diff is None or abs(current_diff) > max(int(tolerance_minutes), 0):
-                continue
-            candidates.append((
-                abs(current_diff),
-                time_minutes(candidate.slot_from) or 0,
-                candidate,
-                "alternative",
-                current_diff,
-            ))
-
-        selected: tuple[HubBlock, bool, str, int] | None = None
-        rejected_reasons: list[str] = []
-        for _score, _minutes, block, match_kind, match_diff in sorted(
-            candidates,
-            key=lambda item: (item[0], item[1], 0 if item[3] == "exact" else 1, item[2].block_key),
-        ):
-            if block.block_key in used_block_keys:
-                rejected_reasons.append(f"duplicate_block_match {block.block_key}")
-                continue
-
-            already_booked = (row.work_date, row.courier_id, row.warehouse, block.slot_from) in existing_subscriptions
-            if not already_booked:
-                if block.status and block.status != "OPEN":
-                    rejected_reasons.append(f"hub_block_not_open {block.block_key} status={block.status}")
-                    continue
-                remaining = block.free_slots - planned_by_block.get(block.block_key, 0)
-                if remaining <= 0:
-                    rejected_reasons.append(f"no_free_slot {block.block_key}")
-                    continue
-
-            selected = (block, already_booked, match_kind, match_diff)
-            break
-
-        if selected is None:
-            reason = rejected_reasons[0] if rejected_reasons else f"missing_hub_block {row.warehouse} {row.shift_start}"
-            return False, reason, matches
-
-        block, already_booked, match_kind, match_diff = selected
-        used_block_keys.add(block.block_key)
-        matches.append((row, block, already_booked, match_kind, match_diff))
-
-    gap_ok, gap_reason = selected_shift_gap_ok(matches, min_gap_minutes)
-    if not gap_ok:
-        return False, gap_reason, matches
-
-    reason = "exact_full_day" if all(match[3] == "exact" for match in matches) else "alternative_full_day"
-    return True, reason, matches
-
-
-def selected_shift_gap_ok(
-    matches: list[tuple[MuszakProRow, HubBlock, bool, str, int]],
-    min_gap_minutes: int,
-) -> tuple[bool, str]:
-    required = max(int(min_gap_minutes), 0)
-    if required <= 0 or len(matches) < 2:
-        return True, ""
-    slots: list[tuple[int, str]] = []
-    for _row, block, _already_booked, _match_kind, _match_diff in matches:
-        minutes = time_minutes(block.slot_from)
-        if minutes is None:
-            return False, f"invalid_hub_slot {block.slot_from or '-'}"
-        slots.append((minutes, block.slot_from))
-    slots.sort()
-    for previous, current in zip(slots, slots[1:]):
-        gap = current[0] - previous[0]
-        if gap < required:
-            return False, (
-                f"min_gap_not_met {previous[1]}->{current[1]} "
-                f"gap={gap} required={required}"
-            )
-    return True, ""
-
-
 def failure_records_for_group(
     rows: list[MuszakProRow],
     reason: str,
@@ -769,6 +659,8 @@ def book_one(
     match_kind: str,
     match_diff: int,
 ) -> bool:
+    if normalize_db_time(row.shift_start) != normalize_db_time(block.slot_from) or match_kind != "exact" or match_diff != 0:
+        raise ValueError("Only exact MuszakPro/Hub start times may be booked")
     log_args = args_for_log(row, block, base_url, dsp_id)
     match_log_payload = {
         "blockKey": block.block_key,
@@ -783,7 +675,7 @@ def book_one(
         log_result(
             log_args,
             "HUB_AUTOBOOK_DRY_RUN_OK",
-            f"HUB_JOB_AUTOBOOKING dry-run {match_kind} full-day match.",
+            f"HUB_JOB_AUTOBOOKING dry-run {match_kind} per-row match.",
             match_log_payload,
         )
         print(
@@ -848,14 +740,14 @@ def book_one(
 
 def parse_args() -> argparse.Namespace:
     today = date.today()
-    parser = argparse.ArgumentParser(description="HUB_JOB_AUTOBOOKING full-day Courier Hub booking.")
+    parser = argparse.ArgumentParser(description="HUB_JOB_AUTOBOOKING exact per-row Courier Hub booking.")
     parser.add_argument("--start-date", default=today.isoformat())
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--dsp-id", type=int, default=8)
     parser.add_argument("--max-courier-days", type=int, default=300)
     parser.add_argument("--source-limit", type=int, default=50000)
-    parser.add_argument("--tolerance-minutes", type=int, default=30)
-    parser.add_argument("--min-gap-minutes", type=int, default=270)
+    parser.add_argument("--tolerance-minutes", type=int, choices=[0], default=0, help="Exact matches only; alternatives are disabled.")
+    parser.add_argument("--min-gap-minutes", type=int, default=0, help="Legacy option; no local gap rule is applied.")
     parser.add_argument(
         "--courier-ids",
         default="",
@@ -864,7 +756,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--failure-output",
         default="results/hub-job-autobooking/failures.json",
-        help="JSON output for courier-days that were not bookable.",
+        help="JSON output for individual rows that were not bookable.",
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--dry-run", action="store_true")
@@ -872,287 +764,75 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def run_exact_bookings(rows, blocks, existing_subscriptions, args, dry_run):
+    planned_by_block = defaultdict(int)
+    seen = set()
+    selected_days = set()
+    failures = []
+    booked_rows = failed_rows = skipped_rows = simulated_rows = 0
+    ordered = sorted(rows, key=lambda row: (parse_timestamp(row.timestamp_text), row.source_row or 999999, row.work_date, row.shift_start))
+    for row in ordered:
+        target = (row.work_date, row.courier_id, row.warehouse, row.shift_start)
+        if target in seen:
+            continue
+        seen.add(target)
+        block = blocks.get((row.work_date, row.warehouse, row.shift_start))
+        reason = ""
+        if target in existing_subscriptions:
+            skipped_rows += 1
+            print(f"HUB_JOB_AUTOBOOKING_SKIP date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} muszakpro_slot={row.shift_start} reason=already_booked", flush=True)
+            continue
+        if block is None:
+            reason = f"missing_exact_hub_block {row.warehouse} {row.shift_start}"
+        elif block.status and block.status != "OPEN":
+            reason = f"hub_block_not_open {block.block_key} status={block.status}"
+        elif block.free_slots - planned_by_block[block.block_key] <= 0:
+            reason = f"no_free_slot {block.block_key}"
+        day = (row.work_date, row.courier_id)
+        if not reason and day not in selected_days and len(selected_days) >= max(int(args.max_courier_days), 1):
+            reason = f"max_courier_days_reached limit={args.max_courier_days}"
+        matches = [(row, block, False, "exact", 0)] if block else []
+        if reason:
+            skipped_rows += 1
+            failures.extend(failure_records_for_group([row], reason, matches))
+            print(f"HUB_JOB_AUTOBOOKING_SKIP date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} muszakpro_slot={row.shift_start} reason={reason}", flush=True)
+            continue
+        selected_days.add(day)
+        try:
+            booked = book_one(row, block, base_url=args.base_url, dsp_id=args.dsp_id, dry_run=dry_run, match_kind="exact", match_diff=0)
+            if not booked:
+                raise RuntimeError("api_booking_returned_false")
+        except Exception as exc:
+            failed_rows += 1
+            reason = f"hub_api_rejected_{exc.reason}" if isinstance(exc, HubApiBookingRejected) else f"api_booking_failed {type(exc).__name__}: {str(exc)[:500]}"
+            failures.extend(failure_records_for_group([row], reason, matches))
+            print(f"HUB_JOB_AUTOBOOKING_BOOK_FAILED date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} muszakpro_slot={row.shift_start} hub_slot={block.slot_from} reason={reason}", flush=True)
+            continue
+        planned_by_block[block.block_key] += 1
+        if dry_run:
+            simulated_rows += 1
+        else:
+            booked_rows += 1
+    return {"selected_groups": len(selected_days), "booked_rows": booked_rows, "simulated_rows": simulated_rows,
+            "failed_booking_rows": failed_rows, "skipped_rows": skipped_rows, "failure_records": failures}
+
+
 def main() -> int:
     args = parse_args()
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
     end_date = start_date + timedelta(days=max(int(args.days), 1) - 1)
     dry_run = bool(args.dry_run or not args.live)
-    target_courier_ids = {
-        int(parsed)
-        for value in re.split(r"[\s,;]+", clean_text(args.courier_ids))
-        if (parsed := int_or_none(value))
-    }
-
+    target_ids = {int(parsed) for value in re.split(r"[\s,;]+", clean_text(args.courier_ids)) if (parsed := int_or_none(value))}
     identities_by_email, identities_by_name = read_courier_identities(args.dsp_id, args.source_limit)
-    muszakpro_rows = read_muszakpro_rows(
-        start_date,
-        end_date,
-        args.source_limit,
-        identities_by_email,
-        identities_by_name,
-    )
-    if target_courier_ids:
-        muszakpro_rows = [
-            row for row in muszakpro_rows
-            if int(row.courier_id) in target_courier_ids
-        ]
-    missing_active_rows = read_missing_active_hub_mismatch_rows(start_date, end_date, args.source_limit)
-    if target_courier_ids:
-        missing_active_rows = [
-            row for row in missing_active_rows
-            if int(row.courier_id) in target_courier_ids
-        ]
+    rows = read_muszakpro_rows(start_date, end_date, args.source_limit, identities_by_email, identities_by_name)
+    if target_ids:
+        rows = [row for row in rows if row.courier_id in target_ids]
     blocks = read_hub_blocks(start_date, end_date, args.dsp_id, args.source_limit)
-    existing_subscriptions = read_existing_subscriptions(start_date, end_date, args.dsp_id, args.source_limit)
-    planned_subscriptions = set(existing_subscriptions)
-
-    groups = build_groups(muszakpro_rows)
-    planned_by_block: dict[str, int] = defaultdict(int)
-    selected_groups = 0
-    booked_rows = 0
-    skipped_groups = 0
-    failed_booking_rows = 0
-    failure_records: list[dict[str, Any]] = []
-
-    print(
-        "HUB_JOB_AUTOBOOKING_START "
-        f"start={start_date.isoformat()} end={end_date.isoformat()} dry_run={dry_run} "
-        f"target_couriers={','.join(str(value) for value in sorted(target_courier_ids)) or '-'} "
-        f"identities={len(identities_by_email)} muszakpro_rows={len(muszakpro_rows)} "
-        f"missing_active_rows={len(missing_active_rows)} "
-        f"hub_blocks={len(blocks)} existing_subscriptions={len(existing_subscriptions)}",
-        flush=True,
-    )
-
-    max_courier_days = max(int(args.max_courier_days), 1)
-    for (_work_date, _courier_id), rows in groups:
-        ok, reason, matches = group_is_exact_full_day(
-            rows,
-            blocks,
-            existing_subscriptions,
-            planned_by_block,
-            args.tolerance_minutes,
-            args.min_gap_minutes,
-        )
-        first = min(rows, key=lambda row: (parse_timestamp(row.timestamp_text), row.source_row or 999999))
-        if not ok:
-            skipped_groups += 1
-            failure_records.extend(failure_records_for_group(rows, reason, matches))
-            print(
-                "HUB_JOB_AUTOBOOKING_SKIP "
-                f"date={first.work_date} courier={first.courier_id} name={first.courier_name or '-'} "
-                f"reason={reason}",
-                flush=True,
-            )
-            continue
-
-        to_book = [
-            (row, block, match_kind, match_diff)
-            for row, block, already_booked, match_kind, match_diff in matches
-            if not already_booked
-        ]
-        if not to_book:
-            skipped_groups += 1
-            print(
-                "HUB_JOB_AUTOBOOKING_SKIP "
-                f"date={first.work_date} courier={first.courier_id} name={first.courier_name or '-'} "
-                "reason=already_fully_booked",
-                flush=True,
-            )
-            continue
-
-        if selected_groups >= max_courier_days:
-            skipped_groups += 1
-            limit_reason = f"max_courier_days_reached limit={max_courier_days}"
-            failure_records.extend(failure_records_for_group(rows, limit_reason, matches))
-            print(
-                "HUB_JOB_AUTOBOOKING_SKIP "
-                f"date={first.work_date} courier={first.courier_id} name={first.courier_name or '-'} "
-                f"reason={limit_reason}",
-                flush=True,
-            )
-            continue
-
-        selected_groups += 1
-        print(
-            "HUB_JOB_AUTOBOOKING_SELECT "
-            f"date={first.work_date} courier={first.courier_id} name={first.courier_name or '-'} "
-            f"shifts={len(matches)} to_book={len(to_book)} reason={reason} "
-            f"first_timestamp={first.timestamp_text or '-'}",
-            flush=True,
-        )
-        for row, block, match_kind, match_diff in to_book:
-            try:
-                booked = book_one(
-                    row,
-                    block,
-                    base_url=args.base_url,
-                    dsp_id=args.dsp_id,
-                    dry_run=dry_run,
-                    match_kind=match_kind,
-                    match_diff=match_diff,
-                )
-            except Exception as exc:
-                failed_booking_rows += 1
-                if isinstance(exc, HubApiBookingRejected):
-                    reason_text = f"hub_api_rejected_{exc.reason}"
-                else:
-                    reason_text = f"api_booking_failed {type(exc).__name__}: {str(exc)[:500]}"
-                failure_records.extend(
-                    failure_records_for_group(
-                        [row],
-                        reason_text,
-                        [(row, block, False, match_kind, match_diff)],
-                    )
-                )
-                print(
-                    "HUB_JOB_AUTOBOOKING_BOOK_FAILED "
-                    f"date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} "
-                    f"muszakpro_slot={row.shift_start} hub_slot={block.slot_from} "
-                    f"template={block.shift_template_id} match={match_kind} diff={match_diff} "
-                    f"reason={reason_text}",
-                    flush=True,
-                )
-                continue
-
-            if booked:
-                planned_by_block[block.block_key] += 1
-                planned_subscriptions.add((row.work_date, row.courier_id, row.warehouse, block.slot_from))
-                booked_rows += 1
-            else:
-                failed_booking_rows += 1
-                failure_records.extend(
-                    failure_records_for_group(
-                        [row],
-                        "api_booking_returned_false",
-                        [(row, block, False, match_kind, match_diff)],
-                    )
-                )
-
-    for row in missing_active_rows:
-        if selected_groups >= max_courier_days:
-            skipped_groups += 1
-            limit_reason = f"max_courier_days_reached limit={max_courier_days}"
-            failure_records.extend(failure_records_for_group([row], limit_reason, []))
-            print(
-                "HUB_JOB_AUTOBOOKING_MISMATCH_SKIP "
-                f"date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} "
-                f"muszakpro_slot={row.shift_start} reason={limit_reason}",
-                flush=True,
-            )
-            continue
-
-        block = blocks.get((row.work_date, row.warehouse, row.shift_start))
-        if block is None:
-            skipped_groups += 1
-            reason = f"missing_exact_hub_block {row.warehouse} {row.shift_start}"
-            failure_records.extend(failure_records_for_group([row], reason, []))
-            print(
-                "HUB_JOB_AUTOBOOKING_MISMATCH_SKIP "
-                f"date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} "
-                f"muszakpro_slot={row.shift_start} reason={reason}",
-                flush=True,
-            )
-            continue
-
-        subscription_key = (row.work_date, row.courier_id, row.warehouse, block.slot_from)
-        if subscription_key in planned_subscriptions:
-            skipped_groups += 1
-            print(
-                "HUB_JOB_AUTOBOOKING_MISMATCH_SKIP "
-                f"date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} "
-                f"muszakpro_slot={row.shift_start} hub_slot={block.slot_from} reason=already_booked_or_planned",
-                flush=True,
-            )
-            continue
-
-        if block.status and block.status != "OPEN":
-            skipped_groups += 1
-            reason = f"hub_block_not_open {block.block_key} status={block.status}"
-            failure_records.extend(
-                failure_records_for_group([row], reason, [(row, block, False, "mismatch_missing_active", 0)])
-            )
-            print(
-                "HUB_JOB_AUTOBOOKING_MISMATCH_SKIP "
-                f"date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} "
-                f"muszakpro_slot={row.shift_start} hub_slot={block.slot_from} reason={reason}",
-                flush=True,
-            )
-            continue
-
-        remaining = block.free_slots - planned_by_block.get(block.block_key, 0)
-        if remaining <= 0:
-            skipped_groups += 1
-            reason = f"no_free_slot {block.block_key}"
-            failure_records.extend(
-                failure_records_for_group([row], reason, [(row, block, False, "mismatch_missing_active", 0)])
-            )
-            print(
-                "HUB_JOB_AUTOBOOKING_MISMATCH_SKIP "
-                f"date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} "
-                f"muszakpro_slot={row.shift_start} hub_slot={block.slot_from} reason={reason}",
-                flush=True,
-            )
-            continue
-
-        selected_groups += 1
-        print(
-            "HUB_JOB_AUTOBOOKING_MISMATCH_SELECT "
-            f"date={row.work_date} courier={row.courier_id} name={row.courier_name or '-'} "
-            f"warehouse={row.warehouse} muszakpro_slot={row.shift_start} hub_slot={block.slot_from} "
-            f"template={block.shift_template_id} reason=NINCS_AKTIV_HUB_FOGLALAS_ERRE_AZ_IDOPONTRA",
-            flush=True,
-        )
-        try:
-            booked = book_one(
-                row,
-                block,
-                base_url=args.base_url,
-                dsp_id=args.dsp_id,
-                dry_run=dry_run,
-                match_kind="mismatch_missing_active",
-                match_diff=0,
-            )
-        except Exception as exc:
-            failed_booking_rows += 1
-            if isinstance(exc, HubApiBookingRejected):
-                reason_text = f"hub_api_rejected_{exc.reason}"
-            else:
-                reason_text = f"api_booking_failed {type(exc).__name__}: {str(exc)[:500]}"
-            failure_records.extend(
-                failure_records_for_group([row], reason_text, [(row, block, False, "mismatch_missing_active", 0)])
-            )
-            print(
-                "HUB_JOB_AUTOBOOKING_MISMATCH_BOOK_FAILED "
-                f"date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} "
-                f"muszakpro_slot={row.shift_start} hub_slot={block.slot_from} "
-                f"template={block.shift_template_id} reason={reason_text}",
-                flush=True,
-            )
-            continue
-
-        if booked:
-            planned_by_block[block.block_key] += 1
-            planned_subscriptions.add(subscription_key)
-            booked_rows += 1
-        else:
-            failed_booking_rows += 1
-            failure_records.extend(
-                failure_records_for_group(
-                    [row],
-                    "api_booking_returned_false",
-                    [(row, block, False, "mismatch_missing_active", 0)],
-                )
-            )
-
-    write_failure_output(failure_records, args.failure_output)
-    print(
-        "HUB_JOB_AUTOBOOKING_DONE "
-        f"selected_groups={selected_groups} booked_rows={booked_rows} failed_booking_rows={failed_booking_rows} "
-        f"skipped_groups={skipped_groups} "
-        f"failure_records={len(failure_records)} failure_output={args.failure_output} dry_run={dry_run}",
-        flush=True,
-    )
+    existing = read_existing_subscriptions(start_date, end_date, args.dsp_id, args.source_limit)
+    print(f"HUB_JOB_AUTOBOOKING_START start={start_date} end={end_date} dry_run={dry_run} muszakpro_rows={len(rows)} hub_blocks={len(blocks)} existing_subscriptions={len(existing)} rule=exact_per_row", flush=True)
+    result = run_exact_bookings(rows, blocks, existing, args, dry_run)
+    write_failure_output(result['failure_records'], args.failure_output)
+    print("HUB_JOB_AUTOBOOKING_DONE " + " ".join(f"{key}={value}" for key, value in result.items() if key != 'failure_records') + f" failure_records={len(result['failure_records'])} failure_output={args.failure_output} dry_run={dry_run}", flush=True)
     return 0
 
 
