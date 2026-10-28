@@ -122,6 +122,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
       COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
       COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
       COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
@@ -165,7 +166,7 @@ jobs:
           if not dates:
               print("  0")
           else:
-              print(min(dates), max(dates), len(dates))
+              print(data.get("start_date") or min(dates), data.get("end_date") or max(dates), len(dates))
           PY
           )
           DRY_RUN="$(python -c 'import json; from pathlib import Path; print(str(json.loads(Path("results/giriton-overlap-fallback/summary.json").read_text()).get("dry_run", False)).lower())')"
@@ -194,6 +195,10 @@ jobs:
             --refresh-source "GIRITON_OVERLAP_AFTER_HUB_REFRESH"
 
           python scripts/refresh_muszakpro_booking_identity_matches.py \
+            --start-date "$START_DATE" \
+            --end-date "$END_DATE"
+
+          python scripts/export_booking_diagnostics_sheet.py \
             --start-date "$START_DATE" \
             --end-date "$END_DATE"
 

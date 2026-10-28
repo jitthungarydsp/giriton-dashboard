@@ -134,5 +134,28 @@ class ExactRowBookingTest(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class GiritonResultLoggingTest(unittest.TestCase):
+    def namespace(self):
+        writes = []
+        ns = {'os': SimpleNamespace(getenv=lambda name: None),
+              'log_giriton_booking_result': lambda row, status, message: writes.append((row, status, message)) or 'OK'}
+        functions('scripts/run_giriton_overlap_fallback.py', {'fallback_error', 'persist_fallback_result'}, ns)
+        return ns, writes
+
+    def test_real_error_message_is_kept_instead_of_just_exit_code(self):
+        ns, writes = self.namespace()
+        error = ns['fallback_error']('trace', 'GIRITON_UIDL_FAST_BOOK_ERROR=Nem található a futár\n', 1)
+        candidate = {'date': '2026-11-03', 'shift_start': '09:30', 'courier_id': '7440'}
+        self.assertEqual(ns['persist_fallback_result'](candidate, error, False), 'OK')
+        self.assertEqual(writes[0][0]['work_date'], '2026-11-03')
+        self.assertEqual(writes[0][1], 'GIRITON_FAILED')
+        self.assertIn('Nem található a futár', writes[0][2])
+
+    def test_dry_run_does_not_write_results_to_database(self):
+        ns, writes = self.namespace()
+        self.assertEqual(ns['persist_fallback_result']({}, 'failure', True), 'SKIPPED_DRY_RUN')
+        self.assertEqual(writes, [])
+
+
 if __name__ == '__main__':
     unittest.main()

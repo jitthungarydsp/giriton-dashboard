@@ -6,6 +6,7 @@ import argparse
 import json
 import subprocess
 import sys
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from resources.supabase_raw import get_supabase_config
+from resources.giriton_auto_booking import log_giriton_booking_result
 
 
 def clean(value: Any) -> str:
@@ -125,6 +127,30 @@ def enrich_candidates_from_hub_identity(candidates: list[dict[str, Any]]) -> int
     return enriched
 
 
+def fallback_error(stdout, stderr, returncode):
+    if returncode == 0:
+        return ""
+    lines = (str(stdout or '') + '\n' + str(stderr or '')).splitlines()
+    for line in reversed(lines):
+        if 'GIRITON_UIDL_FAST_BOOK_ERROR=' in line:
+            return line.split('GIRITON_UIDL_FAST_BOOK_ERROR=', 1)[1].strip()[:4000]
+    return next((line.strip()[:4000] for line in reversed(lines) if line.strip()), f'Giriton process exit code: {returncode}')
+
+
+def persist_fallback_result(candidate, error, dry_run):
+    if dry_run:
+        return 'SKIPPED_DRY_RUN'
+    status = 'GIRITON_FAILED' if error else 'GIRITON_COMPLETED'
+    row = dict(candidate, work_date=candidate['date'], shift_text=candidate['shift_start'], booking_engine='giriton_uidl')
+    if os.getenv('GITHUB_RUN_ID') and os.getenv('GITHUB_REPOSITORY'):
+        row['run_url'] = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+    try:
+        return log_giriton_booking_result(row, status, f'giriton_failed: {error}' if error else 'Giriton process completed; current Hub state is checked separately.')
+    except Exception as exc:
+        print(f'GIRITON_RESULT_LOG_FAILED {type(exc).__name__}: {exc}', flush=True)
+        return f'LOG_FAILED: {type(exc).__name__}'
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
@@ -174,9 +200,19 @@ def main() -> int:
             f"shift_start={candidate['shift_start']} serial={candidate['serial']}",
             flush=True,
         )
-        completed = subprocess.run(command, check=False)
+        try:
+            completed = subprocess.run(command, check=False, capture_output=True, text=True, encoding='utf-8', errors='replace')
+            if completed.stdout:
+                print(completed.stdout, end='', flush=True)
+            if completed.stderr:
+                print(completed.stderr, end='', file=sys.stderr, flush=True)
+            error = fallback_error(completed.stdout, completed.stderr, completed.returncode)
+        except OSError as exc:
+            completed = subprocess.CompletedProcess(command, 1)
+            error = f'{type(exc).__name__}: {exc}'
         status = "success" if completed.returncode == 0 else "failed"
-        results.append({**candidate, "status": status, "returncode": completed.returncode})
+        log_status = persist_fallback_result(candidate, error, args.dry_run)
+        results.append({**candidate, "status": status, "returncode": completed.returncode, "error": error, "log_status": log_status})
         print(
             f"GIRITON_OVERLAP_FALLBACK_{status.upper()} "
             f"date={candidate['date']} courier={candidate['courier_id']} "
@@ -191,6 +227,11 @@ def main() -> int:
         "dry_run": args.dry_run,
         "results": results,
     }
+    config_path = Path(args.input).parent / 'run-config.json'
+    if config_path.exists():
+        source_config = json.loads(config_path.read_text(encoding='utf-8'))
+        summary['start_date'] = source_config.get('start_date')
+        summary['end_date'] = source_config.get('end_date')
     summary_path = output_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(

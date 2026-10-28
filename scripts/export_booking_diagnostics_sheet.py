@@ -68,7 +68,7 @@ def build_diagnostics(start_date, end_date):
     log_by_key = {}
     for row in logs:
         status = str(row.get('status') or '')
-        if not (status in {'COURIER_ADDED', 'ALREADY_BOOKED', 'COURIER_DELETED'} or status.startswith('HUB_API_REJECTED_') or status.endswith('_ERROR')):
+        if not (status in {'COURIER_ADDED', 'ALREADY_BOOKED', 'COURIER_DELETED', 'GIRITON_FAILED', 'GIRITON_COMPLETED'} or status.startswith('HUB_API_REJECTED_') or status.endswith('_ERROR')):
             continue
         log_by_key[key(row, row.get('shift_start'))] = row
     hub_by_key = {key(r, r['slot_from']): r for r in hub}
@@ -79,6 +79,12 @@ def build_diagnostics(start_date, end_date):
 
 
     def explain(reason, shift):
+        if reason.startswith('giriton_failed:'):
+            return 'A Giriton-ág hibával zárult', reason.split(':', 1)[1].strip(), 'A konkrét Giriton-hiba javítása és az aktuális foglalás ellenőrzése szükséges.'
+        if 'Couriers are not on the roster of this DSP' in reason:
+            return 'A futár nincs a DSP névsorában', 'A Hub HTTP 400 választ adott: a futár nincs az adott DSP névsorában.', 'A futár DSP-/raktár-hozzárendelését kell ellenőrizni a Hubban.'
+        if 'already_assigned' in reason.lower():
+            return 'A Hub szerint már hozzárendelve', 'A Hub ALREADY_ASSIGNED választ adott; ez nem új sikeres foglalás.', 'Hub-adatfrissítés és a meglévő hozzárendelés időpontjának ellenőrzése.'
         if 'overlap' in reason.lower():
             return 'Átfedés – Hub elutasította', 'A Hub üzleti válasza OVERLAP; a HTTP 200 nem jelent sikeres foglalást.', 'A meglévő műszakokkal való ütközést kell rendezni; ne kerüljön sikeres ROBOTLOG-ba.'
         if reason.startswith('no_free_slot'):
@@ -86,11 +92,11 @@ def build_diagnostics(start_date, end_date):
             blocking = match[1] if match else ''
             if blocking and blocking != shift:
                 return 'Napi foglalás másik műszakon elakadt', f'A napi csoport {blocking}-as műszakjára nem volt szabad hely; ez nem bizonyítja, hogy a {shift} is megtelt.', f'A {blocking}-as műszak kapacitását és a napi csoport szabályát kell ellenőrizni.'
-            return 'Nincs szabad hely a futáskor', 'A robot a kiválasztott műszakhoz nem talált szabad kapacitást.', 'Kapacitás vagy engedélyezett alternatív időpont ellenőrzése; az akkori kapacitásra vonatkozik.'
+            return 'Nincs szabad hely a futáskor', 'A robot a kiválasztott műszakhoz nem talált szabad kapacitást.', 'Kapacitás ellenőrzése ugyanarra a kezdésre; eltérő időpontot nem foglalunk.'
         if reason.startswith('min_gap_not_met'):
             return 'Műszakok túl közel vannak', 'A napi műszakkezdések között nincs meg a robot által előírt minimális időköz.', 'Az MP napi foglalásait és a minimum időköz szabályát kell egyeztetni.'
         if reason.startswith('missing_exact_hub_block'):
-            return 'Nincs megfelelő Hub-műszak', 'A robot nem talált pontosan ehhez a kezdéshez Hub-blokkot.', 'A Hub műszakkínálatát és az engedélyezett eltérést kell ellenőrizni.'
+            return 'Nincs megfelelő Hub-műszak', 'A robot nem talált pontosan ehhez a kezdéshez Hub-blokkot.', 'Az azonos kezdésű Hub-műszakot kell ellenőrizni; nincs alternatív foglalás.'
         if reason.startswith('single_shift_day'):
             return 'Egyműszakos nap kihagyva', 'A teljes napi foglaló ág legalább két MP-műszakot vár.', 'Ellenőrizni kell, hogy az egyedi foglaló ág megpróbálta-e.'
         if reason.startswith('max_courier_days_reached'):
@@ -118,6 +124,8 @@ def build_diagnostics(start_date, end_date):
             reason = log.get('message') or log['status']
         if not row.get('courier_id'):
             problem, explanation, action = 'MP-futárazonosító hiányzik', 'Az MP-sorban nincs courier ID; ebből nem állapítható meg biztosan a Hub-egyezés.', 'A futár ID / e-mail összerendelés javítása szükséges.'
+        elif status == 'GIRITON_COMPLETED':
+            problem, explanation, action = 'Giriton lefutott, Hub-pár még hiányzik', 'A Giriton-folyamat lefutott, de a jelenlegi Hub-adatban még nincs pontos pár.', 'A frissítési időket és a tényleges Giriton-/Hub-foglalást kell ellenőrizni.'
         elif status in {'COURIER_ADDED', 'ALREADY_BOOKED'}:
             problem, explanation, action = 'Korábbi siker, most nincs pontos pár', 'A robot korábban sikert jelzett, de a jelenlegi aktív Hub-adatban nincs pontos egyezés.', 'Utóellenőrzés: valóban létrejött-e, később törölték-e vagy változott az időpont.'
         else:

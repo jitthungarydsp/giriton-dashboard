@@ -56,6 +56,19 @@ class BookingDiagnosticsTest(unittest.TestCase):
         rows = self.build([self.mp(courier_id=None, email='unknown@example.com')], hub=[hub])['rows']
         self.assertEqual({r[7] for r in rows}, {'MP-futárazonosító hiányzik', 'Csak Hubon szereplő kezdés'})
 
+    def test_giriton_failure_displays_the_actual_error(self):
+        log = {'work_date': '2026-11-02', 'warehouse': 'BUD1', 'courier_id': 9311, 'shift_start': '14:45',
+               'status': 'GIRITON_FAILED', 'message': 'giriton_failed: Nem található a futár', 'created_at': '2026-10-28T14:00:00+00:00'}
+        row = self.build([self.mp()], logs=[log])['rows'][0]
+        self.assertEqual(row[7], 'A Giriton-ág hibával zárult')
+        self.assertEqual(row[8], 'Nem található a futár')
+        self.assertEqual(row[11], 'GIRITON_FAILED')
+
+    def test_http_400_roster_problem_has_a_specific_explanation(self):
+        failure = {'work_date': '2026-11-02', 'warehouse': 'BUD1', 'courier_id': 9311,
+                   'muszakpro_shift_start': '14:45', 'reason': 'api_booking_failed HTTP 400: Couriers are not on the roster of this DSP: [9311]', 'run_at': '2026-10-28T13:00:00+00:00'}
+        self.assertEqual(self.build([self.mp()], failures=[failure])['rows'][0][7], 'A futár nincs a DSP névsorában')
+
 
 if __name__ == '__main__':
     unittest.main()
