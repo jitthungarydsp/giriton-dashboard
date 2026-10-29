@@ -334,8 +334,8 @@ def _show_days(client: Any) -> None:
     form_key = f"day_form_{_text((row or {}).get('id')) or 'new'}"
     with st.form(form_key):
         types = ["highlighted", "normal"]
-        day_type = st.selectbox("Naptípus", types, index=_index(types, (row or {}).get("day_type")), format_func=DAY_LABELS.get)
-        weekdays = st.multiselect("Érintett napok", list(WEEKDAY_LABELS), default=[int(value) for value in ((row or {}).get("weekdays") or [])], format_func=WEEKDAY_LABELS.get, help="Egy bejegyzéshez több nap is kijelölhető.")
+        day_type = st.selectbox("Naptípus", types, index=_index(types, (row or {}).get("day_type")), format_func=DAY_LABELS.get, key=(form_key) + '_Naptípus')
+        weekdays = st.multiselect("Érintett napok", list(WEEKDAY_LABELS), default=[int(value) for value in ((row or {}).get("weekdays") or [])], format_func=WEEKDAY_LABELS.get, help="Egy bejegyzéshez több nap is kijelölhető.", key=(form_key) + '_Érintett napok')
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "day")
         saved = st.form_submit_button("Módosítás mentése" if row else "Napbesorolás mentése", type="primary")
     if saved:
@@ -367,11 +367,11 @@ def _show_base_rates(client: Any) -> None:
     with st.form(form_key):
         left, right = st.columns(2)
         days, routes, units = list(DAY_LABELS), list(ROUTE_LABELS), list(UNIT_LABELS)
-        day_type = left.selectbox("Naptípus", days, index=_index(days, (row or {}).get("day_type")), format_func=DAY_LABELS.get)
-        route_type = right.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type")), format_func=ROUTE_LABELS.get)
-        warehouse = left.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár")
-        unit = right.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get)
-        money1, money2 = st.columns(2); company = money1.number_input("Vállalkozói Fixed Rate (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = money2.number_input("Futár Fixed Rate (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100)
+        day_type = left.selectbox("Naptípus", days, index=_index(days, (row or {}).get("day_type")), format_func=DAY_LABELS.get, key=(form_key) + '_Naptípus')
+        route_type = right.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type")), format_func=ROUTE_LABELS.get, key=(form_key) + '_Túratípus')
+        warehouse = left.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár", key=(form_key) + '_Raktár')
+        unit = right.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get, key=(form_key) + '_Elszámolási egység')
+        money1, money2 = st.columns(2); company = money1.number_input("Vállalkozói Fixed Rate (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100, key=(form_key) + '_Vállalkozói Fixed Rate (Ft)'); courier = money2.number_input("Futár Fixed Rate (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100, key=(form_key) + '_Futár Fixed Rate (Ft)')
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "base")
         saved = st.form_submit_button("Módosítás mentése" if row else "Alapdíj mentése", type="primary")
     if saved:
@@ -394,10 +394,10 @@ def _show_performance(client: Any, table: str, title: str, key: str) -> None:
     form_key = f"{key}_form_{_text((row or {}).get('id')) or 'new'}"
     with st.form(form_key):
         left, right = st.columns(2); days, routes, units = list(DAY_LABELS), list(ROUTE_LABELS), list(UNIT_LABELS)
-        level = left.text_input("Szint", value=_text((row or {}).get("level_code")), placeholder="Például: Szint 1")
-        day_type = right.selectbox("Naptípus", days, index=_index(days, (row or {}).get("day_type")), format_func=DAY_LABELS.get)
-        route_type = left.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type")), format_func=ROUTE_LABELS.get)
-        warehouse = right.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár")
+        level = left.text_input("Szint", value=_text((row or {}).get("level_code")), placeholder="Például: Szint 1", key=(form_key) + '_Szint')
+        day_type = right.selectbox("Naptípus", days, index=_index(days, (row or {}).get("day_type")), format_func=DAY_LABELS.get, key=(form_key) + '_Naptípus')
+        route_type = left.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type")), format_func=ROUTE_LABELS.get, key=(form_key) + '_Túratípus')
+        warehouse = right.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár", key=(form_key) + '_Raktár')
         source_headers = ["(nincs kiválasztva)"] + _excel_source_headers(client)
         stored_source = _text((row or {}).get("excel_source_field"))
         default_source = stored_source or ("Delay Bonus" if key == "delay" else "Compliance Bonus")
@@ -408,14 +408,15 @@ def _show_performance(client: Any, table: str, title: str, key: str) -> None:
             source_headers,
             index=_index(source_headers, default_source),
             help="A feltöltött JITT Excelből beolvasott fejléc. API esetén a szabályt ugyanebből a sorból használjuk, a matchedTier + túratípus alapján.",
+            key=(form_key) + '_Excel forrásmező',
         )
         if len(source_headers) == 2 and source_headers[1] == default_source:
             st.info("A JITT Excel fejléc-lista még nem érhető el az adatbázisból. Ellenőrizd, hogy van-e betöltött settlement.jit_row adat.")
         st.markdown("##### Mutatósáv és tervezett túrahossz")
-        c1,c2,c3,c4 = st.columns(4); threshold_min = c1.number_input("Mutató minimum (%)", value=_number((row or {}).get("threshold_min")), step=0.01); threshold_max = c2.number_input("Mutató maximum (%)", value=_number((row or {}).get("threshold_max")), step=0.01); duration_min = c3.number_input("Túrahossz minimum", value=_number((row or {}).get("duration_min_hours")), min_value=0.0, step=0.5); duration_max = c4.number_input("Túrahossz maximum", value=_number((row or {}).get("duration_max_hours")), min_value=0.0, step=0.5)
-        bounds = st.columns(2); has_threshold_min = bounds[0].checkbox("Van alsó mutatóhatár", value=_clean((row or {}).get("threshold_min")) is not None); has_threshold_max = bounds[1].checkbox("Van felső mutatóhatár", value=_clean((row or {}).get("threshold_max")) is not None)
-        durations = st.columns(2); has_duration_min = durations[0].checkbox("Van minimum túrahossz", value=_clean((row or {}).get("duration_min_hours")) is not None); has_duration_max = durations[1].checkbox("Van maximum túrahossz", value=_clean((row or {}).get("duration_max_hours")) is not None)
-        m1,m2,m3,m4 = st.columns(4); company = m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit = m3.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get); modes = list(CALCULATION_MODE_LABELS); calculation_mode = m4.selectbox("Számítás módja", modes, index=_index(modes, (row or {}).get("calculation_mode") or "excel"), format_func=CALCULATION_MODE_LABELS.get)
+        c1,c2,c3,c4 = st.columns(4); threshold_min = c1.number_input("Mutató minimum (%)", value=_number((row or {}).get("threshold_min")), step=0.01, key=(form_key) + '_Mutató minimum (%)'); threshold_max = c2.number_input("Mutató maximum (%)", value=_number((row or {}).get("threshold_max")), step=0.01, key=(form_key) + '_Mutató maximum (%)'); duration_min = c3.number_input("Túrahossz minimum", value=_number((row or {}).get("duration_min_hours")), min_value=0.0, step=0.5, key=(form_key) + '_Túrahossz minimum'); duration_max = c4.number_input("Túrahossz maximum", value=_number((row or {}).get("duration_max_hours")), min_value=0.0, step=0.5, key=(form_key) + '_Túrahossz maximum')
+        bounds = st.columns(2); has_threshold_min = bounds[0].checkbox("Van alsó mutatóhatár", value=_clean((row or {}).get("threshold_min")) is not None, key=(form_key) + '_Van alsó mutatóhatár'); has_threshold_max = bounds[1].checkbox("Van felső mutatóhatár", value=_clean((row or {}).get("threshold_max")) is not None, key=(form_key) + '_Van felső mutatóhatár')
+        durations = st.columns(2); has_duration_min = durations[0].checkbox("Van minimum túrahossz", value=_clean((row or {}).get("duration_min_hours")) is not None, key=(form_key) + '_Van minimum túrahossz'); has_duration_max = durations[1].checkbox("Van maximum túrahossz", value=_clean((row or {}).get("duration_max_hours")) is not None, key=(form_key) + '_Van maximum túrahossz')
+        m1,m2,m3,m4 = st.columns(4); company = m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100, key=(form_key) + '_JITT összege (Ft)'); courier = m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100, key=(form_key) + '_Futár összege (Ft)'); unit = m3.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get, key=(form_key) + '_Elszámolási egység'); modes = list(CALCULATION_MODE_LABELS); calculation_mode = m4.selectbox("Számítás módja", modes, index=_index(modes, (row or {}).get("calculation_mode") or "excel"), format_func=CALCULATION_MODE_LABELS.get, key=(form_key) + '_Számítás módja')
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, key)
         saved = st.form_submit_button("Módosítás mentése" if row else f"{title} mentése", type="primary")
     if saved:
@@ -452,18 +453,19 @@ def _show_periodic(client: Any) -> None:
     with st.form(form_key):
         left, right = st.columns(2)
         days, routes, units, conditions = list(DAY_LABELS), list(ROUTE_LABELS), list(UNIT_LABELS), list(CONDITION_LABELS)
-        fee_name = left.text_input("Megnevezés", value=_text((row or {}).get("fee_name")), placeholder="Például: 12 címes túrabónusz")
-        day_type = right.selectbox("Naptípus", days, index=_index(days,(row or {}).get("day_type")), format_func=DAY_LABELS.get)
-        route_type = left.selectbox("Túratípus", routes, index=_index(routes,(row or {}).get("route_type")), format_func=ROUTE_LABELS.get)
-        warehouse = right.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár")
+        fee_name = left.text_input("Megnevezés", value=_text((row or {}).get("fee_name")), placeholder="Például: 12 címes túrabónusz", key=(form_key) + '_Megnevezés')
+        day_type = right.selectbox("Naptípus", days, index=_index(days,(row or {}).get("day_type")), format_func=DAY_LABELS.get, key=(form_key) + '_Naptípus')
+        route_type = left.selectbox("Túratípus", routes, index=_index(routes,(row or {}).get("route_type")), format_func=ROUTE_LABELS.get, key=(form_key) + '_Túratípus')
+        warehouse = right.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár", key=(form_key) + '_Raktár')
         selected_weekdays = st.multiselect(
             "Hét napja",
             options=list(WEEKDAY_LABELS),
             default=_weekdays((row or {}).get("weekdays")),
             format_func=WEEKDAY_LABELS.get,
             help="Üresen hagyva minden napra érvényes. Vasárnapi Hősökhöz csak a Vasárnapot jelöld.",
+            key=(form_key) + '_Hét napja',
         )
-        condition = left.selectbox("Feltétel", conditions, index=_index(conditions,_condition_key((row or {}).get("condition_metric") or "none")), format_func=CONDITION_LABELS.get)
+        condition = left.selectbox("Feltétel", conditions, index=_index(conditions,_condition_key((row or {}).get("condition_metric") or "none")), format_func=CONDITION_LABELS.get, key=(form_key) + '_Feltétel')
         condition = _condition_key(condition)
         condition_min = None
         condition_max = None
@@ -477,6 +479,7 @@ def _show_periodic(client: Any) -> None:
             value=default_min if default_min is not None else 3.0,
             step=1.0,
             help="Vasárnapi Hősök: ide 3 kell, ez a kifutott normál túrákat számolja. Címküszöb szabálynál ez a kezdő küszöb.",
+            key=(form_key) + '_Küszöb / minden N. kifutott túra',
         )
         condition_max_input = c2.number_input(
             "Lépcső / felső határ",
@@ -484,6 +487,7 @@ def _show_periodic(client: Any) -> None:
             value=default_max if default_max is not None else 1.0,
             step=1.0,
             help="Címküszöb szabálynál ez az Y. Minden N. kifutott túra szabálynál nem kell.",
+            key=(form_key) + '_Lépcső / felső határ',
         )
         has_max = c2.checkbox(
             "Lépcső / felső határ használata",
@@ -491,6 +495,7 @@ def _show_periodic(client: Any) -> None:
                 condition == "orders_over_threshold_every_n_per_route"
                 or _clean((row or {}).get("condition_max")) is not None
             ),
+            key=(form_key) + '_Lépcső / felső határ használata',
         )
         if condition == "none":
             condition_min = None
@@ -505,7 +510,7 @@ def _show_periodic(client: Any) -> None:
         elif condition != "none":
             condition_min = condition_min_input
             condition_max = condition_max_input
-        m1,m2,m3=st.columns(3); company=m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier=m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit=m3.selectbox("Elszámolási egység",units,index=_index(units,(row or {}).get("calculation_unit") or "per_route"),format_func=UNIT_LABELS.get)
+        m1,m2,m3=st.columns(3); company=m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100, key=(form_key) + '_JITT összege (Ft)'); courier=m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100, key=(form_key) + '_Futár összege (Ft)'); unit=m3.selectbox("Elszámolási egység",units,index=_index(units,(row or {}).get("calculation_unit") or "per_route"),format_func=UNIT_LABELS.get, key=(form_key) + '_Elszámolási egység')
         valid_from,valid_to,has_end,priority,is_active,note=_common_period(row or {},"periodic")
         saved=st.form_submit_button("Módosítás mentése" if row else "Időszakos díj mentése",type="primary")
     if saved:
@@ -574,10 +579,10 @@ def _show_reserve_insurance(client: Any) -> None:
     row = _editor_row(data, "reserve_insurance", "valid_from")
     with st.form(f"reserve_insurance_form_{_text((row or {}).get('id')) or 'new'}"):
         left, right, target_col, third = st.columns(4)
-        insurance_fee = left.number_input("Biztosítás díja (Ft)", min_value=0, value=_int((row or {}).get("insurance_fee_huf")), step=100)
-        base_total = right.number_input("Céltartalék célösszege (Ft)", min_value=0, value=_int((row or {}).get("base_insurance_total_huf")), step=100)
-        reserve_target = target_col.number_input("Havi levonás maximuma (Ft)", min_value=0, value=_int((row or {}).get("reserve_target_huf"), 50_000), step=1000)
-        deduction = third.number_input("Levonás (%)", min_value=0.0, max_value=100.0, value=_number((row or {}).get("deduction_percent")), step=0.1)
+        insurance_fee = left.number_input("Biztosítás díja (Ft)", min_value=0, value=_int((row or {}).get("insurance_fee_huf")), step=100, key=(f"reserve_insurance_form_{_text((row or {}).get('id')) or 'new'}") + '_Biztosítás díja (Ft)')
+        base_total = right.number_input("Céltartalék célösszege (Ft)", min_value=0, value=_int((row or {}).get("base_insurance_total_huf")), step=100, key=(f"reserve_insurance_form_{_text((row or {}).get('id')) or 'new'}") + '_Céltartalék célösszege (Ft)')
+        reserve_target = target_col.number_input("Havi levonás maximuma (Ft)", min_value=0, value=_int((row or {}).get("reserve_target_huf"), 50_000), step=1000, key=(f"reserve_insurance_form_{_text((row or {}).get('id')) or 'new'}") + '_Havi levonás maximuma (Ft)')
+        deduction = third.number_input("Levonás (%)", min_value=0.0, max_value=100.0, value=_number((row or {}).get("deduction_percent")), step=0.1, key=(f"reserve_insurance_form_{_text((row or {}).get('id')) or 'new'}") + '_Levonás (%)')
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "reserve_insurance")
         saved = st.form_submit_button("Módosítás mentése" if row else "Biztosítási szabály mentése", type="primary")
     if saved:
@@ -606,15 +611,15 @@ def _show_loyalty_bonus(client: Any) -> None:
     row = _editor_row(data, "loyalty", "valid_from")
     with st.form(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}"):
         left, middle, right = st.columns(3)
-        required_months = left.number_input("Lojális bónusz hónapok száma", min_value=0, value=_int((row or {}).get("loyalty_months_required")), step=1)
-        previous_normal_routes_min = left.number_input("Előre foglalt műszak minimum", min_value=0, value=_int((row or {}).get("previous_normal_routes_min")), step=1)
+        required_months = left.number_input("Lojális bónusz hónapok száma", min_value=0, value=_int((row or {}).get("loyalty_months_required")), step=1, key=(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}") + '_Lojális bónusz hónapok száma')
+        previous_normal_routes_min = left.number_input("Előre foglalt műszak minimum", min_value=0, value=_int((row or {}).get("previous_normal_routes_min")), step=1, key=(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}") + '_Előre foglalt műszak minimum')
         routes = ["normal"]
-        route_type = middle.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type") or "normal"), format_func=ROUTE_LABELS.get)
+        route_type = middle.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type") or "normal"), format_func=ROUTE_LABELS.get, key=(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}") + '_Túratípus')
         units = ["per_route", "per_order"]
-        unit = right.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get)
-        require_advance_booking = middle.checkbox("Előfoglalás szükséges", value=bool((row or {}).get("require_advance_booking", True)))
-        require_active_relationship = right.checkbox("Aktív jogviszony szükséges", value=bool((row or {}).get("require_active_relationship", True)))
-        amount = st.number_input("Lojalitási bónusz összege (Ft)", min_value=0, value=_int((row or {}).get("bonus_amount_huf")), step=100)
+        unit = right.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get, key=(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}") + '_Elszámolási egység')
+        require_advance_booking = middle.checkbox("Előfoglalás szükséges", value=bool((row or {}).get("require_advance_booking", True)), key=(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}") + '_Előfoglalás szükséges')
+        require_active_relationship = right.checkbox("Aktív jogviszony szükséges", value=bool((row or {}).get("require_active_relationship", True)), key=(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}") + '_Aktív jogviszony szükséges')
+        amount = st.number_input("Lojalitási bónusz összege (Ft)", min_value=0, value=_int((row or {}).get("bonus_amount_huf")), step=100, key=(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}") + '_Lojalitási bónusz összege (Ft)')
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "loyalty")
         saved = st.form_submit_button("Módosítás mentése" if row else "Lojalitási bónusz mentése", type="primary")
     if saved:
@@ -645,9 +650,9 @@ def _show_efo_assignments(client: Any) -> None:
     row = _editor_row(data, "efo", "courier_id")
     with st.form(f"efo_form_{_text((row or {}).get('id')) or 'new'}"):
         left, middle, right = st.columns(3)
-        courier_id = left.text_input("Futár azonosító", value=_text((row or {}).get("courier_id")))
-        courier_name = middle.text_input("Futár neve", value=_text((row or {}).get("courier_name")))
-        daily_deduction = right.number_input("Napi díj levonása (Ft)", min_value=0, value=_int((row or {}).get("daily_deduction_huf")), step=100)
+        courier_id = left.text_input("Futár azonosító", value=_text((row or {}).get("courier_id")), key=(f"efo_form_{_text((row or {}).get('id')) or 'new'}") + '_Futár azonosító')
+        courier_name = middle.text_input("Futár neve", value=_text((row or {}).get("courier_name")), key=(f"efo_form_{_text((row or {}).get('id')) or 'new'}") + '_Futár neve')
+        daily_deduction = right.number_input("Napi díj levonása (Ft)", min_value=0, value=_int((row or {}).get("daily_deduction_huf")), step=100, key=(f"efo_form_{_text((row or {}).get('id')) or 'new'}") + '_Napi díj levonása (Ft)')
 
         row_key = f"efo_{_text((row or {}).get('id')) or 'new'}"
         period_cols = st.columns(3)
@@ -690,7 +695,7 @@ def _show_life_insurance(client: Any) -> None:
         st.dataframe(view[["Életbiztosítás összege", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
     row = _editor_row(data, "life_insurance", "valid_from")
     with st.form(f"life_insurance_form_{_text((row or {}).get('id')) or 'new'}"):
-        amount = st.number_input("Életbiztosítás összege (Ft)", min_value=0, value=_int((row or {}).get("life_insurance_amount_huf")), step=100)
+        amount = st.number_input("Életbiztosítás összege (Ft)", min_value=0, value=_int((row or {}).get("life_insurance_amount_huf")), step=100, key=(f"life_insurance_form_{_text((row or {}).get('id')) or 'new'}") + '_Életbiztosítás összege (Ft)')
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "life_insurance")
         saved = st.form_submit_button("Módosítás mentése" if row else "Életbiztosítás mentése", type="primary")
     if saved:
@@ -736,16 +741,16 @@ def _show_customer_rating(client: Any) -> None:
     row = _editor_row(data, "customer_rating", "level_code")
     with st.form(f"customer_rating_form_{_text((row or {}).get('id')) or 'new'}"):
         left, middle, right = st.columns(3)
-        level = left.text_input("Megnevezés", value=_text((row or {}).get("level_code")) or "Ügyfélértékelés")
+        level = left.text_input("Megnevezés", value=_text((row or {}).get("level_code")) or "Ügyfélértékelés", key=(f"customer_rating_form_{_text((row or {}).get('id')) or 'new'}") + '_Megnevezés')
         routes = ["normal", "express"]
-        route_type = middle.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type") or "normal"), format_func=ROUTE_LABELS.get)
-        courier_amount = right.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100)
+        route_type = middle.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type") or "normal"), format_func=ROUTE_LABELS.get, key=(f"customer_rating_form_{_text((row or {}).get('id')) or 'new'}") + '_Túratípus')
+        courier_amount = right.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100, key=(f"customer_rating_form_{_text((row or {}).get('id')) or 'new'}") + '_Futár összege (Ft)')
         rating_cols = st.columns(2)
-        rating_min = rating_cols[0].number_input("Minimum értékelés", min_value=0.0, max_value=5.0, value=_number((row or {}).get("rating_min_percent")), step=0.01, help="Az Excelben szereplő 1-5 skálás átlagértékelés alsó határa.")
-        rating_max = rating_cols[1].number_input("Maximum értékelés", min_value=0.0, max_value=5.0, value=_number((row or {}).get("rating_max_percent")), step=0.01, help="Az Excelben szereplő 1-5 skálás átlagértékelés felső határa.")
+        rating_min = rating_cols[0].number_input("Minimum értékelés", min_value=0.0, max_value=5.0, value=_number((row or {}).get("rating_min_percent")), step=0.01, help="Az Excelben szereplő 1-5 skálás átlagértékelés alsó határa.", key=(f"customer_rating_form_{_text((row or {}).get('id')) or 'new'}") + '_Minimum értékelés')
+        rating_max = rating_cols[1].number_input("Maximum értékelés", min_value=0.0, max_value=5.0, value=_number((row or {}).get("rating_max_percent")), step=0.01, help="Az Excelben szereplő 1-5 skálás átlagértékelés felső határa.", key=(f"customer_rating_form_{_text((row or {}).get('id')) or 'new'}") + '_Maximum értékelés')
         bounds = st.columns(2)
-        has_min = bounds[0].checkbox("Van minimum", value=_clean((row or {}).get("rating_min_percent")) is not None)
-        has_max = bounds[1].checkbox("Van maximum", value=_clean((row or {}).get("rating_max_percent")) is not None)
+        has_min = bounds[0].checkbox("Van minimum", value=_clean((row or {}).get("rating_min_percent")) is not None, key=(f"customer_rating_form_{_text((row or {}).get('id')) or 'new'}") + '_Van minimum')
+        has_max = bounds[1].checkbox("Van maximum", value=_clean((row or {}).get("rating_max_percent")) is not None, key=(f"customer_rating_form_{_text((row or {}).get('id')) or 'new'}") + '_Van maximum')
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "customer_rating")
         saved = st.form_submit_button("Módosítás mentése" if row else "Ügyfélértékelés mentése", type="primary")
     if saved:
@@ -822,11 +827,12 @@ def _show_email_templates(client: Any) -> None:
             value=_text(selected_row.get("template_key")) if selected_row else "",
             disabled=selected_key != "__new__",
             help="Rövid technikai kulcs, például payment_rejected.",
+            key=(f"email_template_form_{selected_key}") + '_Sablon kulcs',
         )
-        template_name = st.text_input("Megnevezés", value=_text(selected_row.get("template_name")))
-        subject = st.text_input("Tárgy", value=_text(selected_row.get("subject")))
-        body = st.text_area("Sablon szövege", value=_text(selected_row.get("body")), height=280)
-        is_active = st.checkbox("Aktív", value=bool(selected_row.get("is_active", True)))
+        template_name = st.text_input("Megnevezés", value=_text(selected_row.get("template_name")), key=(f"email_template_form_{selected_key}") + '_Megnevezés')
+        subject = st.text_input("Tárgy", value=_text(selected_row.get("subject")), key=(f"email_template_form_{selected_key}") + '_Tárgy')
+        body = st.text_area("Sablon szövege", value=_text(selected_row.get("body")), height=280, key=(f"email_template_form_{selected_key}") + '_Sablon szövege')
+        is_active = st.checkbox("Aktív", value=bool(selected_row.get("is_active", True)), key=(f"email_template_form_{selected_key}") + '_Aktív')
         saved = st.form_submit_button("Sablon mentése", type="primary")
     if saved:
         try:
