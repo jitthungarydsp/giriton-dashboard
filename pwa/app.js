@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v252";
+const APP_VERSION = "v253";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1517,8 +1517,52 @@ function renderQualitySummaryChart(payload = {}) {
           `;
         }).join("")}
       </div>
+      <div id="courier-quality-complaints" aria-live="polite">${renderCourierQualityComplaints(payload)}</div>
     </section>
   `;
+}
+
+function renderCourierQualityComplaints(payload = {}) {
+  const header = '<div class="courier-complaint-heading"><div><h4>Reklamációim</h4><p>A kiválasztott hónapban érintett ügyek állapota</p></div><button class="text-button" type="button" data-courier-complaints-refresh>Állapot frissítése</button></div>';
+  if (payload.qualityComplaintsError) return `<section class="courier-complaints">${header}<p class="notice error">A reklamációk állapotát most nem sikerült lekérni. Próbáld újra az állapotfrissítést.</p></section>`;
+  if (!payload.qualityComplaints) return `<section class="courier-complaints">${header}<p class="muted">Reklamációk állapotának betöltése…</p></section>`;
+  if (!payload.qualityComplaints.length) return `<section class="courier-complaints">${header}<p class="muted">Erre a hónapra még nincs beküldött reklamációd.</p></section>`;
+  const labels = { lateShift: "Műszakkésés", noShow: "No-show", uncleanedTimeWindowLate: "Nem mentesített címkésés", cleanedTimeWindowLate: "Mentesített címkésés" };
+  const explanations = { open: "Megkaptuk a reklamációdat, feldolgozásra vár.", forwarded: "A reklamációdat továbbítottuk a Kifli felé. Válaszra várunk.", closed: "Az ügyet lezártuk. Az alábbi válaszban találod az eredményt." };
+  return `<section class="courier-complaints">${header}<div class="courier-complaint-list">${payload.qualityComplaints.map(item => {
+    const status = ["open", "forwarded", "closed"].includes(item.status) ? item.status : "unknown";
+    return `<article class="courier-complaint-card">
+      <div class="courier-complaint-top"><h4>${escapeHtml(labels[item.topic] || "Reklamáció")}</h4><span class="courier-complaint-badge ${status}">${escapeHtml(qualityComplaintStatus(item.status))}</span></div>
+      <p class="courier-complaint-description">${escapeHtml(explanations[status] || "Az ügy állapota frissítésre vár.")}</p>
+      <div class="courier-complaint-dates"><span>Beküldve <strong>${escapeHtml(shortDateTime(item.created_at))}</strong></span>${item.forwarded_at ? `<span>Továbbítva <strong>${escapeHtml(shortDateTime(item.forwarded_at))}</strong></span>` : ""}${item.closed_at ? `<span>Lezárva <strong>${escapeHtml(shortDateTime(item.closed_at))}</strong></span>` : ""}</div>
+      ${item.admin_response ? `<div class="courier-complaint-response"><strong>Válasz a reklamációdra</strong>${item.responded_at ? `<small>${escapeHtml(shortDateTime(item.responded_at))}</small>` : ""}<p class="complaint-text">${escapeHtml(item.admin_response)}</p></div>` : ""}
+      <details><summary>Beküldött reklamáció és érintett műszakok</summary><p class="complaint-text">${escapeHtml(item.message)}</p>
+      ${(item.affected_items || []).map(row => `<p class="courier-complaint-item">${escapeHtml(row.date)} · ${escapeHtml(row.label)}</p>`).join("")}
+      ${(item.attachments || []).map((photo, index) => `<a class="courier-complaint-photo" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Csatolt kép ${index + 1}</a>`).join("")}
+      ${(item.history || []).filter(event => event.message).map(event => `<p class="complaint-text">${escapeHtml(shortDateTime(event.at))} · ${escapeHtml(event.message)}</p>`).join("")}</details>
+    </article>`;
+  }).join("")}</div>${payload.qualityComplaintsHasMore ? '<p class="muted">A legutóbbi 200 reklamációt mutatjuk.</p>' : ""}</section>`;
+}
+
+async function refreshCourierQualityComplaints() {
+  const payload = state.statistics;
+  if (!payload) return;
+  const sequence = (state.courierComplaintRequest || 0) + 1;
+  state.courierComplaintRequest = sequence;
+  const params = new URLSearchParams({ month: payload.month || state.statisticsMonth });
+  if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) params.set("courier", state.workflowPreviewCourierId);
+  try {
+    const result = await api(`/api/quality/complaints/mine?${params}`, { silentLoading: true });
+    if (state.statistics !== payload || state.courierComplaintRequest !== sequence) return;
+    payload.qualityComplaints = result.items || [];
+    payload.qualityComplaintsHasMore = result.hasMore;
+    payload.qualityComplaintsError = false;
+  } catch (_) {
+    if (state.statistics !== payload || state.courierComplaintRequest !== sequence) return;
+    payload.qualityComplaintsError = true;
+  }
+  const target = $("#courier-quality-complaints");
+  if (target) target.innerHTML = renderCourierQualityComplaints(payload);
 }
 
 function qualityShiftTimes(row, topic) {
@@ -1674,10 +1718,12 @@ function ensureQualityReclamationDialog() {
       }
       context.saved = true;
       status.textContent = `A reklamációt és ${context.uploaded} képet elmentettük. Azonosító: ${context.complaintId}`;
+      refreshCourierQualityComplaints();
     } catch (error) {
       status.textContent = context.complaintId
         ? `A reklamáció elmentve, de a képfeltöltés nem fejeződött be: ${error.message} A beküldés gombbal folytathatod.`
         : `Nem sikerült menteni: ${error.message} Az indoklás és a képek megmaradtak, újrapróbálhatod.`;
+      if (context.complaintId) refreshCourierQualityComplaints();
       if (dialog.complaintContext === context) {
         button.disabled = false;
         note.disabled = Boolean(context.complaintId);
@@ -2229,6 +2275,7 @@ async function loadStatistics(options = {}) {
       state.statisticsHistoryDate = requestedHistoryDate;
     }
     renderStatistics();
+    refreshCourierQualityComplaints();
   } catch (error) {
     if (requestSeq !== state.statisticsRequestSeq) return;
     state.statistics = null;
@@ -11166,6 +11213,10 @@ $("#statistics-refresh").addEventListener("click", () => {
 });
 
 $("#statistics-quality")?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-courier-complaints-refresh]")) {
+    refreshCourierQualityComplaints();
+    return;
+  }
   const reclamationButton = event.target.closest("[data-quality-reclamation-topic]");
   if (reclamationButton) {
     openQualityReclamation(reclamationButton.getAttribute("data-quality-reclamation-topic") || "");

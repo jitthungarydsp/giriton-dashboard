@@ -22282,6 +22282,23 @@ def download_quality_complaint_photo(
         "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
+@app.get("/api/quality/complaints/mine")
+def own_quality_complaints(
+    month: str = Query(...),
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    view_user, _preview = workflow_view_user(user, courier)
+    courier_id, _name = courier_identity(view_user)
+    work_month = parse_month(month)
+    rows = supabase_rest("GET", "pwa_quality_complaints", params={
+        "select": "id,topic,status,message,affected_items,created_at,forwarded_at,closed_at,admin_response,responded_at,history,attachments",
+        "courier_id": f"eq.{courier_id}", "work_month": f"eq.{work_month.isoformat()}",
+        "order": "created_at.desc,id.desc", "limit": "201"})
+    return {"items": rows[:200], "hasMore": len(rows) > 200}
+
+
 @app.get("/api/quality/complaints")
 def list_quality_complaints(
     status: str = Query(default="all"),

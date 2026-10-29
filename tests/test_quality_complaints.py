@@ -61,14 +61,16 @@ class ComplaintManagementTest(unittest.TestCase):
     def functions(self, role, db):
         from uuid import UUID
         tree = ast.parse((Path(__file__).resolve().parents[1] / 'pwa_api.py').read_text(encoding='utf-8'))
-        names = {'quality_complaint_manager', 'manage_quality_complaint', 'list_quality_complaints'}
+        names = {'quality_complaint_manager', 'manage_quality_complaint', 'list_quality_complaints', 'own_quality_complaints'}
         nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
         for node in nodes:
             node.decorator_list = []
         ns = dict(Any=Any, UUID=UUID, QualityComplaintActionRequest=Any,
-                  Cookie=lambda **k: None, Query=lambda **k: k.get('default'),
+                  Cookie=lambda **k: None, Query=lambda *args, **k: k.get('default'),
                   require_user=lambda _: {'username': 'Operator', 'role': role},
                   courier_identity=lambda _: ('6498', 'Futár'),
+                  workflow_view_user=lambda user, courier: (user, False),
+                  parse_month=lambda value: date.fromisoformat(value + '-01'),
                   HTTPException=ApiError, supabase_rest=db)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'management', 'exec'), ns)
         return ns
@@ -106,6 +108,16 @@ class ComplaintManagementTest(unittest.TestCase):
         result = self.functions('courier', db)['list_quality_complaints']()
         self.assertFalse(result['canManage'])
         self.assertEqual(calls[0]['params']['courier_id'], 'eq.6498')
+
+    def test_monthly_statuses_are_scoped_even_for_admin(self):
+        calls = []
+        def db(*args, **kwargs):
+            calls.append(kwargs)
+            return [{'id': 'mine', 'status': 'forwarded'}]
+        result = self.functions('admin', db)['own_quality_complaints']('2026-10')
+        self.assertEqual(result['items'][0]['status'], 'forwarded')
+        self.assertEqual(calls[0]['params']['courier_id'], 'eq.6498')
+        self.assertEqual(calls[0]['params']['work_month'], 'eq.2026-10-01')
 
 
 if __name__ == '__main__':
