@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
+from uuid import UUID
 
 import requests
 import tomllib
@@ -286,6 +287,14 @@ class ComplaintRequest(BaseModel):
     action: str
     message: str
     process: str = ""
+
+
+class QualityComplaintRequest(BaseModel):
+    request_id: UUID
+    month: str
+    topic: str
+    message: str = Field(min_length=5, max_length=5000)
+    items: list[dict[str, Any]] = Field(min_length=1, max_length=200)
 
 
 class RouteDelayAlertRequest(BaseModel):
@@ -22166,6 +22175,48 @@ def shifts(
     user = require_user(giriton_pwa_session)
     view_user, _preview = workflow_view_user(user, courier)
     return read_shifts(view_user, days)
+
+
+@app.post("/api/quality/complaints")
+def create_quality_complaint(
+    payload: QualityComplaintRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if payload.topic not in {"lateShift", "uncleanedTimeWindowLate", "cleanedTimeWindowLate", "noShow"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen reklamációtípus.")
+    month = parse_month(payload.month)
+    message = payload.message.strip()
+    if len(message) < 5:
+        raise HTTPException(status_code=422, detail="Legalább 5 karakteres indoklást adj meg.")
+    courier_id, courier_name = courier_identity(user)
+    if not courier_id:
+        raise HTTPException(status_code=422, detail="Hiányzó futárazonosító.")
+    items = []
+    for item in payload.items:
+        try:
+            work_date = date.fromisoformat(str(item.get("date") or ""))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Hiányzó vagy hibás műszakdátum.")
+        if (work_date.year, work_date.month) != (month.year, month.month):
+            raise HTTPException(status_code=422, detail="A műszak nem a kiválasztott hónaphoz tartozik.")
+        items.append({key: str(item.get(key) or "")[:500] for key in
+                      ("date", "label", "note", "routeId", "giritonLoginAt", "queueStartedAt")})
+    # Idempotent retries: a lost response must not create a second complaint.
+    saved = supabase_rest("POST", "pwa_quality_complaints",
+        params={"on_conflict": "request_id"},
+        payload={"request_id": str(payload.request_id), "courier_id": str(courier_id),
+                 "courier_name": courier_name, "topic": payload.topic,
+                 "work_month": month.isoformat(), "message": message,
+                 "affected_items": items, "created_by": str(user.get("username") or courier_name)},
+        prefer="resolution=ignore-duplicates,return=representation")
+    if not saved:
+        saved = supabase_rest("GET", "pwa_quality_complaints", params={
+            "select": "id,created_at", "request_id": f"eq.{payload.request_id}",
+            "courier_id": f"eq.{courier_id}", "limit": "1"})
+    if not saved or not saved[0].get("id"):
+        raise HTTPException(status_code=502, detail="A reklamáció mentése nem igazolható. Próbáld újra.")
+    return {"ok": True, "id": saved[0]["id"], "createdAt": saved[0].get("created_at")}
 
 
 @app.get("/api/coordinator/live-map")

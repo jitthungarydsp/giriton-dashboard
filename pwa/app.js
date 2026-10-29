@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v249";
+const APP_VERSION = "v250";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1565,10 +1565,34 @@ function ensureQualityReclamationDialog() {
       </div>
       <div data-quality-reclamation-body></div>
       <label>Reklamáció indoka<textarea data-quality-reclamation-note placeholder="Ide írható a reklamáció rövid indoklása..."></textarea></label>
-      <div class="dialog-actions"><button type="button" class="secondary" data-quality-reclamation-close>Bezárás</button></div>
+      <p data-quality-reclamation-status role="status" aria-live="polite"></p>
+      <div class="dialog-actions"><button type="button" class="secondary" data-quality-reclamation-close>Bezárás</button><button type="button" data-quality-reclamation-submit>Reklamáció beküldése</button></div>
     </form>
   `;
   document.body.appendChild(dialog);
+  dialog.querySelector("[data-quality-reclamation-submit]").addEventListener("click", async () => {
+    const button = dialog.querySelector("[data-quality-reclamation-submit]");
+    const status = dialog.querySelector("[data-quality-reclamation-status]");
+    const note = dialog.querySelector("[data-quality-reclamation-note]");
+    const context = dialog.complaintContext;
+    if (!context || context.saved || button.disabled) return;
+    const message = note.value.trim();
+    if (message.length < 5) { status.textContent = "Legalább 5 karakteres indoklást adj meg."; return; }
+    button.disabled = true;
+    note.disabled = true;
+    status.textContent = "Mentés folyamatban…";
+    try {
+      const result = await api("/api/quality/complaints", { method: "POST", body: JSON.stringify({
+        request_id: context.requestId, topic: context.topic, month: context.month, items: context.rows, message,
+      }) });
+      if (!result.ok || !result.id) throw new Error("A mentés nem igazolható.");
+      context.saved = true;
+      status.textContent = `A reklamációt elmentettük. Azonosító: ${result.id}`;
+    } catch (error) {
+      status.textContent = `Nem sikerült menteni: ${error.message} Az indoklás megmaradt, újrapróbálhatod.`;
+      if (dialog.complaintContext === context) { button.disabled = false; note.disabled = false; }
+    }
+  });
   dialog.querySelectorAll("[data-quality-reclamation-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close();
@@ -1578,6 +1602,10 @@ function ensureQualityReclamationDialog() {
 
 function openQualityReclamation(topic) {
   const dialog = ensureQualityReclamationDialog();
+  if (dialog.querySelector("[data-quality-reclamation-note]").disabled && !dialog.complaintContext?.saved) {
+    dialog.showModal();
+    return;
+  }
   const summary = state.statistics?.qualitySummary || {};
   const details = summary.details || {};
   const rows = topic === "noShow" ? pastQualityDetails(details.noShow || []) : (details[topic] || []);
@@ -1593,6 +1621,13 @@ function openQualityReclamation(topic) {
     ? `<div class="quality-reclamation-list">${rows.map((row) => `<div class="stat-row"><span>${escapeHtml(row.date || "-")} · ${escapeHtml(row.label || "Műszak")}${qualityShiftTimes(row, topic)}</span><strong>${escapeHtml(row.note || "")}</strong></div>`).join("")}</div>`
     : `<p class="updated-at">Ehhez a jelzéshez nincs részletes adat.</p>`;
   dialog.querySelector("[data-quality-reclamation-note]").value = "";
+  dialog.querySelector("[data-quality-reclamation-note]").disabled = false;
+  const preview = Boolean(previewCourierValue() || state.workflowPreviewCourierId);
+  dialog.complaintContext = { topic, month: state.statistics?.month || state.statisticsMonth,
+    rows, requestId: crypto.randomUUID(), saved: false };
+  dialog.querySelector("[data-quality-reclamation-submit]").disabled = preview || !rows.length;
+  dialog.querySelector("[data-quality-reclamation-status]").textContent = preview
+    ? "Admin előnézetből nem küldhető be reklamáció a futár nevében." : "";
   dialog.showModal();
 }
 
