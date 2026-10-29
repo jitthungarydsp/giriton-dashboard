@@ -1,0 +1,754 @@
+{
+  "checked": {
+    "Alapdíj": 2038,
+    "Késedelmi bónusz": 2038,
+    "Túramegfelelés": 2038,
+    "Ügyfélértékelés": 68
+  },
+  "route_rows": 2038,
+  "unmatched": [
+    {
+      "sheet": "All_JIT_092026",
+      "row": 84,
+      "courier": "Vándor Balázs",
+      "route_id": "1529065",
+      "date": "2026-09-03",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 87,
+      "courier": "Vándor Balázs",
+      "route_id": "1529120",
+      "date": "2026-09-03",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 95,
+      "courier": "Vándor Balázs",
+      "route_id": "1529265",
+      "date": "2026-09-03",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 99,
+      "courier": "Vándor Balázs",
+      "route_id": "1529356",
+      "date": "2026-09-03",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 106,
+      "courier": "Vándor Balázs",
+      "route_id": "1529477",
+      "date": "2026-09-03",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 111,
+      "courier": "Vándor Balázs",
+      "route_id": "1529618",
+      "date": "2026-09-03",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 112,
+      "courier": "Nagy Kristóf",
+      "route_id": "1529644",
+      "date": "2026-09-03",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 114,
+      "courier": "Vándor Balázs",
+      "route_id": "1529651",
+      "date": "2026-09-03",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 116,
+      "courier": "Tuza Ádám",
+      "route_id": "1529657",
+      "date": "2026-09-03",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 133,
+      "courier": "Abonyi György",
+      "route_id": "1530032",
+      "date": "2026-09-04",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 163,
+      "courier": "Tuza Ádám",
+      "route_id": "1530635",
+      "date": "2026-09-04",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 310,
+      "courier": "Cserna Levente Zoltán",
+      "route_id": "1533875",
+      "date": "2026-09-08",
+      "type": "regional",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 916.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 352,
+      "courier": "Vándor Balázs",
+      "route_id": "1534635",
+      "date": "2026-09-09",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 358,
+      "courier": "Vándor Balázs",
+      "route_id": "1534757",
+      "date": "2026-09-09",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 390,
+      "courier": "Cserna Levente Zoltán",
+      "route_id": "1535324",
+      "date": "2026-09-10",
+      "type": "regional",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 916.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 412,
+      "courier": "Cserna Levente Zoltán",
+      "route_id": "1535760",
+      "date": "2026-09-10",
+      "type": "regional",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 916.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 433,
+      "courier": "Kiss 7245 Csaba",
+      "route_id": "1536109",
+      "date": "2026-09-10",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 483,
+      "courier": "Tuza Ádám",
+      "route_id": "1537171",
+      "date": "2026-09-11",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 484,
+      "courier": "Abonyi György",
+      "route_id": "1537175",
+      "date": "2026-09-11",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 611,
+      "courier": "Abonyi György",
+      "route_id": "1540082",
+      "date": "2026-09-14",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 613,
+      "courier": "Abonyi György",
+      "route_id": "1540106",
+      "date": "2026-09-14",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 628,
+      "courier": "Vándor Balázs",
+      "route_id": "1540442",
+      "date": "2026-09-15",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 637,
+      "courier": "Vándor Balázs",
+      "route_id": "1540610",
+      "date": "2026-09-15",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 646,
+      "courier": "Vándor Balázs",
+      "route_id": "1540885",
+      "date": "2026-09-15",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 674,
+      "courier": "Nagy Kristóf",
+      "route_id": "1541566",
+      "date": "2026-09-16",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 736,
+      "courier": "Abonyi György",
+      "route_id": "1543102",
+      "date": "2026-09-17",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 863,
+      "courier": "Kiss 7245 Csaba",
+      "route_id": "1546326",
+      "date": "2026-09-20",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 921,
+      "courier": "Vándor Balázs",
+      "route_id": "1547731",
+      "date": "2026-09-22",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 926,
+      "courier": "Nagy Kristóf",
+      "route_id": "1547822",
+      "date": "2026-09-22",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 932,
+      "courier": "Vándor Balázs",
+      "route_id": "1547962",
+      "date": "2026-09-22",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 933,
+      "courier": "Nagy Kristóf",
+      "route_id": "1547981",
+      "date": "2026-09-22",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 937,
+      "courier": "Abonyi György",
+      "route_id": "1548070",
+      "date": "2026-09-22",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 939,
+      "courier": "Vándor Balázs",
+      "route_id": "1548116",
+      "date": "2026-09-22",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 953,
+      "courier": "Tuza Ádám",
+      "route_id": "1548369",
+      "date": "2026-09-22",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1123,
+      "courier": "Tuza Ádám",
+      "route_id": "1552645",
+      "date": "2026-09-26",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1141,
+      "courier": "Vándor Balázs",
+      "route_id": "1553046",
+      "date": "2026-09-27",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1168,
+      "courier": "Vándor Balázs",
+      "route_id": "1553532",
+      "date": "2026-09-27",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1179,
+      "courier": "Vándor Balázs",
+      "route_id": "1553695",
+      "date": "2026-09-27",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1180,
+      "courier": "Kiss 7245 Csaba",
+      "route_id": "1553704",
+      "date": "2026-09-27",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1254,
+      "courier": "Vándor Balázs",
+      "route_id": "1555202",
+      "date": "2026-09-29",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1263,
+      "courier": "Vándor Balázs",
+      "route_id": "1555412",
+      "date": "2026-09-29",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1273,
+      "courier": "Vándor Balázs",
+      "route_id": "1555576",
+      "date": "2026-09-29",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1288,
+      "courier": "Vándor Balázs",
+      "route_id": "1555897",
+      "date": "2026-09-29",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1652,
+      "courier": "Kanyó Krisztián",
+      "route_id": "1540370",
+      "date": "2026-09-15",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1653,
+      "courier": "Koncsik Zoltán",
+      "route_id": "1540478",
+      "date": "2026-09-15",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1738,
+      "courier": "Kanyó Krisztián",
+      "route_id": "1543880",
+      "date": "2026-09-18",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1921,
+      "courier": "Lulaj 8001 Brendon",
+      "route_id": "1551454",
+      "date": "2026-09-25",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 1967,
+      "courier": "Kanyó Krisztián",
+      "route_id": "1553463",
+      "date": "2026-09-27",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 2008,
+      "courier": "Koncsik Zoltán",
+      "route_id": "1555259",
+      "date": "2026-09-29",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "All_JIT_092026",
+      "row": 2033,
+      "courier": "Koncsik Zoltán",
+      "route_id": "1556356",
+      "date": "2026-09-30",
+      "type": "express",
+      "field": "Compliance Bonus",
+      "category": "Túramegfelelés",
+      "value": 666.0
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 37,
+      "courier_id": "7245",
+      "category": "Ügyfélértékelés",
+      "value": 4.899,
+      "reason": "Sávok közötti rés"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 38,
+      "courier_id": "8226",
+      "category": "Ügyfélértékelés",
+      "value": 4.895,
+      "reason": "Sávok közötti rés"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 57,
+      "courier_id": "8864",
+      "category": "Ügyfélértékelés",
+      "value": 4.797,
+      "reason": "Sávok közötti rés"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 58,
+      "courier_id": "8760",
+      "category": "Ügyfélértékelés",
+      "value": 4.795,
+      "reason": "Sávok közötti rés"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 64,
+      "courier_id": "7624",
+      "category": "Ügyfélértékelés",
+      "value": 4.667,
+      "reason": "A legalsó bónuszsáv alatt"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 65,
+      "courier_id": "9016",
+      "category": "Ügyfélértékelés",
+      "value": 4.654,
+      "reason": "A legalsó bónuszsáv alatt"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 66,
+      "courier_id": "8266",
+      "category": "Ügyfélértékelés",
+      "value": 4.5,
+      "reason": "A legalsó bónuszsáv alatt"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 67,
+      "courier_id": "9136",
+      "category": "Ügyfélértékelés",
+      "value": 4.5,
+      "reason": "A legalsó bónuszsáv alatt"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 68,
+      "courier_id": "8960",
+      "category": "Ügyfélértékelés",
+      "value": 4.0,
+      "reason": "A legalsó bónuszsáv alatt"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 69,
+      "courier_id": "9065",
+      "category": "Ügyfélértékelés",
+      "value": 3.667,
+      "reason": "A legalsó bónuszsáv alatt"
+    }
+  ],
+  "counts": {
+    "Túramegfelelés": 50,
+    "Ügyfélértékelés": 10
+  },
+  "route_issues": 50,
+  "affected_unique_routes": 50,
+  "route_groups": [
+    [
+      "Túramegfelelés",
+      "express",
+      666.0,
+      47
+    ],
+    [
+      "Túramegfelelés",
+      "regional",
+      916.0,
+      3
+    ]
+  ],
+  "couriers": {
+    "Vándor Balázs": 22,
+    "Nagy Kristóf": 4,
+    "Tuza Ádám": 5,
+    "Abonyi György": 6,
+    "Cserna Levente Zoltán": 3,
+    "Kiss 7245 Csaba": 3,
+    "Kanyó Krisztián": 3,
+    "Koncsik Zoltán": 3,
+    "Lulaj 8001 Brendon": 1
+  },
+  "rating_issues": [
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 37,
+      "courier_id": "7245",
+      "category": "Ügyfélértékelés",
+      "value": 4.899,
+      "reason": "Sávok közötti rés"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 38,
+      "courier_id": "8226",
+      "category": "Ügyfélértékelés",
+      "value": 4.895,
+      "reason": "Sávok közötti rés"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 57,
+      "courier_id": "8864",
+      "category": "Ügyfélértékelés",
+      "value": 4.797,
+      "reason": "Sávok közötti rés"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 58,
+      "courier_id": "8760",
+      "category": "Ügyfélértékelés",
+      "value": 4.795,
+      "reason": "Sávok közötti rés"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 64,
+      "courier_id": "7624",
+      "category": "Ügyfélértékelés",
+      "value": 4.667,
+      "reason": "A legalsó bónuszsáv alatt"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 65,
+      "courier_id": "9016",
+      "category": "Ügyfélértékelés",
+      "value": 4.654,
+      "reason": "A legalsó bónuszsáv alatt"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 66,
+      "courier_id": "8266",
+      "category": "Ügyfélértékelés",
+      "value": 4.5,
+      "reason": "A legalsó bónuszsáv alatt"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 67,
+      "courier_id": "9136",
+      "category": "Ügyfélértékelés",
+      "value": 4.5,
+      "reason": "A legalsó bónuszsáv alatt"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 68,
+      "courier_id": "8960",
+      "category": "Ügyfélértékelés",
+      "value": 4.0,
+      "reason": "A legalsó bónuszsáv alatt"
+    },
+    {
+      "sheet": "JITT_courier_ratings_2026-09",
+      "row": 69,
+      "courier_id": "9065",
+      "category": "Ügyfélértékelés",
+      "value": 3.667,
+      "reason": "A legalsó bónuszsáv alatt"
+    }
+  ]
+}
