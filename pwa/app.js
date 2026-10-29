@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v250";
+const APP_VERSION = "v251";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -317,6 +317,7 @@ function currentSectionRefresh() {
   if (state.section === "registration-admin") return loadRegistrationRequests();
   if (state.section === "coordinator-live") return loadCoordinatorLiveMap();
   if (state.section === "departure-helper") return loadDepartureHelper();
+  if (state.section === "quality-complaints") return loadQualityComplaints();
   if (state.section === "today-workers") return loadTodayWorkers();
   if (state.section === "settlement-dashboard") return loadSettlementDashboard();
   if (state.section === "settlement-import-config") {
@@ -572,6 +573,7 @@ function showApp() {
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   $("#nav-coordinator-live").classList.toggle("hidden", !canCoordinate);
   $("#nav-departure-helper").classList.toggle("hidden", !canCoordinate);
+  $("#nav-quality-complaints").classList.toggle("hidden", !["admin", "superadmin"].includes(role));
   $("#nav-today-workers").classList.toggle("hidden", !canCoordinate);
   $("#nav-coordinator-schedule").classList.toggle("hidden", !canCoordinate);
   ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-game"]
@@ -609,7 +611,10 @@ function showApp() {
 }
 
 function showSection(section) {
+  if (section === "quality-complaints" && !["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
   state.section = section;
+  $("#quality-complaints-content").classList.toggle("hidden", section !== "quality-complaints");
+  $("#nav-quality-complaints").classList.toggle("active", section === "quality-complaints");
   $("#home-content").classList.toggle("hidden", section !== "home");
   $("#settlement-content").classList.toggle("hidden", section !== "settlement");
   $("#statistics-content").classList.toggle("hidden", section !== "statistics");
@@ -707,6 +712,7 @@ function showSection(section) {
   if (section === "coordinator") loadCoordinatorAdjustments();
   if (section === "coordinator-live") loadCoordinatorLiveMap();
   if (section === "departure-helper") loadDepartureHelper();
+  if (section === "quality-complaints") loadQualityComplaints();
   if (section === "today-workers") loadTodayWorkers();
   if (section === "coordinator-schedule") {
     if (state.coordinatorScheduleView === "day") {
@@ -1549,6 +1555,64 @@ function renderQualitySummaryDetails(topic, details = {}) {
       `).join("") : `<p>Nincs külön vizsgálandó sor ehhez a jelzéshez.</p>`}
     </div>
   `;
+}
+
+function qualityComplaintStatus(value) {
+  return ({ open: "Nyitott", forwarded: "Továbbított", closed: "Lezárt" })[value] || value;
+}
+
+async function loadQualityComplaints() {
+  if (!["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
+  const target = $("#quality-complaints-list");
+  const status = $("#quality-complaints-status");
+  const request = (state.qualityComplaintRequest || 0) + 1;
+  state.qualityComplaintRequest = request;
+  status.textContent = "Betöltés…";
+  try {
+    const payload = await api(`/api/quality/complaints?status=${encodeURIComponent($("#quality-complaints-filter").value)}&offset=${state.qualityComplaintOffset || 0}`);
+    if (state.qualityComplaintRequest !== request) return;
+    target.innerHTML = payload.items.length ? payload.items.map((item) => {
+      const topics = { lateShift: "Műszakkésés", noShow: "No-show", uncleanedTimeWindowLate: "Nem mentesített címkésés", cleanedTimeWindowLate: "Mentesített címkésés" };
+      return `<article class="shift-card" data-complaint-id="${escapeHtml(item.id)}">
+        <div class="shift-top"><div><h3>${escapeHtml(item.courier_name)} · #${escapeHtml(item.courier_id)}</h3><p>${escapeHtml(topics[item.topic] || item.topic)} · ${escapeHtml(shortDateTime(item.created_at))}</p></div><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></div>
+        <p class="complaint-text">${escapeHtml(item.message)}</p>
+        <details><summary>Érintett tételek és előzmények</summary>
+          ${(item.affected_items || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.date)} · ${escapeHtml(row.label)}</span><strong>${escapeHtml(row.note)}</strong></div>`).join("")}
+          ${(item.history || []).map(event => `<p class="complaint-text">${escapeHtml(shortDateTime(event.at))} · ${escapeHtml(event.actor)} · ${escapeHtml(qualityComplaintStatus(event.status))}<br>${escapeHtml(event.message || event.reference)}</p>`).join("")}
+        </details>
+        ${item.admin_response ? `<div class="notice complaint-text"><strong>Válasz:</strong> ${escapeHtml(item.admin_response)}</div>` : ""}
+        ${payload.canManage && item.status !== "closed" ? `<label>Szöveges válasz<textarea data-complaint-response maxlength="5000" placeholder="Válasz a futárnak…"></textarea></label>
+          <div class="dialog-actions"><button type="button" class="secondary" data-complaint-action="reply">Válasz mentése</button><button type="button" data-complaint-action="close">Lezárás válasszal</button></div>
+          ${item.status === "open" ? `<details><summary>Kifli-továbbítás rögzítése</summary><p class="muted">Csak a tényleges továbbítás után. Ez a gomb nem küldi el a reklamációt.</p><label>Kifli ügyazonosító / feltöltési hivatkozás<input data-complaint-reference maxlength="500" /></label><button type="button" class="secondary" data-complaint-action="forward">Továbbítottként rögzítés</button></details>` : ""}` : ""}
+        <p data-complaint-result role="status" aria-live="polite"></p>
+      </article>`;
+    }).join("") : '<div class="empty-card">Nincs ilyen státuszú reklamáció.</div>';
+    $("#quality-complaints-prev").disabled = !(state.qualityComplaintOffset > 0);
+    $("#quality-complaints-next").disabled = !payload.hasMore;
+    status.textContent = `${payload.items.length} reklamáció ezen az oldalon`;
+    target.querySelectorAll("[data-complaint-action]").forEach(button => button.addEventListener("click", async () => {
+      const card = button.closest("[data-complaint-id]");
+      const result = card.querySelector("[data-complaint-result]");
+      const action = button.dataset.complaintAction;
+      const message = card.querySelector("[data-complaint-response]")?.value.trim() || "";
+      const reference = card.querySelector("[data-complaint-reference]")?.value.trim() || "";
+      if (action !== "forward" && message.length < 5) { result.textContent = "Legalább 5 karakteres válasz szükséges."; return; }
+      if (action === "forward" && reference.length < 3) { result.textContent = "Add meg a továbbítás hivatkozását."; return; }
+      const buttons = card.querySelectorAll("button");
+      buttons.forEach(b => b.disabled = true);
+      result.textContent = "Mentés…";
+      try {
+        const response = await api(`/api/quality/complaints/${encodeURIComponent(card.dataset.complaintId)}/actions`, { method: "POST", body: JSON.stringify({ action, message, reference }) });
+        if (!response.ok) throw new Error("Nem igazolható a mentés.");
+        await loadQualityComplaints();
+      } catch (error) {
+        result.textContent = error.message;
+        buttons.forEach(b => b.disabled = false);
+      }
+    }));
+  } catch (error) {
+    if (state.qualityComplaintRequest === request) status.textContent = error.message;
+  }
 }
 
 function ensureQualityReclamationDialog() {
@@ -11410,6 +11474,11 @@ fullscreenToggle?.addEventListener("click", () => {
 });
 updateFullscreenToggle();
 
+$("#nav-quality-complaints").addEventListener("click", () => showSection("quality-complaints"));
+$("#quality-complaints-refresh").addEventListener("click", () => loadQualityComplaints());
+$("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintOffset = 0; loadQualityComplaints(); });
+$("#quality-complaints-prev").addEventListener("click", () => { state.qualityComplaintOffset = Math.max(0, (state.qualityComplaintOffset || 0) - 50); loadQualityComplaints(); });
+$("#quality-complaints-next").addEventListener("click", () => { state.qualityComplaintOffset = (state.qualityComplaintOffset || 0) + 50; loadQualityComplaints(); });
 $("#refresh").addEventListener("click", loadShifts);
 $("#open-muszakpro-refresh").addEventListener("click", toggleOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));

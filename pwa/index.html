@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest?v=244" />
     <link rel="icon" href="/icon.svg?v=244" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg?v=244" />
-    <link rel="stylesheet" href="/styles.css?v=250" />
+    <link rel="stylesheet" href="/styles.css?v=251" />
     <title>Jitt</title>
   </head>
   <body>
@@ -743,6 +743,13 @@
         <section id="departure-helper-panel" class="ops-panel"></section>
       </div>
 
+      <div id="quality-complaints-content" class="hidden">
+        <section class="section-heading"><div><p class="eyebrow">REKLAMÁCIÓK</p><h2 id="quality-complaints-title">Futár reklamációk kezelése</h2></div><button id="quality-complaints-refresh" class="secondary" type="button">Frissítés</button></section>
+        <label>Státusz<select id="quality-complaints-filter"><option value="all">Összes</option><option value="open">Nyitott</option><option value="forwarded">Továbbított</option><option value="closed">Lezárt</option></select></label>
+        <p id="quality-complaints-status" role="status" aria-live="polite"></p>
+        <section id="quality-complaints-list" class="shift-list"></section>
+        <div class="dialog-actions"><button id="quality-complaints-prev" class="secondary" type="button">Előző</button><button id="quality-complaints-next" class="secondary" type="button">Következő</button></div>
+      </div>
       <div id="today-workers-content" class="hidden">
         <section class="workflow-header">
           <div>
@@ -839,6 +846,7 @@
         <button id="nav-coordinator-live" class="hidden"><span>◎</span>Live map</button>
         <button id="nav-departure-helper" class="hidden"><span>⇥</span>Indulás segítő</button>
         <button id="nav-today-workers" class="hidden"><span>☷</span>Ki jön ma?</button>
+        <button id="nav-quality-complaints" class="hidden"><span>✉</span>Futár reklamációk kezelése</button>
         <button id="nav-coordinator-schedule" class="hidden"><span>15</span>Beosztás</button>
         <button id="nav-coordinator" class="hidden"><span>±</span>Bónusz / Málusz</button>
         <button id="nav-registration-admin" class="hidden"><span>✓</span>Futárok jóváhagyása</button>
@@ -918,6 +926,6 @@
         </section>
       </dialog>
     </main>
-    <script src="/app.js?v=250" defer></script>
+    <script src="/app.js?v=251" defer></script>
   </body>
 </html>

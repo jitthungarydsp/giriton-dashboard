@@ -297,6 +297,12 @@ class QualityComplaintRequest(BaseModel):
     items: list[dict[str, Any]] = Field(min_length=1, max_length=200)
 
 
+class QualityComplaintActionRequest(BaseModel):
+    action: str
+    message: str = Field(default="", max_length=5000)
+    reference: str = Field(default="", max_length=500)
+
+
 class RouteDelayAlertRequest(BaseModel):
     route_id: str | int
     order_id: str = ""
@@ -22177,6 +22183,55 @@ def shifts(
     return read_shifts(view_user, days)
 
 
+def quality_complaint_manager(user: dict[str, Any]) -> bool:
+    return str(user.get("role") or "").lower() in {"admin", "superadmin"}
+
+
+@app.get("/api/quality/complaints")
+def list_quality_complaints(
+    status: str = Query(default="all"),
+    offset: int = Query(default=0, ge=0),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    manager = quality_complaint_manager(user)
+    if status not in {"all", "open", "forwarded", "closed"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen státusz.")
+    params = {"select": "*", "order": "created_at.desc,id.desc", "limit": "51", "offset": str(offset)}
+    if status != "all":
+        params["status"] = f"eq.{status}"
+    if not manager:
+        courier_id, _name = courier_identity(user)
+        if not courier_id:
+            raise HTTPException(status_code=403, detail="Hiányzó futárazonosító.")
+        params["courier_id"] = f"eq.{courier_id}"
+    rows = supabase_rest("GET", "pwa_quality_complaints", params=params)
+    return {"items": rows[:50], "hasMore": len(rows) > 50, "canManage": manager}
+
+
+@app.post("/api/quality/complaints/{complaint_id}/actions")
+def manage_quality_complaint(
+    complaint_id: UUID,
+    payload: QualityComplaintActionRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not quality_complaint_manager(user):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    if payload.action not in {"reply", "forward", "close"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen művelet.")
+    if payload.action in {"reply", "close"} and len(payload.message.strip()) < 5:
+        raise HTTPException(status_code=422, detail="Legalább 5 karakteres szöveges válasz szükséges.")
+    if payload.action == "forward" and len(payload.reference.strip()) < 3:
+        raise HTTPException(status_code=422, detail="Add meg a sikeres Kifli-továbbítás hivatkozását.")
+    saved = supabase_rest("POST", "rpc/pwa_manage_quality_complaint", payload={
+        "p_id": str(complaint_id), "p_action": payload.action, "p_message": payload.message.strip(),
+        "p_actor": str(user.get("username") or "admin"), "p_reference": payload.reference.strip()})
+    if not saved or not saved[0].get("id"):
+        raise HTTPException(status_code=502, detail="A módosítás mentése nem igazolható.")
+    return {"ok": True, "item": saved[0]}
+
+
 @app.post("/api/quality/complaints")
 def create_quality_complaint(
     payload: QualityComplaintRequest,
@@ -22207,7 +22262,7 @@ def create_quality_complaint(
         params={"on_conflict": "request_id"},
         payload={"request_id": str(payload.request_id), "courier_id": str(courier_id),
                  "courier_name": courier_name, "topic": payload.topic,
-                 "work_month": month.isoformat(), "message": message,
+                 "work_month": month.isoformat(), "message": message, "status": "open",
                  "affected_items": items, "created_by": str(user.get("username") or courier_name)},
         prefer="resolution=ignore-duplicates,return=representation")
     if not saved:

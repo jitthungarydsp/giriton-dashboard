@@ -57,5 +57,56 @@ class QualityComplaintTest(unittest.TestCase):
         self.assertEqual(error.exception.status_code, 422)
 
 
+class ComplaintManagementTest(unittest.TestCase):
+    def functions(self, role, db):
+        from uuid import UUID
+        tree = ast.parse((Path(__file__).resolve().parents[1] / 'pwa_api.py').read_text(encoding='utf-8'))
+        names = {'quality_complaint_manager', 'manage_quality_complaint', 'list_quality_complaints'}
+        nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+        for node in nodes:
+            node.decorator_list = []
+        ns = dict(Any=Any, UUID=UUID, QualityComplaintActionRequest=Any,
+                  Cookie=lambda **k: None, Query=lambda **k: k.get('default'),
+                  require_user=lambda _: {'username': 'Operator', 'role': role},
+                  courier_identity=lambda _: ('6498', 'Futár'),
+                  HTTPException=ApiError, supabase_rest=db)
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'management', 'exec'), ns)
+        return ns
+
+    def test_admin_only_mutations(self):
+        for role in ['courier', 'coordinator', 'hr']:
+            ns = self.functions(role, lambda *a, **k: self.fail('Unauthorized DB write'))
+            with self.assertRaises(ApiError) as error:
+                ns['manage_quality_complaint']('id', SimpleNamespace(action='close', message='Válasz', reference=''))
+            self.assertEqual(error.exception.status_code, 403)
+
+    def test_close_requires_text_and_forward_requires_reference(self):
+        ns = self.functions('admin', lambda *a, **k: self.fail('Invalid DB write'))
+        for action in ['close', 'reply', 'forward']:
+            with self.assertRaises(ApiError) as error:
+                ns['manage_quality_complaint']('id', SimpleNamespace(action=action, message='', reference=''))
+            self.assertEqual(error.exception.status_code, 422)
+
+    def test_confirmed_admin_close_and_identity(self):
+        calls = []
+        def db(*args, **kwargs):
+            calls.append((args, kwargs))
+            return [{'id': 'id', 'status': 'closed'}]
+        ns = self.functions('admin', db)
+        result = ns['manage_quality_complaint']('id', SimpleNamespace(action='close', message='Megvizsgáltuk.', reference=''))
+        self.assertTrue(result['ok'])
+        self.assertEqual(calls[0][0], ('POST', 'rpc/pwa_manage_quality_complaint'))
+        self.assertEqual(calls[0][1]['payload']['p_actor'], 'Operator')
+
+    def test_courier_cannot_read_other_couriers(self):
+        calls = []
+        def db(*args, **kwargs):
+            calls.append(kwargs)
+            return []
+        result = self.functions('courier', db)['list_quality_complaints']()
+        self.assertFalse(result['canManage'])
+        self.assertEqual(calls[0]['params']['courier_id'], 'eq.6498')
+
+
 if __name__ == '__main__':
     unittest.main()
