@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v248";
+const APP_VERSION = "v249";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -3868,28 +3868,14 @@ async function submitDelayAlert(event) {
 
 function renderTabs() {
   const tabs = $("#day-tabs");
-  const month = state.shiftMonth || localDate().slice(0, 7);
-  $("#shift-month").value = month;
-  const [year, number] = month.split("-").map(Number);
-  const first = new Date(year, number - 1, 1);
-  const count = new Date(year, number, 0).getDate();
-  const byDate = new Map();
-  for (const item of state.data?.items || []) {
-    const entry = byDate.get(item.date) || { count: 0, issue: false };
-    entry.count += 1;
-    entry.issue ||= ["waiting", "review"].includes(item.status);
-    byDate.set(item.date, entry);
-  }
-  tabs.innerHTML = '<span></span>'.repeat((first.getDay() + 6) % 7);
-  for (let day = 1; day <= count; day += 1) {
-    const value = `${month}-${String(day).padStart(2, "0")}`;
-    const info = byDate.get(value);
+  tabs.innerHTML = "";
+  for (let offset = 0; offset < 5; offset += 1) {
+    const value = localDate(offset);
+    const date = new Date(`${value}T12:00:00`);
     const button = document.createElement("button");
-    button.type = "button";
     button.className = `day-tab${state.selectedDate === value ? " active" : ""}`;
-    button.setAttribute("aria-pressed", String(state.selectedDate === value));
-    button.setAttribute("aria-label", `${value}: ${info?.count || 0} műszak${info?.issue ? ", ellenőrzés szükséges" : ""}`);
-    button.innerHTML = `<strong>${day}${value === localDate() ? " ·" : ""}</strong><span>${info ? `${info.count} műszak` : "—"}</span>${info?.issue ? '<span class="calendar-issue">! Eltérés</span>' : ""}`;
+    const label = offset === 0 ? "Ma" : dateLabel(value, true).replace(".", "");
+    button.innerHTML = `<span>${label}</span><strong>${date.getDate()}</strong>`;
     button.addEventListener("click", () => {
       state.selectedDate = value;
       state.openMuszakproShifts = null;
@@ -3899,19 +3885,6 @@ function renderTabs() {
     });
     tabs.appendChild(button);
   }
-  $("#shift-selected-date").textContent = new Date(`${state.selectedDate || month + "-01"}T12:00:00`).toLocaleDateString("hu-HU", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
-}
-
-function changeShiftMonth(month, today = false) {
-  if (!/^\d{4}-\d{2}$/.test(month)) return;
-  state.shiftMonth = month;
-  state.selectedDate = today ? localDate() : `${month}-01`;
-  state.openMuszakproShifts = null;
-  state.data = null;
-  renderTabs();
-  renderShifts();
-  renderOpenMuszakproShifts();
-  loadShifts();
 }
 
 function shiftCard(item, index = 0) {
@@ -4053,16 +4026,11 @@ function renderWarnings() {
 }
 
 async function loadShifts() {
-  const requestId = (state.shiftRequestId || 0) + 1;
-  state.shiftRequestId = requestId;
   $("#refresh").disabled = true;
   try {
-    const month = state.shiftMonth || localDate().slice(0, 7);
-    state.shiftMonth = month;
-    const payload = await api(withPreviewCourier(`/api/shifts?month=${encodeURIComponent(month)}`));
-    if (state.shiftRequestId !== requestId || state.shiftMonth !== month) return;
-    state.data = payload;
-    if (!state.selectedDate?.startsWith(month)) state.selectedDate = month === localDate().slice(0, 7) ? localDate() : `${month}-01`;
+    state.data = await api(withPreviewCourier("/api/shifts?days=5"));
+    const focusShift = activeOrNextShift(state.data?.items || []);
+    state.selectedDate = focusShift?.date || state.selectedDate || localDate();
     renderHero();
     renderTabs();
     renderWarnings();
@@ -4071,10 +4039,9 @@ async function loadShifts() {
     loadQueueStatus().catch(() => {});
     $("#updated-at").textContent = `Utolsó lekérés: ${new Date(state.data.updatedAt).toLocaleString("hu-HU")}`;
   } catch (error) {
-    if (state.shiftRequestId !== requestId) return;
     $("#warning-list").innerHTML = `<div class="warning-card">${escapeHtml(error.message)}</div>`;
   } finally {
-    if (state.shiftRequestId === requestId) $("#refresh").disabled = false;
+    $("#refresh").disabled = false;
   }
 }
 
@@ -11409,21 +11376,6 @@ fullscreenToggle?.addEventListener("click", () => {
 updateFullscreenToggle();
 
 $("#refresh").addEventListener("click", loadShifts);
-$("#shift-month").addEventListener("change", (event) => changeShiftMonth(event.target.value));
-for (const [id, offset] of [["#shift-month-prev", -1], ["#shift-month-next", 1]]) {
-  $(id).addEventListener("click", () => {
-    const [year, month] = (state.shiftMonth || localDate().slice(0, 7)).split("-").map(Number);
-    const next = new Date(year, month - 1 + offset, 1);
-    changeShiftMonth(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`);
-  });
-}
-$("#shift-month-today").addEventListener("click", () => {
-  if (state.shiftMonth === localDate().slice(0, 7) && state.data) {
-    state.selectedDate = localDate();
-    state.openMuszakproShifts = null;
-    renderTabs(); renderShifts(); renderOpenMuszakproShifts();
-  } else changeShiftMonth(localDate().slice(0, 7), true);
-});
 $("#open-muszakpro-refresh").addEventListener("click", toggleOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
