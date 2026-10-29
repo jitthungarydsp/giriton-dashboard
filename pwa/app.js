@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v254";
+const APP_VERSION = "v255";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5736,11 +5736,12 @@ function settlementDashboardStatusOptions(statusCounts = {}) {
 
 function renderSettlementStatusFilters(statusCounts = {}) {
   const active = String(state.settlementDashboardStatusFilter || "");
+  const searching = Boolean(String(state.settlementDashboardQuery || "").trim());
   const options = settlementDashboardStatusOptions(statusCounts);
   return `<div class="settlement-dashboard-filter-panel">
     <div class="settlement-dashboard-filter-title">
       <strong>Áttekintés</strong>
-      <small>${active ? `Aktív szűrés: ${escapeHtml(active)}` : "Nincs státuszszűrés: minden futár megjelenik."}</small>
+      <small>${searching ? "Gyorskeresés aktív: a státuszszűrő most nem korlátozza a találatokat." : active ? `Aktív szűrés: ${escapeHtml(active)}` : "Nincs státuszszűrés: minden futár megjelenik."}</small>
     </div>
     <div class="settlement-dashboard-filter-grid">
       ${options.map((label) => {
@@ -6202,6 +6203,18 @@ function renderSettlementDashboardExpanded(row) {
   </article>`;
 }
 
+function settlementDashboardVisibleRows(rows, query, statusFilter) {
+  const normalize = value => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("hu-HU").replace(/#/g, "").trim();
+  const words = normalize(query).split(/\s+/).filter(Boolean);
+  if (words.length) {
+    return rows.filter(row => {
+      const text = normalize(`${row.courierName || ""} ${row.courierId || ""}`);
+      return words.every(word => text.includes(word));
+    });
+  }
+  return statusFilter ? rows.filter(row => String(row.status?.label || "") === statusFilter) : rows;
+}
+
 function renderSettlementDashboard() {
   const target = $("#settlement-dashboard-panel");
   if (!target) return;
@@ -6218,9 +6231,7 @@ function renderSettlementDashboard() {
     statusCounts[label] = (statusCounts[label] || 0) + 1;
   });
   const activeStatusFilter = String(state.settlementDashboardStatusFilter || "");
-  const displayRows = activeStatusFilter
-    ? rows.filter((row) => String(row.status?.label || "") === activeStatusFilter)
-    : rows;
+  const displayRows = settlementDashboardVisibleRows(rows, state.settlementDashboardQuery, activeStatusFilter);
   const hasSearch = Boolean(String(state.settlementDashboardQuery || "").trim());
   target.innerHTML = `
     <section class="settlement-dashboard-hero">
@@ -6235,6 +6246,11 @@ function renderSettlementDashboard() {
         <small>${escapeHtml(formatCount(summary.couriers || rows.length || 0))} futár</small>
       </div>
     </section>
+    <div class="settlement-quick-search">
+      <label for="settlement-dashboard-search">Gyorskeresés az összes futár között</label>
+      <div><input id="settlement-dashboard-search" type="search" value="${escapeHtml(state.settlementDashboardQuery || "")}" placeholder="Név vagy futár ID részlete…" autocomplete="off" aria-describedby="settlement-quick-search-hint" /><button type="button" class="secondary" data-settlement-clear-search ${!hasSearch ? 'disabled' : ''}>Törlés</button></div>
+      <p id="settlement-quick-search-hint">${hasSearch ? 'A keresés a kiválasztott hónap összes futárában keres, a státuszszűrőtől függetlenül.' : 'Azonnali, részleges név- és ID-keresés. Ékezet nélkül is működik.'}</p>
+    </div>
     ${renderSettlementStatusFilters(statusCounts)}
     <div class="settlement-dashboard-toolbar">
       <strong>${hasSearch ? "Keresési találatok" : "Futár elszámolások"}</strong>
@@ -6258,7 +6274,7 @@ function renderSettlementDashboard() {
           <button class="icon-button settlement-dashboard-edit" type="button" data-settlement-dashboard-edit="${escapeHtml(row.courierId || "")}" aria-pressed="${state.settlementDashboardEditCourierId === String(row.courierId || "")}" title="Futár értékeinek szerkesztése" aria-label="Futár értékeinek szerkesztése"><span aria-hidden="true">✎</span><span>Szerkesztés</span></button>
         </div>
         ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? renderSettlementDashboardExpanded(row) : renderDashboardInvoiceIssue(row)}
-      `).join("") : `<div class="empty-card">${activeStatusFilter ? "Nincs futár ebben a státuszban." : "Nincs futár a kiválasztott hónapban."}</div>`}
+      `).join("") : `<div class="empty-card">${hasSearch ? "Nincs a keresésnek megfelelő futár ebben a hónapban." : activeStatusFilter ? "Nincs futár ebben a státuszban." : "Nincs futár a kiválasztott hónapban."}</div>`}
     </div>
   `;
 }
@@ -6310,6 +6326,8 @@ async function loadSettlementDashboardCourierDetail(courierId, {includeTig = sta
 }
 
 async function loadSettlementDashboard() {
+  const requestSeq = (state.settlementDashboardRequestSeq || 0) + 1;
+  state.settlementDashboardRequestSeq = requestSeq;
   const target = $("#settlement-dashboard-panel");
   if (target && !state.settlementDashboard) target.innerHTML = `<div class="empty-card">Elszámolási dashboard betöltése...</div>`;
   const month = $("#settlement-dashboard-month")?.value || state.settlementDashboardMonth || previousLocalMonth();
@@ -6317,10 +6335,13 @@ async function loadSettlementDashboard() {
   state.settlementDashboardMonth = month;
   state.settlementDashboardQuery = query;
   try {
-    const params = new URLSearchParams({ month, q: query, _: String(Date.now()) });
-    state.settlementDashboard = await api(`/api/admin/settlement-dashboard?${params}`);
+    const params = new URLSearchParams({ month, _: String(Date.now()) });
+    const payload = await api(`/api/admin/settlement-dashboard?${params}`);
+    if (requestSeq !== state.settlementDashboardRequestSeq) return;
+    state.settlementDashboard = payload;
     renderSettlementDashboard();
   } catch (error) {
+    if (requestSeq !== state.settlementDashboardRequestSeq) return;
     if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
 }
@@ -11644,13 +11665,22 @@ $("#settlement-dashboard-month")?.addEventListener("change", (event) => {
   state.settlementDashboardStatusFilter = "";
   loadSettlementDashboard();
 });
-$("#settlement-dashboard-search")?.addEventListener("input", (event) => {
-  state.settlementDashboardQuery = event.currentTarget.value || "";
-  window.clearTimeout(state.settlementDashboardSearchTimer);
-  state.settlementDashboardSearchTimer = window.setTimeout(() => {
-    state.settlementDashboard = null;
-    loadSettlementDashboard();
-  }, 350);
+$("#settlement-dashboard-panel")?.addEventListener("input", (event) => {
+  if (event.target.id !== "settlement-dashboard-search") return;
+  const input = event.target;
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
+  state.settlementDashboardQuery = input.value || "";
+  renderSettlementDashboard();
+  const replacement = $("#settlement-dashboard-search");
+  replacement?.focus({ preventScroll: true });
+  replacement?.setSelectionRange(start, end);
+});
+$("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-settlement-clear-search]")) return;
+  state.settlementDashboardQuery = "";
+  renderSettlementDashboard();
+  $("#settlement-dashboard-search")?.focus({ preventScroll: true });
 });
 $("#settlement-import-config-panel")?.addEventListener("change", (event) => {
   const monthInput = event.target.closest("#settlement-import-month");

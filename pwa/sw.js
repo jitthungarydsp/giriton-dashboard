@@ -1,5 +1,5 @@
-const CACHE = "jitt-pwa-v254";
-const APP_SHELL = ["/", "/styles.css?v=254", "/app.js?v=254", "/webshop.js?v=254", "/webshop.css?v=254", "/sw.js?v=254", "/manifest.webmanifest?v=254", "/icon.svg?v=254"];
+const CACHE = "jitt-pwa-v255";
+const APP_SHELL = ["/", "/styles.css?v=255", "/app.js?v=255", "/webshop.js?v=255", "/webshop.css?v=255", "/sw.js?v=255", "/manifest.webmanifest?v=255", "/icon.svg?v=255"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
