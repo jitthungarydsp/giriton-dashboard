@@ -22187,6 +22187,101 @@ def quality_complaint_manager(user: dict[str, Any]) -> bool:
     return str(user.get("role") or "").lower() in {"admin", "superadmin"}
 
 
+def read_accessible_quality_complaint(complaint_id: UUID, user: dict[str, Any]) -> dict[str, Any]:
+    params = {"select": "id,courier_id,status,attachments", "id": f"eq.{complaint_id}", "limit": "1"}
+    if not quality_complaint_manager(user):
+        courier_id, _name = courier_identity(user)
+        params["courier_id"] = f"eq.{courier_id}"
+    rows = supabase_rest("GET", "pwa_quality_complaints", params=params)
+    if not rows:
+        raise HTTPException(status_code=404, detail="A reklamáció nem található.")
+    return rows[0]
+
+
+def quality_photo_mime(content: bytes) -> str:
+    from PIL import Image, UnidentifiedImageError
+    import warnings
+    if not content or len(content) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="Üres vagy 8 MB-nál nagyobb kép.")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(content)) as image:
+                mime = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}.get(image.format)
+                if not mime or image.width * image.height > 40_000_000:
+                    raise ValueError("Unsupported image")
+                image.verify()
+                return mime
+    except (UnidentifiedImageError, OSError, ValueError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+        raise HTTPException(status_code=422, detail="Érvényes JPG, PNG vagy WebP képet csatolj (legfeljebb 40 megapixel).")
+
+
+@app.post("/api/quality/complaints/{complaint_id}/photos")
+async def upload_quality_complaint_photo(
+    complaint_id: UUID,
+    photo: UploadFile = File(...),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    complaint = read_accessible_quality_complaint(complaint_id, user)
+    content = await photo.read(8 * 1024 * 1024 + 1)
+    mime = quality_photo_mime(content)
+    digest = hashlib.sha256(content).hexdigest()
+    existing = next((item for item in complaint.get("attachments", []) if item.get("sha256") == digest), None)
+    if existing:
+        return {"ok": True, "sha256": digest}
+    if complaint["status"] != "open":
+        raise HTTPException(status_code=409, detail="Csak nyitott reklamációhoz csatolható kép.")
+    if len(complaint.get("attachments", [])) >= 5:
+        raise HTTPException(status_code=422, detail="Egy reklamációhoz legfeljebb 5 kép csatolható.")
+    bucket = pwa_attachment_bucket()
+    extension = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[mime]
+    # Deterministic content-based path: retrying cannot create duplicate Storage files.
+    path = f"quality-complaints/{complaint_id}/{digest}.{extension}"
+    headers = supabase_key_headers(load_setting("SUPABASE_SERVICE_ROLE_KEY"))
+    headers.update({"Content-Type": mime, "x-upsert": "true", "Cache-Control": "private, max-age=31536000"})
+    response = requests.post(
+        f"{load_setting('SUPABASE_URL').rstrip('/')}/storage/v1/object/{quote(bucket, safe='')}/{quote(path, safe='/')}",
+        headers=headers, data=content, timeout=60)
+    if not response.ok:
+        raise HTTPException(status_code=502, detail="A kép Storage-feltöltése nem sikerült. Próbáld újra.")
+    metadata = {"file_name": storage_file_name(photo.filename, f"kep.{extension}"), "mime_type": mime,
+                "file_size": len(content), "sha256": digest, "storage_bucket": bucket, "storage_path": path,
+                "uploaded_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        saved = supabase_rest("POST", "rpc/pwa_attach_quality_complaint_photo",
+                              payload={"p_id": str(complaint_id), "p_photo": metadata})
+    except HTTPException:
+        # A definite database rejection must not leave a new unreferenced image.
+        # An uncertain network outcome is left intact for a safe content-hash retry.
+        try:
+            requests.delete(
+                f"{load_setting('SUPABASE_URL').rstrip('/')}/storage/v1/object/{quote(bucket, safe='')}",
+                headers=supabase_key_headers(load_setting("SUPABASE_SERVICE_ROLE_KEY")),
+                json={"prefixes": [path]}, timeout=15)
+        except requests.RequestException:
+            pass
+        raise
+    if not saved or not any(item.get("sha256") == digest for item in saved[0].get("attachments", [])):
+        raise HTTPException(status_code=502, detail="A kép csatolása nem igazolható. Próbáld újra.")
+    return {"ok": True, "sha256": digest}
+
+
+@app.get("/api/quality/complaints/{complaint_id}/photos/{digest}")
+def download_quality_complaint_photo(
+    complaint_id: UUID, digest: str,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    complaint = read_accessible_quality_complaint(complaint_id, user)
+    photo = next((item for item in complaint.get("attachments", []) if item.get("sha256") == digest), None)
+    if not photo:
+        raise HTTPException(status_code=404, detail="A kép nem található.")
+    content = download_pwa_attachment(photo["storage_bucket"], photo["storage_path"])
+    return Response(content=content, media_type=photo["mime_type"], headers={
+        "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/api/quality/complaints")
 def list_quality_complaints(
     status: str = Query(default="all"),

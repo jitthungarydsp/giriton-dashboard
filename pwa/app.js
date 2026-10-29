@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v251";
+const APP_VERSION = "v252";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1576,6 +1576,7 @@ async function loadQualityComplaints() {
       return `<article class="shift-card" data-complaint-id="${escapeHtml(item.id)}">
         <div class="shift-top"><div><h3>${escapeHtml(item.courier_name)} · #${escapeHtml(item.courier_id)}</h3><p>${escapeHtml(topics[item.topic] || item.topic)} · ${escapeHtml(shortDateTime(item.created_at))}</p></div><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></div>
         <p class="complaint-text">${escapeHtml(item.message)}</p>
+        ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
         <details><summary>Érintett tételek és előzmények</summary>
           ${(item.affected_items || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.date)} · ${escapeHtml(row.label)}</span><strong>${escapeHtml(row.note)}</strong></div>`).join("")}
           ${(item.history || []).map(event => `<p class="complaint-text">${escapeHtml(shortDateTime(event.at))} · ${escapeHtml(event.actor)} · ${escapeHtml(qualityComplaintStatus(event.status))}<br>${escapeHtml(event.message || event.reference)}</p>`).join("")}
@@ -1629,6 +1630,8 @@ function ensureQualityReclamationDialog() {
       </div>
       <div data-quality-reclamation-body></div>
       <label>Reklamáció indoka<textarea data-quality-reclamation-note placeholder="Ide írható a reklamáció rövid indoklása..."></textarea></label>
+      <label>Képek csatolása (nem kötelező)<input data-quality-reclamation-photos type="file" accept="image/jpeg,image/png,image/webp" multiple /></label>
+      <small>Legfeljebb 5 kép, képenként maximum 8 MB. JPG, PNG vagy WebP.</small>
       <p data-quality-reclamation-status role="status" aria-live="polite"></p>
       <div class="dialog-actions"><button type="button" class="secondary" data-quality-reclamation-close>Bezárás</button><button type="button" data-quality-reclamation-submit>Reklamáció beküldése</button></div>
     </form>
@@ -1638,23 +1641,48 @@ function ensureQualityReclamationDialog() {
     const button = dialog.querySelector("[data-quality-reclamation-submit]");
     const status = dialog.querySelector("[data-quality-reclamation-status]");
     const note = dialog.querySelector("[data-quality-reclamation-note]");
+    const photoInput = dialog.querySelector("[data-quality-reclamation-photos]");
     const context = dialog.complaintContext;
     if (!context || context.saved || button.disabled) return;
     const message = note.value.trim();
     if (message.length < 5) { status.textContent = "Legalább 5 karakteres indoklást adj meg."; return; }
+    const photos = context.photos || Array.from(photoInput.files || []);
+    if (photos.length > 5 || photos.some(file => file.size > 8 * 1024 * 1024)) {
+      status.textContent = "Legfeljebb 5 képet válassz, egyenként maximum 8 MB méretben."; return;
+    }
     button.disabled = true;
     note.disabled = true;
+    photoInput.disabled = true;
     status.textContent = "Mentés folyamatban…";
     try {
-      const result = await api("/api/quality/complaints", { method: "POST", body: JSON.stringify({
-        request_id: context.requestId, topic: context.topic, month: context.month, items: context.rows, message,
-      }) });
-      if (!result.ok || !result.id) throw new Error("A mentés nem igazolható.");
+      if (!context.complaintId) {
+        const result = await api("/api/quality/complaints", { method: "POST", body: JSON.stringify({
+          request_id: context.requestId, topic: context.topic, month: context.month, items: context.rows, message,
+        }) });
+        if (!result.ok || !result.id) throw new Error("A mentés nem igazolható.");
+        context.complaintId = result.id;
+        context.photos = photos;
+        context.uploaded = 0;
+      }
+      for (let index = context.uploaded; index < context.photos.length; index++) {
+        status.textContent = `Reklamáció elmentve. Képfeltöltés: ${index + 1}/${context.photos.length}…`;
+        const form = new FormData();
+        form.append("photo", context.photos[index]);
+        const uploaded = await api(`/api/quality/complaints/${encodeURIComponent(context.complaintId)}/photos`, { method: "POST", body: form });
+        if (!uploaded.ok) throw new Error("A kép feltöltése nem igazolható.");
+        context.uploaded = index + 1;
+      }
       context.saved = true;
-      status.textContent = `A reklamációt elmentettük. Azonosító: ${result.id}`;
+      status.textContent = `A reklamációt és ${context.uploaded} képet elmentettük. Azonosító: ${context.complaintId}`;
     } catch (error) {
-      status.textContent = `Nem sikerült menteni: ${error.message} Az indoklás megmaradt, újrapróbálhatod.`;
-      if (dialog.complaintContext === context) { button.disabled = false; note.disabled = false; }
+      status.textContent = context.complaintId
+        ? `A reklamáció elmentve, de a képfeltöltés nem fejeződött be: ${error.message} A beküldés gombbal folytathatod.`
+        : `Nem sikerült menteni: ${error.message} Az indoklás és a képek megmaradtak, újrapróbálhatod.`;
+      if (dialog.complaintContext === context) {
+        button.disabled = false;
+        note.disabled = Boolean(context.complaintId);
+        photoInput.disabled = Boolean(context.complaintId);
+      }
     }
   });
   dialog.querySelectorAll("[data-quality-reclamation-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
@@ -1686,6 +1714,8 @@ function openQualityReclamation(topic) {
     : `<p class="updated-at">Ehhez a jelzéshez nincs részletes adat.</p>`;
   dialog.querySelector("[data-quality-reclamation-note]").value = "";
   dialog.querySelector("[data-quality-reclamation-note]").disabled = false;
+  dialog.querySelector("[data-quality-reclamation-photos]").value = "";
+  dialog.querySelector("[data-quality-reclamation-photos]").disabled = false;
   const preview = Boolean(previewCourierValue() || state.workflowPreviewCourierId);
   dialog.complaintContext = { topic, month: state.statistics?.month || state.statisticsMonth,
     rows, requestId: crypto.randomUUID(), saved: false };
