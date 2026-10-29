@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v253";
+const APP_VERSION = "v254";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -317,6 +317,7 @@ function currentSectionRefresh() {
   if (state.section === "registration-admin") return loadRegistrationRequests();
   if (state.section === "coordinator-live") return loadCoordinatorLiveMap();
   if (state.section === "departure-helper") return loadDepartureHelper();
+  if (state.section === "webshop") return loadWebshop();
   if (state.section === "quality-complaints") return loadQualityComplaints();
   if (state.section === "today-workers") return loadTodayWorkers();
   if (state.section === "settlement-dashboard") return loadSettlementDashboard();
@@ -613,6 +614,8 @@ function showApp() {
 function showSection(section) {
   if (section === "quality-complaints" && !["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
   state.section = section;
+  $("#webshop-content").classList.toggle("hidden", section !== "webshop");
+  $("#nav-webshop").classList.toggle("active", section === "webshop");
   $("#quality-complaints-content").classList.toggle("hidden", section !== "quality-complaints");
   $("#nav-quality-complaints").classList.toggle("active", section === "quality-complaints");
   $("#home-content").classList.toggle("hidden", section !== "home");
@@ -712,6 +715,7 @@ function showSection(section) {
   if (section === "coordinator") loadCoordinatorAdjustments();
   if (section === "coordinator-live") loadCoordinatorLiveMap();
   if (section === "departure-helper") loadDepartureHelper();
+  if (section === "webshop") loadWebshop();
   if (section === "quality-complaints") loadQualityComplaints();
   if (section === "today-workers") loadTodayWorkers();
   if (section === "coordinator-schedule") {
@@ -11555,6 +11559,11 @@ fullscreenToggle?.addEventListener("click", () => {
 });
 updateFullscreenToggle();
 
+function loadWebshop() {
+  window.JittWebshop.mount({ api, getUser: () => state.user, preview: isAdminPreviewMode, escapeHtml });
+  return window.JittWebshop.load();
+}
+$("#nav-webshop").addEventListener("click", () => showSection("webshop"));
 $("#nav-quality-complaints").addEventListener("click", () => showSection("quality-complaints"));
 $("#quality-complaints-refresh").addEventListener("click", () => loadQualityComplaints());
 $("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintOffset = 0; loadQualityComplaints(); });

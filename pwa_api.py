@@ -22,6 +22,7 @@ from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 from uuid import UUID
+from resources.webshop import validate_webshop_product, validate_webshop_items
 
 import requests
 import tomllib
@@ -287,6 +288,52 @@ class ComplaintRequest(BaseModel):
     action: str
     message: str
     process: str = ""
+
+
+class WebshopVariantRequest(BaseModel):
+    id: UUID | None = None
+    sku: str = Field(min_length=1, max_length=100)
+    price_huf: int = Field(ge=0, le=10_000_000, strict=True)
+    size: str = Field(min_length=1, max_length=100)
+    type: str = Field(min_length=1, max_length=100)
+    attributes: dict[str, str] = Field(default_factory=dict, max_length=30)
+
+
+class WebshopProductRequest(BaseModel):
+    id: UUID | None = None
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=5000)
+    category: str = Field(default="", max_length=100)
+    active: bool = True
+    variants: list[WebshopVariantRequest] = Field(min_length=1, max_length=100)
+
+
+class WebshopAttributeRequest(BaseModel):
+    id: UUID | None = None
+    name: str = Field(min_length=1, max_length=100)
+    values: list[str] = Field(min_length=1, max_length=100)
+    required: bool = False
+
+
+class WebshopItemRequest(BaseModel):
+    variant_id: UUID
+    quantity: int = Field(ge=1, le=99, strict=True)
+    expected_price_huf: int = Field(ge=0, le=10_000_000, strict=True)
+
+
+class WebshopOrderRequest(BaseModel):
+    request_key: UUID
+    items: list[WebshopItemRequest] = Field(min_length=1, max_length=50)
+    note: str = Field(default="", max_length=2000)
+
+
+class WebshopOrderActionRequest(BaseModel):
+    status: str
+    response: str = Field(default="", max_length=5000)
+
+
+class WebshopBasketRequest(BaseModel):
+    ids: list[UUID] = Field(min_length=1, max_length=50)
 
 
 class QualityComplaintRequest(BaseModel):
@@ -9564,6 +9611,19 @@ def supabase_rest(
         print("Supabase table:", table)
         print("Supabase status:", response.status_code)
         print("Supabase response:", response.text)
+
+        if table.startswith("webshop_") or table.startswith("rpc/pwa_") and "webshop" in table:
+            try:
+                webshop_error = response.json()
+            except ValueError:
+                webshop_error = {}
+            code = str(webshop_error.get("code") or "")
+            if code in {"PGRST205", "PGRST202", "42P01", "42703"}:
+                raise HTTPException(status_code=503, detail="A webshop adatbázisa még nincs telepítve. Futtasd a pwa_webshop.sql fájlt a Supabase SQL Editorban.")
+            if code == "23505":
+                raise HTTPException(status_code=409, detail="Ez a cikkszám vagy tulajdonságnév már használatban van.")
+            if code == "P0001":
+                raise HTTPException(status_code=409, detail=str(webshop_error.get("message") or "A művelet nem hajtható végre."))
 
         if explain_workflow_error:
             try:
@@ -22280,6 +22340,168 @@ def download_quality_complaint_photo(
     content = download_pwa_attachment(photo["storage_bucket"], photo["storage_path"])
     return Response(content=content, media_type=photo["mime_type"], headers={
         "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+
+def require_webshop_admin(user: dict[str, Any]) -> dict[str, Any]:
+    if str(user.get("role") or "").lower() not in {"admin", "superadmin"}:
+        raise HTTPException(status_code=403, detail="A webshop kezeléséhez admin jogosultság szükséges.")
+    return user
+
+
+@app.get("/api/webshop/products")
+def webshop_products(
+    admin: bool = Query(default=False), offset: int = Query(default=0, ge=0),
+    product_id: UUID | None = Query(default=None),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if admin:
+        require_webshop_admin(user)
+    params = {"select": "id,name,description,category,active,image_path,updated_at,variants:webshop_variants(*)",
+              "order": "name.asc,id.asc", "limit": "51", "offset": str(offset)}
+    if product_id:
+        params["id"] = f"eq.{product_id}"
+    if not admin:
+        params.update({"active": "eq.true", "variants.active": "eq.true"})
+    rows = supabase_rest("GET", "webshop_products", params=params)
+    for row in rows:
+        row["image_url"] = f"/api/webshop/products/{row['id']}/photo?v={quote(str(row.get('updated_at') or ''))}" if row.pop("image_path", None) else ""
+    attributes = supabase_rest("GET", "webshop_attributes", params={"select": "*", "order": "name.asc", "limit": "500"})
+    return {"items": rows[:50], "hasMore": len(rows) > 50, "attributes": attributes}
+
+
+@app.post("/api/webshop/products")
+def save_webshop_product(payload: WebshopProductRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    require_webshop_admin(require_user(giriton_pwa_session))
+    product = payload.model_dump(mode="json", exclude={"variants"})
+    product.update({key: str(product[key]).strip() for key in ("name", "category", "description")})
+    variants = [variant.model_dump(mode="json") for variant in payload.variants]
+    for variant in variants:
+        for key in ("sku", "size", "type"):
+            variant[key] = variant[key].strip()
+    attributes = supabase_rest("GET", "webshop_attributes", params={"select": "*", "limit": "500"})
+    try:
+        validate_webshop_product(product, variants, attributes)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    identifier = supabase_rest("POST", "rpc/pwa_save_webshop_product",
+                              payload={"p_product": product, "p_variants": variants}, explain_workflow_error=True)
+    if not identifier:
+        raise HTTPException(status_code=502, detail="A termék mentése nem igazolható.")
+    return {"ok": True, "id": identifier}
+
+
+@app.post("/api/webshop/basket")
+def webshop_basket(payload: WebshopBasketRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    require_user(giriton_pwa_session)
+    rows = supabase_rest("GET", "webshop_variants", params={
+        "select": "id,sku,size,type,attributes,price_huf,product:webshop_products!inner(name,active)",
+        "id": "in.(" + ",".join(str(value) for value in payload.ids) + ")",
+        "active": "eq.true", "product.active": "eq.true", "limit": "50"})
+    return {"items": rows}
+
+
+@app.post("/api/webshop/attributes")
+def save_webshop_attribute(payload: WebshopAttributeRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    require_webshop_admin(require_user(giriton_pwa_session))
+    attribute = payload.model_dump(mode="json")
+    attribute["name"] = attribute["name"].strip()
+    attribute["values"] = list(dict.fromkeys(value.strip() for value in attribute["values"] if value.strip()))
+    if not attribute["name"] or not attribute["values"] or any(len(value) > 100 for value in attribute["values"]):
+        raise HTTPException(status_code=422, detail="Adj meg nevet és legalább egy, legfeljebb 100 karakteres értéket.")
+    identifier = supabase_rest("POST", "rpc/pwa_save_webshop_attribute", payload={"p_attribute": attribute}, explain_workflow_error=True)
+    if not identifier:
+        raise HTTPException(status_code=502, detail="A tulajdonság mentése nem igazolható.")
+    return {"ok": True, "id": identifier}
+
+
+@app.post("/api/webshop/products/{product_id}/photo")
+async def upload_webshop_photo(product_id: UUID, photo: UploadFile = File(...), giriton_pwa_session: str | None = Cookie(default=None)):
+    require_webshop_admin(require_user(giriton_pwa_session))
+    rows = supabase_rest("GET", "webshop_products", params={"select": "id", "id": f"eq.{product_id}", "limit": "1"})
+    if not rows:
+        raise HTTPException(status_code=404, detail="A termék nem található.")
+    content = await photo.read(8 * 1024 * 1024 + 1)
+    mime = quality_photo_mime(content)
+    storage = upload_pwa_attachment(prefix="webshop-products", record_id=product_id,
+        file_name=photo.filename, mime_type=mime, content=content)
+    saved = supabase_rest("PATCH", "webshop_products", params={"id": f"eq.{product_id}"},
+        payload={"image_bucket": storage["storage_bucket"], "image_path": storage["storage_path"],
+                 "updated_at": datetime.now(timezone.utc).isoformat()}, prefer="return=representation")
+    if not saved:
+        raise HTTPException(status_code=502, detail="A termékkép mentése nem igazolható.")
+    return {"ok": True}
+
+
+@app.get("/api/webshop/products/{product_id}/photo")
+def webshop_photo(product_id: UUID, giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_user(giriton_pwa_session)
+    params = {"select": "id,image_bucket,image_path", "id": f"eq.{product_id}", "limit": "1"}
+    if str(user.get("role") or "").lower() not in {"admin", "superadmin"}:
+        params["active"] = "eq.true"
+    rows = supabase_rest("GET", "webshop_products", params=params)
+    if not rows or not rows[0].get("image_path"):
+        raise HTTPException(status_code=404, detail="A termékkép nem található.")
+    content = download_pwa_attachment(rows[0]["image_bucket"], rows[0]["image_path"])
+    return Response(content=content, media_type=quality_photo_mime(content), headers={"Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/api/webshop/requests")
+def webshop_requests(admin: bool = Query(default=False), status: str = Query(default="all"), offset: int = Query(default=0, ge=0),
+                     giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_user(giriton_pwa_session)
+    if admin:
+        require_webshop_admin(user)
+    params = {"select": "*,items:webshop_request_items(*),events:webshop_request_events(*)", "order": "created_at.desc,id.desc", "limit": "51", "offset": str(offset)}
+    if not admin:
+        courier_id, _name = courier_identity(user)
+        params["courier_id"] = f"eq.{courier_id}"
+    if status != "all":
+        if status not in {"received", "processing", "ready", "fulfilled", "rejected", "withdrawn"}:
+            raise HTTPException(status_code=422, detail="Ismeretlen státusz.")
+        params["status"] = f"eq.{status}"
+    rows = supabase_rest("GET", "webshop_requests", params=params)
+    return {"items": rows[:50], "hasMore": len(rows) > 50}
+
+
+@app.post("/api/webshop/requests")
+def create_webshop_request(payload: WebshopOrderRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_user(giriton_pwa_session)
+    courier_id, name = courier_identity(user)
+    items = [item.model_dump(mode="json") for item in payload.items]
+    try:
+        validate_webshop_items(items)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    identifier = supabase_rest("POST", "rpc/pwa_create_webshop_request", payload={
+        "p_key": str(payload.request_key), "p_courier": courier_id, "p_name": name, "p_note": payload.note.strip(), "p_items": items}, explain_workflow_error=True)
+    if not identifier:
+        raise HTTPException(status_code=502, detail="Az igény mentése nem igazolható. A kosarad megmaradt.")
+    return {"ok": True, "id": identifier}
+
+
+@app.post("/api/webshop/requests/{request_id}/actions")
+def manage_webshop_request(request_id: UUID, payload: WebshopOrderActionRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_webshop_admin(require_user(giriton_pwa_session))
+    if payload.status not in {"received", "processing", "ready", "fulfilled", "rejected"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen státusz.")
+    if payload.status == "rejected" and len(payload.response.strip()) < 5:
+        raise HTTPException(status_code=422, detail="Elutasításhoz legalább 5 karakteres indoklás szükséges.")
+    rows = supabase_rest("POST", "rpc/pwa_manage_webshop_request", payload={
+        "p_id": str(request_id), "p_status": payload.status, "p_response": payload.response.strip(),
+        "p_actor": str(user.get("username") or "admin")}, explain_workflow_error=True)
+    if not rows:
+        raise HTTPException(status_code=502, detail="A módosítás mentése nem igazolható.")
+    return {"ok": True}
+
+
+@app.post("/api/webshop/requests/{request_id}/withdraw")
+def withdraw_webshop_request(request_id: UUID, giriton_pwa_session: str | None = Cookie(default=None)):
+    courier_id, _name = courier_identity(require_user(giriton_pwa_session))
+    rows = supabase_rest("POST", "rpc/pwa_withdraw_webshop_request", payload={"p_id": str(request_id), "p_courier": courier_id}, explain_workflow_error=True)
+    if not rows:
+        raise HTTPException(status_code=502, detail="A visszavonás nem igazolható.")
+    return {"ok": True}
 
 
 @app.get("/api/quality/complaints/mine")

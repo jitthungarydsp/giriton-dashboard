@@ -8,7 +8,8 @@
     <link rel="manifest" href="/manifest.webmanifest?v=244" />
     <link rel="icon" href="/icon.svg?v=244" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg?v=244" />
-    <link rel="stylesheet" href="/styles.css?v=253" />
+    <link rel="stylesheet" href="/styles.css?v=254" />
+    <link rel="stylesheet" href="/webshop.css?v=254" />
     <title>Jitt</title>
   </head>
   <body>
@@ -743,6 +744,7 @@
         <section id="departure-helper-panel" class="ops-panel"></section>
       </div>
 
+      <div id="webshop-content" class="hidden"></div>
       <div id="quality-complaints-content" class="hidden">
         <section class="section-heading"><div><p class="eyebrow">REKLAMÁCIÓK</p><h2 id="quality-complaints-title">Futár reklamációk kezelése</h2></div><button id="quality-complaints-refresh" class="secondary" type="button">Frissítés</button></section>
         <label>Státusz<select id="quality-complaints-filter"><option value="all">Összes</option><option value="open">Nyitott</option><option value="forwarded">Továbbított</option><option value="closed">Lezárt</option></select></label>
@@ -846,6 +848,7 @@
         <button id="nav-coordinator-live" class="hidden"><span>◎</span>Live map</button>
         <button id="nav-departure-helper" class="hidden"><span>⇥</span>Indulás segítő</button>
         <button id="nav-today-workers" class="hidden"><span>☷</span>Ki jön ma?</button>
+        <button id="nav-webshop"><span>🛒</span>Webshop</button>
         <button id="nav-quality-complaints" class="hidden"><span>✉</span>Futár reklamációk kezelése</button>
         <button id="nav-coordinator-schedule" class="hidden"><span>15</span>Beosztás</button>
         <button id="nav-coordinator" class="hidden"><span>±</span>Bónusz / Málusz</button>
@@ -926,6 +929,7 @@
         </section>
       </dialog>
     </main>
-    <script src="/app.js?v=253" defer></script>
+    <script src="/webshop.js?v=254" defer></script>
+    <script src="/app.js?v=254" defer></script>
   </body>
 </html>
