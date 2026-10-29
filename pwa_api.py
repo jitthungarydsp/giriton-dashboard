@@ -3015,8 +3015,8 @@ def attach_vehicle_assignments(
     return items
 
 
-def read_shifts(user: dict, days: int) -> dict[str, Any]:
-    start = datetime.now(LOCAL_TIMEZONE).date()
+def read_shifts(user: dict, days: int, start: date | None = None) -> dict[str, Any]:
+    start = start or datetime.now(LOCAL_TIMEZONE).date()
     end = start + timedelta(days=days - 1)
     source_errors: list[str] = []
     vehicle_rows = read_vehicle_assignment_rows_for_user(user, start, end)
@@ -22160,11 +22160,19 @@ def get_device_condition_photo(
 @app.get("/api/shifts")
 def shifts(
     days: int = Query(default=5, ge=1, le=14),
+    month: str = Query(default="", pattern=r"^(\d{4}-\d{2})?$"),
     courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
     view_user, _preview = workflow_view_user(user, courier)
+    if month:
+        try:
+            start = date.fromisoformat(f"{month}-01")
+            next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Érvénytelen hónap.")
+        return read_shifts(view_user, (next_month - start).days, start)
     return read_shifts(view_user, days)
 
 

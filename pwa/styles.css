@@ -101,6 +101,17 @@ textarea { min-height: 96px; resize: vertical; }
 .section-heading h2 { margin: 0; font-size: 24px; }
 .text-button { border: 0; background: transparent; color: var(--green-dark); font-weight: 800; }
 .day-tabs { display: grid; grid-template-columns: repeat(5, minmax(58px, 1fr)); gap: 8px; overflow-x: auto; padding: 2px 0 14px; }
+.shift-month-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.shift-month-controls label { display: grid; gap: 4px; color: var(--muted); }
+.shift-month-controls input { min-width: 160px; max-width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); }
+.shift-weekdays, .day-tabs.shift-month-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; overflow: visible; }
+.shift-weekdays { text-align: center; color: var(--muted); padding-bottom: 8px; font-size: 12px; }
+.shift-month-days .day-tab { min-width: 0; min-height: 76px; padding: 8px 3px; }
+.shift-month-days .day-tab span { font-size: 11px; }
+.shift-month-days .day-tab strong { font-size: 18px; }
+.shift-month-days .calendar-issue { color: var(--warning); }
+.shift-month-days .day-tab.active .calendar-issue { color: inherit; }
+@media (max-width: 420px) { .shift-month-days .day-tab { min-height: 66px; border-radius: 12px; } .shift-weekdays, .day-tabs.shift-month-days { gap: 4px; } }
 .day-tab { min-width: 58px; padding: 11px 5px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--muted); }
 .day-tab strong, .day-tab span { display: block; }
 .day-tab strong { margin-top: 3px; color: var(--ink); font-size: 17px; }
@@ -263,6 +274,11 @@ textarea { min-height: 96px; resize: vertical; }
 .worker-shift-dialog-head strong { display: block; margin-top: 4px; font-size: 22px; overflow-wrap: anywhere; }
 .worker-shift-dialog-head small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 750; }
 .worker-shift-list { display: grid; gap: 10px; max-height: min(62vh, 520px); overflow: auto; padding-right: 2px; }
+#worker-info-dialog { max-height: calc(100dvh - 24px); overflow: hidden; }
+#worker-info-dialog .worker-shift-dialog-card { display: flex; flex-direction: column; max-height: calc(100dvh - 24px); overflow: hidden; }
+#worker-info-dialog .worker-shift-dialog-head { flex: 0 0 auto; }
+#worker-info-dialog [data-worker-info-body] { min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; grid-auto-rows: max-content; align-content: start; -webkit-overflow-scrolling: touch; }
+#worker-info-dialog [data-worker-info-body] > * { min-height: min-content; }
 .worker-shift-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 13px; border: 1px solid var(--line); border-radius: 16px; background: #fbfcfa; }
 .worker-shift-row.first { border-color: #9ccc96; background: #f2faef; }
 .worker-shift-row.attention { border-color: #e0a39e; background: #fff8f7; }
