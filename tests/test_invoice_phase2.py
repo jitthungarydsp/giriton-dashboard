@@ -13,6 +13,35 @@ package.__path__ = [str(ROOT / "resources")]
 # Avoid application startup from resources/__init__.py in this isolated unit test.
 sys.modules.setdefault("resources", package)
 from resources.pwa_invoice_phase2 import compare_sheet, compare_workbooks, get_working, select_working, RawImportError
+from resources.pwa_invoice_phase2 import COMPARISON_SLOT
+
+
+class SheetClient:
+    def __init__(self, sources):
+        self.sources = sources; self.fields = []; self.filters = {}
+    def schema(self, _): return self
+    def table(self, _): self.filters = {}; return self
+    def select(self, fields): self.current = fields; self.fields.append(fields); return self
+    def eq(self, field, value): self.filters[field] = value; return self
+    def is_(self, *args): return self
+    def in_(self, field, values): self.filters[field] = values; return self
+    def limit(self, _): return self
+    def execute(self):
+        rows = self.sources
+        selected = self.filters.get('id')
+        if selected: rows = [row for row in rows if row['id'] in selected] if isinstance(selected,list) else [row for row in rows if row['id']==selected]
+        result = []
+        for source in rows:
+            entry = {'id':source['id']}
+            for field in self.current.split(','):
+                if ':raw_data->sheets->' in field:
+                    alias, expression = field.split(':',1); index = int(expression.split('->')[2])
+                    sheet = source['raw_data']['sheets'][index] if index < len(source['raw_data']['sheets']) else None
+                    entry[alias] = sheet.get('name') if sheet and expression.endswith('->name') else sheet
+                elif field=='sheet_count': entry[field] = len(source['raw_data']['sheets'])
+                elif field in source: entry[field] = source[field]
+            result.append(entry)
+        return SimpleNamespace(data=result)
 
 
 def row(number, *values):
@@ -88,14 +117,27 @@ class ComparisonTests(unittest.TestCase):
             {"name": "Adatok-JITT", "index": 1, "rows": [row(2, "ID", i * 100)]},
             {"name": "Üres-KIFLI" if i==0 else "Új-KIFLI", "index": 2, "rows": []},
         ]}} for i, id in enumerate(ids)]
-        client = Mock()
-        client.schema.return_value.table.return_value.select.return_value.eq.return_value.is_.return_value.in_.return_value.execute.return_value.data = sources
+        client = SheetClient(sources)
         result = compare_workbooks(client, "2026-09", ids, ids[0])
         self.assertEqual(len(result["comparisons"]), 2)
         self.assertEqual([s["status"] for s in result["comparisons"][0]["sheets"]], ["changed", "removed", "added"])
         detail = compare_workbooks(client, "2026-09", ids, ids[0], {"Adatok-JITT": [1]}, ids[2], "Adatok-JITT")
         changes = next(c["sheets"] for c in detail["comparisons"] if c["uploadId"]==ids[2])[0]["changes"]
         self.assertEqual(changes[0]["cells"][0]["delta"], "200")
+        self.assertFalse(any('raw_data' in fields.split(',') for fields in client.fields))
+        self.assertTrue(any('sheet:raw_data->sheets->' in fields for fields in client.fields))
+
+    def test_one_comparison_at_a_time_and_slot_released_after_failure(self):
+        COMPARISON_SLOT.acquire()
+        try:
+            with self.assertRaises(RawImportError) as error:
+                compare_workbooks(Mock(), '2026-09', [uuid4(),uuid4()],uuid4())
+            self.assertEqual(error.exception.status,429)
+        finally: COMPARISON_SLOT.release()
+        with self.assertRaises(RawImportError):
+            compare_workbooks(Mock(), '2026-09', [uuid4(),uuid4()],uuid4())
+        self.assertTrue(COMPARISON_SLOT.acquire(blocking=False))
+        COMPARISON_SLOT.release()
 
     def test_old_working_id_rejected_instead_of_loading_current_month_copy(self):
         client = Mock(); query = client.schema.return_value.table.return_value

@@ -75,3 +75,21 @@ SQL: `test_invoice_phase2_sql.cjs`, PGlite PostgreSQL futtatókörnyezettel
 (`PGLITE_TEST_RUNTIME`). A teszt ellenőrzi a teljes másolatot, havi egyediséget,
 újrapróbálást, párhuzamos választás utáni konfliktust, hónapelkülönítést,
 törlésvédelmet, megőrzött RAW adatot és anon jogosultságok tiltását.
+
+
+## v265 üzemeltetési javítás
+
+Az összehasonlító csak a munkalapneveket kéri le elsőként JSON útvonallal, majd
+legfeljebb egy munkalappárt tart memóriában; teljes RAW munkafüzeteket nem kér le
+együtt. A részletezés csak a választott lapot tölti le. Ehhez nem kell új SQL.
+Folyamatonként egyszerre egy összehasonlítás futhat, a további kérés 429-es,
+olvasható választ kap. Ez terheléscsökkentés, a korábbi üres 502/503 válasz
+szolgáltatói okát önmagában nem bizonyítja.
+
+A Render napló `invoice_compare start/complete/rejected/failed` sorai véletlen
+hibaazonosítót, futásidőt, fájlszámot és Linuxon RSS memóriaadatot tartalmaznak.
+Nem naplózunk cellaadatot, fájlnevet, jelszót vagy külső kivétel teljes szövegét.
+A felület külön kezeli az alkalmazás JSON hibaüzenetét, az üres átjáróhibát és a
+Cloudflare-ellenőrzést. Automatikus újraküldés nincs; az összehasonlítás kézzel
+ismételhető. Az éles RAW adatokból végzett olvasási teszt a két jelzett fájllal
+sikeres volt, az éles, bejelentkezett végpont ettől külön ellenőrzést igényel.

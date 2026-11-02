@@ -2,12 +2,24 @@
 from collections import defaultdict, deque
 from decimal import Decimal, InvalidOperation
 import json
+from pathlib import Path
 from uuid import UUID
+from threading import BoundedSemaphore
 
 from resources.pwa_invoice_raw import RawImportError, month_start, METADATA_FIELDS, TABLE
 
+COMPARISON_SLOT = BoundedSemaphore(1)
+
 WORK_TABLE = "PWA_INVOICE_WORK"
 WORK_FIELDS = "settlement_month,id,session_id,source_upload_id,source_session_id,source_file_name,file_sha256,sheet_count,raw_row_count,created_by,created_at"
+
+
+def process_memory_mb():
+    try:
+        line = next(line for line in Path("/proc/self/status").read_text().splitlines() if line.startswith("VmRSS:"))
+        return round(int(line.split()[1]) / 1024, 1)
+    except (OSError, StopIteration, ValueError):
+        return None
 
 
 def db_call(operation):
@@ -29,13 +41,47 @@ def upload_ids(values, minimum=1, maximum=10):
 
 
 def read_sources(client, month, ids):
-    rows = db_call(lambda: client.schema("public").table(TABLE).select(METADATA_FIELDS + ",raw_data")
+    rows = db_call(lambda: client.schema("public").table(TABLE).select(METADATA_FIELDS)
                    .eq("settlement_month", month_start(month).isoformat()).is_("deleted_at", "null")
                    .in_("id", ids).execute().data or [])
     by_id = {str(row["id"]): row for row in rows}
     if set(by_id) != set(ids):
         raise RawImportError("Egy kiválasztott fájl hiányzik, törölt vagy másik hónaphoz tartozik. Frissítsd a listát.", 409)
     return [by_id[id] for id in ids]
+
+
+def read_sheet_catalog(client, month, sources):
+    ids = [str(source["id"]) for source in sources]
+    catalog = {id: {} for id in ids}
+    largest = max(int(source["sheet_count"]) for source in sources)
+    # Bounded URL length; only names travel over the wire, never all RAW sheets.
+    for start in range(0, largest, 16):
+        indexes = range(start, min(start + 16, largest))
+        fields = "id," + ",".join(f"s{i}:raw_data->sheets->{i}->name" for i in indexes)
+        rows = db_call(lambda: client.schema("public").table(TABLE).select(fields)
+            .eq("settlement_month", month_start(month).isoformat()).is_("deleted_at", "null")
+            .in_("id", ids).execute().data or [])
+        if {str(row["id"]) for row in rows} != set(ids):
+            raise RawImportError("Egy forrás közben megváltozott. Frissítsd a feltöltési listát.", 409)
+        for row in rows:
+            for i in indexes:
+                name = row.get(f"s{i}")
+                if name is not None:
+                    catalog[str(row["id"])][name] = i
+    if any(len(catalog[str(source["id"])]) != int(source["sheet_count"]) for source in sources):
+        raise RawImportError("A munkalaplista nem egyezik a feltöltés adataival.", 409)
+    return catalog
+
+
+def read_source_sheet(client, month, source_id, index, expected_name):
+    rows = db_call(lambda: client.schema("public").table(TABLE)
+        .select(f"id,sheet:raw_data->sheets->{index}").eq("id", str(source_id))
+        .eq("settlement_month", month_start(month).isoformat()).is_("deleted_at", "null")
+        .limit(1).execute().data or [])
+    sheet = rows[0].get("sheet") if rows else None
+    if not sheet or sheet.get("name") != expected_name:
+        raise RawImportError("A kiválasztott munkalap közben nem elérhető. Frissítsd a listát.", 409)
+    return sheet
 
 
 def canonical(value):
@@ -148,31 +194,46 @@ def compare_sheet(left, right, key_columns=None, offset=0, limit=50, include_det
 
 
 def compare_workbooks(client, month, selected, primary, key_columns=None, detail_upload_id=None, detail_sheet=None, offset=0, limit=50):
+    if not COMPARISON_SLOT.acquire(blocking=False):
+        raise RawImportError("Másik összehasonlítás még folyamatban van. Várd meg a végét, majd próbáld újra.", 429)
+    try:
+        return _compare_workbooks(client, month, selected, primary, key_columns, detail_upload_id, detail_sheet, offset, limit)
+    finally:
+        COMPARISON_SLOT.release()
+
+
+def _compare_workbooks(client, month, selected, primary, key_columns=None, detail_upload_id=None, detail_sheet=None, offset=0, limit=50):
     ids = upload_ids(selected, 2)
     primary = str(UUID(str(primary)))
     if primary not in ids:
         raise RawImportError("Az elsődleges fájlt a kijelöltek közül válaszd ki.")
     if detail_upload_id and str(detail_upload_id) not in set(ids) - {primary}:
         raise RawImportError("Érvénytelen összehasonlítási cél.")
-    sources = read_sources(client, month, ids)
-    base = next(row for row in sources if row["id"] == primary)
-    sheets = {s["name"]: s for s in base["raw_data"]["sheets"]}
-    output = []
     key_columns = key_columns or {}
     if any(not isinstance(cols, list) or len(cols) > 10 or any(not isinstance(col, int) or isinstance(col, bool) or not 1 <= col <= 16384 for col in cols) for cols in key_columns.values()):
         raise RawImportError("A kulcsoszlopok sorszáma 1 és 16384 közé essen (legfeljebb 10 oszlop).")
-    for source in sources:
-        if source["id"] == primary: continue
-        others = {s["name"]: s for s in source["raw_data"]["sheets"]}
-        result = []
-        for name in dict.fromkeys([*sheets, *others]):
-            if detail_sheet is not None and (name != detail_sheet or str(source["id"]) != str(detail_upload_id)): continue
-            left, right = sheets.get(name), others.get(name)
+    sources = read_sources(client, month, ids)
+    catalog = read_sheet_catalog(client, month, sources)
+    base = catalog[primary]
+    others = [source for source in sources if str(source["id"]) != primary]
+    output = {str(source["id"]): {"uploadId": source["id"], "fileName": source["source_file_name"], "sheets": []} for source in others}
+    names = list(dict.fromkeys([*base, *(name for source in others for name in catalog[str(source["id"])])]))
+    if detail_sheet is not None:
+        names = [detail_sheet] if detail_sheet in names else []
+    for name in names:
+        left = read_source_sheet(client, month, primary, base[name], name) if name in base else None
+        for source in others:
+            source_id = str(source["id"])
+            if detail_sheet is not None and source_id != str(detail_upload_id): continue
+            target = catalog[source_id]
+            if name not in base and name not in target: continue
+            right = read_source_sheet(client, month, source_id, target[name], name) if name in target else None
             summary = compare_sheet(left, right, key_columns.get(name), offset, limit, detail_sheet is not None)
-            result.append({"name": name, "status": "added" if left is None else "removed" if right is None else "changed" if summary["changedRows"] + summary["addedRows"] + summary["removedRows"] or summary["movedRows"] or left.get("index") != right.get("index") else "identical",
-                           "beforeIndex": (left or {}).get("index"), "afterIndex": (right or {}).get("index"), **summary})
-        output.append({"uploadId": source["id"], "fileName": source["source_file_name"], "sheets": result})
-    return {"ok": True, "primaryId": primary, "comparisons": output}
+            output[source_id]["sheets"].append({"name": name, "status": "added" if left is None else "removed" if right is None else "changed" if summary["changedRows"] + summary["addedRows"] + summary["removedRows"] or summary["movedRows"] or left.get("index") != right.get("index") else "identical",
+                "beforeIndex": (left or {}).get("index"), "afterIndex": (right or {}).get("index"), **summary})
+            del right
+        del left
+    return {"ok": True, "primaryId": primary, "comparisons": list(output.values())}
 
 
 def get_working(client, month, working_id=None, sheet=None, offset=0, limit=30):

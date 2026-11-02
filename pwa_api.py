@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from resources.http_pool import database_http_request
 from resources.finance_adjustment_details import snapshot_manual_adjustment_details
 import hmac
@@ -33,7 +34,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.concurrency import run_in_threadpool
-from resources.pwa_invoice_phase2 import compare_workbooks as compare_invoice_workbooks, get_working as get_invoice_working, select_working as select_invoice_working, delete_sources as delete_invoice_sources
+from resources.pwa_invoice_phase2 import process_memory_mb as invoice_process_memory_mb, compare_workbooks as compare_invoice_workbooks, get_working as get_invoice_working, select_working as select_invoice_working, delete_sources as delete_invoice_sources
 from resources.pwa_invoice_raw import (
     save_workbook as save_raw_invoice_workbook, list_workbooks as list_raw_invoice_workbooks,
     RawImportError, MAX_FILE_BYTES as MAX_RAW_INVOICE_FILE_BYTES,
@@ -24940,12 +24941,27 @@ class InvoiceDeleteRequest(BaseModel):
 @app.post("/api/admin/pwa-invoice/raw/compare")
 def admin_compare_invoice_raw(payload: InvoiceCompareRequest, giriton_pwa_session: str | None = Cookie(default=None)):
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    trace_id = secrets.token_hex(8)
+    started = time.perf_counter()
+    logger = logging.getLogger("uvicorn.error")
+    logger.info("invoice_compare start trace=%s month=%s files=%d detail=%s rss_mb=%s", trace_id, payload.month,
+                len(payload.selected_ids), payload.detail_sheet is not None, invoice_process_memory_mb())
     try:
-        return compare_invoice_workbooks(settlement_supabase_client(), payload.month,
+        result = compare_invoice_workbooks(settlement_supabase_client(), payload.month,
             payload.selected_ids, payload.primary_id, payload.key_columns,
             payload.detail_upload_id, payload.detail_sheet, payload.offset, payload.limit)
+        logger.info("invoice_compare complete trace=%s seconds=%.3f rss_mb=%s", trace_id, time.perf_counter() - started, invoice_process_memory_mb())
+        return result
     except RawImportError as exc:
-        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+        logger.warning("invoice_compare rejected trace=%s status=%s cause=%s seconds=%.3f", trace_id,
+                       exc.status, type(exc.__cause__).__name__ if exc.__cause__ else type(exc).__name__,
+                       time.perf_counter() - started)
+        raise HTTPException(status_code=exc.status, detail=f"{exc} Hibaazonosító: {trace_id}") from exc
+    except Exception as exc:
+        # Do not log raw cells, financial values, credentials, or third-party exception text.
+        logger.error("invoice_compare failed trace=%s cause=%s seconds=%.3f", trace_id,
+                     type(exc).__name__, time.perf_counter() - started)
+        raise HTTPException(status_code=500, detail=f"Az összehasonlítás feldolgozási hibával leállt. Hibaazonosító: {trace_id}") from exc
 
 
 @app.post("/api/admin/pwa-invoice/raw/delete")

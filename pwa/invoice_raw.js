@@ -139,7 +139,7 @@
     env.target.innerHTML=`<section class="settlement-import-panel invoice-raw-panel"><p class="eyebrow">2a. lépés · Összehasonlítás</p><h3>Excel-fájlok eltérései</h3>
       <p class="muted">Válassz egy elsődleges forrást. Minden eltérés ehhez képest látszik. Az előszobába csak az elsődleges fájl teljes tartalma kerül.</p>
       <div class="invoice-source-grid">${selectedItems().map(item=>`<button type="button" class="secondary invoice-source ${state.primary===item.id ? "invoice-primary" : ""}" data-invoice-primary="${esc(item.id)}" ${disabled}><strong>${esc(item.source_file_name)}</strong><small>${esc(item.session_id)}</small><span>${state.primary===item.id ? "✓ Elsődleges forrás" : "Legyen elsődleges"}</span></button>`).join("")}</div>
-      ${state.message ? `<p class="notice error" role="alert">${esc(state.message)}</p>` : ""}
+      ${state.message ? `<p class="notice error" role="alert">${esc(state.message)}</p><button type="button" class="secondary" data-invoice-raw-action="compare-retry" ${disabled}>Összehasonlítás újrapróbálása</button>` : ""}
       ${state.busy ? `<p role="status">Összehasonlítás betöltése…</p>` : ""}
       ${(state.diff?.comparisons || []).map(comparison=>`<section class="invoice-diff-file"><h4>${esc(comparison.fileName)} – eltérések az elsődlegeshez képest</h4>
         <div class="invoice-raw-table-wrap"><table class="invoice-diff-table"><thead><tr><th>Munkalap</th><th>Állapot</th><th>Egyező</th><th>Módosult</th><th>Hiányzó</th><th>Új</th><th>Áthelyezett</th><th></th></tr></thead><tbody>
@@ -232,6 +232,7 @@
       if(!button){const row=event.target.closest("[data-invoice-row]");if(row && !event.target.closest("input,button,a"))toggleSelection(row.dataset.invoiceRow,!state.selected.has(row.dataset.invoiceRow));return;}
       const action=button.dataset.invoiceRawAction;
       if(action==="proceed"){if(state.selected.size>1){state.step="2a";state.detail=null;loadComparison();}else prepareWorking();return;}
+      if(action==="compare-retry"){loadComparison();return;}
       if(action==="compare-back"){state.step=2;state.detail=null;render();return;}
       if(action==="work-back"){state.step=2;render();loadList();return;}
       if(action==="prepare"){prepareWorking();return;}

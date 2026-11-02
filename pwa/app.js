@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v264";
+const APP_VERSION = "v265";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -258,6 +258,21 @@ async function withSilentLoading(callback) {
   }
 }
 
+function apiFailureMessage(response, payload) {
+  const detail = payload?.detail;
+  if (typeof detail === "string") return detail;
+  if (typeof detail?.message === "string") return detail.message;
+  const reference = response.headers?.get("rndr-id") || response.headers?.get("cf-ray") || "";
+  const suffix = reference ? ` Hibaazonosító: ${reference}` : "";
+  if (response.headers?.get("cf-mitigated") === "challenge") {
+    return `A webhely biztonsági ellenőrzést kér (${response.status}). Nyisd meg újra az oldalt a böngészőben.${suffix}`;
+  }
+  if ([502, 503, 504].includes(response.status)) {
+    return `A kiszolgáló vagy az előtte lévő átjáró nem adott alkalmazásválaszt (${response.status}). A művelet eredménye nem igazolható.${suffix}`;
+  }
+  return `A kérés nem sikerült. (${response.status})${suffix}`;
+}
+
 async function api(path, options = {}) {
   const { silentLoading = false, loadingMessage = "", ...fetchOptions } = options;
   const method = String(fetchOptions.method || "GET").toUpperCase();
@@ -271,8 +286,7 @@ async function api(path, options = {}) {
     const response = await fetch(path, { credentials: "same-origin", cache: "no-store", ...fetchOptions, headers });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const detail = payload.detail;
-      const error = new Error(typeof detail === "string" ? detail : detail?.message || `A kérés nem sikerült. (${response.status})`);
+      const error = new Error(apiFailureMessage(response, payload));
       error.status = response.status;
       throw error;
     }
