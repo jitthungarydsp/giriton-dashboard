@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v259";
+const APP_VERSION = "v260";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -6826,6 +6826,18 @@ function renderSettlementImportValidation(validation = {}) {
 }
 
 function renderSettlementImportConfig() {
+  const target = $("#settlement-import-config-panel");
+  if (!target) return;
+  if (!window.JittInvoiceRaw) {
+    target.innerHTML = `<div class="notice error">A RAW feltöltési modul nem töltődött be. Frissítsd az oldalt.</div>`;
+    return;
+  }
+  window.JittInvoiceRaw.mount({target,api,escapeHtml,formatCount,formatMonthLabel,
+    initialMonth:state.settlementImportMonth || previousLocalMonth()});
+  window.JittInvoiceRaw.show();
+}
+
+function renderLegacySettlementImportConfig() {
   const target = $("#settlement-import-config-panel");
   if (!target) return;
   const step = state.settlementImportStep || 1;

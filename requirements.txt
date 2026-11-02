@@ -30,3 +30,5 @@ uvicorn[standard]
 
 pywebpush
 py-vapid
+
+xlrd>=2.0.1,<3

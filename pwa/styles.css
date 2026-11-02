@@ -1430,3 +1430,21 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-selection-check input { width: 22px; height: 22px; accent-color: var(--danger); }
 .schedule-hub-refresh { margin-top: 20px; }
 .schedule-hub-refresh p { margin-top: 10px; font-size: 13px; overflow-wrap: anywhere; }
+.invoice-raw-saved { display: grid; gap: 12px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.invoice-raw-saved > button { justify-self: start; }
+.invoice-raw-table-wrap { width: 100%; overflow-x: auto; }
+.invoice-raw-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.invoice-raw-table th, .invoice-raw-table td { padding: 12px 9px; border-bottom: 1px solid var(--line); text-align: left; overflow-wrap: anywhere; }
+.invoice-raw-table th { color: var(--green-dark); }
+.invoice-raw-status { display: inline-block; border-radius: 20px; padding: 6px 10px; background: #e5f0df; color: var(--green-dark); font-weight: 800; white-space: nowrap; }
+.invoice-raw-queue { display: grid; gap: 9px; }
+.invoice-raw-queue > div { padding: 12px; background: #f5f8f2; border: 1px solid var(--line); border-radius: 14px; overflow-wrap: anywhere; }
+.invoice-raw-queue span { display: block; margin-top: 4px; color: var(--muted); }
+@media (max-width: 640px) {
+  .invoice-raw-table, .invoice-raw-table tbody, .invoice-raw-table tr { display: block; width: 100%; }
+  .invoice-raw-table thead { display: none; }
+  .invoice-raw-table tr { border: 1px solid var(--line); border-radius: 16px; margin: 10px 0; padding: 8px; }
+  .invoice-raw-table td { display: grid; grid-template-columns: minmax(100px, 0.8fr) minmax(0, 1.2fr); gap: 8px; }
+  .invoice-raw-table td::before { content: attr(data-label); color: var(--green-dark); font-weight: 700; }
+  .invoice-raw-table td:last-child { border-bottom: 0; }
+}

@@ -31,6 +31,11 @@ from fastapi import Cookie, FastAPI, File, Form, HTTPException, Query, Request, 
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.concurrency import run_in_threadpool
+from resources.pwa_invoice_raw import (
+    save_workbook as save_raw_invoice_workbook, list_workbooks as list_raw_invoice_workbooks,
+    RawImportError, MAX_FILE_BYTES as MAX_RAW_INVOICE_FILE_BYTES,
+)
 from pydantic import BaseModel, Field
 
 from resources.email_sender import send_login_credentials, send_message, smtp_config, validate_email
@@ -24844,6 +24849,33 @@ def admin_update_workflow_complaint(
 
 
 
+
+
+@app.get("/api/admin/pwa-invoice/raw")
+def admin_list_invoice_raw(
+    month: str, offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    try:
+        return list_raw_invoice_workbooks(settlement_supabase_client(), month, offset, limit)
+    except RawImportError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/pwa-invoice/raw/excel")
+async def admin_upload_invoice_raw(
+    month: str = Form(...), request_id: UUID = Form(...), excel_file: UploadFile = File(...),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    content = await excel_file.read(MAX_RAW_INVOICE_FILE_BYTES + 1)
+    try:
+        upload = await run_in_threadpool(save_raw_invoice_workbook, settlement_supabase_client(),
+            content, excel_file.filename or "", month, request_id, user.get("username") or "admin")
+        return {"ok": True, "upload": upload}
+    except RawImportError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
 @app.post("/api/admin/settlement-imports/excel")
