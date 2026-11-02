@@ -16,7 +16,7 @@ PREFIX = "pwa-invoice-raw"
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_RAW_BYTES = 25 * 1024 * 1024
 MAX_VISITED_CELLS = 2_000_000
-METADATA_FIELDS = "id,session_id,settlement_month,source_file_name,file_sha256,file_size_bytes,sheet_count,raw_row_count,status,created_by,created_at"
+METADATA_FIELDS = "id,session_id,settlement_month,source_file_name,file_sha256,file_size_bytes,sheet_count,raw_row_count,status,created_by,created_at,deleted_at"
 
 
 class RawImportError(Exception):
@@ -27,6 +27,8 @@ class RawImportError(Exception):
 
 def database_error(exc):
     text = str(exc)
+    if "42703" in text or "deleted_at" in text:
+        return RawImportError("A Phase 2 tároló még nincs telepítve. Futtasd a sql/pwa_invoice_phase2.sql fájlt a Supabase SQL Editorban.", 503)
     if any(code in text for code in ("PGRST205", "PGRST202", "42P01", "42883")):
         return RawImportError("Az új RAW tároló még nincs telepítve. Futtasd a sql/pwa_invoice_raw_phase1.sql fájlt a Supabase SQL Editorban.", 503)
     return RawImportError("A RAW mentés jelenleg nem igazolható. Ugyanazon fájl újrapróbálása ugyanazzal a kérésazonosítóval történik.", 502)
@@ -135,6 +137,8 @@ def existing_upload(client, request_id):
 
 
 def verify_existing(row, month, name, sha256, size):
+    if row.get("deleted_at"):
+        raise RawImportError("Ezt a feltöltést korábban törölték a listából. Új feltöltés szükséges.", 409)
     if (str(row.get("settlement_month"))[:10] != month.isoformat() or row.get("source_file_name") != name
         or row.get("file_sha256") != sha256 or row.get("file_size_bytes") != size):
         raise RawImportError("A kérésazonosító már másik fájlhoz vagy hónaphoz tartozik.", 409)
@@ -195,7 +199,7 @@ def save_workbook(client, content, filename, month, request_id, actor):
 def list_workbooks(client, month, offset=0, limit=50):
     month = month_start(month)
     try:
-        rows = client.schema("public").table(TABLE).select(METADATA_FIELDS).eq("settlement_month", month.isoformat()).order("created_at", desc=True).order("id").range(offset, offset + limit).execute().data or []
+        rows = client.schema("public").table(TABLE).select(METADATA_FIELDS).eq("settlement_month", month.isoformat()).is_("deleted_at", "null").order("created_at", desc=True).order("id").range(offset, offset + limit).execute().data or []
         return {"month": month.strftime("%Y-%m"), "items": rows[:limit], "hasMore": len(rows) > limit}
     except Exception as exc:
         raise database_error(exc) from exc

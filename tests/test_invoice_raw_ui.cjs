@@ -24,7 +24,8 @@ test('four workbooks, monthly listing, partial failure retry with same ID, no ca
   await page.addScriptTag({path:path.join(root,'pwa/invoice_raw.js')});
   await page.exposeFunction('testApi',async request=>{
     requests.push(request);
-    assert.ok(request.url.startsWith('/api/admin/pwa-invoice/raw'));
+    assert.ok(request.url.startsWith('/api/admin/pwa-invoice/'));
+    if(new URL(request.url,'http://localhost').pathname.endsWith('/working'))return {ok:true,working:null};
     if(request.method==='POST'){
       if(request.name==='c.xlsx' && failOnce){failOnce=false;return {error:'Hálózati hiba, próbáld újra.'};}
       let row=rows.find(row=>row.id===request.id);

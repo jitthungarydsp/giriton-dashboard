@@ -33,6 +33,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.concurrency import run_in_threadpool
+from resources.pwa_invoice_phase2 import compare_workbooks as compare_invoice_workbooks, get_working as get_invoice_working, select_working as select_invoice_working, delete_sources as delete_invoice_sources
 from resources.pwa_invoice_raw import (
     save_workbook as save_raw_invoice_workbook, list_workbooks as list_raw_invoice_workbooks,
     RawImportError, MAX_FILE_BYTES as MAX_RAW_INVOICE_FILE_BYTES,
@@ -24909,6 +24910,72 @@ async def admin_upload_invoice_raw(
         upload = await run_in_threadpool(save_raw_invoice_workbook, settlement_supabase_client(),
             content, excel_file.filename or "", month, request_id, user.get("username") or "admin")
         return {"ok": True, "upload": upload}
+    except RawImportError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+class InvoiceCompareRequest(BaseModel):
+    month: str
+    selected_ids: list[UUID] = Field(min_length=2, max_length=10)
+    primary_id: UUID
+    key_columns: dict[str, list[int]] = Field(default_factory=dict)
+    detail_upload_id: UUID | None = None
+    detail_sheet: str | None = None
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=100)
+
+
+class InvoiceWorkingRequest(BaseModel):
+    month: str
+    source_id: UUID
+    request_id: UUID
+    expected_id: UUID | None = None
+
+
+class InvoiceDeleteRequest(BaseModel):
+    month: str
+    selected_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+@app.post("/api/admin/pwa-invoice/raw/compare")
+def admin_compare_invoice_raw(payload: InvoiceCompareRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    try:
+        return compare_invoice_workbooks(settlement_supabase_client(), payload.month,
+            payload.selected_ids, payload.primary_id, payload.key_columns,
+            payload.detail_upload_id, payload.detail_sheet, payload.offset, payload.limit)
+    except RawImportError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/pwa-invoice/raw/delete")
+def admin_delete_invoice_raw(payload: InvoiceDeleteRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    try:
+        return delete_invoice_sources(settlement_supabase_client(), payload.month, payload.selected_ids)
+    except RawImportError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/pwa-invoice/working")
+def admin_get_invoice_working(
+    month: str, working_id: UUID | None = None, sheet: str | None = None,
+    offset: int = Query(default=0, ge=0), limit: int = Query(default=30, ge=1, le=100),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    try:
+        return get_invoice_working(settlement_supabase_client(), month, working_id, sheet, offset, limit)
+    except RawImportError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/admin/pwa-invoice/working")
+def admin_select_invoice_working(payload: InvoiceWorkingRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    try:
+        return select_invoice_working(settlement_supabase_client(), payload.month,
+            payload.source_id, payload.request_id, payload.expected_id, user.get("username") or "admin")
     except RawImportError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
