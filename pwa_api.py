@@ -34,6 +34,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.concurrency import run_in_threadpool
+from resources.pwa_invoice_database import invoice_database
 from resources.pwa_invoice_phase2 import process_memory_mb as invoice_process_memory_mb, compare_workbooks as compare_invoice_workbooks, get_working as get_invoice_working, select_working as select_invoice_working, delete_sources as delete_invoice_sources
 from resources.pwa_invoice_raw import (
     save_workbook as save_raw_invoice_workbook, list_workbooks as list_raw_invoice_workbooks,
@@ -24895,7 +24896,8 @@ def admin_list_invoice_raw(
 ):
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     try:
-        return list_raw_invoice_workbooks(settlement_supabase_client(), month, offset, limit)
+        with invoice_database(load_setting("SUPABASE_URL"), load_setting("SUPABASE_SERVICE_ROLE_KEY")) as client:
+            return list_raw_invoice_workbooks(client, month, offset, limit)
     except RawImportError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
@@ -24947,9 +24949,10 @@ def admin_compare_invoice_raw(payload: InvoiceCompareRequest, giriton_pwa_sessio
     logger.info("invoice_compare start trace=%s month=%s files=%d detail=%s rss_mb=%s", trace_id, payload.month,
                 len(payload.selected_ids), payload.detail_sheet is not None, invoice_process_memory_mb())
     try:
-        result = compare_invoice_workbooks(settlement_supabase_client(), payload.month,
-            payload.selected_ids, payload.primary_id, payload.key_columns,
-            payload.detail_upload_id, payload.detail_sheet, payload.offset, payload.limit)
+        with invoice_database(load_setting("SUPABASE_URL"), load_setting("SUPABASE_SERVICE_ROLE_KEY")) as client:
+            result = compare_invoice_workbooks(client, payload.month,
+                payload.selected_ids, payload.primary_id, payload.key_columns,
+                payload.detail_upload_id, payload.detail_sheet, payload.offset, payload.limit)
         logger.info("invoice_compare complete trace=%s seconds=%.3f rss_mb=%s", trace_id, time.perf_counter() - started, invoice_process_memory_mb())
         return result
     except RawImportError as exc:
@@ -24968,7 +24971,8 @@ def admin_compare_invoice_raw(payload: InvoiceCompareRequest, giriton_pwa_sessio
 def admin_delete_invoice_raw(payload: InvoiceDeleteRequest, giriton_pwa_session: str | None = Cookie(default=None)):
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     try:
-        return delete_invoice_sources(settlement_supabase_client(), payload.month, payload.selected_ids)
+        with invoice_database(load_setting("SUPABASE_URL"), load_setting("SUPABASE_SERVICE_ROLE_KEY")) as client:
+            return delete_invoice_sources(client, payload.month, payload.selected_ids)
     except RawImportError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
@@ -24981,7 +24985,8 @@ def admin_get_invoice_working(
 ):
     require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     try:
-        return get_invoice_working(settlement_supabase_client(), month, working_id, sheet, offset, limit)
+        with invoice_database(load_setting("SUPABASE_URL"), load_setting("SUPABASE_SERVICE_ROLE_KEY")) as client:
+            return get_invoice_working(client, month, working_id, sheet, offset, limit)
     except RawImportError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
@@ -24990,8 +24995,9 @@ def admin_get_invoice_working(
 def admin_select_invoice_working(payload: InvoiceWorkingRequest, giriton_pwa_session: str | None = Cookie(default=None)):
     user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
     try:
-        return select_invoice_working(settlement_supabase_client(), payload.month,
-            payload.source_id, payload.request_id, payload.expected_id, user.get("username") or "admin")
+        with invoice_database(load_setting("SUPABASE_URL"), load_setting("SUPABASE_SERVICE_ROLE_KEY")) as client:
+            return select_invoice_working(client, payload.month,
+                payload.source_id, payload.request_id, payload.expected_id, user.get("username") or "admin")
     except RawImportError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 

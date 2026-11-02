@@ -93,3 +93,24 @@ A felület külön kezeli az alkalmazás JSON hibaüzenetét, az üres átjáró
 Cloudflare-ellenőrzést. Automatikus újraküldés nincs; az összehasonlítás kézzel
 ismételhető. Az éles RAW adatokból végzett olvasási teszt a két jelzett fájllal
 sikeres volt, az éles, bejelentkezett végpont ettől külön ellenőrzést igényel.
+
+
+## v266 – HTTP-kliens életciklus
+
+A vizsgált Supabase/PostgREST SDK `schema()` hívása új HTTP-klienst készít.
+A v265 munkalaponkénti lekérdezései emiatt sok, explicit lezárás nélküli TLS
+kapcsolatkészletet hoztak létre. Az éles napló egyik kérésénél az RSS 297,6 MB-ról
+497,2 MB-ra emelkedett. Ez a memóriahiány gyanúját támogatja, de a szolgáltatói
+kilövést önmagában nem bizonyítja.
+
+Az izolált RAW lista és a Phase 2 végpontok most `invoice_database` kontextust
+használnak: műveletenként egy, eleve public sémára konfigurált PostgREST kliens,
+minden részlekérdezéshez ugyanaz az objektum, végül kötelező lezárás siker és
+hiba esetén is. A régi elszámolási adatbázis-kapcsolatok nem változnak. Az Excel
+feltöltés Storage-kezelése szintén változatlan.
+
+A két aktuális aktív RAW feltöltéssel végzett, kizárólag olvasási mérésben:
+korábbi útvonal 23 új HTTP kliens / 23 nyitva maradt; új útvonal 1 HTTP kliens /
+0 nyitva maradt. A klienslétrehozást instrumentált SDK-val számoltuk. Ez
+kapcsolatéletciklus-mérés; az éles RSS-t és az 502/503 megszűnését külön, a Render
+naplójában kell ellenőrizni a v266 telepítése után. Új SQL nem szükséges.
