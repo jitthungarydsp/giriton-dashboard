@@ -22,6 +22,7 @@ from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 from uuid import UUID
+from resources.gate_opening import GateOpeningService, GateOpeningError
 from resources.webshop import validate_webshop_product, validate_webshop_items
 from resources.schedule_bulk import normalize_batch, fingerprint as schedule_batch_fingerprint, read_record as read_schedule_batch, create_record as create_schedule_batch
 
@@ -442,6 +443,7 @@ class ScheduleHubRefreshRequest(BaseModel):
     request_id: UUID
     work_date: str = ""
     warehouse: str = ""
+    month: str = ""
 
 
 class VehicleConfigurationRequest(BaseModel):
@@ -22360,6 +22362,35 @@ def download_quality_complaint_photo(
         "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
+class GateOpeningRequest(BaseModel):
+    request_id: UUID
+
+
+gate_opening_service = GateOpeningService(load_setting)
+
+
+def require_gate_admin(user: dict[str, Any]) -> dict[str, Any]:
+    if str(user.get("role") or "").lower() not in {"admin", "superadmin"}:
+        raise HTTPException(status_code=403, detail="A kapunyitáshoz admin jogosultság szükséges.")
+    return user
+
+
+@app.get("/api/admin/gate")
+def gate_configuration(giriton_pwa_session: str | None = Cookie(default=None)):
+    require_gate_admin(require_user(giriton_pwa_session))
+    return gate_opening_service.configuration()
+
+
+@app.post("/api/admin/gate/open")
+def gate_open(payload: GateOpeningRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_gate_admin(require_user(giriton_pwa_session))
+    owner = str(user.get("id") or user.get("username") or "")
+    try:
+        return gate_opening_service.open(str(payload.request_id), owner)
+    except GateOpeningError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+
+
 def require_webshop_admin(user: dict[str, Any]) -> dict[str, Any]:
     if str(user.get("role") or "").lower() not in {"admin", "superadmin"}:
         raise HTTPException(status_code=403, detail="A webshop kezeléséhez admin jogosultság szükséges.")
@@ -22682,6 +22713,10 @@ def schedule_hub_refresh(payload: ScheduleHubRefreshRequest, giriton_pwa_session
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Érvénytelen frissítési dátum.") from exc
         end = start
+        warehouses = selected_coordinator_warehouse_ids(user, payload.warehouse)
+    elif getattr(payload, "month", ""):
+        start = parse_month(payload.month)
+        end = month_end(start)
         warehouses = selected_coordinator_warehouse_ids(user, payload.warehouse)
     else:
         start = datetime.now(LOCAL_TIMEZONE).date()

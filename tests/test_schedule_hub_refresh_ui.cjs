@@ -7,7 +7,7 @@ function setup(conclusion='success'){
  const ctx={state:{user:{username:'Admin'},section:'coordinator-schedule',coordinatorScheduleView:'calendar'},
   $:id=>id.endsWith('-status')?elements.status:elements.button,crypto:{randomUUID:()=> 'fixture-id'},
   localStorage:{setItem(){},removeItem(){},getItem:()=>null},window:{setTimeout:()=>1},
-  loadCoordinatorSchedule:async()=>{reloads++},loadCoordinatorScheduleDay:async()=>{reloads++},
+  scheduleMonthlyMode:()=>false,loadCoordinatorSchedule:async()=>{reloads++},loadCoordinatorScheduleDay:async()=>{reloads++},
   api:async(url,options={})=>{calls.push({url,options});return options.method==='POST'?{status:'queued',startDate:'2026-11-02',endDate:'2026-11-06',warehouses:['BUD1','BUD2']}:{status:'completed',conclusion}}};
  vm.runInNewContext(functions,ctx);return{ctx,calls,elements,reloads:()=>reloads};
 }
@@ -15,7 +15,7 @@ test('dedicated Hub request completes before automatic overview reload',async()=
  const {ctx,calls,elements,reloads}=setup();await ctx.startScheduleHubRefresh();
  await new Promise(resolve=>setImmediate(resolve));
  assert.equal(calls[0].url,'/api/coordinator/schedule/hub-refresh');
- assert.deepEqual(JSON.parse(calls[0].options.body),{request_id:'fixture-id',work_date:'',warehouse:''});
+ assert.deepEqual(JSON.parse(calls[0].options.body),{request_id:'fixture-id',work_date:'',month:'',warehouse:''});
  assert.equal(reloads(),1);assert.equal(elements.button.disabled,false);assert.match(elements.status.textContent,/Hub-adatok frissítve/);
 });
 test('failure does not claim fresh data or reload the view',async()=>{

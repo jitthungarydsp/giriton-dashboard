@@ -1448,3 +1448,27 @@ textarea { min-height: 96px; resize: vertical; }
   .invoice-raw-table td::before { content: attr(data-label); color: var(--green-dark); font-weight: 700; }
   .invoice-raw-table td:last-child { border-bottom: 0; }
 }
+[data-schedule-bulk-job-message]:empty { display: none; }
+[id="coordinator-hub-refresh-status"] { min-height: 4.5em; }
+.quality-reclamation-dialog .dialog-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; margin-top: 16px; }
+.quality-reclamation-dialog .dialog-actions button { min-height: 52px; padding: 12px 18px; border-radius: 16px; font: inherit; font-weight: 800; }
+.quality-submission-dialog { padding: 0; border: 0; border-radius: 24px; max-width: calc(100vw - 32px); color: var(--ink); background: var(--surface); }
+.quality-submission-dialog::backdrop { background: #17231c88; backdrop-filter: blur(4px); }
+.quality-submission-dialog .global-loading-card { width: min(420px, calc(100vw - 32px)); max-width: 100%; box-sizing: border-box; }
+.quality-submission-dialog p { margin: 4px 0; line-height: 1.5; overflow-wrap: anywhere; }
+.quality-submission-dialog button { width: 100%; padding: 12px 18px; }
+.quality-submission-dialog[data-phase="success"] strong, .quality-submit-success { color: var(--green-dark); }
+.quality-submission-dialog[data-phase="error"] strong { color: var(--danger); }
+@media (max-width: 560px) { .quality-reclamation-dialog .dialog-actions { grid-template-columns: 1fr; } }
+
+.gate-panel { padding: clamp(20px, 4vw, 36px); border: 1px solid var(--line); border-radius: 28px; background: var(--surface); }
+.gate-panel h2 { margin: 10px 0; }
+.gate-panel [data-gate-open] { margin-top: 18px; min-height: 64px; width: min(100%, 420px); }
+.gate-feedback { line-height: 1.6; overflow-wrap: anywhere; }
+.gate-feedback.success { color: var(--green-dark); }
+.gate-feedback.error { color: var(--danger); }
+.gate-dialog { padding: 0; border: 0; border-radius: 24px; max-width: calc(100vw - 32px); color: var(--ink); }
+.gate-dialog::backdrop { background: rgba(23,35,28,.3); backdrop-filter: blur(3px); }
+.gate-dialog .global-loading-card { box-sizing: border-box; width: min(400px, calc(100vw - 32px)); }
+.gate-dialog h3, .gate-dialog p { margin: 0; text-align: center; }
+.gate-dialog [hidden] { display: none; }

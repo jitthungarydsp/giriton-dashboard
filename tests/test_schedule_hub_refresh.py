@@ -1,4 +1,5 @@
 import ast
+import calendar
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import sys
@@ -23,7 +24,7 @@ class RefreshTest(unittest.TestCase):
         ns=dict(ScheduleHubRefreshRequest=object,UUID=UUID,Cookie=lambda **k:None,require_user=lambda _: {},
                 require_coordinator=lambda user:user,coordinator_warehouse_ids=lambda _:list(allowed),
                 selected_coordinator_warehouse_ids=selected,date=date,datetime=SimpleNamespace(now=lambda _:datetime(2026,11,29)),
-                LOCAL_TIMEZONE=None,timedelta=timedelta,HTTPException=ApiError)
+                LOCAL_TIMEZONE=None,timedelta=timedelta,HTTPException=ApiError,parse_month=lambda s:date.fromisoformat(s+'-01'),month_end=lambda d:d.replace(day=calendar.monthrange(d.year,d.month)[1]))
         exec(compile(ast.Module(body=nodes,type_ignores=[]),'refresh','exec'),ns)
         gh=ModuleType('resources.github_actions');gh.dispatch_workflow=Mock();gh.get_latest_runs=Mock(return_value=[])
         return ns,gh
@@ -51,5 +52,11 @@ class RefreshTest(unittest.TestCase):
             gh.get_latest_runs.return_value.append({'event':'workflow_dispatch','display_title':f'PWA Hub refresh {id}','status':'completed','conclusion':'failure'})
             result=ns['schedule_hub_refresh_status'](id)
         self.assertEqual(result['conclusion'],'failure')
+
+    def test_selected_month_refresh_covers_whole_month(self):
+        ns,gh=self.endpoints();request=SimpleNamespace(request_id=uuid4(),work_date='',month='2026-12',warehouse='BUD1')
+        with patch.dict(sys.modules,{'resources.github_actions':gh}):result=ns['schedule_hub_refresh'](request)
+        self.assertEqual((result['startDate'],result['endDate']),('2026-12-01','2026-12-31'))
+        self.assertEqual(result['warehouses'],['BUD1'])
 
 if __name__=='__main__':unittest.main()

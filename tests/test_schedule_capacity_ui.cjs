@@ -15,7 +15,7 @@ test('shows percentage, actual free slots, missing data and warehouse-specific d
  assert.doesNotMatch(panel.innerHTML,/>0%</);
 });
 test('overview requests one five-day summary instead of monthly worker details',async()=>{
- const ctx={state:{coordinatorScheduleRequestSeq:0},$:()=>null,api:async url=>{assert.equal(url,'/api/coordinator/schedule-capacity');return payload},renderCoordinatorSchedule:()=>{}};
+ const ctx={state:{coordinatorScheduleRequestSeq:0},$:()=>null,api:async url=>{assert.equal(url,'/api/coordinator/schedule-capacity');return payload},renderCoordinatorSchedule:()=>{},renderCoordinatorScheduleHeader(){},scheduleMonthlyMode:()=>false};
  vm.runInNewContext(source.slice(source.indexOf('async function loadCoordinatorSchedule()'),source.indexOf('async function loadCoordinatorScheduleDay(')),ctx);
  await ctx.loadCoordinatorSchedule();assert.equal(ctx.state.coordinatorCapacity,payload);
 });

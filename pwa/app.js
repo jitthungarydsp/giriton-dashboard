@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v260";
+const APP_VERSION = "v263";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -328,10 +328,9 @@ function currentSectionRefresh() {
     return Promise.resolve();
   }
   if (state.section === "coordinator-schedule") {
-    if (state.coordinatorScheduleActionActive) return Promise.resolve();
-    return state.coordinatorScheduleView === "day"
-      ? loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true })
-      : loadCoordinatorSchedule();
+    // Do not replace an interactive schedule from the global background timer.
+    // Navigation, explicit refresh and confirmed Hub jobs load the data instead.
+    return Promise.resolve();
   }
   if (state.section === "vehicle") return loadVehicleAssignments({ background: true });
   if (state.section === "vehicle-config") return loadVehicleConfigurations();
@@ -570,6 +569,7 @@ function showApp() {
     state.user.canPreviewCouriers = false;
     state.workflowPreviewCourierId = "";
   }
+  $("#nav-gate").classList.toggle("hidden", !["admin", "superadmin"].includes(role));
   const canCoordinate = ["admin", "coordinator"].includes(role);
   const canViewAdminSettlement = Boolean(state.user.canViewSettlementDashboard)
     || ["admin", "superadmin"].includes(role);
@@ -609,11 +609,15 @@ function showApp() {
   const adminPreviewInput = $("#admin-preview-courier");
   if (adminPreviewInput) adminPreviewInput.value = state.workflowPreviewCourierId;
   const scheduleWarehouseWrap = $("#coordinator-schedule-warehouse-wrap");
-  if (scheduleWarehouseWrap) scheduleWarehouseWrap.classList.toggle("hidden", role !== "admin");
+  if (scheduleWarehouseWrap) scheduleWarehouseWrap.classList.toggle("hidden", !["admin","coordinator"].includes(role));
   loadCourierMasterOptions();
 }
 
 function showSection(section) {
+  if (section === "gate" && !["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
+  $("#gate-content").classList.toggle("hidden", section !== "gate");
+  $("#nav-gate").classList.toggle("active", section === "gate");
+  if (section === "gate") window.JittGate.mount($("#gate-content"), { api });
   if (section === "quality-complaints" && !["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
   state.section = section;
   $("#webshop-content").classList.toggle("hidden", section !== "webshop");
@@ -1666,6 +1670,27 @@ async function loadQualityComplaints() {
   }
 }
 
+function showQualitySubmissionProgress(phase, message, complaintDialog) {
+  let progress=$("#quality-submission-dialog");
+  if(!progress){
+    progress=document.createElement("dialog");progress.id="quality-submission-dialog";progress.className="quality-submission-dialog";
+    progress.setAttribute("aria-labelledby","quality-submission-title");progress.setAttribute("aria-describedby","quality-submission-message");
+    progress.innerHTML=`<div class="global-loading-card"><span class="global-loading-spinner" data-quality-submission-spinner aria-hidden="true"></span><strong id="quality-submission-title" role="status" aria-live="polite"></strong><p id="quality-submission-message"></p><button class="primary" type="button" data-quality-submission-close>Rendben</button></div>`;
+    progress.querySelector("[data-quality-submission-close]").addEventListener("click",()=>progress.close());
+    progress.addEventListener("cancel",event=>{if(progress.dataset.phase==="loading")event.preventDefault();});
+    progress.addEventListener("click",event=>{if(event.target===progress && progress.dataset.phase!=="loading")progress.close();});
+    progress.addEventListener("close",()=>{if(progress.dataset.phase==="success" && progress.complaintDialog?.complaintContext===progress.complaintContext)progress.complaintDialog.close();});
+    document.body.appendChild(progress);
+  }
+  progress.complaintDialog=complaintDialog;progress.complaintContext=complaintDialog?.complaintContext;progress.dataset.phase=phase;progress.setAttribute("aria-busy",String(phase==="loading"));
+  progress.querySelector("#quality-submission-title").textContent=phase==="loading" ? "Beküldés folyamatban…" : phase==="success" ? "Sikeres beküldés" : "A beküldés nem fejeződött be";
+  progress.querySelector("#quality-submission-message").textContent=message;
+  progress.querySelector("[data-quality-submission-spinner]").classList.toggle("hidden",phase!=="loading");
+  progress.querySelector("[data-quality-submission-close]").classList.toggle("hidden",phase==="loading");
+  if(!progress.open)progress.showModal();
+  return progress;
+}
+
 function ensureQualityReclamationDialog() {
   let dialog = $("#quality-reclamation-dialog");
   if (dialog) return dialog;
@@ -1683,7 +1708,7 @@ function ensureQualityReclamationDialog() {
       <label>Képek csatolása (nem kötelező)<input data-quality-reclamation-photos type="file" accept="image/jpeg,image/png,image/webp" multiple /></label>
       <small>Legfeljebb 5 kép, képenként maximum 8 MB. JPG, PNG vagy WebP.</small>
       <p data-quality-reclamation-status role="status" aria-live="polite"></p>
-      <div class="dialog-actions"><button type="button" class="secondary" data-quality-reclamation-close>Bezárás</button><button type="button" data-quality-reclamation-submit>Reklamáció beküldése</button></div>
+      <div class="dialog-actions"><button type="button" class="secondary" data-quality-reclamation-close>Bezárás</button><button type="button" class="primary" data-quality-reclamation-submit>Reklamáció beküldése</button></div>
     </form>
   `;
   document.body.appendChild(dialog);
@@ -1693,7 +1718,7 @@ function ensureQualityReclamationDialog() {
     const note = dialog.querySelector("[data-quality-reclamation-note]");
     const photoInput = dialog.querySelector("[data-quality-reclamation-photos]");
     const context = dialog.complaintContext;
-    if (!context || context.saved || button.disabled) return;
+    if (!context || context.saved || context.submitting || button.disabled) return;
     const message = note.value.trim();
     if (message.length < 5) { status.textContent = "Legalább 5 karakteres indoklást adj meg."; return; }
     const photos = context.photos || Array.from(photoInput.files || []);
@@ -1703,12 +1728,17 @@ function ensureQualityReclamationDialog() {
     button.disabled = true;
     note.disabled = true;
     photoInput.disabled = true;
+    context.submitting=true;
+    button.textContent="Beküldés folyamatban…";
+    dialog.querySelectorAll("[data-quality-reclamation-close]").forEach(button=>button.disabled=true);
     status.textContent = "Mentés folyamatban…";
+    status.className="";
+    showQualitySubmissionProgress("loading","A reklamáció mentése folyamatban van.",dialog);
     try {
       if (!context.complaintId) {
         const result = await api("/api/quality/complaints", { method: "POST", body: JSON.stringify({
           request_id: context.requestId, topic: context.topic, month: context.month, items: context.rows, message,
-        }) });
+        }), silentLoading:true });
         if (!result.ok || !result.id) throw new Error("A mentés nem igazolható.");
         context.complaintId = result.id;
         context.photos = photos;
@@ -1716,30 +1746,41 @@ function ensureQualityReclamationDialog() {
       }
       for (let index = context.uploaded; index < context.photos.length; index++) {
         status.textContent = `Reklamáció elmentve. Képfeltöltés: ${index + 1}/${context.photos.length}…`;
+        showQualitySubmissionProgress("loading",`Képek feltöltése: ${index + 1}/${context.photos.length}…`,dialog);
         const form = new FormData();
         form.append("photo", context.photos[index]);
-        const uploaded = await api(`/api/quality/complaints/${encodeURIComponent(context.complaintId)}/photos`, { method: "POST", body: form });
+        const uploaded = await api(`/api/quality/complaints/${encodeURIComponent(context.complaintId)}/photos`, { method: "POST", body: form, silentLoading:true });
         if (!uploaded.ok) throw new Error("A kép feltöltése nem igazolható.");
         context.uploaded = index + 1;
       }
       context.saved = true;
-      status.textContent = `A reklamációt és ${context.uploaded} képet elmentettük. Azonosító: ${context.complaintId}`;
-      refreshCourierQualityComplaints();
+      const success=`${context.uploaded ? `A reklamációt és ${context.uploaded} képet elmentettük.` : "A reklamációt elmentettük."} Azonosító: ${context.complaintId}`;
+      status.textContent = `Sikeres beküldés. ${success}`;status.className="notice quality-submit-success";
+      button.textContent="Beküldve";
+      showQualitySubmissionProgress("success",success,dialog);
+      Promise.resolve().then(()=>refreshCourierQualityComplaints()).catch(()=>{});
     } catch (error) {
       status.textContent = context.complaintId
         ? `A reklamáció elmentve, de a képfeltöltés nem fejeződött be: ${error.message} A beküldés gombbal folytathatod.`
         : `Nem sikerült menteni: ${error.message} Az indoklás és a képek megmaradtak, újrapróbálhatod.`;
-      if (context.complaintId) refreshCourierQualityComplaints();
+      status.className="notice error";
+      showQualitySubmissionProgress("error",status.textContent,dialog);
+      if (context.complaintId) Promise.resolve().then(()=>refreshCourierQualityComplaints()).catch(()=>{});
       if (dialog.complaintContext === context) {
         button.disabled = false;
+        button.textContent=context.complaintId ? "Képfeltöltés folytatása" : "Reklamáció beküldése";
         note.disabled = Boolean(context.complaintId);
         photoInput.disabled = Boolean(context.complaintId);
       }
+    } finally {
+      context.submitting=false;
+      dialog.querySelectorAll("[data-quality-reclamation-close]").forEach(button=>button.disabled=false);
     }
   });
-  dialog.querySelectorAll("[data-quality-reclamation-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+  dialog.querySelectorAll("[data-quality-reclamation-close]").forEach((button) => button.addEventListener("click", () => {if(!dialog.complaintContext?.submitting)dialog.close();}));
+  dialog.addEventListener("cancel",event=>{if(dialog.complaintContext?.submitting)event.preventDefault();});
   dialog.addEventListener("click", (event) => {
-    if (event.target === dialog) dialog.close();
+    if (event.target === dialog && !dialog.complaintContext?.submitting) dialog.close();
   });
   return dialog;
 }
@@ -1772,6 +1813,8 @@ function openQualityReclamation(topic) {
   dialog.complaintContext = { topic, month: state.statistics?.month || state.statisticsMonth,
     rows, requestId: crypto.randomUUID(), saved: false };
   dialog.querySelector("[data-quality-reclamation-submit]").disabled = preview || !rows.length;
+  dialog.querySelector("[data-quality-reclamation-submit]").textContent="Reklamáció beküldése";
+  dialog.querySelector("[data-quality-reclamation-status]").className="";
   dialog.querySelector("[data-quality-reclamation-status]").textContent = preview
     ? "Admin előnézetből nem küldhető be reklamáció a futár nevében." : "";
   dialog.showModal();
@@ -10008,8 +10051,8 @@ function renderScheduleBulkPanel(day) {
     <div class="schedule-bulk-buttons"><button class="secondary" type="button" data-schedule-bulk-mark-visible ${scheduleBulkBusy(day) ? "disabled" : ""}>${ui.query ? "Keresett futár foglalásainak kijelölése törlésre" : "Látható foglalások kijelölése törlésre"}</button><button class="secondary" type="button" data-schedule-filter-clear>Szűrő törlése</button></div>
     <strong>${selections.length} kijelölt művelet</strong>
     ${selections.length ? `<details><summary>Kijelölt futárok és slotok – a szűrés által elrejtettek is</summary><div class="schedule-bulk-list">${selections.map(item => `<div><span>${item.action === "delete" ? "Törlés" : "Foglalás"}: <b>${escapeHtml(item.courier_name)} #${escapeHtml(item.courier_id)}</b> · ${escapeHtml(item.slot_from)} · ${escapeHtml(item.warehouse)}</span><button type="button" class="secondary" data-schedule-selection-remove="${escapeHtml(scheduleSelectionKey(item))}" data-selection-action="${item.action}" ${scheduleBulkBusy(day) ? "disabled" : ""}>Kivesz</button></div>`).join("")}</div></details>` : ""}
-    ${Object.values(ui.jobs).map(job => `<div class="notice ${job.status === "failed" || job.status === "unknown" ? "error" : ""}"><strong>${job.action === "delete" ? "Törlési" : "Foglalási"} lista: ${escapeHtml(statusLabel[job.status] || job.status)}</strong><small>Azonosító: ${escapeHtml(job.id)}</small>
-      ${job.error ? `<p>${escapeHtml(job.error)}</p>` : ""}
+    ${Object.values(ui.jobs).map(job => `<div class="notice ${job.status === "failed" || job.status === "unknown" ? "error" : ""}"><strong data-schedule-bulk-job-status="${escapeHtml(job.id)}">${job.action === "delete" ? "Törlési" : "Foglalási"} lista: ${escapeHtml(statusLabel[job.status] || job.status)}</strong><small>Azonosító: ${escapeHtml(job.id)}</small>
+      <p data-schedule-bulk-job-message="${escapeHtml(job.id)}">${escapeHtml(job.error || "")}</p>
       ${job.refreshStatus === "failed" ? `<p>A Hub műveletek eredménye lent látható, de a napi DB-frissítés nem sikerült. Az adatok késhetnek.</p>` : ""}
       ${(job.items || []).length ? `<details><summary>Tételes eredmények (${job.items.length})</summary>${job.items.map(item => `<div>${escapeHtml(item.courier_name)} #${escapeHtml(item.courier_id)} · ${escapeHtml(item.slot_from)}: <b>${escapeHtml(statusLabel[item.status] || item.status)}</b> ${escapeHtml(item.message || "")}</div>`).join("")}</details>` : ""}</div>`).join("")}
     ${renderScheduleBulkButtons(day)}</section>`;
@@ -10033,6 +10076,21 @@ function scheduleBulkIsVisible(day) {
     && scheduleBulkScope(selectedScheduleDay(state.coordinatorSchedule) || {}) === scheduleBulkScope(day);
 }
 
+function updateScheduleBulkProgress(day) {
+  if(!scheduleBulkIsVisible(day))return;
+  const target=$("#coordinator-schedule-panel"), jobs=Object.values(scheduleBulkState(day).jobs);
+  if(!target)return;
+  const labels={queued:"Sorban áll",running:"Folyamatban",refreshing:"Napi adatok frissítése",completed:"Befejeződött",failed:"Sikertelen",unknown:"Az állapot még nem ismert",checking:"Állapot lekérése"};
+  target.querySelectorAll("[data-schedule-bulk-job-status]").forEach(node=>{
+    const job=jobs.find(job=>job.id===node.dataset.scheduleBulkJobStatus);if(!job)return;
+    node.textContent=`${job.action === "delete" ? "Törlési" : "Foglalási"} lista: ${labels[job.status] || job.status}`;
+    node.closest(".notice")?.classList.toggle("error",Boolean(job.error || job.status === "unknown" || job.status === "failed"));
+  });
+  target.querySelectorAll("[data-schedule-bulk-job-message]").forEach(node=>{
+    const job=jobs.find(job=>job.id===node.dataset.scheduleBulkJobMessage);if(job)node.textContent=job.error || "";
+  });
+}
+
 async function pollScheduleBulk(day, action, attempt = 0) {
   const ui = scheduleBulkState(day), job = ui.jobs[action];
   if (!job || job.polling) return;
@@ -10047,7 +10105,6 @@ async function pollScheduleBulk(day, action, attempt = 0) {
       saveScheduleBulkJobs(day);
       state.coordinatorCapacity = null;
       if (scheduleBulkIsVisible(day)) {
-        renderCoordinatorSchedule();
         await loadCoordinatorScheduleDay(day.date, {keepRendered:true,full:true,preserveScroll:true});
       } else if (state.section === "coordinator-schedule" && state.coordinatorScheduleView !== "day") {
         loadCoordinatorSchedule().catch(() => {});
@@ -10061,7 +10118,7 @@ async function pollScheduleBulk(day, action, attempt = 0) {
     state.coordinatorScheduleActionActive = Object.values(state.scheduleBulkScopes || {}).some(scope => Object.values(scope.jobs).some(j => !["completed","failed"].includes(j.status)));
   }
   if (attempt >= 200) { job.status = "unknown"; job.error ||= "Ellenőrizd a háttérfeladatot; a lista nem indul újra automatikusan."; }
-  if (scheduleBulkIsVisible(day)) renderCoordinatorSchedule();
+  updateScheduleBulkProgress(day);
   if (attempt < 200 && !job.timer) job.timer = window.setTimeout(() => { job.timer = null; pollScheduleBulk(day,action,attempt+1); }, 3000);
 }
 
@@ -10775,7 +10832,9 @@ async function startScheduleHubRefresh() {
   saveScheduleHubRefresh();renderScheduleHubRefreshState();
   try{
     const result=await api("/api/coordinator/schedule/hub-refresh",{method:"POST",body:JSON.stringify({request_id:job.id,
-      work_date:detail ? state.coordinatorScheduleDay : "",warehouse:detail ? state.coordinatorScheduleWarehouse : ""})});
+      work_date:detail ? state.coordinatorScheduleDay : "",
+      month:!detail && scheduleMonthlyMode() ? $("#coordinator-schedule-month")?.value || localDate().slice(0,7) : "",
+      warehouse:detail ? state.coordinatorScheduleWarehouse : scheduleMonthlyMode() ? state.coordinatorScheduleOverviewWarehouse : ""})});
     if(state.scheduleHubRefresh !== job)return;
     Object.assign(job,result);saveScheduleHubRefresh();
   }catch(error){
@@ -10821,11 +10880,67 @@ function renderCoordinatorCapacity() {
   }));
 }
 
+function scheduleMonthlyMode() {
+  return state.coordinatorScheduleOverviewMode === "month";
+}
+
+function renderCoordinatorScheduleHeader() {
+  const title=$("#coordinator-schedule-title"), description=$("#coordinator-schedule-description");
+  if(title)title.textContent=scheduleMonthlyMode() ? "Havi beosztás" : "Következő 5 nap";
+  if(description)description.textContent=scheduleMonthlyMode()
+    ? `${state.coordinatorScheduleOverviewWarehouse || ""} teljes havi beosztása. Válassz napot a részletekhez.`
+    : "BUD1 és BUD2 töltöttsége és szabad műszakhelyei, a mai nappal együtt.";
+  const month=$("#coordinator-schedule-month"), warehouse=$("#coordinator-schedule-warehouse");
+  if(month && !month.value)month.value=localDate().slice(0,7);
+  if(warehouse && state.coordinatorScheduleView !== "day")warehouse.value=scheduleMonthlyMode() ? state.coordinatorScheduleOverviewWarehouse : "";
+}
+
+function renderCoordinatorScheduleMonth() {
+  const target=$("#coordinator-schedule-panel"), payload=state.coordinatorSchedule;
+  if(!target)return;
+  if(!payload){target.innerHTML=`<div class="empty-card">Havi beosztás betöltése...</div>`;return;}
+  const summary={...(payload.summary || {}),capacityKnown:Number(payload.summary?.requiredSlots || 0)>0};
+  target.innerHTML=`${payload.error ? `<div class="notice error">${escapeHtml(payload.error)}</div>` : ""}
+    ${renderOpsSummary(summary, [["Töltöttség",scheduleCoverageText(summary),"teljes hónap"],
+      ["Slot",`${formatCount(summary.bookedSlots || 0)}/${formatCount(summary.requiredSlots || 0)}`,"foglalt / nyitott"],
+      ["Szabad műszakhely",summary.capacityKnown ? formatCount(summary.freeSlots || 0) : "–","teljes hónap"]])}
+    <p class="updated-at">${escapeHtml(payload.month || "")} · ${escapeHtml(state.coordinatorScheduleOverviewWarehouse)} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
+    <div class="schedule-day-grid">${renderScheduleCalendarDays(payload.days || [])}</div>`;
+  target.querySelectorAll("[data-schedule-day]").forEach(button=>button.addEventListener("click",()=>{
+    state.coordinatorScheduleDay=button.dataset.scheduleDay;
+    state.coordinatorScheduleView="day";
+    loadCoordinatorScheduleDay(state.coordinatorScheduleDay,{preserveScroll:true});
+  }));
+}
+
+function captureSchedulePosition(target) {
+  const nodes=Array.from(target.querySelectorAll(".schedule-slot-card[data-schedule-slot]"));
+  const anchor=nodes.find(node=>node.getBoundingClientRect().bottom > 0);
+  const active=document.activeElement;
+  return {anchor:anchor?.getAttribute("data-schedule-slot"),top:anchor?.getBoundingClientRect().top,
+    open:new Set(nodes.filter(node=>node.open).map(node=>node.getAttribute("data-schedule-slot"))),
+    choices:new Map(nodes.map(node=>[node.getAttribute("data-schedule-slot"),node.querySelector("[data-schedule-booking-courier]")?.value])),
+    focus:active && target.contains(active) ? active.id : "",start:active?.selectionStart,end:active?.selectionEnd};
+}
+
+function restoreSchedulePosition(target, position) {
+  for(const node of target.querySelectorAll(".schedule-slot-card[data-schedule-slot]")){
+    const key=node.getAttribute("data-schedule-slot");
+    if(position.open.has(key))node.open=true;
+    const select=node.querySelector("[data-schedule-booking-courier]"), value=position.choices.get(key);
+    if(select && value && Array.from(select.options).some(option=>option.value===value))select.value=value;
+    if(key===position.anchor){const delta=node.getBoundingClientRect().top-position.top;if(Math.abs(delta)>1)window.scrollBy(0,delta);}
+  }
+  if(position.focus){const input=document.getElementById(position.focus);input?.focus({preventScroll:true});if(input?.setSelectionRange && position.start!=null)input.setSelectionRange(position.start,position.end);}
+}
+
 function renderCoordinatorSchedule() {
   const target = $("#coordinator-schedule-panel");
   if (!target) return;
   resumeScheduleHubRefresh();
-  if (state.coordinatorScheduleView !== "day") { renderCoordinatorCapacity(); return; }
+  renderCoordinatorScheduleHeader();
+  if (state.coordinatorScheduleView !== "day") { if(scheduleMonthlyMode())renderCoordinatorScheduleMonth();else renderCoordinatorCapacity();return; }
+  const position=captureSchedulePosition(target);
   const openSlotKeys = new Set(
     Array.from(target.querySelectorAll(".schedule-slot-card[open][data-schedule-slot]"))
       .map((item) => item.getAttribute("data-schedule-slot") || "")
@@ -10846,7 +10961,7 @@ function renderCoordinatorSchedule() {
     : "-";
   const dayMissingValue = day?.capacityKnown ? formatCount(day.missingSlots || 0) : "-";
   if (state.coordinatorScheduleView === "day") {
-    target.innerHTML = renderCoordinatorScheduleDayDetail(payload, day);
+    target.innerHTML = `${state.coordinatorScheduleReadError ? `<div class="notice error">${escapeHtml(state.coordinatorScheduleReadError)}</div>` : ""}${renderCoordinatorScheduleDayDetail(payload, day)}`;
     target.querySelectorAll(".schedule-slot-card[data-schedule-slot]").forEach((item) => {
       if (openSlotKeys.has(item.getAttribute("data-schedule-slot") || "")) item.setAttribute("open", "");
     });
@@ -10864,6 +10979,7 @@ function renderCoordinatorSchedule() {
       });
     });
     bindSchedulePrepActions(target);
+    restoreSchedulePosition(target,position);
     return;
   }
 }
@@ -10903,7 +11019,10 @@ function mergeCoordinatorScheduleMonth(payload) {
 }
 
 async function loadCoordinatorSchedule() {
+  renderCoordinatorScheduleHeader();
+  if(scheduleMonthlyMode())return loadCoordinatorScheduleMonth();
   const target = $("#coordinator-schedule-panel");
+  if(state.coordinatorCapacity)renderCoordinatorCapacity();
   if (target && !state.coordinatorCapacity) target.innerHTML = `<div class="empty-card">Töltöttség betöltése...</div>`;
   const requestSeq = ++state.coordinatorScheduleRequestSeq;
   try {
@@ -10917,6 +11036,33 @@ async function loadCoordinatorSchedule() {
   }
 }
 
+async function loadCoordinatorScheduleMonth() {
+  const target=$("#coordinator-schedule-panel"), month=$("#coordinator-schedule-month")?.value || localDate().slice(0,7);
+  const warehouse=state.coordinatorScheduleOverviewWarehouse;
+  if(!warehouse)return;
+  if(!state.coordinatorSchedule && target)target.innerHTML=`<div class="empty-card">Havi beosztás betöltése...</div>`;
+  const requestSeq=++state.coordinatorScheduleRequestSeq;
+  try{
+    const payload=await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}&warehouse=${encodeURIComponent(warehouse)}`);
+    if(requestSeq!==state.coordinatorScheduleRequestSeq)return;
+    state.coordinatorSchedule=payload;
+    state.coordinatorScheduleDay=localDate().startsWith(month) ? localDate() : `${month}-01`;
+    renderCoordinatorSchedule();
+  }catch(error){if(requestSeq===state.coordinatorScheduleRequestSeq && target)target.innerHTML=`<div class="notice error">${escapeHtml(error.message)}</div>`;}
+}
+
+function openCoordinatorSchedule() {
+  state.coordinatorScheduleRequestSeq++;
+  state.coordinatorScheduleOverviewMode="capacity";
+  state.coordinatorScheduleOverviewWarehouse="";
+  state.coordinatorScheduleWarehouse="";
+  state.coordinatorScheduleView="calendar";
+  state.coordinatorSchedule=null;
+  state.coordinatorScheduleDay="";
+  const warehouse=$("#coordinator-schedule-warehouse");if(warehouse)warehouse.value="";
+  showSection("coordinator-schedule");
+}
+
 async function loadCoordinatorScheduleDay(day, options = {}) {
   const target = $("#coordinator-schedule-panel");
   const monthInput = $("#coordinator-schedule-month");
@@ -10925,9 +11071,10 @@ async function loadCoordinatorScheduleDay(day, options = {}) {
   const warehouse = String(warehouseInput?.value || state.coordinatorScheduleWarehouse || "").trim();
   const selectedDay = String(day || state.coordinatorScheduleDay || "").slice(0, 10);
   if (!selectedDay) return;
+  state.coordinatorScheduleReadError="";
   const requestSeq = ++state.coordinatorScheduleRequestSeq;
-  const fast = !options.full;
-  const previousScrollY = options.preserveScroll ? window.scrollY : null;
+  const alreadyDetailed=(state.coordinatorSchedule?.days || []).some(item=>item.date===selectedDay && item.detailsLoaded);
+  const fast = !options.full && !alreadyDetailed;
   if (!options.keepRendered) renderCoordinatorSchedule();
   try {
     const warehouseQuery = warehouse ? `&warehouse=${encodeURIComponent(warehouse)}` : "";
@@ -10942,13 +11089,14 @@ async function loadCoordinatorScheduleDay(day, options = {}) {
     state.coordinatorScheduleDay = selectedDay;
     state.coordinatorScheduleView = "day";
     renderCoordinatorSchedule();
-    preserveScrollAfterRender(previousScrollY);
     if (fast && !state.coordinatorScheduleActionActive) {
       loadCoordinatorScheduleDay(selectedDay, { keepRendered: true, full: true, preserveScroll: true }).catch(() => {});
     }
   } catch (error) {
     if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
-    if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+    state.coordinatorScheduleReadError=error.message;
+    if(state.coordinatorSchedule)renderCoordinatorSchedule();
+    else if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -11779,6 +11927,7 @@ function loadWebshop() {
   window.JittWebshop.mount({ api, getUser: () => state.user, preview: isAdminPreviewMode, escapeHtml });
   return window.JittWebshop.load();
 }
+$("#nav-gate").addEventListener("click", () => showSection("gate"));
 $("#nav-webshop").addEventListener("click", () => showSection("webshop"));
 $("#nav-quality-complaints").addEventListener("click", () => showSection("quality-complaints"));
 $("#quality-complaints-refresh").addEventListener("click", () => loadQualityComplaints());
@@ -11818,7 +11967,7 @@ $("#game-refresh")?.addEventListener("click", loadGame);
 $("#nav-coordinator-live").addEventListener("click", () => showSection("coordinator-live"));
 $("#nav-departure-helper").addEventListener("click", () => showSection("departure-helper"));
 $("#nav-today-workers").addEventListener("click", () => showSection("today-workers"));
-$("#nav-coordinator-schedule").addEventListener("click", () => showSection("coordinator-schedule"));
+$("#nav-coordinator-schedule").addEventListener("click", openCoordinatorSchedule);
 $("#coordinator-live-refresh")?.addEventListener("click", loadCoordinatorLiveMap);
 $("#departure-helper-refresh")?.addEventListener("click", loadDepartureHelper);
 $("#today-workers-refresh")?.addEventListener("click", loadTodayWorkers);
@@ -11831,16 +11980,21 @@ $("#coordinator-schedule-refresh")?.addEventListener("click", () => {
   }
 });
 $("#coordinator-schedule-month")?.addEventListener("change", () => {
+  const warehouse=$("#coordinator-schedule-warehouse")?.value || "";
+  state.coordinatorScheduleOverviewWarehouse=warehouse;
+  state.coordinatorScheduleOverviewMode=warehouse ? "month" : "capacity";
   state.coordinatorScheduleRequestSeq += 1;
   state.coordinatorSchedule = null;
   state.coordinatorScheduleDay = "";
   state.coordinatorScheduleView = "calendar";
   state.scheduleOpenVehiclePanels.clear();
-  loadCoordinatorSchedule();
+  if(scheduleMonthlyMode())loadCoordinatorSchedule();else renderCoordinatorSchedule();
 });
 $("#coordinator-schedule-warehouse")?.addEventListener("change", (event) => {
   state.coordinatorScheduleRequestSeq += 1;
   state.coordinatorScheduleWarehouse = event.currentTarget.value || "";
+  state.coordinatorScheduleOverviewWarehouse = state.coordinatorScheduleWarehouse;
+  state.coordinatorScheduleOverviewMode = state.coordinatorScheduleWarehouse ? "month" : "capacity";
   state.coordinatorSchedule = null;
   state.coordinatorScheduleDay = localDate();
   state.coordinatorScheduleView = "calendar";

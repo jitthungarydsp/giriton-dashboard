@@ -61,3 +61,17 @@ A folyamatban lévő kérésazonosító oldalfrissítés után is visszaolvashat
 Új végpontok: `POST /api/coordinator/schedule/hub-refresh`,
 `GET /api/coordinator/schedule/hub-refresh/{uuid}`.
 A workflow és a szerverkód együtt élesítendő. A fejlesztés során valódi szinkron nem indult.
+
+## Nézetválasztás és stabil megjelenítés
+
+- A Beosztás menü megnyitásakor mindig az ötnapos áttekintés indul.
+- A fejlécben a hónap- és raktárválasztó látható. **Összes**: az öt nap;
+  **BUD1/BUD2**: a kiválasztott raktár teljes havi naptára, minden naptári nappal.
+- Napi részletből visszalépve az eredeti áttekintés marad meg (havi vagy ötnapos).
+- Havi nézetben a Hub-frissítés a kiválasztott teljes hónapra/raktárra fut.
+- A globális időzítő nem tölti újra az interaktív beosztást. A menü, választók,
+  Frissítés gomb és a befejezett Hub-műveletek indítanak adatbetöltést.
+- Tömeges feladat közben csak a státusz szövege változik; a napi slotlista nem
+  rajzolódik újra három másodpercenként.
+- Az indokolt napi újrarajzolás megőrzi a látható slothoz tartozó görgetési helyet,
+  nyitott slotokat, érvényes futárválasztást és a kereső fókuszát/kurzorpozícióját.

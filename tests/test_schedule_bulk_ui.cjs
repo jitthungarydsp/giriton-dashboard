@@ -18,6 +18,15 @@ test('active filter matches accents, multi-part names and IDs, hides empty slots
  assert.equal(Object.keys(ctx.scheduleBulkState({date:'2026-11-05',warehouse:'BUD2'}).delete).length,0);
 });
 
+test('pending batch polling updates status without re-rendering the slot list',async()=>{
+ const day={date:'2026-11-04',warehouse:'BUD2'};
+ const ctx={state:{section:'coordinator-schedule',coordinatorScheduleView:'day'},selectedScheduleDay:()=>day,
+  $:()=>({querySelectorAll:()=>[]}),api:async()=>({status:'running',items:[]}),
+  renderCoordinatorSchedule:()=>{throw Error('Polling must not replace the slot DOM')},window:{setTimeout:()=>1}};
+ vm.runInNewContext(helpers,ctx);ctx.scheduleBulkState(day).jobs.delete={id:'fixture',action:'delete',status:'queued'};
+ await ctx.pollScheduleBulk(day,'delete');assert.equal(ctx.scheduleBulkState(day).jobs.delete.status,'running');
+});
+
 const runtime=path.join(require('node:os').homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 test('selection makes no request; filtered bulk deletes exact courier slots, bookings stay staged, partial failures remain selectable',{skip:!fs.existsSync(runtime)},async()=>{
  const {chromium}=require(runtime);const browser=await chromium.launch({channel:'chrome',headless:true});
@@ -43,7 +52,7 @@ test('selection makes no request; filtered bulk deletes exact courier slots, boo
    window.scheduleBookingCandidates=()=>[{identity:'9245',courierId:9245,courierName:'Balogh Noel',label:'Balogh Noel #9245'}];
    window.renderScheduleSlotCard=(slot,day)=>`<article class="schedule-slot-card" data-test-slot="${slot.start}"><b>${slot.start}</b>${slot.workers.map(worker=>renderScheduleSlotWorker(worker,slot,day)).join('')}${renderScheduleSlotBookingPrep(slot,day)}</article>`;
    window.renderCoordinatorSchedule=()=>{const target=$('#panel');target.innerHTML=renderScheduleBulkPanel(day)+renderScheduleSlots(day)+renderScheduleBulkButtons(day);bindScheduleBulkActions(target)};
-   window.refreshes=0;window.loadCoordinatorScheduleDay=async()=>{refreshes++};window.confirm=()=>true;
+   window.refreshes=0;window.loadCoordinatorScheduleDay=async()=>{refreshes++;renderCoordinatorSchedule()};window.confirm=()=>true;
    window.calls=[];window.records={};window.lostOnce=false;
    window.api=async(url,options={})=>{
     calls.push({url,method:options.method||'GET',body:options.body?JSON.parse(options.body):null});

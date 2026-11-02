@@ -8,8 +8,8 @@
     <link rel="manifest" href="/manifest.webmanifest?v=244" />
     <link rel="icon" href="/icon.svg?v=244" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg?v=244" />
-    <link rel="stylesheet" href="/styles.css?v=260" />
-    <link rel="stylesheet" href="/webshop.css?v=260" />
+    <link rel="stylesheet" href="/styles.css?v=263" />
+    <link rel="stylesheet" href="/webshop.css?v=263" />
     <title>Jitt</title>
   </head>
   <body>
@@ -744,6 +744,7 @@
         <section id="departure-helper-panel" class="ops-panel"></section>
       </div>
 
+      <div id="gate-content" class="hidden"></div>
       <div id="webshop-content" class="hidden"></div>
       <div id="quality-complaints-content" class="hidden">
         <section class="section-heading"><div><p class="eyebrow">REKLAMÁCIÓK</p><h2 id="quality-complaints-title">Futár reklamációk kezelése</h2></div><button id="quality-complaints-refresh" class="secondary" type="button">Frissítés</button></section>
@@ -768,24 +769,22 @@
         <section class="workflow-header">
           <div>
             <p class="eyebrow">BEOSZTÁS</p>
-            <h2>Következő 5 nap</h2>
-            <p class="muted">BUD1 és BUD2 töltöttsége és szabad műszakhelyei, a mai nappal együtt.</p>
+            <h2 id="coordinator-schedule-title">Következő 5 nap</h2>
+            <p id="coordinator-schedule-description" class="muted">BUD1 és BUD2 töltöttsége és szabad műszakhelyei, a mai nappal együtt.</p>
             <div class="schedule-hub-refresh">
               <button id="coordinator-hub-refresh" class="primary" type="button">Hub adatok frissítése</button>
               <p id="coordinator-hub-refresh-status" class="muted" role="status" aria-live="polite"></p>
             </div>
           </div>
           <div class="workflow-controls">
-            <div hidden>
             <label class="month-picker">Hónap<input id="coordinator-schedule-month" type="month" /></label>
             <label id="coordinator-schedule-warehouse-wrap" class="month-picker">Raktár
               <select id="coordinator-schedule-warehouse">
-                <option value="">Válassz raktárat</option>
+                <option value="">Összes – következő 5 nap</option>
                 <option value="BUD1">BUD1</option>
                 <option value="BUD2">BUD2</option>
               </select>
             </label>
-            </div>
             <button id="coordinator-schedule-refresh" class="secondary" type="button">Frissítés</button>
           </div>
         </section>
@@ -853,6 +852,7 @@
         <button id="nav-coordinator-live" class="hidden"><span>◎</span>Live map</button>
         <button id="nav-departure-helper" class="hidden"><span>⇥</span>Indulás segítő</button>
         <button id="nav-today-workers" class="hidden"><span>☷</span>Ki jön ma?</button>
+        <button id="nav-gate" class="hidden"><span>↗</span>Kapunyitás</button>
         <button id="nav-webshop"><span>🛒</span>Webshop</button>
         <button id="nav-quality-complaints" class="hidden"><span>✉</span>Futár reklamációk kezelése</button>
         <button id="nav-coordinator-schedule" class="hidden"><span>15</span>Beosztás</button>
@@ -934,8 +934,9 @@
         </section>
       </dialog>
     </main>
-    <script src="/webshop.js?v=260" defer></script>
-    <script src="/invoice_raw.js?v=260" defer></script>
-    <script src="/app.js?v=260" defer></script>
+    <script src="/webshop.js?v=263" defer></script>
+    <script src="/invoice_raw.js?v=263" defer></script>
+    <script src="/gate.js?v=263" defer></script>
+    <script src="/app.js?v=263" defer></script>
   </body>
 </html>
