@@ -1,0 +1,77 @@
+name: PWA_SCHEDULE_REFRESH
+run-name: PWA Hub refresh ${{ inputs.request_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        required: true
+      start_date:
+        required: true
+      end_date:
+        required: true
+      warehouse_ids:
+        required: true
+concurrency:
+  group: pwa-schedule-refresh-${{ inputs.warehouse_ids }}
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
+      COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      COURIER_HUB_AUTH_CACHE_FILE: /tmp/pwa-schedule-refresh-auth.json
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/pwa-schedule-refresh-auth.json --debug-dir results/pwa-schedule-refresh/auth
+      KIFLI_COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      KIFLI_COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      KIFLI_COURIER_HUB_AUTH_CACHE_FILE: /tmp/pwa-schedule-refresh-auth.json
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/pwa-schedule-refresh-auth.json --debug-dir results/pwa-schedule-refresh/auth
+
+      START_DATE: ${{ inputs.start_date }}
+      END_DATE: ${{ inputs.end_date }}
+      WAREHOUSE_IDS: ${{ inputs.warehouse_ids }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: browser-actions/setup-chrome@v1
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Validate range
+        id: range
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import date
+          start, end = date.fromisoformat(os.environ['START_DATE']), date.fromisoformat(os.environ['END_DATE'])
+          days = (end - start).days
+          assert 0 <= days <= 30, 'Invalid date range'
+          assert set(os.environ['WAREHOUSE_IDS'].split(',')) <= {'1', '2'}, 'Invalid warehouses'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'days={days}\n')
+          PY
+      - name: Authenticate Courier Hub
+        run: |
+          FIRST_WAREHOUSE="${WAREHOUSE_IDS%%,*}"
+          python scripts/refresh_courier_hub_auth.py \
+            --cache-file "$COURIER_HUB_AUTH_CACHE_FILE" \
+            --debug-dir results/pwa-schedule-refresh/auth \
+            --probe-path "/services/courier-hub-service/external/warehouses/$FIRST_WAREHOUSE/dsps/8/shift-blocks?dateFrom=$START_DATE&dateTo=$END_DATE"
+      - name: Download latest Hub shift blocks, bookings and subscribers
+        run: |
+          python scripts/sync_courier_hub_shift_blocks.py \
+            --warehouse-ids "$WAREHOUSE_IDS" --dsp-id 8 \
+            --start-date "$START_DATE" --end-date "$END_DATE"
+      - name: Refresh PWA capacity summary
+        env:
+          LOOKAHEAD_DAYS: ${{ steps.range.outputs.days }}
+        run: |
+          python scripts/refresh_pwa_schedule_capacity_calendar.py \
+            --warehouse-ids "$WAREHOUSE_IDS" --dsp-id 8 \
+            --start-date "$START_DATE" --lookahead-days "$LOOKAHEAD_DAYS" \
+            --refresh-source PWA_SCHEDULE_REFRESH

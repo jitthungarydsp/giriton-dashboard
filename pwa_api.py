@@ -23,6 +23,7 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 from uuid import UUID
 from resources.webshop import validate_webshop_product, validate_webshop_items
+from resources.schedule_bulk import normalize_batch, fingerprint as schedule_batch_fingerprint, read_record as read_schedule_batch, create_record as create_schedule_batch
 
 import requests
 import tomllib
@@ -424,6 +425,18 @@ class ScheduleHubShiftActionRequest(BaseModel):
     slot_from: str
     courier_id: int
     courier_name: str = ""
+
+
+class ScheduleBulkRequest(BaseModel):
+    request_id: UUID
+    action: str
+    items: list[ScheduleHubShiftActionRequest] = Field(min_length=1, max_length=100)
+
+
+class ScheduleHubRefreshRequest(BaseModel):
+    request_id: UUID
+    work_date: str = ""
+    warehouse: str = ""
 
 
 class VehicleConfigurationRequest(BaseModel):
@@ -22655,6 +22668,76 @@ def coordinator_today_worker_attendance(
     return save_today_worker_attendance(payload, user)
 
 
+@app.post("/api/coordinator/schedule/hub-refresh")
+def schedule_hub_refresh(payload: ScheduleHubRefreshRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_coordinator(require_user(giriton_pwa_session))
+    if payload.work_date:
+        try:
+            start = date.fromisoformat(payload.work_date)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Érvénytelen frissítési dátum.") from exc
+        end = start
+        warehouses = selected_coordinator_warehouse_ids(user, payload.warehouse)
+    else:
+        start = datetime.now(LOCAL_TIMEZONE).date()
+        end = start + timedelta(days=4)
+        warehouses = coordinator_warehouse_ids(user)
+    try:
+        from resources.github_actions import dispatch_workflow
+        dispatch_workflow("pwa-schedule-refresh.yml", inputs={
+            "request_id": str(payload.request_id), "start_date": start.isoformat(), "end_date": end.isoformat(),
+            "warehouse_ids": ",".join(str(value) for value in warehouses),
+        })
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="A Hub-frissítés indítása nem igazolható. Ellenőrizd a feladat állapotát; a böngésző nem indít új feladatot automatikusan.") from exc
+    return {"requestId": str(payload.request_id), "status": "queued", "startDate": start.isoformat(), "endDate": end.isoformat(),
+            "warehouses": [f"BUD{value}" for value in warehouses]}
+
+
+@app.get("/api/coordinator/schedule/hub-refresh/{request_id}")
+def schedule_hub_refresh_status(request_id: UUID, giriton_pwa_session: str | None = Cookie(default=None)):
+    require_coordinator(require_user(giriton_pwa_session))
+    try:
+        from resources.github_actions import get_latest_runs
+        runs = get_latest_runs(limit=50, workflow="pwa-schedule-refresh.yml")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="A Hub-frissítés állapota most nem olvasható.") from exc
+    run = next((run for run in runs if run.get("display_title") == f"PWA Hub refresh {request_id}" and run.get("event") == "workflow_dispatch"), None)
+    return {"requestId": str(request_id), "status": run.get("status") if run else "queued",
+            "conclusion": run.get("conclusion") if run else "", "found": bool(run)}
+
+
+@app.get("/api/coordinator/schedule-capacity")
+def coordinator_schedule_capacity(giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_coordinator(require_user(giriton_pwa_session))
+    start = datetime.now(LOCAL_TIMEZONE).date()
+    end = start + timedelta(days=4)
+    allowed = coordinator_warehouse_ids(user)
+    try:
+        summary = schedule_capacity_summary(read_schedule_capacity_rows(start, end), allowed)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="A töltöttségi adatok most nem tölthetők be.") from exc
+    days = []
+    for offset in range(5):
+        day = start + timedelta(days=offset)
+        data = summary.get(day.isoformat()) or {}
+        by_warehouse = {item["warehouse"]: item for item in data.get("warehouses", [])}
+        warehouses = []
+        for warehouse_id in allowed:
+            code = f"BUD{warehouse_id}"
+            values = by_warehouse.get(code)
+            known = bool(values and values.get("requiredSlots", 0) > 0)
+            warehouses.append({"warehouse": code, "capacityKnown": known,
+                "requiredSlots": values["requiredSlots"] if known else None,
+                "bookedSlots": values["bookedSlots"] if known else None,
+                "freeSlots": values["freeSlots"] if known else None,
+                "coveragePercent": values["coveragePercent"] if known else None})
+        days.append({"date": day.isoformat(), "warehouses": warehouses,
+                     "updatedAt": data.get("updatedAt") or ""})
+    return {"startDate": start.isoformat(), "endDate": end.isoformat(), "days": days,
+            "fetchedAt": datetime.now(LOCAL_TIMEZONE).isoformat()}
+
+
 @app.get("/api/coordinator/schedule")
 def coordinator_schedule(
     month: str = Query(default=""),
@@ -22675,6 +22758,75 @@ def coordinator_schedule(
     except Exception as exc:
         print("Coordinator schedule failed:", exc)
         return empty_coordinator_schedule_payload(selected_month, exc)
+
+
+@app.get("/api/coordinator/schedule/batches/{request_id}")
+def schedule_bulk_status(request_id: UUID, check_run: bool = Query(default=False), giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_coordinator(require_user(giriton_pwa_session))
+    try:
+        record = read_schedule_batch(settlement_supabase_client(), str(request_id))
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="A műveletlista nem található vagy nem olvasható.") from exc
+    if warehouse_id_for_hub(record["warehouse"]) not in coordinator_warehouse_ids(user):
+        raise HTTPException(status_code=403, detail="Ehhez a raktárhoz nincs jogosultság.")
+    if check_run and record.get("status") not in {"completed", "failed"}:
+        try:
+            from resources.github_actions import get_latest_runs
+            runs = get_latest_runs(limit=30, workflow="pwa-schedule-bulk.yml")
+            run = next((run for run in runs if run.get("display_title") == f"PWA batch {request_id}" and run.get("event") == "workflow_dispatch"), None)
+            if run and run.get("status") == "completed":
+                for item in record["items"]:
+                    if item["status"] == "running":
+                        item.update(status="uncertain", message="A háttérfeladat megszakadt; a Hub állapotát ellenőrizni kell.")
+                    elif item["status"] == "pending":
+                        item.update(status="failed", message="A háttérfeladat a művelet indítása előtt leállt.")
+                record.update(status="completed", refreshStatus="failed")
+        except Exception:
+            pass  # A failed status lookup must never restart external mutations.
+    return record
+
+
+@app.post("/api/coordinator/schedule/batches")
+def schedule_bulk_submit(payload: ScheduleBulkRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_coordinator(require_user(giriton_pwa_session))
+    try:
+        if any(item.action != payload.action for item in payload.items):
+            raise ValueError("Egy listán csak azonos típusú műveletek lehetnek.")
+        items = normalize_batch(payload.action, [item.model_dump() for item in payload.items], coordinator_warehouse_ids(user))
+        for item in items:
+            if item["action"] != payload.action:
+                raise ValueError("Eltérő művelettípus.")
+        # Normalize the explicit slot identity using the same resolver as single actions.
+        for item in items:
+            template, start = resolve_schedule_shift_template_id(ScheduleHubShiftActionRequest(**item), date.fromisoformat(item["work_date"]), warehouse_id_for_hub(item["warehouse"]))
+            if template != item["shift_template_id"]:
+                raise ValueError("A műszaksablon nem egyezik az aktuális slottal.")
+            item["slot_from"] = start
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    client = settlement_supabase_client()
+    record = {"id": str(payload.request_id), "action": payload.action, "items": items,
+              "work_date": items[0]["work_date"], "warehouse": items[0]["warehouse"],
+              "fingerprint": schedule_batch_fingerprint(items), "status": "queued",
+              "created_by": str(user.get("username") or ""), "created_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        create_schedule_batch(client, record)
+    except Exception as exc:
+        # A retry of the same request never dispatches a second job.
+        try:
+            existing = read_schedule_batch(client, record["id"])
+        except Exception:
+            raise HTTPException(status_code=502, detail="A műveletlista mentése nem igazolható; ne indíts új listát, próbáld ugyanazt újra.") from exc
+        if existing.get("fingerprint") != record["fingerprint"]:
+            raise HTTPException(status_code=409, detail="Ez a kérésazonosító másik műveletlistához tartozik.")
+        return existing
+    try:
+        from resources.github_actions import dispatch_workflow
+        dispatch_workflow("pwa-schedule-bulk.yml", inputs={"request_id": record["id"]})
+    except Exception as exc:
+        # Keep the request ID: dispatch may have reached GitHub despite a lost response.
+        raise HTTPException(status_code=502, detail=f"A háttérfeladat indítása nem igazolható. A mentett lista azonosítója: {record['id']}. Az állapotot ellenőrizd; ne küldd be új listaként.") from exc
+    return record
 
 
 @app.post("/api/coordinator/schedule/hub-shift")
@@ -24680,6 +24832,18 @@ def admin_update_workflow_complaint(
             can_view_amounts=True,
         ),
     }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 @app.post("/api/admin/settlement-imports/excel")

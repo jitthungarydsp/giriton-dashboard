@@ -1404,3 +1404,29 @@ textarea { min-height: 96px; resize: vertical; }
 #worker-info-dialog .worker-shift-dialog-head { flex: 0 0 auto; }
 #worker-info-dialog [data-worker-info-body] { min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; grid-auto-rows: max-content; align-content: start; -webkit-overflow-scrolling: touch; }
 #worker-info-dialog [data-worker-info-body] > * { min-height: min-content; }
+.capacity-five-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.capacity-day { padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; min-width: 0; }
+.capacity-day header { display: grid; gap: 5px; margin-bottom: 16px; }
+.capacity-day header strong { font-size: 20px; }
+.capacity-day header small, .capacity-source-date { color: var(--muted); font-size: 11px; }
+.capacity-warehouse { display: grid; width: 100%; gap: 10px; padding: 12px; margin: 10px 0; text-align: left; border: 1px solid var(--line); border-radius: 16px; background: #f6f9f3; font-size: 12px; font-weight: 500; }
+.capacity-warehouse-heading { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.capacity-warehouse-heading strong { color: var(--green-dark); font-size: 22px; }
+.capacity-meter { display: block; height: 8px; overflow: hidden; border-radius: 99px; background: #e1e8dc; }
+.capacity-meter i { display: block; height: 100%; background: var(--green-dark); border-radius: inherit; }
+.capacity-free b { font-size: 20px; color: var(--green-dark); }
+.capacity-details { font-size: 11px; color: var(--green-dark); }
+.capacity-source-date { display: block; overflow-wrap: anywhere; margin-top: 10px; }
+@media (max-width: 1100px) { .capacity-five-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .capacity-five-grid { grid-template-columns: 1fr; } }
+.schedule-bulk-panel { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); margin: 16px 0; }
+.schedule-bulk-panel > label { display: grid; gap: 8px; color: var(--green-dark); font-weight: 800; }
+.schedule-bulk-panel small { display: block; overflow-wrap: anywhere; }
+.schedule-bulk-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.schedule-bulk-buttons button { min-height: 44px; }
+.schedule-bulk-list { display: grid; gap: 8px; max-height: 300px; overflow-y: auto; }
+.schedule-bulk-list > div { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.schedule-selection-check { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; font-weight: 800; color: var(--danger); }
+.schedule-selection-check input { width: 22px; height: 22px; accent-color: var(--danger); }
+.schedule-hub-refresh { margin-top: 20px; }
+.schedule-hub-refresh p { margin-top: 10px; font-size: 13px; overflow-wrap: anywhere; }

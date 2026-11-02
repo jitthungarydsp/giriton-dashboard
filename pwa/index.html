@@ -8,8 +8,8 @@
     <link rel="manifest" href="/manifest.webmanifest?v=244" />
     <link rel="icon" href="/icon.svg?v=244" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg?v=244" />
-    <link rel="stylesheet" href="/styles.css?v=255" />
-    <link rel="stylesheet" href="/webshop.css?v=255" />
+    <link rel="stylesheet" href="/styles.css?v=259" />
+    <link rel="stylesheet" href="/webshop.css?v=259" />
     <title>Jitt</title>
   </head>
   <body>
@@ -768,10 +768,15 @@
         <section class="workflow-header">
           <div>
             <p class="eyebrow">BEOSZTÁS</p>
-            <h2>Havi beosztás</h2>
-            <p class="muted">Napra bontva látszik, ki jön dolgozni, és mi a Giriton / MűszakPro állapot.</p>
+            <h2>Következő 5 nap</h2>
+            <p class="muted">BUD1 és BUD2 töltöttsége és szabad műszakhelyei, a mai nappal együtt.</p>
+            <div class="schedule-hub-refresh">
+              <button id="coordinator-hub-refresh" class="primary" type="button">Hub adatok frissítése</button>
+              <p id="coordinator-hub-refresh-status" class="muted" role="status" aria-live="polite"></p>
+            </div>
           </div>
           <div class="workflow-controls">
+            <div hidden>
             <label class="month-picker">Hónap<input id="coordinator-schedule-month" type="month" /></label>
             <label id="coordinator-schedule-warehouse-wrap" class="month-picker">Raktár
               <select id="coordinator-schedule-warehouse">
@@ -780,6 +785,7 @@
                 <option value="BUD2">BUD2</option>
               </select>
             </label>
+            </div>
             <button id="coordinator-schedule-refresh" class="secondary" type="button">Frissítés</button>
           </div>
         </section>
@@ -928,7 +934,7 @@
         </section>
       </dialog>
     </main>
-    <script src="/webshop.js?v=255" defer></script>
-    <script src="/app.js?v=255" defer></script>
+    <script src="/webshop.js?v=259" defer></script>
+    <script src="/app.js?v=259" defer></script>
   </body>
 </html>
