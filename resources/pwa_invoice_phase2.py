@@ -237,19 +237,45 @@ def _compare_workbooks(client, month, selected, primary, key_columns=None, detai
 
 
 def get_working(client, month, working_id=None, sheet=None, offset=0, limit=30):
-    fields = WORK_FIELDS + (",raw_data" if working_id else "")
-    rows = db_call(lambda: client.schema("public").table(WORK_TABLE).select(fields)
-                  .eq("settlement_month", month_start(month).isoformat()).limit(1).execute().data or [])
-    current = rows[0] if rows else None
-    if working_id:
-        if not current or str(current["id"]) != str(working_id):
-            raise RawImportError("Ez már nem a hónap aktív munkamenete. Lépj vissza és válaszd ki újra a forrást.", 409)
-        raw = current.pop("raw_data")
-        current["sheets"] = [{"name": s["name"], "rowCount": len(s["rows"]), "index": s.get("index")} for s in raw["sheets"]]
-        if sheet is not None:
-            chosen = next((s for s in raw["sheets"] if s["name"] == sheet), None)
-            if chosen is None: raise RawImportError("A munkalap nem található.", 404)
-            current["preview"] = {"sheet": sheet, "rows": chosen["rows"][offset:offset + limit], "hasMore": len(chosen["rows"]) > offset + limit}
+    month_filter = month_start(month).isoformat()
+    stale_message = "Ez már nem a hónap aktív munkamenete. Lépj vissza és válaszd ki újra a forrást."
+
+    def fetch(fields):
+        query = client.schema("public").table(WORK_TABLE).select(fields).eq("settlement_month", month_filter)
+        if working_id:
+            query = query.eq("id", str(working_id))
+        rows = db_call(lambda: query.limit(1).execute().data or [])
+        if working_id and (not rows or str(rows[0]["id"]) != str(working_id)):
+            raise RawImportError(stale_message, 409)
+        return rows[0] if rows else None
+
+    current = fetch(WORK_FIELDS)
+    if not working_id:
+        return {"ok": True, "working": current}
+
+    sheets = []
+    for start in range(0, int(current["sheet_count"]), 16):
+        indexes = range(start, min(start + 16, int(current["sheet_count"])))
+        fields = "id," + ",".join(f"s{i}:raw_data->sheets->{i}->name" for i in indexes)
+        names = fetch(fields)
+        sheets.extend({"name": names[f"s{i}"], "index": i + 1} for i in indexes)
+    current["sheets"] = sheets
+
+    if sheet is not None:
+        chosen = next((entry for entry in sheets if entry["name"] == sheet), None)
+        if chosen is None:
+            raise RawImportError("A munkalap nem található.", 404)
+        sheet_index = chosen["index"] - 1
+        preview_rows = []
+        # Read one extra row to detect the next page. Bound each query URL.
+        for start in range(offset, offset + limit + 1, 16):
+            indexes = range(start, min(start + 16, offset + limit + 1))
+            fields = "id," + ",".join(f"r{i}:raw_data->sheets->{sheet_index}->rows->{i}" for i in indexes)
+            page = fetch(fields)
+            preview_rows.extend(page[f"r{i}"] for i in indexes if page.get(f"r{i}") is not None)
+            if page.get(f"r{indexes[-1]}") is None:
+                break
+        current["preview"] = {"sheet": sheet, "rows": preview_rows[:limit], "hasMore": len(preview_rows) > limit}
     return {"ok": True, "working": current}
 
 

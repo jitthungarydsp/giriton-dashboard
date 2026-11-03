@@ -141,7 +141,7 @@ class ComparisonTests(unittest.TestCase):
 
     def test_old_working_id_rejected_instead_of_loading_current_month_copy(self):
         client = Mock(); query = client.schema.return_value.table.return_value
-        query.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [{"id": str(uuid4())}]
+        query.select.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
         with self.assertRaises(RawImportError) as error:
             get_working(client, "2026-09", uuid4())
         self.assertEqual(error.exception.status, 409)
