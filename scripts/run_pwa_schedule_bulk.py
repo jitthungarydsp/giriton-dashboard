@@ -64,14 +64,14 @@ def run_items(record, save, execute=execute_item):
     return record
 
 
-def refresh_day(record):
+def refresh_day(record, *, env=None):
     warehouse_id = record["warehouse"][-1]
     commands = [
         ["sync_courier_hub_shift_blocks.py", "--warehouse-ids", warehouse_id, "--dsp-id", "8", "--start-date", record["work_date"], "--end-date", record["work_date"]],
         ["refresh_pwa_schedule_capacity_calendar.py", "--warehouse-ids", warehouse_id, "--dsp-id", "8", "--start-date", record["work_date"], "--lookahead-days", "0", "--refresh-source", "PWA_SCHEDULE_BULK"],
     ]
     for script, *args in commands:
-        subprocess.run([sys.executable, str(ROOT / "scripts" / script), *args], cwd=ROOT, check=True, timeout=240)
+        subprocess.run([sys.executable, str(ROOT / "scripts" / script), *args], cwd=ROOT, check=True, timeout=240, env=env)
 
 
 def main():

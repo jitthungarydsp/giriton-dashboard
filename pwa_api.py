@@ -29,7 +29,7 @@ from resources.schedule_bulk import normalize_batch, fingerprint as schedule_bat
 
 import requests
 import tomllib
-from fastapi import Cookie, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Cookie, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
@@ -22812,7 +22812,7 @@ def schedule_bulk_status(request_id: UUID, check_run: bool = Query(default=False
         raise HTTPException(status_code=404, detail="A műveletlista nem található vagy nem olvasható.") from exc
     if warehouse_id_for_hub(record["warehouse"]) not in coordinator_warehouse_ids(user):
         raise HTTPException(status_code=403, detail="Ehhez a raktárhoz nincs jogosultság.")
-    if check_run and record.get("status") not in {"completed", "failed"}:
+    if check_run and record.get("execution") != "direct" and record.get("status") not in {"completed", "failed"}:
         try:
             from resources.github_actions import get_latest_runs
             runs = get_latest_runs(limit=30, workflow="pwa-schedule-bulk.yml")
@@ -22830,7 +22830,7 @@ def schedule_bulk_status(request_id: UUID, check_run: bool = Query(default=False
 
 
 @app.post("/api/coordinator/schedule/batches")
-def schedule_bulk_submit(payload: ScheduleBulkRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+def schedule_bulk_submit(payload: ScheduleBulkRequest, background_tasks: BackgroundTasks, giriton_pwa_session: str | None = Cookie(default=None)):
     user = require_coordinator(require_user(giriton_pwa_session))
     try:
         if any(item.action != payload.action for item in payload.items):
@@ -22852,6 +22852,8 @@ def schedule_bulk_submit(payload: ScheduleBulkRequest, giriton_pwa_session: str 
               "work_date": items[0]["work_date"], "warehouse": items[0]["warehouse"],
               "fingerprint": schedule_batch_fingerprint(items), "status": "queued",
               "created_by": str(user.get("username") or ""), "created_at": datetime.now(timezone.utc).isoformat()}
+    if payload.action == "delete":
+        record["execution"] = "direct"
     try:
         create_schedule_batch(client, record)
     except Exception as exc:
@@ -22863,6 +22865,10 @@ def schedule_bulk_submit(payload: ScheduleBulkRequest, giriton_pwa_session: str 
         if existing.get("fingerprint") != record["fingerprint"]:
             raise HTTPException(status_code=409, detail="Ez a kérésazonosító másik műveletlistához tartozik.")
         return existing
+    if payload.action == "delete":
+        from resources.schedule_direct_delete import delete_batch
+        background_tasks.add_task(delete_batch, client, record)
+        return record
     try:
         from resources.github_actions import dispatch_workflow
         dispatch_workflow("pwa-schedule-bulk.yml", inputs={"request_id": record["id"]})
