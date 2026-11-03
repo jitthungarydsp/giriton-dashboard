@@ -1,24 +1,18 @@
 """Delete PWA schedule assignments using the stored Hub session."""
 
 import json
-import os
 from datetime import time, datetime, timezone
-from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import requests
 
-from resources.schedule_bulk import BUCKET, object_path
+from resources.schedule_bulk import update_record
 from scripts.run_pwa_schedule_bulk import refresh_day, run_items
-from scripts.shared_courier_hub_session import session_headers
+from scripts.shared_courier_hub_session import session_headers, stored_session_environment
 
 
 def delete_batch(client, record):
     def save(current):
-        client.storage.from_(BUCKET).update(
-            object_path(current["id"]), json.dumps(current, ensure_ascii=False).encode(),
-            file_options={"content-type": "application/octet-stream"},
-        )
+        update_record(client, current)
 
     try:
         headers = session_headers(json.loads(client.storage.from_("hub-session-cache").download("session.json")))
@@ -91,15 +85,7 @@ def delete_batch(client, record):
     run_items(record, save, execute=execute)
     if any(item["status"] in {"succeeded", "uncertain"} for item in record["items"]):
         try:
-            with TemporaryDirectory() as directory:
-                cache = Path(directory) / "session.json"
-                cache.write_text(json.dumps({"headers": headers}), encoding="utf-8")
-                env = {**os.environ, "COURIER_HUB_AUTH_CACHE_FILE": str(cache),
-                       "KIFLI_COURIER_HUB_AUTH_CACHE_FILE": str(cache)}
-                for key in ("COURIER_HUB_AUTH_REFRESH_COMMAND", "KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND",
-                            "COURIER_HUB_USERNAME", "COURIER_HUB_PASSWORD",
-                            "KIFLI_COURIER_HUB_USERNAME", "KIFLI_COURIER_HUB_PASSWORD"):
-                    env.pop(key, None)
+            with stored_session_environment(headers) as env:
                 refresh_day(record, env=env)
             record["refreshStatus"] = "succeeded"
         except Exception:

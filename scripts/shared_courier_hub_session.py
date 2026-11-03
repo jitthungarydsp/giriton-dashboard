@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import sys
+from contextlib import contextmanager
+from tempfile import TemporaryDirectory
 
 import requests
 
@@ -17,6 +19,19 @@ def session_headers(payload):
         for name in ("Authorization", "Cookie")
         if isinstance(headers.get(name), str) and headers[name]
     }
+
+
+@contextmanager
+def stored_session_environment(headers):
+    with TemporaryDirectory() as directory:
+        cache = Path(directory) / "session.json"
+        cache.write_text(json.dumps({"headers": headers}), encoding="utf-8")
+        env = os.environ.copy()
+        for prefix in ("COURIER_HUB", "KIFLI_COURIER_HUB"):
+            for suffix in ("AUTH_REFRESH_COMMAND", "USERNAME", "PASSWORD", "AUTHORIZATION", "COOKIE", "API_KEY"):
+                env.pop(f"{prefix}_{suffix}", None)
+            env[f"{prefix}_AUTH_CACHE_FILE"] = str(cache)
+        yield env
 
 
 def storage_request(method, *, authenticated=False, **kwargs):

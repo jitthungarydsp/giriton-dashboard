@@ -43,18 +43,25 @@ def fingerprint(items):
     return hashlib.sha256(json.dumps(values).encode()).hexdigest()
 
 
-def object_path(request_id):
-    return f"{PREFIX}/{UUID(str(request_id))}.json"
+def object_path(request_id, prefix=PREFIX):
+    return f"{prefix}/{UUID(str(request_id))}.json"
 
 
-def read_record(client, request_id):
-    return json.loads(client.storage.from_(BUCKET).download(object_path(request_id)))
+def read_record(client, request_id, *, prefix=PREFIX):
+    return json.loads(client.storage.from_(BUCKET).download(object_path(request_id, prefix)))
 
 
-def create_record(client, record):
+def create_record(client, record, *, prefix=PREFIX):
     bucket = client.storage.get_bucket(BUCKET)
     public = bucket.get("public") if isinstance(bucket, dict) else getattr(bucket, "public", None)
     if public is not False:
         raise ValueError("A műveletlista privát tárhelyet igényel.")
-    client.storage.from_(BUCKET).upload(object_path(record["id"]), json.dumps(record, ensure_ascii=False).encode(),
+    client.storage.from_(BUCKET).upload(object_path(record["id"], prefix), json.dumps(record, ensure_ascii=False).encode(),
                                       file_options={"content-type": "application/octet-stream", "upsert": "false"})
+
+
+def update_record(client, record, *, prefix=PREFIX):
+    client.storage.from_(BUCKET).update(
+        object_path(record["id"], prefix), json.dumps(record, ensure_ascii=False).encode(),
+        file_options={"content-type": "application/octet-stream"},
+    )

@@ -10818,7 +10818,7 @@ async function pollScheduleHubRefresh(attempt=0) {
     job.error="";
     if(result.status === "completed"){
       job.status=result.conclusion === "success" ? "success" : "failed";
-      if(job.status === "failed")job.error=`Háttérfeladat: ${result.conclusion || "hiba"}.`;
+      if(job.status === "failed")job.error=result.detail || `Háttérfeladat: ${result.conclusion || "hiba"}.`;
       saveScheduleHubRefresh();renderScheduleHubRefreshState();
       if(job.status === "success"){
         state.coordinatorCapacity=null;
@@ -10853,7 +10853,7 @@ async function startScheduleHubRefresh() {
     Object.assign(job,result);saveScheduleHubRefresh();
   }catch(error){
     job.error=error.message;
-    if([400,401,403,422].includes(error.status)){job.status="failed";saveScheduleHubRefresh();renderScheduleHubRefreshState();return;}
+    if([400,401,403,409,422].includes(error.status)){job.status="failed";saveScheduleHubRefresh();renderScheduleHubRefreshState();return;}
   }
   pollScheduleHubRefresh();
 }

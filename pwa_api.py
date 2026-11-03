@@ -22708,8 +22708,9 @@ def coordinator_today_worker_attendance(
 
 
 @app.post("/api/coordinator/schedule/hub-refresh")
-def schedule_hub_refresh(payload: ScheduleHubRefreshRequest, giriton_pwa_session: str | None = Cookie(default=None)):
+def schedule_hub_refresh(payload: ScheduleHubRefreshRequest, background_tasks: BackgroundTasks, giriton_pwa_session: str | None = Cookie(default=None)):
     user = require_coordinator(require_user(giriton_pwa_session))
+    from resources.schedule_direct_refresh import REFRESH_PREFIX, refresh_from_hub
     if payload.work_date:
         try:
             start = date.fromisoformat(payload.work_date)
@@ -22725,21 +22726,40 @@ def schedule_hub_refresh(payload: ScheduleHubRefreshRequest, giriton_pwa_session
         start = datetime.now(LOCAL_TIMEZONE).date()
         end = start + timedelta(days=4)
         warehouses = coordinator_warehouse_ids(user)
+    request_id = str(payload.request_id)
+    record = {
+        "id": request_id, "requestId": request_id, "status": "queued",
+        "startDate": start.isoformat(), "endDate": end.isoformat(),
+        "warehouse_ids": warehouses, "warehouses": [f"BUD{value}" for value in warehouses],
+    }
+    client = settlement_supabase_client()
     try:
-        from resources.github_actions import dispatch_workflow
-        dispatch_workflow("pwa-schedule-refresh.yml", inputs={
-            "request_id": str(payload.request_id), "start_date": start.isoformat(), "end_date": end.isoformat(),
-            "warehouse_ids": ",".join(str(value) for value in warehouses),
-        })
+        create_schedule_batch(client, record, prefix=REFRESH_PREFIX)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="A Hub-frissítés indítása nem igazolható. Ellenőrizd a feladat állapotát; a böngésző nem indít új feladatot automatikusan.") from exc
-    return {"requestId": str(payload.request_id), "status": "queued", "startDate": start.isoformat(), "endDate": end.isoformat(),
-            "warehouses": [f"BUD{value}" for value in warehouses]}
+        try:
+            existing = read_schedule_batch(client, request_id, prefix=REFRESH_PREFIX)
+        except Exception:
+            raise HTTPException(status_code=502, detail="A Hub-frissítés indítása nem igazolható.") from exc
+        if any(existing.get(key) != record[key] for key in ("startDate", "endDate", "warehouse_ids")):
+            raise HTTPException(status_code=409, detail="Ez az azonosító másik frissítéshez tartozik.")
+        return existing
+    background_tasks.add_task(refresh_from_hub, client, record)
+    return record
 
 
 @app.get("/api/coordinator/schedule/hub-refresh/{request_id}")
 def schedule_hub_refresh_status(request_id: UUID, giriton_pwa_session: str | None = Cookie(default=None)):
-    require_coordinator(require_user(giriton_pwa_session))
+    user = require_coordinator(require_user(giriton_pwa_session))
+    from resources.schedule_direct_refresh import REFRESH_PREFIX
+
+    try:
+        record = read_schedule_batch(settlement_supabase_client(), request_id, prefix=REFRESH_PREFIX)
+    except Exception:
+        record = None
+    if record is not None:
+        if not set(record["warehouse_ids"]).issubset(coordinator_warehouse_ids(user)):
+            raise HTTPException(status_code=403, detail="Ehhez a raktárhoz nincs jogosultság.")
+        return record
     try:
         from resources.github_actions import get_latest_runs
         runs = get_latest_runs(limit=50, workflow="pwa-schedule-refresh.yml")

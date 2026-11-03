@@ -65,10 +65,16 @@ def run_items(record, save, execute=execute_item):
 
 
 def refresh_day(record, *, env=None):
-    warehouse_id = record["warehouse"][-1]
+    refresh_schedule(record["warehouse"][-1], record["work_date"], record["work_date"], 0,
+                     source="PWA_SCHEDULE_BULK", env=env)
+
+
+def refresh_schedule(warehouse_ids, start_date, end_date, days, *, source, env=None):
     commands = [
-        ["sync_courier_hub_shift_blocks.py", "--warehouse-ids", warehouse_id, "--dsp-id", "8", "--start-date", record["work_date"], "--end-date", record["work_date"]],
-        ["refresh_pwa_schedule_capacity_calendar.py", "--warehouse-ids", warehouse_id, "--dsp-id", "8", "--start-date", record["work_date"], "--lookahead-days", "0", "--refresh-source", "PWA_SCHEDULE_BULK"],
+        ["sync_courier_hub_shift_blocks.py", "--warehouse-ids", warehouse_ids, "--dsp-id", "8",
+         "--start-date", start_date, "--end-date", end_date],
+        ["refresh_pwa_schedule_capacity_calendar.py", "--warehouse-ids", warehouse_ids, "--dsp-id", "8",
+         "--start-date", start_date, "--lookahead-days", str(days), "--refresh-source", source],
     ]
     for script, *args in commands:
         subprocess.run([sys.executable, str(ROOT / "scripts" / script), *args], cwd=ROOT, check=True, timeout=240, env=env)
