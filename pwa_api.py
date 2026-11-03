@@ -22852,6 +22852,7 @@ def schedule_bulk_status(request_id: UUID, check_run: bool = Query(default=False
 @app.post("/api/coordinator/schedule/batches")
 def schedule_bulk_submit(payload: ScheduleBulkRequest, background_tasks: BackgroundTasks, giriton_pwa_session: str | None = Cookie(default=None)):
     user = require_coordinator(require_user(giriton_pwa_session))
+    from resources.schedule_direct_actions import execute_direct_batch
     try:
         if any(item.action != payload.action for item in payload.items):
             raise ValueError("Egy listán csak azonos típusú műveletek lehetnek.")
@@ -22870,14 +22871,12 @@ def schedule_bulk_submit(payload: ScheduleBulkRequest, background_tasks: Backgro
     client = settlement_supabase_client()
     record = {"id": str(payload.request_id), "action": payload.action, "items": items,
               "work_date": items[0]["work_date"], "warehouse": items[0]["warehouse"],
-              "fingerprint": schedule_batch_fingerprint(items), "status": "queued",
+              "fingerprint": schedule_batch_fingerprint(items), "status": "queued", "execution": "direct",
               "created_by": str(user.get("username") or ""), "created_at": datetime.now(timezone.utc).isoformat()}
-    if payload.action == "delete":
-        record["execution"] = "direct"
     try:
         create_schedule_batch(client, record)
     except Exception as exc:
-        # A retry of the same request never dispatches a second job.
+        # A retry of the same request never schedules a second mutation.
         try:
             existing = read_schedule_batch(client, record["id"])
         except Exception:
@@ -22885,16 +22884,7 @@ def schedule_bulk_submit(payload: ScheduleBulkRequest, background_tasks: Backgro
         if existing.get("fingerprint") != record["fingerprint"]:
             raise HTTPException(status_code=409, detail="Ez a kérésazonosító másik műveletlistához tartozik.")
         return existing
-    if payload.action == "delete":
-        from resources.schedule_direct_delete import delete_batch
-        background_tasks.add_task(delete_batch, client, record)
-        return record
-    try:
-        from resources.github_actions import dispatch_workflow
-        dispatch_workflow("pwa-schedule-bulk.yml", inputs={"request_id": record["id"]})
-    except Exception as exc:
-        # Keep the request ID: dispatch may have reached GitHub despite a lost response.
-        raise HTTPException(status_code=502, detail=f"A háttérfeladat indítása nem igazolható. A mentett lista azonosítója: {record['id']}. Az állapotot ellenőrizd; ne küldd be új listaként.") from exc
+    background_tasks.add_task(execute_direct_batch, client, record)
     return record
 
 

@@ -70,7 +70,7 @@ class EndpointTest(unittest.TestCase):
         def create(client,record):
             if record['id'] in store:raise ValueError('Already exists')
             store[record['id']]=copy.deepcopy(record)
-        ns=dict(Any=Any,UUID=UUID,ScheduleBulkRequest=Any,Cookie=lambda **k:None,Query=lambda **k:False,
+        ns=dict(Any=Any,UUID=UUID,ScheduleBulkRequest=Any,BackgroundTasks=Any,Cookie=lambda **k:None,Query=lambda **k:False,
                 HTTPException=ApiError,require_user=lambda _:{'username':'Admin'},require_coordinator=lambda user:user,
                 coordinator_warehouse_ids=lambda _:list(allowed),normalize_batch=bulk.normalize_batch,
                 resolve_schedule_shift_template_id=lambda payload,*a:(payload.shift_template_id,payload.slot_from),
@@ -79,39 +79,46 @@ class EndpointTest(unittest.TestCase):
                 schedule_batch_fingerprint=bulk.fingerprint,create_schedule_batch=create,
                 read_schedule_batch=lambda client,id:copy.deepcopy(store[id]))
         exec(compile(ast.Module(body=nodes,type_ignores=[]),'endpoints','exec'),ns)
-        gh=ModuleType('resources.github_actions');gh.dispatch_workflow=dispatch
-        return ns,gh
+        direct=ModuleType('resources.schedule_direct_actions');direct.execute_direct_batch=Mock()
+        return ns,direct
 
     def payload(self,request_id=None,**changes):
         data=item()|changes
         return SimpleNamespace(request_id=request_id or uuid4(),action=data['action'],items=[SimpleNamespace(**data,model_dump=lambda:data)])
 
     def test_idempotent_submit_and_read_scope(self):
-        store={};dispatch=Mock();ns,gh=self.endpoints(store,dispatch)
-        payload=self.payload()
-        with patch.dict(sys.modules,{'resources.github_actions':gh}):
-            first=ns['schedule_bulk_submit'](payload)
-            second=ns['schedule_bulk_submit'](payload)
-        dispatch.assert_called_once_with('pwa-schedule-bulk.yml',inputs={'request_id':str(payload.request_id)})
+        store={};dispatch=Mock();ns,direct=self.endpoints(store,dispatch)
+        payload=self.payload(action='book')
+        background=Mock()
+        with patch.dict(sys.modules,{'resources.schedule_direct_actions':direct}):
+            first=ns['schedule_bulk_submit'](payload,background)
+            second=ns['schedule_bulk_submit'](payload,background)
+            with self.assertRaises(ApiError) as error:
+                ns['schedule_bulk_submit'](self.payload(payload.request_id,action='book',courier_id=42),background)
+        background.add_task.assert_called_once_with(direct.execute_direct_batch,None,first)
+        self.assertEqual(first['execution'],'direct')
         self.assertEqual(first['id'],second['id'])
-        with self.assertRaises(ApiError) as error:ns['schedule_bulk_submit'](self.payload(payload.request_id,courier_id=42))
         self.assertEqual(error.exception.status_code,409)
         ns,_=self.endpoints(store,dispatch,allowed=(1,))
         with self.assertRaises(ApiError) as error:ns['schedule_bulk_status'](payload.request_id,False)
         self.assertEqual(error.exception.status_code,403)
 
     def test_invalid_scope_never_persists_or_dispatches(self):
-        store={};dispatch=Mock();ns,_=self.endpoints(store,dispatch,allowed=(1,))
-        with self.assertRaises(ApiError):ns['schedule_bulk_submit'](self.payload())
-        self.assertFalse(store);dispatch.assert_not_called()
+        store={};dispatch=Mock();ns,direct=self.endpoints(store,dispatch,allowed=(1,))
+        background=Mock()
+        with patch.dict(sys.modules,{'resources.schedule_direct_actions':direct}):
+            with self.assertRaises(ApiError):ns['schedule_bulk_submit'](self.payload(),background)
+        self.assertFalse(store);background.add_task.assert_not_called()
 
-    def test_lost_dispatch_response_retains_id_and_never_redispatches(self):
-        store={};dispatch=Mock(side_effect=TimeoutError());ns,gh=self.endpoints(store,dispatch)
+    def test_interrupted_submission_retains_id_and_never_reschedules(self):
+        store={};dispatch=Mock();ns,direct=self.endpoints(store,dispatch)
         payload=self.payload()
-        with patch.dict(sys.modules,{'resources.github_actions':gh}):
-            with self.assertRaises(ApiError):ns['schedule_bulk_submit'](payload)
-            ns['schedule_bulk_submit'](payload)
-        self.assertEqual(dispatch.call_count,1)
+        background=Mock()
+        background.add_task.side_effect=TimeoutError
+        with patch.dict(sys.modules,{'resources.schedule_direct_actions':direct}):
+            with self.assertRaises(TimeoutError):ns['schedule_bulk_submit'](payload,background)
+            ns['schedule_bulk_submit'](payload,background)
+        self.assertEqual(background.add_task.call_count,1)
         self.assertIn(str(payload.request_id),store)
 
 

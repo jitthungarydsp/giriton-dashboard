@@ -1,35 +1,32 @@
-"""Delete PWA schedule assignments using the stored Hub session."""
+"""Change PWA schedule assignments using the stored Hub session."""
 
-import json
 from datetime import time, datetime, timezone
 
 import requests
 
 from resources.schedule_bulk import update_record
 from scripts.run_pwa_schedule_bulk import refresh_day, run_items
-from scripts.shared_courier_hub_session import session_headers, stored_session_environment
+from scripts.shared_courier_hub_session import read_pwa_session, stored_session_environment
 
 
-def delete_batch(client, record):
+def execute_direct_batch(client, record):
     def save(current):
         update_record(client, current)
 
-    try:
-        headers = session_headers(json.loads(client.storage.from_("hub-session-cache").download("session.json")))
-    except Exception:
-        headers = {}
+    warehouse_id = int(record["warehouse"][-1])
+    day = record["work_date"]
+    headers = read_pwa_session(client, [warehouse_id], day, day)
     if not headers:
         for item in record["items"]:
-            item.update(status="failed", message="A mentett Hub-munkamenet nem érhető el.")
+            item.update(status="failed", message="A Hub nem érhető el a mentett munkamenettel.")
         record.update(status="completed", finished_at=datetime.now(timezone.utc).isoformat())
         save(record)
         return
 
     base = (
         "https://courier-hub.kifli.hu/services/courier-hub-service/external"
-        f"/warehouses/{int(record['warehouse'][-1])}/dsps/8/shift-blocks"
+        f"/warehouses/{warehouse_id}/dsps/8/shift-blocks"
     )
-    day = record["work_date"]
 
     def assigned(item):
         response = requests.get(
@@ -44,7 +41,7 @@ def delete_batch(client, record):
             if (
                 str(block.get("shiftTemplateId")) != str(item["shift_template_id"])
                 or not block.get("slotFrom")
-                or time.fromisoformat(block["slotFrom"]).isoformat() != item["slot_from"]
+                or time.fromisoformat(block["slotFrom"]) != time.fromisoformat(item["slot_from"])
                 or block.get("date", day) != day
             ):
                 continue
@@ -63,24 +60,42 @@ def delete_batch(client, record):
         raise ValueError("Hub shift missing")
 
     def execute(item):
+        book = item["action"] == "book"
+        operation = "foglalás" if book else "törlés"
         try:
-            if not assigned(item):
-                return "succeeded", "A futár már nem szerepel a Hub műszakban."
+            if assigned(item) == book:
+                message = ("A futár már szerepel a Hub műszakban." if book
+                           else "A futár már nem szerepel a Hub műszakban.")
+                return "succeeded", message
         except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError):
-            return "failed", "A Hub műszak nem olvasható. A törlés nem indult el."
+            return "failed", f"A Hub műszak nem olvasható. A {operation} nem indult el."
 
+        response = None
         try:
-            requests.delete(
-                f"{base}/0/assignments", headers={"Accept": "application/json", **headers},
+            response = requests.request(
+                "POST" if book else "DELETE", f"{base}/assign" if book else f"{base}/0/assignments",
+                headers={"Accept": "application/json", **headers},
                 json={"date": day, "shiftTemplateId": item["shift_template_id"],
-                      "slotFrom": item["slot_from"], "courierIds": [item["courier_id"]]},
+                      "slotFrom": time.fromisoformat(item["slot_from"]).isoformat(),
+                      "courierIds": [item["courier_id"]]},
                 timeout=8, allow_redirects=False,
             )
         except requests.RequestException:
-            pass  # A timeout may still have applied the deletion.
-        if assigned(item):
-            return "uncertain", "A futár a visszaolvasáskor még szerepelt a Hub műszakban."
-        return "succeeded", "A Hub műszak visszaolvasása igazolta a törlést."
+            pass  # A timeout may still have applied the mutation.
+        if assigned(item) == book:
+            return "succeeded", f"A Hub műszak visszaolvasása igazolta a műveletet ({operation})."
+        if response is not None:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+            decisions = payload.get("results") if isinstance(payload, dict) else None
+            if isinstance(decisions, list) and any(
+                isinstance(result, dict) and str(result.get("decision", "")).upper() == "REJECTED"
+                for result in decisions
+            ):
+                return "failed", f"A Hub elutasította a műveletet ({operation})."
+        return "uncertain", f"A Hub visszaolvasása nem igazolta a műveletet ({operation})."
 
     run_items(record, save, execute=execute)
     if any(item["status"] in {"succeeded", "uncertain"} for item in record["items"]):
