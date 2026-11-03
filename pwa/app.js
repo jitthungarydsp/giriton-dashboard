@@ -10339,27 +10339,18 @@ function renderScheduleSlotRecommendations(slot = {}) {
   `;
 }
 
-function scheduleIdentityText(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
 function scheduleBookingCandidates(slot = {}, day = {}) {
   const used = new Set((slot.workers || []).map((worker) =>
-    String(worker.courierId || "").trim() || scheduleIdentityText(worker.courierName || "")
+    String(worker.courierId || "").trim()
   ));
   const items = [];
   const add = (worker = {}, source = "") => {
     const courierId = String(worker.courierId || "").trim();
     const courierName = String(worker.courierName || "Futár").trim();
-    const identity = courierId || scheduleIdentityText(courierName);
-    if (!identity || used.has(identity)) return;
-    if (items.some((item) => item.identity === identity)) return;
+    if (!/^\d+$/.test(courierId) || Number(courierId) <= 0 || used.has(courierId)) return;
+    used.add(courierId);
     items.push({
-      identity,
+      identity: courierId,
       courierId,
       courierName,
       source,
@@ -10370,6 +10361,7 @@ function scheduleBookingCandidates(slot = {}, day = {}) {
   (day.workers || [])
     .filter((worker) => !slot.warehouse || worker.warehouse === slot.warehouse)
     .forEach((worker) => add(worker, "napi lista"));
+  (state.couriers || []).forEach((courier) => add(courier, courier.warehouse));
   return items.sort((a, b) => a.label.localeCompare(b.label, "hu"));
 }
 
@@ -10386,7 +10378,7 @@ function renderScheduleSlotBookingPrep(slot = {}, day = {}) {
         <select data-schedule-booking-courier ${candidates.length ? "" : "disabled"}>
           ${candidates.length
             ? candidates.map((item) => `<option value="${escapeHtml(item.identity)}" data-courier-id="${escapeHtml(item.courierId)}" data-courier-name="${escapeHtml(item.courierName)}">${escapeHtml(item.label)}</option>`).join("")
-            : `<option value="">Nincs választható futár ebben a napi listában</option>`}
+            : `<option value="">Nincs választható futár</option>`}
         </select>
         <button type="button"
           data-schedule-booking-select
@@ -11096,7 +11088,7 @@ async function loadCoordinatorScheduleDay(day, options = {}) {
     const payload = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}${warehouseQuery}&day=${encodeURIComponent(selectedDay)}${fastQuery}`);
     if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
     if (!fast) {
-      await loadScheduleVehicleConfigurations();
+      await Promise.all([loadScheduleVehicleConfigurations(), loadCourierMasterOptions()]);
       if (requestSeq !== state.coordinatorScheduleRequestSeq) return;
     }
     mergeCoordinatorScheduleDay(payload);
