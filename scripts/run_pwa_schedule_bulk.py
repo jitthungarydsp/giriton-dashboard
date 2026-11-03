@@ -75,6 +75,8 @@ def refresh_day(record):
 
 
 def main():
+    from shared_courier_hub_session import publish, restore
+
     request_id = str(UUID(os.environ["PWA_BATCH_ID"]))
     record = storage_record(request_id)
     save = lambda data: storage_record(request_id, data)
@@ -82,11 +84,23 @@ def main():
         print("Batch already started; refusing automatic re-execution.")
         return 0
     try:
-        subprocess.run([sys.executable, str(ROOT / "scripts/refresh_courier_hub_auth.py"),
-                        "--cache-file", os.environ["COURIER_HUB_AUTH_CACHE_FILE"],
-                        "--debug-dir", "results/pwa-schedule-bulk/auth",
-                        "--probe-path", f"/services/courier-hub-service/external/warehouses/{record['warehouse'][-1]}/dsps/8/shift-blocks?dateFrom={record['work_date']}&dateTo={record['work_date']}"],
-                       cwd=ROOT, check=True, timeout=180)
+        cache_file = os.environ["COURIER_HUB_AUTH_CACHE_FILE"]
+        work_date = record["work_date"]
+        warehouse_id = record["warehouse"][-1]
+        probe_path = (
+            f"/services/courier-hub-service/external/warehouses/{warehouse_id}/dsps/8/shift-blocks"
+            f"?dateFrom={work_date}&dateTo={work_date}"
+        )
+        if restore(cache_file, probe_path):
+            print("Hub session reused.")
+        else:
+            print("Hub session unavailable; starting browser authentication.")
+            subprocess.run([sys.executable, str(ROOT / "scripts/refresh_courier_hub_auth.py"),
+                            "--cache-file", cache_file,
+                            "--debug-dir", "results/pwa-schedule-bulk/auth",
+                            "--probe-path", probe_path],
+                           cwd=ROOT, check=True, timeout=180, stdout=subprocess.DEVNULL)
+            publish(cache_file)
     except Exception:
         record["status"] = "failed"
         for item in record["items"]:

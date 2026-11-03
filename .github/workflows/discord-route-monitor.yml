@@ -124,6 +124,7 @@ jobs:
               --debug-dir results/courier-hub-auth \
               --cache-file "$COURIER_HUB_AUTH_CACHE_FILE" \
               > /tmp/courier-hub-auth-output.json
+            python scripts/shared_courier_hub_session.py "$COURIER_HUB_AUTH_CACHE_FILE"
           else
             echo "Courier Hub login secrets not set, using static auth secrets."
           fi

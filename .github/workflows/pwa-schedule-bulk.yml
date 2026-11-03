@@ -32,6 +32,10 @@ jobs:
       PWA_BATCH_ID: ${{ inputs.request_id }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts
+            resources
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
