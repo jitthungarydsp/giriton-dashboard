@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v266";
+const APP_VERSION = "v267";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -297,7 +297,7 @@ async function api(path, options = {}) {
 }
 
 function previewCourierValue() {
-  if (!state.user?.canPreviewCouriers || String(state.user.role || "").toLowerCase() === "coordinator") return "";
+  if (!state.user?.canPreviewCouriers || ["coordinator", "supercoordinator"].includes(String(state.user.role || "").toLowerCase())) return "";
   return String(state.workflowPreviewCourierId || "").trim();
 }
 
@@ -578,13 +578,14 @@ function showApp() {
   $("#app-view").classList.remove("hidden");
   $("#welcome").textContent = `Szia, ${state.user.username.split(" ")[0]}!`;
   const role = String(state.user.role || "").toLowerCase();
-  if (role === "coordinator") {
+  const isCoordinator = ["coordinator", "supercoordinator"].includes(role);
+  if (isCoordinator) {
     // A koordinátor a koordinátori menüket használja, admin előnézetet nem.
     state.user.canPreviewCouriers = false;
     state.workflowPreviewCourierId = "";
   }
   $("#nav-gate").classList.toggle("hidden", !["admin", "superadmin"].includes(role));
-  const canCoordinate = ["admin", "coordinator"].includes(role);
+  const canCoordinate = role === "admin" || isCoordinator;
   const canViewAdminSettlement = Boolean(state.user.canViewSettlementDashboard)
     || ["admin", "superadmin"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
@@ -601,9 +602,8 @@ function showApp() {
   $("#nav-settlement-import-config").classList.toggle("hidden", !canViewAdminSettlement);
   $("#nav-financial-statistics")?.classList.toggle("hidden", !canViewAdminSettlement);
   $("#nav-vehicle-config").classList.toggle("hidden", !state.user.canManageVehicles);
-  const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
-  if (coordinatorOnly) {
+  if (isCoordinator) {
     // A koordinátori jogosultság hozzáadódik a futár saját menüihez.
     $("#nav-vehicle-config")?.classList.toggle("hidden", !state.user.canManageVehicles);
   }
@@ -623,7 +623,7 @@ function showApp() {
   const adminPreviewInput = $("#admin-preview-courier");
   if (adminPreviewInput) adminPreviewInput.value = state.workflowPreviewCourierId;
   const scheduleWarehouseWrap = $("#coordinator-schedule-warehouse-wrap");
-  if (scheduleWarehouseWrap) scheduleWarehouseWrap.classList.toggle("hidden", !["admin","coordinator"].includes(role));
+  if (scheduleWarehouseWrap) scheduleWarehouseWrap.classList.toggle("hidden", !canCoordinate);
   loadCourierMasterOptions();
 }
 
@@ -11798,7 +11798,7 @@ $("#login-form").addEventListener("submit", async (event) => {
     state.queueStatus = queueStorageRead();
     renderQueueStatus();
     showApp();
-    if (String(state.user.role || "").toLowerCase() === "coordinator") {
+    if (["coordinator", "supercoordinator"].includes(String(state.user.role || "").toLowerCase())) {
       showSection("coordinator-live");
     } else if (String(state.user.role || "").toLowerCase() === "hr") {
       showSection("vehicle");
@@ -12548,7 +12548,7 @@ async function start() {
     const payload = await api("/api/me");
     state.user = payload.user;
     showApp();
-    if (String(state.user.role || "").toLowerCase() === "coordinator") {
+    if (["coordinator", "supercoordinator"].includes(String(state.user.role || "").toLowerCase())) {
       showSection("coordinator-live");
     } else if (String(state.user.role || "").toLowerCase() === "hr") {
       showSection("vehicle");

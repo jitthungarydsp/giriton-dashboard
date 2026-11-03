@@ -592,7 +592,7 @@ def can_preview_couriers(user: dict[str, Any]) -> bool:
     username_key = normalize_text(user.get("username"))
     role = str(user.get("role") or "").strip().lower()
     trainer_key = normalize_text(user.get("trainer"))
-    if role == "coordinator":
+    if role in {"coordinator", "supercoordinator"}:
         return False
     return (
         role in {"admin", "superadmin"}
@@ -614,7 +614,7 @@ def can_view_settlement_dashboard(user: dict[str, Any]) -> bool:
 def can_manage_vehicle_history(user: dict[str, Any]) -> bool:
     role = str(user.get("role") or "").strip().lower()
     username_key = normalize_text(user.get("username"))
-    return role in {"admin", "superadmin", "hr", "coordinator"} or username_key == normalize_text("admin")
+    return role in {"admin", "superadmin", "hr", "coordinator", "supercoordinator"} or username_key == normalize_text("admin")
 
 
 def can_approve_pwa_registrations(user: dict[str, Any]) -> bool:
@@ -625,7 +625,7 @@ def can_approve_pwa_registrations(user: dict[str, Any]) -> bool:
 
 def is_admin_push_user(user: dict[str, Any]) -> bool:
     role = str(user.get("role") or "").strip().lower()
-    return role in {"admin", "coordinator", "superadmin"} or can_preview_couriers(user)
+    return role in {"admin", "coordinator", "supercoordinator", "superadmin"} or can_preview_couriers(user)
 
 
 def admin_push_recipient_id(user: dict[str, Any]) -> int:
@@ -1711,7 +1711,7 @@ def require_user(token: str | None) -> dict[str, Any]:
 
 def require_coordinator(user: dict[str, Any]) -> dict[str, Any]:
     role = str(user.get("role") or "").strip().lower()
-    if role not in {"admin", "coordinator"}:
+    if role not in {"admin", "coordinator", "supercoordinator"}:
         raise HTTPException(
             status_code=403,
             detail="Ehhez a funkcióhoz koordinátori vagy admin jogosultság szükséges.",
@@ -4970,7 +4970,7 @@ def coordinator_push_recipient_ids(target_courier_id: str) -> list[str]:
         recipients.append(clean_target)
     for user in load_users():
         role = str(user.get("role") or "").strip().lower()
-        if role not in {"admin", "coordinator", "superadmin"}:
+        if role not in {"admin", "coordinator", "supercoordinator", "superadmin"}:
             continue
         user_id = str(safe_int(user.get("courierId") or user.get("courier_id")) or admin_push_recipient_id(user))
         if user_id and user_id not in recipients:

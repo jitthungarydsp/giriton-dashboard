@@ -171,6 +171,15 @@
             "token": ""
         },
         {
+            "username": "Elő Zsolt",
+            "trainer": "trainer_name",
+            "password": "vnUKrryT",
+            "role": "supercoordinator",
+            "courierId": 7244,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Farkas Zsolt",
             "trainer": "trainer_name",
             "password": "vnUKrryT",
