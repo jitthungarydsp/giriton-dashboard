@@ -26317,6 +26317,8 @@ def admin_approve_salary_advance_request(
     if not rows:
         raise HTTPException(status_code=404, detail="Nem található előleg kérelem.")
     request_row = rows[0]
+    if str(request_row.get("status") or "").lower() in {"approved", "paid", "closed"} or request_row.get("paid_at"):
+        raise HTTPException(status_code=409, detail="Az előleg már jóváhagyott vagy kifizetett; az aktuális számlafolyamatot nem indítjuk újra.")
     courier_id = str(request_row.get("courier_id") or "").strip()
     courier_name = str(request_row.get("courier_name") or "").strip() or read_courier_display_name(courier_id) or f"Futár {courier_id}"
     if not courier_id:
@@ -26342,6 +26344,8 @@ def admin_approve_salary_advance_request(
             "status": "approved",
             "process_id": process_id,
             "note": updated_note,
+            "approved_by": actor,
+            "approved_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         },
         prefer="return=minimal",
@@ -26353,9 +26357,7 @@ def admin_approve_salary_advance_request(
     for workflow_action, status, status_note in [
         ("settlement", "done", f"Fizetés előleg jóváhagyva: {amount_huf} Ft."),
         ("tig", "done", "Fizetés előleghez TIG nem szükséges."),
-        ("invoice_submit", "done", "Fizetés előleghez számlafeltöltés nem szükséges."),
-        ("invoice_check", "done", "Fizetés előleg admin által jóváhagyva."),
-        ("invoice_payment", "open", f"Fizetés előleg kifizetésre vár: {amount_huf} Ft."),
+        ("invoice_submit", "open", f"Fizetés előleg jóváhagyva, számlafeltöltésre vár: {amount_huf} Ft."),
     ]:
         upsert_workflow_status(
             workflow_user,
