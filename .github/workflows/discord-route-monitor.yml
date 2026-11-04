@@ -189,37 +189,6 @@ jobs:
 
           python scripts/discord_route_monitor.py --loop-minutes "$LOOP_MINUTES" --poll-seconds "$POLL_SECONDS" --max-age-minutes 0
 
-      - name: Sync Courier Hub shifts and export ROBOTSHIFT sheets
-        continue-on-error: true
-        shell: bash
-        run: |
-          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
-            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, ROBOTSHIFT refresh skipped."
-            exit 0
-          fi
-
-          MONTH_WINDOW="$(python - <<'PY'
-          from datetime import datetime, timedelta
-          from zoneinfo import ZoneInfo
-
-          start = datetime.now(ZoneInfo("Europe/Budapest")).date().replace(day=1)
-          next_month = (start + timedelta(days=32)).replace(day=1)
-          end = (next_month + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-          print(start.isoformat(), end.isoformat())
-          PY
-          )"
-          read -r START_DATE END_DATE <<< "$MONTH_WINDOW"
-
-          python scripts/sync_courier_hub_shift_blocks.py \
-            --warehouse-ids "1,2" \
-            --dsp-id 8 \
-            --start-date "$START_DATE" \
-            --end-date "$END_DATE"
-
-          python scripts/export_courier_hub_shift_block_capacity_sheet.py \
-            --start-date "$START_DATE" \
-            --end-date "$END_DATE"
-
       - name: Upload Courier Hub auth debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
