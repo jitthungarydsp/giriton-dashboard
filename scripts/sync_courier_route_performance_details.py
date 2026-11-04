@@ -177,6 +177,7 @@ def read_route_refs(
                         "route_id": route_id,
                         "delivery_date": delivery_date,
                         "order_count": safe_int(route.get("orderCount")),
+                        "financial_route": route,
                         "warehouse_id": int(wh_id),
                         "year": year,
                         "month": month,

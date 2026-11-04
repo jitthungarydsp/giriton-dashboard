@@ -551,7 +551,7 @@ def read_courier_name_lookup() -> dict[int, str]:
     try:
         rows = read_supabase_rows(
             "courier_master",
-            {"select": "courier_id,courier_name,name", "limit": "10000", "order": "courier_id.asc"},
+            {"select": "courier_id,courier_name", "limit": "10000", "order": "courier_id.asc"},
         )
     except Exception as exc:
         print(f"courier_master nev lookup kihagyva: {exc}", flush=True)

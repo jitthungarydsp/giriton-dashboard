@@ -786,6 +786,7 @@ def extract_route_refs(payload: Any) -> list[dict[str, Any]]:
                 "route_id": route_id,
                 "delivery_date": clean_text(route.get("deliveryDate")),
                 "order_count": safe_int(route.get("orderCount")),
+                "financial_route": route,
             }
         )
     return refs
@@ -886,7 +887,7 @@ def build_delay_row(
         or iso_date((response_json.get("shift") if isinstance(response_json, dict) else {}).get("plannedStartAt"))
         or f"{year}-{month:02d}-01"
     )
-    return {
+    result = {
         "courier_id": courier_id,
         "route_id": route_id,
         "delivery_date": delivery_date,
@@ -911,6 +912,28 @@ def build_delay_row(
         "source_raw_updated_at": now,
         "updated_at": now,
     }
+    # Stop telemetry does not necessarily include Dataport's later exemptions.
+    # Use the complete financial breakdown when it is available for this route.
+    financial_route = route_ref.get("financial_route") or {}
+    orders = financial_route.get("delayOrders")
+    reported = max(safe_int(financial_route.get("dataportDelayedOrderCount")), safe_int(financial_route.get("billedDelayedOrderCount")))
+    matching_route = safe_int(financial_route.get("routeId") or financial_route.get("id")) == route_id
+    if status_code == 200 and matching_route and isinstance(orders, list) and all(isinstance(order, dict) for order in orders) and reported <= len(orders):
+        cleaned, uncleaned, reasons = [], [], []
+        for order in orders:
+            minutes = safe_int(order.get("delayMinutes") or order.get("delay_minutes"))
+            reason = clean_text(order.get("cleanedReason") or order.get("cleaned_reason"))
+            (cleaned if order.get("cleaned") is True or reason else uncleaned).append(minutes)
+            if reason and reason not in reasons:
+                reasons.append(reason)
+        result.update({
+            "delayed_stops_count": len(orders), "total_delay_minutes": sum(cleaned) + sum(uncleaned),
+            "max_delay_minutes": max(cleaned + uncleaned, default=0),
+            "cleaned_delay_count": len(cleaned), "uncleaned_delay_count": len(uncleaned),
+            "cleaned_delay_minutes": sum(cleaned), "uncleaned_delay_minutes": sum(uncleaned),
+            "has_delay_cleaning": bool(cleaned), "cleaned_reasons": reasons,
+        })
+    return result
 
 
 def build_compliance_row(
