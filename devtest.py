@@ -12623,7 +12623,9 @@ def _finalize_customer_rating_value_rows(
     result["name_key"] = result["driver_name"].map(_courier_match_key)
     dashboard_routes = result["courier_id"].map(routes_by_id)
     dashboard_routes = dashboard_routes.fillna(result["name_key"].map(routes_by_name))
-    existing_routes = pd.to_numeric(result.get("completed_routes", 0), errors="coerce").fillna(0)
+    # Standard rating sheets have no completed_routes column. Use an aligned
+    # Series instead of a scalar default so fillna and row matching work.
+    existing_routes = _numeric_series(result, "completed_routes")
     result["completed_routes"] = dashboard_routes.where(dashboard_routes.gt(0), existing_routes)
     result["completed_routes"] = pd.to_numeric(result["completed_routes"], errors="coerce").fillna(1).astype(int)
     result["bonus_per_route_huf"] = result["average_rating"].map(
