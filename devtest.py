@@ -1,5 +1,6 @@
 import hashlib
-from resources.finance_adjustment_details import snapshot_manual_adjustment_details
+from resources.finance_adjustment_details import snapshot_manual_adjustment_details, snapshot_correction_amounts
+from resources.efo_deduction import calculate_efo_adjustments, EfoCalculationError
 import html
 import json
 import re
@@ -3975,6 +3976,7 @@ def render_devtest_finance_snapshot_view(
         st.warning(str(exc))
     drilldowns = _snapshot_source_payload(snapshot, "card_drilldowns")
     drilldowns = drilldowns if isinstance(drilldowns, dict) else {}
+    saved_correction_income, saved_correction_deduction = snapshot_correction_amounts(snapshot)
 
     kpi_items = [
         ("Rendelés", _snapshot_amount(snapshot, "orders"), "count", "", ""),
@@ -3993,7 +3995,8 @@ def render_devtest_finance_snapshot_view(
         ("Céltartalék levonás jóváírása", _snapshot_amount(snapshot, "reserve_deduction_credit"), "huf", "", ""),
         ("Ügyfélértékelési bónusz", _snapshot_amount(snapshot, "customer_rating"), "huf", "", ""),
         ("Fizetendő", _snapshot_amount(snapshot, "payable") or parse_huf_value(metadata.get("payable_total")), "huf", "payable", ""),
-        ("Korrekció", _snapshot_amount(snapshot, "correction"), "huf", "", ""),
+        ("Korrekció +", saved_correction_income, "huf", "", ""),
+        ("Korrekció -", saved_correction_deduction, "huf", "", ""),
         ("Kiflis levonások / bónuszok", _snapshot_amount(snapshot, "kiflis_bonus_malus"), "huf", "", ""),
         ("JITT bónusz / malus", _snapshot_amount(snapshot, "bonus_malus"), "huf", "", ""),
         ("ATM hatás", _snapshot_amount(snapshot, "atm_effect"), "huf", "", ""),
@@ -4007,9 +4010,12 @@ def render_devtest_finance_snapshot_view(
     def finance_detail_html(detail_label: str) -> str:
         manual_rows = snapshot_manual_adjustment_details(snapshot, detail_label)
         if manual_rows:
-            total_key = {"Korrekció": "correction", "JITT bónusz / malus": "bonus_malus"}[detail_label]
+            total_key = {"Korrekció": "correction", "Korrekció +": "correction_income",
+                         "Korrekció -": "correction_deduction", "JITT bónusz / malus": "bonus_malus"}[detail_label]
             detail_total = sum(item["Összeg"] for item in manual_rows)
             saved_total = _snapshot_amount(snapshot, total_key)
+            if detail_label in {"Korrekció +", "Korrekció -"}:
+                saved_total = saved_correction_income if detail_label == "Korrekció +" else saved_correction_deduction
             discrepancy_html = ""
             if abs(saved_total - detail_total) > 0.5:
                 discrepancy_html = (
@@ -4675,6 +4681,10 @@ def recalculate_mobile_breakdown_totals(rows: list[dict[str, object]]) -> list[d
     correction = _mobile_breakdown_amount(rows, "correction")
     correction_income = max(correction, 0.0)
     correction_deduction = abs(min(correction, 0.0))
+    explicit_income = _mobile_breakdown_amount(rows, "correction_income")
+    explicit_deduction = abs(_mobile_breakdown_amount(rows, "correction_deduction"))
+    if abs(explicit_income - explicit_deduction - correction) < 0.5:
+        correction_income, correction_deduction = explicit_income, explicit_deduction
     _set_mobile_breakdown_row_amount(rows, "correction_income", correction_income, item_label="Korrekció +")
     _set_mobile_breakdown_row_amount(rows, "correction_deduction", -correction_deduction, item_label="Korrekció -")
     _set_mobile_breakdown_row_amount(
@@ -4889,6 +4899,9 @@ def enrich_mobile_settlement_row_for_snapshot(
         )
         if customer_rating_total:
             enriched["Ügyfélértékelés"] = customer_rating_total
+    enriched = apply_efo_deductions(
+        pd.DataFrame([enriched]), session_id, calculation_mode, period_start, period_end,
+    ).iloc[0].to_dict()
     return enriched, route_detail
 
 
@@ -5409,6 +5422,9 @@ def save_devtest_finance_snapshots_for_rows(
                 # devtest calculation. Do not repeat route, summary,
                 # adjustment and imported-component queries for every courier.
                 item = refresh_courier_salary_advance_row(raw_item, courier_id, period_start, period_end)
+                item = apply_efo_deductions(
+                    pd.DataFrame([item]), session_id, calculation_mode, period_start, period_end,
+                ).iloc[0].to_dict()
                 route_detail = pd.DataFrame()
                 # Persist the same itemized DB bonuses used by the detail page.
                 # The compact overview may omit these columns entirely.
@@ -5491,6 +5507,10 @@ def save_devtest_finance_snapshots_for_rows(
                     calculation_mode=calculation_mode,
                 )
                 finance_rows = recalculate_mobile_breakdown_totals(finance_rows)
+            efo_entries = item.get("_efo_adjustments")
+            finance_rows = append_efo_mobile_rows(
+                finance_rows, efo_entries, item.get("_efo_correction_deduction"),
+            )
             profile_row = profile_by_id.get(courier_id, {})
             tig_payable_total = parse_huf_value(item.get("Kifizetendő")) or _mobile_breakdown_amount(finance_rows, "payable")
             tig_tip_total = parse_huf_value(item.get("Borravaló")) or _mobile_breakdown_amount(finance_rows, "tip")
@@ -5520,6 +5540,8 @@ def save_devtest_finance_snapshots_for_rows(
                 summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
                 profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
                 reserve_month = load_target_reserve_monthly(courier_id, period_start, period_end)
+            if isinstance(efo_entries, list) and efo_entries:
+                profile_adjustments = pd.concat([profile_adjustments, pd.DataFrame(efo_entries)], ignore_index=True)
             snapshot_drilldowns = build_finance_snapshot_drilldown_payload(finance_rows, route_detail)
             snapshot_result = save_devtest_finance_snapshot_version(
                 courier_id=courier_id,
@@ -5929,6 +5951,107 @@ def load_active_efo_assignment(courier_id: str, as_of: date) -> dict[str, object
         if pd.isna(valid_to) or valid_to.date() >= as_of:
             return row
     return {}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_efo_assignments_for_month(period_start: date, period_end: date, parameter_revision: int = 0) -> list[dict]:
+    # A failed read must not turn an EFO deduction into an apparently valid zero.
+    rows = []
+    offset = 0
+    while True:
+        page = (get_db().schema("settlement").table("courier_efo_assignment")
+                .select("*").eq("is_active", True).is_("deleted_at", "null")
+                .lte("valid_from", period_end.isoformat()).order("id")
+                .range(offset, offset + 999).execute().data or [])
+        rows.extend(item for item in page if not item.get("valid_to")
+                    or date.fromisoformat(str(item["valid_to"])[:10]) >= period_start)
+        if len(page) < 1000:
+            return rows
+        offset += 1000
+
+
+def efo_adjustments_for_calculation(courier_id, courier_name, session_id, calculation_mode,
+                                    period_start, period_end, expected_routes=0):
+    assignments = [item for item in load_efo_assignments_for_month(
+        period_start, period_end, int(st.session_state.get("settlement_parameter_revision", 0)))
+                   if _courier_id_key(item.get("courier_id")) == _courier_id_key(courier_id)]
+    if not assignments:
+        return []
+    # EFO is charged for the courier's working day, across both warehouses.
+    detail = load_courier_route_detail(
+        courier_id, courier_name, session_id, calculation_mode, period_start, None,
+        int(st.session_state.get("settlement_parameter_revision", 0)),
+    )
+    if len(detail) < expected_routes:
+        raise EfoCalculationError(f"EFO: {courier_id} munkanapjai nem tölthetők be; a számítás megszakadt.")
+    if not detail.empty and "Excel dátum" not in detail:
+        raise EfoCalculationError(f"EFO: {courier_id} túráihoz hiányoznak a munkanapok.")
+    days = []
+    for value in detail.get("Excel dátum", []):
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            raise EfoCalculationError(f"EFO: {courier_id} egyik túrájának dátuma hibás.")
+        days.append(parsed.date())
+    manual = load_courier_adjustments(courier_id, period_start, period_end, strict=True)
+    return calculate_efo_adjustments(courier_id, days, assignments, period_start, period_end,
+                                     manual.to_dict("records"))
+
+
+def apply_efo_deductions(data, session_id, calculation_mode, period_start, period_end):
+    result = data.copy()
+    efo_ids = {_courier_id_key(item.get("courier_id"))
+               for item in load_efo_assignments_for_month(
+                   period_start, period_end, int(st.session_state.get("settlement_parameter_revision", 0)))}
+    for index, row in result.iterrows():
+        courier_id = _courier_id_key(row.get("Courier ID"))
+        if courier_id not in efo_ids:
+            continue
+        entries = efo_adjustments_for_calculation(
+            courier_id, str(row.get("Futár") or ""), session_id, calculation_mode,
+            period_start, period_end, max(parse_huf_value(row.get(key)) for key in ("Útvonalak", "Számolt túrák", "Kör")),
+        )
+        total = sum(item["amount_huf"] for item in entries)
+        previous_total = parse_huf_value(row.get("EFO levonás"))
+        result.at[index, "Korrekció"] = parse_huf_value(row.get("Korrekció")) - total + previous_total
+        result.at[index, "EFO levonás"] = total
+        if "Kifizetendő" in row:
+            result.at[index, "Kifizetendő"] = parse_huf_value(row.get("Kifizetendő")) - total + previous_total
+        manual = load_courier_adjustments(courier_id, period_start, period_end, strict=True)
+        manual_deduction = 0.0
+        manual_income = 0.0
+        for entry in manual.to_dict("records"):
+            kind = entry.get("adjustment_type")
+            amount = parse_huf_value(entry.get("amount_huf"))
+            if kind in {"correction_deduction", "manual_correction_deduction", "other_expense"}:
+                manual_deduction += abs(amount)
+            elif kind in {"correction", "manual_correction", "correction_income"}:
+                manual_income += amount
+        residual = parse_huf_value(row.get("Korrekció")) + previous_total - manual_income + manual_deduction
+        result.at[index, "_efo_correction_deduction"] = manual_deduction + total + max(-residual, 0)
+        if "_efo_adjustments" not in result:
+            result["_efo_adjustments"] = pd.Series([None] * len(result), index=result.index, dtype=object)
+        result.at[index, "_efo_adjustments"] = entries
+    return result
+
+
+def append_efo_mobile_rows(rows, entries, deduction_total=None):
+    entries = entries if isinstance(entries, list) else []
+    if not entries:
+        return rows
+    # The net correction already contains EFO. Keep income/deduction separate
+    # even when a positive correction offsets the EFO amount.
+    net = _mobile_breakdown_amount(rows, "correction")
+    daily_total = sum(item["amount_huf"] for item in entries)
+    deduction = (float(deduction_total) if deduction_total is not None
+                 else max(abs(_mobile_breakdown_amount(rows, "correction_deduction")), daily_total))
+    income = net + deduction
+    _set_mobile_breakdown_row_amount(rows, "correction_income", income, item_label="Korrekció +")
+    _set_mobile_breakdown_row_amount(rows, "correction_deduction", -deduction, item_label="Korrekció -")
+    rows[:] = [item for item in rows if not str(item.get("item_key", "")).startswith("efo_daily_")]
+    rows.extend({"item_key": f"efo_daily_{item['effective_date']}", "item_label": "EFO napi levonás",
+                 "amount_kind": "huf", "amount_value": -item["amount_huf"], "note": item["note"]}
+                for item in entries)
+    return rows
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -11154,6 +11277,7 @@ def build_settlement_overview_data(
     )
     data = apply_customer_rating_bonus(data, period_start, period_end)
     data = apply_manual_balance_adjustments(data, period_start, period_end)
+    data = apply_efo_deductions(data, session_id, calculation_mode, period_start, period_end)
     data = apply_periodic_fee_corrections(
         data,
         session_id,
@@ -16263,7 +16387,7 @@ def load_settlement_month(session_id: str | None) -> tuple[date, date]:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_courier_adjustments(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
+def load_courier_adjustments(courier_id: str, period_start: date, period_end: date, strict: bool = False) -> pd.DataFrame:
     columns = ["id", "adjustment_type", "amount_huf", "effective_date", "valid_from", "valid_to", "note", "created_by", "created_at"]
     if not courier_id:
         return pd.DataFrame(columns=columns)
@@ -16273,6 +16397,8 @@ def load_courier_adjustments(courier_id: str, period_start: date, period_end: da
                 .eq("courier_id", courier_id)
                 .eq("is_active", True).is_("deleted_at", "null").execute().data or [])
     except BaseException:
+        if strict:
+            raise
         return pd.DataFrame(columns=columns)
     data = pd.DataFrame(rows)
     if data.empty:
@@ -16292,6 +16418,8 @@ def load_courier_adjustments(courier_id: str, period_start: date, period_end: da
         data["valid_to"] = valid_to.loc[data.index].dt.date
         return data
     except (TypeError, ValueError, KeyError):
+        if strict:
+            raise
         return pd.DataFrame(columns=columns)
 
 
@@ -18332,8 +18460,17 @@ def render_courier_detail_page() -> None:
             if not route_detail.empty and "Túramegfelelés" in route_detail.columns
             else 0.0
         )
+        try:
+            efo_entries = efo_adjustments_for_calculation(
+                courier_id, courier_name, session_id, active_calculation_mode,
+                period_start, period_end, max(parse_huf_value(row.get(key)) for key in ("Útvonalak", "Számolt túrák", "Kör")),
+            )
+        except EfoCalculationError as exc:
+            st.error(str(exc))
+            st.stop()
         adjustments = profile_adjustments
-        adjustment_totals = profile_adjustment_totals
+        calculation_adjustments = pd.concat([adjustments, pd.DataFrame(efo_entries)], ignore_index=True) if efo_entries else adjustments
+        adjustment_totals = calculation_adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not calculation_adjustments.empty else {}
         # These two totals are calculated and persisted by the DB view.  The
         # Route ID table below is an audit drill-down, not a second calculator.
         base_total = float(row.get("Nettó bevétel", 0.0))
@@ -18981,7 +19118,7 @@ def render_courier_detail_page() -> None:
                     "Összeg": customer_rating_total,
                     "Számítás": f"{route_total} x {format_huf(unit_amount)}" if unit_amount else format_huf(customer_rating_total),
                 }])
-            if detail_label == "Korrekció":
+            if detail_label in {"Korrekció", "Korrekció +", "Korrekció -"}:
                 detail_parts = []
                 if not periodic_correction_detail.empty:
                     detail_parts.append(periodic_correction_detail)
@@ -18993,18 +19130,23 @@ def render_courier_detail_page() -> None:
                     "manual_correction_deduction": "Kézi korrekció -",
                     "other_expense": "Egyéb kiadás",
                 }
-                if not adjustments.empty:
-                    manual_corrections = adjustments[
-                        adjustments["adjustment_type"].astype(str).isin(correction_labels)
+                if not calculation_adjustments.empty:
+                    manual_corrections = calculation_adjustments[
+                        calculation_adjustments["adjustment_type"].astype(str).isin(correction_labels)
                     ].copy()
                     if not manual_corrections.empty:
                         manual_corrections["Összeg"] = pd.to_numeric(manual_corrections["amount_huf"], errors="coerce").fillna(0.0)
                         deduction_mask = manual_corrections["adjustment_type"].isin({"correction_deduction", "manual_correction_deduction", "other_expense"})
                         manual_corrections.loc[deduction_mask, "Összeg"] = -manual_corrections.loc[deduction_mask, "Összeg"].abs()
                         manual_corrections["Tétel"] = manual_corrections["adjustment_type"].map(correction_labels).fillna("Korrekció")
+                        if "created_by" in manual_corrections:
+                            manual_corrections.loc[manual_corrections["created_by"].eq("automatic_efo"), "Tétel"] = "EFO napi levonás"
                         manual_corrections["Számítás"] = manual_corrections.get("note", pd.Series("", index=manual_corrections.index)).fillna("")
                         detail_parts.append(manual_corrections[["Tétel", "Összeg", "Számítás"]])
-                return pd.concat(detail_parts, ignore_index=True, sort=False) if detail_parts else pd.DataFrame()
+                detail = pd.concat(detail_parts, ignore_index=True, sort=False) if detail_parts else pd.DataFrame()
+                if not detail.empty and detail_label != "Korrekció":
+                    detail = detail.loc[detail["Összeg"].lt(0) if detail_label == "Korrekció -" else detail["Összeg"].gt(0)]
+                return detail
             if detail_label == "Kiflis levonások / bónuszok":
                 itemized_imports = load_imported_balance_component_items(imported_balance_session_id, courier_id, courier_name)
                 if not itemized_imports.empty:
@@ -19168,7 +19310,8 @@ def render_courier_detail_page() -> None:
             ("Lojalitás", format_huf(loyalty_total), "", loyalty_status or ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
             ("Fizetendő", format_huf(payable_total), "payable", ""),
-            ("Korrekció", format_huf(correction_total), "", ""),
+            ("Korrekció +", format_huf(correction_income_total), "", ""),
+            ("Korrekció -", format_huf(-correction_deduction_total), "", ""),
             ("Kiflis levonások / bónuszok", format_huf(kiflis_bonus_malus_effect), "", ""),
             ("JITT bónusz / malus", format_huf(jitt_bonus_malus_effect), "", ""),
             ("ATM hatás", format_huf(-atm_deduction_total), "", f"Excel import: {format_huf(-imported_atm_total)} | kézi: {format_huf(-manual_atm_total)}"),
@@ -19204,7 +19347,7 @@ def render_courier_detail_page() -> None:
 
         detail_labels = {
             "Kör", "Alapdíj", "Borravaló", "Késedelmi díj", "Túramegfelelés", "Cím bónusz (Kifli)", "Lojalitás", "Ügyfélértékelési bónusz",
-            "Korrekció", "Kiflis levonások / bónuszok", "JITT bónusz / malus", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
+            "Korrekció", "Korrekció +", "Korrekció -", "Kiflis levonások / bónuszok", "JITT bónusz / malus", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
         }
 
         def render_finance_kpi(label: str, value: str, css_class: str, note: str = "") -> str:
@@ -19495,8 +19638,8 @@ def render_courier_detail_page() -> None:
                     {
                         "source_key": "manual_adjustments",
                         "source_table": "settlement.courier_settlement_adjustment",
-                        "payload": profile_adjustments.to_dict("records") if isinstance(profile_adjustments, pd.DataFrame) and not profile_adjustments.empty else [],
-                        "row_count": int(len(profile_adjustments)) if isinstance(profile_adjustments, pd.DataFrame) else 0,
+                        "payload": calculation_adjustments.to_dict("records") if not calculation_adjustments.empty else [],
+                        "row_count": int(len(calculation_adjustments)),
                     },
                     {
                         "source_key": "target_reserve_month",

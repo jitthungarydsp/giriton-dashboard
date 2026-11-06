@@ -1,7 +1,21 @@
 """Itemized manual entries from the same published finance snapshot."""
 
 
+def snapshot_correction_amounts(snapshot):
+    """Support legacy net-only snapshots without changing saved money."""
+    values = {item.get("item_key"): float(item.get("amount_value") or 0)
+              for item in snapshot.get("items", []) if item.get("section") == "finance"}
+    net = values.get("correction", 0)
+    income, deduction = values.get("correction_income", 0), -abs(values.get("correction_deduction", 0))
+    if abs(income + deduction - net) < 0.5:
+        return income, deduction
+    return max(net, 0), min(net, 0)
+
+
 def snapshot_manual_adjustment_details(snapshot, label):
+    correction_side = label if label in {"Korrekció +", "Korrekció -"} else None
+    if correction_side:
+        label = "Korrekció"
     groups = {
         "Korrekció": ({"correction", "manual_correction", "correction_income",
                         "correction_deduction", "manual_correction_deduction", "other_expense"}, "correction"),
@@ -30,7 +44,7 @@ def snapshot_manual_adjustment_details(snapshot, label):
         if not amount:
             continue
         period = " – ".join(str(item.get(key) or "") for key in ("valid_from", "valid_to")).strip(" –")
-        rows.append({"Tétel": names[kind], "Összeg": amount,
+        rows.append({"Tétel": "EFO napi levonás" if item.get("created_by") == "automatic_efo" else names[kind], "Összeg": amount,
                      "Megjegyzés": str(item.get("note") or ""), "Érvényesség": period})
     if label == "Korrekció":
         # Periodic bonuses are separate snapshot items, not manual adjustments.
@@ -62,6 +76,8 @@ def snapshot_manual_adjustment_details(snapshot, label):
                 rows.append({"Tétel": str(item.get("item_label") or "Időszakos bónusz"),
                              "Összeg": amount, "Megjegyzés": str(item.get("note") or ""),
                              "Érvényesség": ""})
+    if correction_side:
+        rows = [item for item in rows if item["Összeg"] < 0] if correction_side == "Korrekció -" else [item for item in rows if item["Összeg"] > 0]
     if not rows:
         return []
     # A difference from the saved total is a consistency problem, not an entry.
