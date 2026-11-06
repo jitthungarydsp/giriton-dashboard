@@ -1,4 +1,5 @@
 import os
+import logging
 import re
 import requests
 import smtplib
@@ -12,6 +13,7 @@ from string import Formatter
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+logger = logging.getLogger(__name__)
 
 
 def get_setting(name, default=""):
@@ -512,27 +514,47 @@ def send_message(message, config):
         return
 
     context = ssl.create_default_context()
-    if config["use_ssl"]:
-        with smtplib.SMTP_SSL(
-            config["host"],
-            config["port"],
-            timeout=30,
-            context=context,
-        ) as smtp:
-            smtp.login(config["username"], config["password"])
-            smtp.send_message(message)
-    else:
-        with smtplib.SMTP(
-            config["host"],
-            config["port"],
-            timeout=30,
-        ) as smtp:
+    smtp = None
+    stage = "kapcsolódás"
+    try:
+        if config["use_ssl"]:
+            smtp = smtplib.SMTP_SSL(config["host"], config["port"], timeout=30, context=context)
+        else:
+            smtp = smtplib.SMTP(config["host"], config["port"], timeout=30)
+            stage = "SMTP üdvözlés"
             smtp.ehlo()
             if config["use_starttls"]:
+                stage = "STARTTLS titkosítás"
                 smtp.starttls(context=context)
+                stage = "TLS utáni SMTP üdvözlés"
                 smtp.ehlo()
-            smtp.login(config["username"], config["password"])
-            smtp.send_message(message)
+        stage = "bejelentkezés"
+        smtp.login(config["username"], config["password"])
+        stage = "levél átadása"
+        refused = smtp.send_message(message)
+        if refused:
+            raise smtplib.SMTPRecipientsRefused(refused)
+    except (smtplib.SMTPException, OSError) as exc:
+        # Do not log raw SMTP replies, AUTH traffic, recipients or message bodies.
+        logger.error(
+            "email_send_failed transport=smtp stage=%s port=%s ssl=%s starttls=%s error_type=%s",
+            stage, config["port"], config["use_ssl"], config["use_starttls"], type(exc).__name__,
+        )
+        raise RuntimeError(
+            f"SMTP-hiba a(z) {stage} lépésnél ({type(exc).__name__}). "
+            f"Kiszolgáló: {config['host']}:{config['port']}. "
+            "A levélküldés sikere nem igazolt."
+        ) from exc
+    finally:
+        if smtp is not None:
+            try:
+                smtp.quit()
+            except (smtplib.SMTPException, OSError) as exc:
+                # QUIT failure must not hide the original error or turn an
+                # already accepted message into an apparent send failure.
+                logger.warning("email_smtp_cleanup_failed error_type=%s", type(exc).__name__)
+            finally:
+                smtp.close()
 
 
 def send_message_with_resend(message, config, api_key):
