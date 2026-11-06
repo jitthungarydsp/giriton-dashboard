@@ -284,6 +284,14 @@ jobs:
             sleep 90
           }
 
+          # Refresh ROBOTSHIFT_BUD1/BUD2 from the post-booking Hub snapshot.
+          # The exporter preserves MuszakPro's R column by BlockKey.
+          run_with_retry python scripts/export_courier_hub_shift_block_capacity_sheet.py \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
+
+          sheet_pause
+
           run_with_retry python scripts/sync_giriton_robotlog_sheet.py \
             --start-date "${{ steps.window.outputs.start_date }}" \
             --end-date "${{ steps.window.outputs.end_date }}" \
