@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v267";
+const APP_VERSION = "v268";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1751,7 +1751,7 @@ function ensureQualityReclamationDialog() {
     try {
       if (!context.complaintId) {
         const result = await api("/api/quality/complaints", { method: "POST", body: JSON.stringify({
-          request_id: context.requestId, topic: context.topic, month: context.month, items: context.rows, message,
+          request_id: context.requestId, courier: context.courier, topic: context.topic, month: context.month, items: context.rows, message,
         }), silentLoading:true });
         if (!result.ok || !result.id) throw new Error("A mentés nem igazolható.");
         context.complaintId = result.id;
@@ -1771,6 +1771,7 @@ function ensureQualityReclamationDialog() {
       const success=`${context.uploaded ? `A reklamációt és ${context.uploaded} képet elmentettük.` : "A reklamációt elmentettük."} Azonosító: ${context.complaintId}`;
       status.textContent = `Sikeres beküldés. ${success}`;status.className="notice quality-submit-success";
       button.textContent="Beküldve";
+      dialog.close();
       showQualitySubmissionProgress("success",success,dialog);
       Promise.resolve().then(()=>refreshCourierQualityComplaints()).catch(()=>{});
     } catch (error) {
@@ -1823,14 +1824,17 @@ function openQualityReclamation(topic) {
   dialog.querySelector("[data-quality-reclamation-note]").disabled = false;
   dialog.querySelector("[data-quality-reclamation-photos]").value = "";
   dialog.querySelector("[data-quality-reclamation-photos]").disabled = false;
-  const preview = Boolean(previewCourierValue() || state.workflowPreviewCourierId);
+  const courier = String(previewCourierValue() || state.workflowPreviewCourierId || "").trim();
+  const preview = Boolean(courier);
+  const canSubmitPreview = ["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase());
   dialog.complaintContext = { topic, month: state.statistics?.month || state.statisticsMonth,
-    rows, requestId: crypto.randomUUID(), saved: false };
-  dialog.querySelector("[data-quality-reclamation-submit]").disabled = preview || !rows.length;
+    rows, courier, requestId: crypto.randomUUID(), saved: false };
+  dialog.querySelector("[data-quality-reclamation-submit]").disabled = (preview && !canSubmitPreview) || !rows.length;
   dialog.querySelector("[data-quality-reclamation-submit]").textContent="Reklamáció beküldése";
   dialog.querySelector("[data-quality-reclamation-status]").className="";
   dialog.querySelector("[data-quality-reclamation-status]").textContent = preview
-    ? "Admin előnézetből nem küldhető be reklamáció a futár nevében." : "";
+    ? (canSubmitPreview ? "A reklamáció a kiválasztott futárhoz kerül. A beküldő admin nevét naplózzuk."
+      : "Másik futár nevében csak admin küldhet be reklamációt.") : "";
   dialog.showModal();
 }
 

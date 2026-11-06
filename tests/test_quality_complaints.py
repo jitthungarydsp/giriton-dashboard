@@ -12,20 +12,22 @@ class ApiError(Exception):
 
 
 class QualityComplaintTest(unittest.TestCase):
-    def function(self, db):
+    def function(self, db, user=None):
         tree = ast.parse((Path(__file__).resolve().parents[1] / 'pwa_api.py').read_text(encoding='utf-8'))
         node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'create_quality_complaint')
         node.decorator_list = []
         ns = dict(QualityComplaintRequest=Any, Cookie=lambda **k: None, date=date,
-                  require_user=lambda _: {'username': 'courier'},
-                  courier_identity=lambda _: ('6498', 'Futár'),
+                  require_user=lambda _: user or {'username': 'courier', 'courierId': '6498'},
+                  quality_complaint_manager=lambda u: u.get('role') in {'admin', 'superadmin'},
+                  workflow_view_user=lambda u, target: (dict(u, courierId=target, username='Kiválasztott futár'), True) if target else (u, False),
+                  courier_identity=lambda u: (u['courierId'], u['username']),
                   parse_month=lambda m: date.fromisoformat(m + '-01'),
                   HTTPException=ApiError, supabase_rest=db)
         exec(compile(ast.Module(body=[node], type_ignores=[]), 'quality_complaints', 'exec'), ns)
         return ns['create_quality_complaint']
 
     def payload(self, **changes):
-        values = dict(request_id='request', month='2026-10', topic='lateShift',
+        values = dict(request_id='request', courier='', month='2026-10', topic='lateShift',
                       message='Indoklás', items=[{'date': '2026-10-13', 'label': '08:45–13:15'}])
         return SimpleNamespace(**(values | changes))
 
@@ -46,6 +48,24 @@ class QualityComplaintTest(unittest.TestCase):
             return [] if method == 'POST' else [{'id': 'existing'}]
         self.assertEqual(self.function(db)(self.payload())['id'], 'existing')
         self.assertEqual(calls, ['POST', 'GET'])
+
+    def test_admin_submission_uses_target_but_audits_actual_admin(self):
+        calls = []
+        def db(*args, **kwargs):
+            calls.append(kwargs)
+            return [{'id': 'saved'}]
+        result = self.function(db, {'username': 'Admin', 'role': 'admin'})(self.payload(courier='7644'))
+        self.assertTrue(result['ok'])
+        record = calls[0]['payload']
+        self.assertEqual(record['courier_id'], '7644')
+        self.assertEqual(record['courier_name'], 'Kiválasztott futár')
+        self.assertEqual(record['created_by'], 'Admin')
+
+    def test_courier_cannot_submit_for_another_courier(self):
+        fn = self.function(lambda *a, **k: self.fail('Unauthorized DB write'))
+        with self.assertRaises(ApiError) as error:
+            fn(self.payload(courier='7644'))
+        self.assertEqual(error.exception.status_code, 403)
 
     def test_no_false_success_and_wrong_month_rejected(self):
         fn = self.function(lambda *a, **k: [])

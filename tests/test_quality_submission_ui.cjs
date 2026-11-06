@@ -15,7 +15,7 @@ async function setup(browser){
   window.previewCourierValue=()=>'';
   window.state={statistics:{month:'2026-10',qualitySummary:{details:{uncleanedTimeWindowLate:[{date:'2026-10-09',label:'Route 1566147',note:'1 cím · 6 perc'}]}}}};
   window.requests=[];window.pending=[];
-  window.api=(url,options)=>{requests.push({url,silentLoading:options.silentLoading});return new Promise((resolve,reject)=>pending.push({resolve,reject}))};
+  window.api=(url,options)=>{requests.push({url,body:options.body,silentLoading:options.silentLoading});return new Promise((resolve,reject)=>pending.push({resolve,reject}))};
   window.refreshCourierQualityComplaints=async()=>{throw Error('A listafrissítés hibája nem változtathatja sikertelenné a mentést')};
  });
  await page.addScriptTag({content:functions+'\nopenQualityReclamation("uncleanedTimeWindowLate");'});
@@ -38,6 +38,7 @@ test('submission opens a top-layer loading modal immediately; confirmed save sho
   if(process.env.QUALITY_LOADING_SCREENSHOT)await page.screenshot({path:process.env.QUALITY_LOADING_SCREENSHOT});
   await page.evaluate(()=>pending.shift().resolve({ok:true,id:'11111111-1111-4111-8111-111111111111'}));
   await page.getByText('Sikeres beküldés',{exact:true}).waitFor();
+  assert.equal(await page.locator('#quality-reclamation-dialog').evaluate(node=>node.open),false);
   assert.equal(await page.locator('#quality-submission-dialog').getAttribute('aria-busy'),'false');
   assert.equal(await page.locator('[data-quality-submission-spinner]').isVisible(),false);
   assert.equal(await page.evaluate(()=>requests.every(request=>request.silentLoading===true)),true);
@@ -45,6 +46,28 @@ test('submission opens a top-layer loading modal immediately; confirmed save sho
   if(process.env.QUALITY_SUCCESS_SCREENSHOT)await page.screenshot({path:process.env.QUALITY_SUCCESS_SCREENSHOT});
   await page.locator('[data-quality-submission-close]').click();
   await page.waitForFunction(()=>!document.querySelector('#quality-reclamation-dialog').open);
+ }finally{await browser.close()}
+});
+
+test('admin preview submits the selected courier; non-admin preview stays blocked',{skip:!fs.existsSync(runtime)},async()=>{
+ const {chromium}=require(runtime);const browser=await chromium.launch({channel:'chrome',headless:true});
+ try{
+  const page=await setup(browser);
+  await page.evaluate(()=>{
+   document.querySelector('#quality-reclamation-dialog').close();
+   state.user={role:'admin'};window.previewCourierValue=()=> '7644';
+   openQualityReclamation('uncleanedTimeWindowLate');
+  });
+  assert.equal(await page.locator('[data-quality-reclamation-submit]').isEnabled(),true);
+  await page.locator('[data-quality-reclamation-note]').fill('Admin próba');
+  await page.locator('[data-quality-reclamation-submit]').click();
+  assert.equal(await page.evaluate(()=>JSON.parse(requests[0].body).courier),'7644');
+  await page.evaluate(()=>pending.shift().resolve({ok:true,id:'admin-saved'}));
+  await page.getByText('Sikeres beküldés',{exact:true}).waitFor();
+  assert.equal(await page.locator('#quality-reclamation-dialog').evaluate(n=>n.open),false);
+  await page.locator('[data-quality-submission-close]').click();
+  await page.evaluate(()=>{state.user={role:'courier'};openQualityReclamation('uncleanedTimeWindowLate')});
+  assert.equal(await page.locator('[data-quality-reclamation-submit]').isDisabled(),true);
  }finally{await browser.close()}
 });
 

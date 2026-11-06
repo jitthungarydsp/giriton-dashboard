@@ -348,6 +348,7 @@ class WebshopBasketRequest(BaseModel):
 
 class QualityComplaintRequest(BaseModel):
     request_id: UUID
+    courier: str = Field(default="", max_length=200)
     month: str
     topic: str
     message: str = Field(min_length=5, max_length=5000)
@@ -22624,13 +22625,17 @@ def create_quality_complaint(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
+    target_courier = str(payload.courier or "").strip()
+    if target_courier and not quality_complaint_manager(user):
+        raise HTTPException(status_code=403, detail="Másik futár nevében csak admin küldhet be reklamációt.")
+    view_user, _preview = workflow_view_user(user, target_courier)
     if payload.topic not in {"lateShift", "uncleanedTimeWindowLate", "cleanedTimeWindowLate", "noShow"}:
         raise HTTPException(status_code=422, detail="Ismeretlen reklamációtípus.")
     month = parse_month(payload.month)
     message = payload.message.strip()
     if len(message) < 5:
         raise HTTPException(status_code=422, detail="Legalább 5 karakteres indoklást adj meg.")
-    courier_id, courier_name = courier_identity(user)
+    courier_id, courier_name = courier_identity(view_user)
     if not courier_id:
         raise HTTPException(status_code=422, detail="Hiányzó futárazonosító.")
     items = []
