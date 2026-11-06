@@ -1,6 +1,7 @@
 import hashlib
 from resources.finance_adjustment_details import snapshot_manual_adjustment_details, snapshot_correction_amounts
 from resources.efo_deduction import calculate_efo_adjustments, EfoCalculationError
+from resources.salary_advance_validation import salary_advance_optional_text, salary_advance_uuid
 import html
 import json
 import re
@@ -8812,7 +8813,8 @@ def update_salary_advance_schedule(
     change_note: str = "",
 ) -> str:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
-    request_id = str(request_row.get("id") or "").strip()
+    request_id = salary_advance_uuid(request_row.get("id"), required=True, label="Előlegigény azonosítója")
+    plan_id = salary_advance_uuid(request_row.get("plan_id"))
     courier_id = str(request_row.get("courier_id") or "").strip()
     requested_amount = int(round(parse_huf_value(new_requested_amount_huf)))
     start_month, _ = month_bounds(new_start_date)
@@ -8836,7 +8838,6 @@ def update_salary_advance_schedule(
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("id", request_id).execute()
 
-    plan_id = str(request_row.get("plan_id") or "").strip()
     if not plan_id:
         request_courier_finance_refresh(courier_id)
         load_courier_salary_advance_requests.clear()
@@ -8962,11 +8963,14 @@ def approve_salary_advance_request(request_row: dict, courier_name: str) -> str:
 
 def mark_salary_advance_request_paid(request_row: dict, courier_name: str) -> str:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
-    request_id = str(request_row.get("id") or "").strip()
+    request_id = salary_advance_uuid(request_row.get("id"), required=True, label="Előlegigény azonosítója")
     courier_id = str(request_row.get("courier_id") or "").strip()
-    start_date = pd.to_datetime(request_row.get("start_date"), errors="coerce").date()
+    plan_id = salary_advance_uuid(request_row.get("plan_id"))
+    start_date_value = pd.to_datetime(request_row.get("start_date"), errors="coerce")
+    if pd.isna(start_date_value):
+        raise ValueError("Az előleg kezdődátuma hiányzik vagy hibás. A lezárás nem indult el.")
+    start_date = start_date_value.date()
     document_month = start_date.replace(day=1)
-    plan_id = str(request_row.get("plan_id") or "").strip()
     if not plan_id:
         plan_id = create_salary_advance_plan(
             courier_id,
@@ -8976,7 +8980,7 @@ def mark_salary_advance_request_paid(request_row: dict, courier_name: str) -> st
             start_date,
             str(request_row.get("note") or ""),
         )
-    process_id = str(request_row.get("process_id") or "") or salary_advance_process_id(request_id, courier_id, start_date)
+    process_id = salary_advance_optional_text(request_row.get("process_id")) or salary_advance_process_id(request_id, courier_id, start_date)
     upsert_peopleforce_card_status(
         courier_id=courier_id,
         courier_name=courier_name,
@@ -9003,7 +9007,7 @@ def mark_salary_advance_request_paid(request_row: dict, courier_name: str) -> st
 
 def cancel_salary_advance_plan_for_request(request_row: dict, response_message: str = "") -> int:
     courier_id = str(request_row.get("courier_id") or "").strip()
-    plan_id = str(request_row.get("plan_id") or "").strip()
+    plan_id = salary_advance_uuid(request_row.get("plan_id"))
     if not plan_id:
         return 0
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
