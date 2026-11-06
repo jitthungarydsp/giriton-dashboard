@@ -164,6 +164,75 @@ def worksheet_by_gid(spreadsheet, gid: int):
     return worksheet
 
 
+def write_capacity_rows(spreadsheet, worksheet, rows: list[list[Any]]) -> None:
+    """Keep the externally maintained R column attached to its BlockKey.
+
+    Read before writing and replace A:S atomically, without clearing the sheet.
+    Columns T onward and existing formatting are outside this export's scope.
+    """
+    existing: dict[str, Any] = {}
+    if worksheet.row_count > 1:
+        keys, bookings = worksheet.batch_get(
+            [f"F2:F{worksheet.row_count}", f"R2:R{worksheet.row_count}"],
+            value_render_option="FORMULA",
+        )
+        for index, key_cells in enumerate(keys):
+            key = clean_text(key_cells[0]) if key_cells else ""
+            if not key:
+                continue
+            if key in existing:
+                raise RuntimeError(f"Duplikált BlockKey a munkalapon: {key}")
+            cells = bookings[index] if index < len(bookings) else []
+            existing[key] = cells[0] if cells else ""
+
+    cell_rows = []
+    seen_keys: set[str] = set()
+    for index, source_row in enumerate(rows):
+        row = list(source_row)
+        if index:
+            key = clean_text(row[5])
+            if not key or key in seen_keys:
+                raise RuntimeError(f"Hiányzó vagy duplikált export BlockKey: {key}")
+            seen_keys.add(key)
+            # Even an explicitly empty cell belongs to MuszakPro, not Hub.
+            row[17] = existing.get(key, "")
+        cells = []
+        for column, value in enumerate(row):
+            if value is None or value == "":
+                cells.append({})
+                continue
+            if isinstance(value, bool):
+                value_type = "boolValue"
+            elif isinstance(value, (int, float)):
+                value_type = "numberValue"
+            elif index and column == 17 and str(value).startswith("="):
+                value_type = "formulaValue"
+            else:
+                value_type = "stringValue"
+                value = str(value)
+            cells.append({"userEnteredValue": {value_type: value}})
+        cell_rows.append({"values": cells})
+
+    requests_body = []
+    row_count = max(worksheet.row_count, len(rows))
+    if len(rows) > worksheet.row_count or worksheet.col_count < len(HEADER):
+        requests_body.append({"updateSheetProperties": {
+            "properties": {"sheetId": worksheet.id, "gridProperties": {
+                "rowCount": row_count,
+                "columnCount": max(worksheet.col_count, len(HEADER)),
+            }},
+            "fields": "gridProperties.rowCount,gridProperties.columnCount",
+        }})
+    requests_body.append({"updateCells": {
+        "range": {"sheetId": worksheet.id, "startRowIndex": 0,
+                  "endRowIndex": row_count, "startColumnIndex": 0,
+                  "endColumnIndex": len(HEADER)},
+        "rows": cell_rows,
+        "fields": "userEnteredValue",
+    }})
+    spreadsheet.batch_update({"requests": requests_body})
+
+
 def export_capacity(start_date: date, end_date: date, dry_run: bool = False) -> dict[str, int]:
     exported_at = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
     output: dict[str, list[list[Any]]] = {}
@@ -201,11 +270,7 @@ def export_capacity(start_date: date, end_date: date, dry_run: bool = False) -> 
             spreadsheet,
             WAREHOUSE_WORKSHEETS[warehouse_code],
         )
-        worksheet.clear()
-        worksheet.update(
-            range_name="A1",
-            values=rows,
-        )
+        write_capacity_rows(spreadsheet, worksheet, rows)
 
     return counts
 
