@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v269";
+const APP_VERSION = "v270";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -6441,7 +6441,7 @@ const SETTLEMENT_IMPORT_CARD_TARGETS = [
   { key: "tip", label: "Borravaló", rule: "Borravaló összegzés" },
   { key: "delay", label: "Késedelmi díj", rule: "Delay bonus szabály" },
   { key: "compliance", label: "Túramegfelelés", rule: "Compliance / hibamutató szabály" },
-  { key: "stop_count", label: "Cím bónusz (Kifli)", rule: "Stop-count Bonus" },
+  { key: "stop_count", label: "Szerződésen kívüli bónusz", rule: "Out_of_contract_Bonus Routes" },
   { key: "loyalty", label: "Lojalitás", rule: "Aktuális kör alapján" },
   { key: "customer_rating", label: "Ügyfélértékelési bónusz", rule: "Értékelés szabály" },
   { key: "kifli_adjustments", label: "Kiflis levonások / bónuszok", rule: "Kifli tétel besorolás" },

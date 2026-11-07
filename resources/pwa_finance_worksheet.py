@@ -192,7 +192,7 @@ def prepare_worksheet(snapshot, rows, manual_rows, note):
     ]
     # Existing PWA card groups must include newly entered manual lines.
     labels = {"base": "Alapdíj", "tip": "Borravaló", "delay_bonus": "Késedelmi díj", "compliance_bonus": "Túramegfelelés",
-              "address_bonus_kifli": "Cím bónusz (Kifli)", "loyalty_bonus": "Lojalitás", "customer_rating": "Ügyfélértékelési bónusz"}
+              "address_bonus_kifli": "Szerződésen kívüli bónusz", "loyalty_bonus": "Lojalitás", "customer_rating": "Ügyfélértékelési bónusz"}
     drilldowns = {label: [{"Tétel": label, "Összeg": unique_rows.get(key, {}).get("amountHuf", 0)}] for key, label in labels.items()}
     drilldowns["Korrekció"] = [{"Tétel": r["label"], "Összeg": r["amountHuf"], "Megjegyzés": r.get("note", "")}
                               for r in base + extra if r["key"] in {"correction", "correction_income", "correction_deduction"} or r.get("correction")]

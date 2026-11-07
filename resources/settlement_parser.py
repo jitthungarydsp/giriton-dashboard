@@ -167,6 +167,7 @@ def detect_sheet_type_from_name(
         "wallet deductions": "atm_balance",
         "wallet deducation": "atm_balance",
         "bonus routes": "bonus",
+        "out of contract bonus routes": "bonus",
         "penalties": "penalties",
         "kesedelmi mutato": "performance_indicator",
         "turamegfelelesi mutato": "performance_indicator",

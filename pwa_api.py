@@ -11537,7 +11537,7 @@ def build_financial_breakdown_from_snapshot(
         "tip": "Borravaló",
         "delay_bonus": "Késedelmi díj",
         "compliance_bonus": "Túramegfelelés",
-        "address_bonus_kifli": "Cím bónusz (Kifli)",
+        "address_bonus_kifli": "Szerződésen kívüli bónusz",
         "loyalty_bonus": "Lojalitás",
         "customer_rating": "Ügyfélértékelési bónusz",
         "kiflis_bonus_malus": "Kiflis levonások / bónuszok",
@@ -11586,7 +11586,7 @@ def build_financial_breakdown_from_snapshot(
         {"key": "tip", "label": "Borravaló", "amountHuf": amount("tip"), "tone": "income", "items": items(["tip"])},
         {"key": "delay_bonus", "label": "Késedelmi díj", "amountHuf": amount("delay_bonus"), "tone": "income", "items": detail_or_fallback("delay_bonus", ["delay_bonus"])},
         {"key": "compliance_bonus", "label": "Túramegfelelés", "amountHuf": amount("compliance_bonus"), "tone": "income", "items": detail_or_fallback("compliance_bonus", ["compliance_bonus"])},
-        {"key": "address_bonus_kifli", "label": "Cím bónusz (Kifli)", "amountHuf": amount("address_bonus_kifli"), "tone": "income", "items": items(["address_bonus_kifli"])},
+        {"key": "address_bonus_kifli", "label": "Szerződésen kívüli bónusz", "amountHuf": amount("address_bonus_kifli"), "tone": "income", "items": items(["address_bonus_kifli"])},
         {
             "key": "loyalty_bonus",
             "label": "Lojalitási bónusz",
@@ -12243,6 +12243,7 @@ def imported_balance_amount(payload: dict[str, Any], *keys: str) -> int:
 
 
 def read_imported_bonus_malus_items(session_id: str, courier_id: str, courier_name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    from resources.out_of_contract_bonus import is_out_of_contract_bonus_sheet
     if not session_id:
         return [], []
     table_definitions = [
@@ -12268,7 +12269,7 @@ def read_imported_bonus_malus_items(session_id: str, courier_id: str, courier_na
             table_name,
             schema="settlement",
             params={
-                "select": "normalized_data,source_row_no",
+                "select": "normalized_data,source_row_no,source_sheet",
                 "session_id": f"eq.{session_id}",
                 "limit": "5000",
             },
@@ -12276,6 +12277,8 @@ def read_imported_bonus_malus_items(session_id: str, courier_id: str, courier_na
         )
         target_items = bonus_items if sign > 0 else malus_items
         for index, source_row in enumerate(rows, start=1):
+            if table_name == "bonus_route_row" and is_out_of_contract_bonus_sheet(source_row.get("source_sheet")):
+                continue
             payload = imported_balance_payload(source_row)
             if not imported_balance_matches_courier(payload, courier_id, courier_name):
                 continue
@@ -12292,6 +12295,21 @@ def read_imported_bonus_malus_items(session_id: str, courier_id: str, courier_na
                 )
             )
     return bonus_items, malus_items
+
+
+def read_out_of_contract_bonus_amount(session_id: str, courier_id: str, courier_name: str) -> int | None:
+    if not session_id:
+        return None
+    rows = optional_supabase_rows(
+        "bonus_route_row", schema="settlement",
+        params={"select": "normalized_data,source_sheet", "session_id": f"eq.{session_id}",
+                "source_sheet": "eq.Out_of_contract_Bonus Routes", "limit": "5000"}, timeout=30,
+    )
+    if not rows:
+        return None
+    return sum(imported_balance_amount(payload, "Bonus", "Bónusz", "Bonus amount", "Amount")
+               for row in rows if imported_balance_matches_courier(
+                   payload := imported_balance_payload(row), courier_id, courier_name))
 
 
 def read_periodic_fee_rules(period_start: date, period_end: date) -> list[dict[str, Any]]:
@@ -13285,7 +13303,7 @@ def build_financial_breakdown(
     tip = money_from(row, "tip_huf")
     delay = money_from(row, "delay_bonus_huf")
     compliance = money_from(row, "compliance_bonus_huf")
-    address_bonus_kifli = money_from(row, "address_bonus_kifli_huf")
+    address_bonus_kifli = money_from(row, "address_bonus_kifli_huf", "other_route_bonus_huf")
     loyalty = money_from(row, "loyalty_bonus_huf")
     customer_rating = money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
     monthly_bonus = money_from(row, "monthly_bonus_huf") or money_sum_from(
@@ -13330,6 +13348,9 @@ def build_financial_breakdown(
     other_deduction -= manual_adjustments.get("other_expense", 0)
     main_session_id = str(row.get("_mobile_session_id") or row.get("session_id") or "")
     imported_balance_session_id = latest_excel_balance_session_for_month(month) or main_session_id
+    contract_bonus = read_out_of_contract_bonus_amount(imported_balance_session_id, courier_id, _courier_name)
+    if contract_bonus is not None:
+        address_bonus_kifli = contract_bonus
     imported_bonus_items, imported_malus_items = read_imported_bonus_malus_items(
         imported_balance_session_id,
         courier_id,
@@ -13341,7 +13362,7 @@ def build_financial_breakdown(
         signed_item("tip", "Borravaló", tip),
         signed_item("delay_bonus", "Késedelmi díj", delay),
         signed_item("compliance_bonus", "Túramegfelelés", compliance),
-        signed_item("address_bonus_kifli", "Cím bónusz (Kifli)", address_bonus_kifli, note="Stop-count Bonus"),
+        signed_item("address_bonus_kifli", "Szerződésen kívüli bónusz", address_bonus_kifli, note="Out_of_contract_Bonus Routes"),
         signed_item("loyalty_bonus", "Lojalitási bónusz", loyalty),
         signed_item("customer_rating", "Ügyfélelégedettség", customer_rating),
         signed_item("monthly_bonus", "Bónuszok összesen", monthly_bonus),
@@ -13539,7 +13560,7 @@ def build_financial_breakdown(
         {"key": "base", "label": "Alapdíj", "amountHuf": base, "tone": "income", "items": [signed_item("base", "Alapdíj", base)]},
         {"key": "delay_bonus", "label": "Késedelmi díj", "amountHuf": delay, "tone": "income", "items": [signed_item("delay_bonus", "Késedelmi díj", delay)]},
         {"key": "compliance_bonus", "label": "Túramegfelelés", "amountHuf": compliance, "tone": "income", "items": [signed_item("compliance_bonus", "Túramegfelelés", compliance)]},
-        {"key": "address_bonus_kifli", "label": "Cím bónusz (Kifli)", "amountHuf": address_bonus_kifli, "tone": "income", "items": [signed_item("address_bonus_kifli", "Cím bónusz (Kifli)", address_bonus_kifli, note="Stop-count Bonus")]},
+        {"key": "address_bonus_kifli", "label": "Szerződésen kívüli bónusz", "amountHuf": address_bonus_kifli, "tone": "income", "items": [signed_item("address_bonus_kifli", "Szerződésen kívüli bónusz", address_bonus_kifli, note="Out_of_contract_Bonus Routes")]},
         {"key": "loyalty_bonus", "label": "Lojalitási bónusz", "amountHuf": loyalty, "tone": "income", "items": loyalty_items},
         {"key": "customer_rating", "label": "Ügyfélértékelés", "amountHuf": customer_rating, "tone": "income", "items": customer_rating_items},
         {"key": "kiflis_bonus_malus", "label": "Kiflis levonások / bónuszok", "amountHuf": kiflis_bonus_malus_total, "tone": "info", "items": kiflis_bonus_malus_items},
