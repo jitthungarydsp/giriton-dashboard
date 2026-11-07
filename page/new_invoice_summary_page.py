@@ -132,10 +132,10 @@ def build_tig_pdf_bytes(
     transfer_amount_huf: float,
     cash_amount_huf: float = 0,
 ) -> bytes:
-    """Teljesítési igazolás PDF előállítása a kiválasztott futárnak."""
+    """Teljesítés-összesítő PDF előállítása a kiválasztott futárnak."""
     if not REPORTLAB_AVAILABLE:
         raise RuntimeError(
-            "A TIG PDF előállításához hiányzik a reportlab csomag. "
+            "A Teljesítés-összesítő PDF előállításához hiányzik a reportlab csomag. "
             "Telepítsd a requirements.txt függőségeit."
         )
     regular_font, bold_font = _register_tig_font()
@@ -147,7 +147,7 @@ def build_tig_pdf_bytes(
         leftMargin=16 * mm,
         topMargin=14 * mm,
         bottomMargin=14 * mm,
-        title=f"TIG {document_month:%Y-%m} - {courier_name}",
+        title=f"Teljesítés-összesítő {document_month:%Y-%m} - {courier_name}",
     )
     styles = getSampleStyleSheet()
     normal = ParagraphStyle(
@@ -184,14 +184,14 @@ def build_tig_pdf_bytes(
     cash_amount_huf = int(round(float(cash_amount_huf or 0)))
 
     story = [
-        Paragraph("TELJESÍTÉSI IGAZOLÁS", title_style),
+        Paragraph("Teljesítés-összesítő", title_style),
         Spacer(1, 3 * mm),
     ]
 
     party_data = [
         [
-            Paragraph("SZOLGÁLTATÓ (ELADÓ):", heading),
-            Paragraph("MEGBÍZÓ (VEVŐ):", heading),
+            Paragraph("KÖZREMŰKÖDŐ:", heading),
+            Paragraph("ÖSSZESÍTÉST KÉSZÍTŐ:", heading),
         ],
         [
             Paragraph(
@@ -283,7 +283,7 @@ def build_tig_pdf_bytes(
     story.extend([
         Spacer(1, 8 * mm),
         Paragraph(
-            "Gépi úton készült igazolás, aláírás nélkül is hiteles.<br/>"
+            "Az adott időszakhoz nyilvántartott elszámolási tételek összesítése.<br/>"
             "<b>Just in Time Transport Hungary Kft.</b><br/>"
             "Észrevétel és kifogások: elszamolas@jitt.hu",
             ParagraphStyle("TIGFooter", parent=small, alignment=TA_CENTER, textColor=colors.HexColor("#777777")),
@@ -444,7 +444,7 @@ def month_start_from_date(value):
 
 WORKFLOW_BACKSTEP_TARGETS = {
     "settlement": {"label": "Elszamolas elfogadasara", "done": [], "open": ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]},
-    "tig": {"label": "TIG elfogadasara", "done": ["settlement"], "open": ["tig", "invoice_submit", "invoice_check", "invoice_payment"]},
+    "tig": {"label": "Teljesítés-összesítő áttekintésére", "done": ["settlement"], "open": ["tig", "invoice_submit", "invoice_check", "invoice_payment"]},
     "invoice_submit": {"label": "Szamlafeltoltesre", "done": ["settlement", "tig"], "open": ["invoice_submit", "invoice_check", "invoice_payment"]},
     "invoice_check": {"label": "Szamlaellenorzesre", "done": ["settlement", "tig", "invoice_submit"], "open": ["invoice_check", "invoice_payment"]},
     "invoice_payment": {"label": "Kifizetesre", "done": ["settlement", "tig", "invoice_submit", "invoice_check"], "open": ["invoice_payment"]},
@@ -481,7 +481,7 @@ def render_admin_document_manager(courier_id, courier_name):
             st.info("Ehhez a futárhoz még nincs feltöltött dokumentum.")
             return
         type_labels = {
-            "settlement": "Elszámolás", "tig": "TIG", "invoice": "Számla",
+            "settlement": "Elszámolás", "tig": "Teljesítés-összesítő", "invoice": "Számla",
             "complaint_response": "Reklamációs válasz",
         }
         st.caption(f"{len(documents)} feltöltött dokumentum – {courier_name}")
@@ -756,7 +756,7 @@ def _render_amount_check(courier_id, document_month, fallback_tig_amount=0):
         st.warning("A feltöltött számlából nem sikerült kiolvasni a bruttó összeget.")
         return
     if not tig_amount:
-        st.warning("A TIG-ből nem sikerült kiolvasni az összeget, ezért az összevetés nem végezhető el.")
+        st.warning("A Teljesítés-összesítőből nem sikerült kiolvasni az összeget, ezért az összevetés nem végezhető el.")
         return
 
     invoice_total = sum(amount for _file_name, amount in invoice_amounts)
@@ -769,15 +769,15 @@ def _render_amount_check(courier_id, document_month, fallback_tig_amount=0):
     )
     difference = invoice_total - tig_amount
     if difference == 0 and not unreadable_files:
-        st.success(f"Egyezik: a számla és a TIG összege is {format_huf(tig_amount)}.")
+        st.success(f"Egyezik: a számla és a Teljesítés-összesítő összege is {format_huf(tig_amount)}.")
     elif difference == 0:
         st.warning(
-            f"A kiolvasható számlák összege egyezik a TIG összegével ({format_huf(tig_amount)}), "
+            f"A kiolvasható számlák összege egyezik a Teljesítés-összesítő összegével ({format_huf(tig_amount)}), "
             f"de {len(unreadable_files)} fájl nem volt automatikusan olvasható."
         )
     else:
         st.error(
-            f"Nem egyezik. Számla: {format_huf(invoice_total)}; TIG: {format_huf(tig_amount)}; "
+            f"Nem egyezik. Számla: {format_huf(invoice_total)}; Teljesítés-összesítő: {format_huf(tig_amount)}; "
             f"eltérés: {format_huf(difference)}."
         )
     if unreadable_files:
@@ -807,7 +807,7 @@ def _render_open_complaints(courier_id, courier_name, document_month):
         return
     if "created_at" in open_complaints.columns:
         open_complaints = open_complaints.sort_values("created_at", ascending=False)
-    type_labels = {"settlement": "Elszámolás", "tig": "TIG", "invoice": "Számla"}
+    type_labels = {"settlement": "Elszámolás", "tig": "Teljesítés-összesítő", "invoice": "Számla"}
     for _, complaint in open_complaints.iterrows():
         complaint_type = str(complaint.get("document_type") or "folyamat")
         st.error(
@@ -842,7 +842,7 @@ def _render_task_tig_generator(task_row, document_month):
                 return str(value).strip()
         return default
 
-    with st.expander("TIG generálása", expanded="TIG elkészítésére" in str(task_row.get("Mire vár?"))):
+    with st.expander("Teljesítés-összesítő generálása", expanded="Teljesítés-összesítő elkészítésére" in str(task_row.get("Mire vár?"))):
         with st.form(f"task_tig_generator_{courier_id}_{document_month}"):
             col1, col2 = st.columns(2)
             seller_name = col1.text_input(
@@ -869,7 +869,7 @@ def _render_task_tig_generator(task_row, document_month):
             cash_amount = amount2.number_input(
                 "Készpénzes összeg (Ft)", min_value=0, value=0, step=100
             )
-            generate = st.form_submit_button("TIG előállítása", use_container_width=True)
+            generate = st.form_submit_button("Teljesítés-összesítő előállítása", use_container_width=True)
 
         state_key = f"task_generated_tig_{courier_id}_{document_month}"
         if generate:
@@ -886,19 +886,19 @@ def _render_task_tig_generator(task_row, document_month):
                         transfer_amount_huf=transfer_amount,
                         cash_amount_huf=cash_amount,
                     )
-                    st.success("A TIG elkészült.")
+                    st.success("A Teljesítés-összesítő elkészült.")
                 except Exception as exc:
-                    st.error(f"A TIG előállítása sikertelen: {exc}")
+                    st.error(f"A Teljesítés-összesítő előállítása sikertelen: {exc}")
 
         generated = st.session_state.get(state_key)
         if generated:
             file_name = (
-                f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_"
+                f"jitt_teljesites_osszesito_{courier_id}_{slugify_filename(courier_name)}_"
                 f"{month_start_from_date(document_month):%Y-%m}.pdf"
             )
             action1, action2 = st.columns(2)
             action1.download_button(
-                "TIG letöltése",
+                "Teljesítés-összesítő letöltése",
                 data=generated,
                 file_name=file_name,
                 mime="application/pdf",
@@ -916,8 +916,8 @@ def _render_task_tig_generator(task_row, document_month):
                         courier_name=courier_name,
                         document_type="tig",
                         document_month=document_month,
-                        title=f"TIG - {month_start_from_date(document_month):%Y-%m}",
-                        note="Admin által generált teljesítési igazolás.",
+                        title=f"Teljesítés-összesítő - {month_start_from_date(document_month):%Y-%m}",
+                        note="Admin által generált Teljesítés-összesítő.",
                         file_name=file_name,
                         mime_type="application/pdf",
                         file_bytes=generated,
@@ -929,15 +929,15 @@ def _render_task_tig_generator(task_row, document_month):
                         action_key="tig",
                         document_month=document_month,
                         status="open",
-                        status_note="TIG elkészült, futár elfogadására vár.",
+                        status_note="Teljesítés-összesítő elkészült, futár elfogadására vár.",
                         updated_by=str(st.session_state.get("username", "admin")),
                     )
                     st.session_state.pop(state_key, None)
                     st.cache_data.clear()
-                    st.success("A TIG bekerült a futár profiljába.")
+                    st.success("A Teljesítés-összesítő bekerült a futár profiljába.")
                     st.rerun()
                 except Exception as exc:
-                    st.error(f"A TIG feltöltése sikertelen: {exc}")
+                    st.error(f"A Teljesítés-összesítő feltöltése sikertelen: {exc}")
 
 
 def _render_task_manual_item_form(task_row, document_month):
@@ -1038,7 +1038,7 @@ def render_invoice_task_dialog(task_row, document_month):
     if documents.empty:
         st.info("Ehhez a hónaphoz még nincs feltöltött dokumentum.")
     else:
-        type_labels = {"settlement": "Elszámolás", "tig": "TIG", "invoice": "Számla", "complaint_response": "Válasz"}
+        type_labels = {"settlement": "Elszámolás", "tig": "Teljesítés-összesítő", "invoice": "Számla", "complaint_response": "Válasz"}
         document_rows = documents.to_dict("records")
         overview = pd.DataFrame(
             [
@@ -1120,7 +1120,7 @@ def render_invoice_task_dialog(task_row, document_month):
     st.divider()
     _render_task_tig_generator(task_row, document_month)
     _render_task_manual_item_form(task_row, document_month)
-    if st.button("Számla és TIG összegének ellenőrzése", use_container_width=True):
+    if st.button("Számla és Teljesítés-összesítő összegének ellenőrzése", use_container_width=True):
         _render_amount_check(courier_id, document_month, task_row.get("_tig_amount", 0))
 
 
@@ -1449,7 +1449,7 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
                 "tig": 35,
                 "settlement": 15,
             }.get(complaint_type, 0)
-            complaint_labels = {"invoice": "számlafeltöltés", "tig": "TIG", "settlement": "elszámolás"}
+            complaint_labels = {"invoice": "számlafeltöltés", "tig": "Teljesítés-összesítő", "settlement": "elszámolás"}
             reason = str(complaint.get("message") or status_note or "Nincs megadott indok.").strip()
             step = f"Admin segítségére vár ({complaint_labels.get(complaint_type, complaint_type or 'folyamat')})"
             courier_feedback = "Segítséget kér"
@@ -1472,16 +1472,16 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
             row_state = "waiting"
             lamp = "Sárga"
             workflow_priority = 30
-            step = "TIG elkészítésére és feltöltésére vár"
+            step = "Teljesítés-összesítő elkészítésére és feltöltésére vár"
             courier_feedback = "Admin feladat"
             note = "Az elszámolást a futár elfogadta."
         elif tig_status is None or str(tig_status.get("status") or "").lower() != "done":
             row_state = "waiting"
             lamp = "Sárga"
             workflow_priority = 35
-            step = "A futár TIG-elfogadására vár"
+            step = "A futár Teljesítés-összesítő áttekintésére vár"
             courier_feedback = "Futárnál"
-            note = str(tig_status.get("status_note") or "A TIG feltöltve.") if tig_status is not None else "A TIG feltöltve."
+            note = str(tig_status.get("status_note") or "A Teljesítés-összesítő feltöltve.") if tig_status is not None else "A Teljesítés-összesítő feltöltve."
         elif invoice_check_status is None or str(invoice_check_status.get("status") or "").lower() != "done":
             row_state = "waiting"
             lamp = "Sárga"
@@ -1500,7 +1500,7 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
                     note = check_note
             else:
                 step = "A futár számlaellenőrzésére vár"
-                note = "A TIG-et a futár elfogadta, a számla ellenőrzése még nem készült el."
+                note = "A Teljesítés-összesítőt a futár áttekintette, a számla ellenőrzése még nem készült el."
             courier_feedback = "Futárnál"
         elif invoice_submit_status is None or str(invoice_submit_status.get("status") or "").lower() != "done":
             row_state = "waiting"
@@ -2285,20 +2285,20 @@ def show_new_invoice_summary_page():
                     )
 
 
-            with st.expander("Tomeges TIG generalas es feltoltes", expanded=False):
-                st.caption("A jelenlegi szuresben szereplo futaroknak keszit TIG-et, majd feltolti a Kiflis kartyara.")
+            with st.expander("Tomeges Teljesítés-összesítő generalas es feltoltes", expanded=False):
+                st.caption("A jelenlegi szuresben szereplo futaroknak keszit Teljesítés-összesítőt, majd feltolti a Kiflis kartyara.")
                 tig_source_rows = pdf_driver_summary.reset_index(drop=True)
                 tig_skip_existing = st.checkbox(
-                    "A mar feltoltott TIG-ek kihagyasa",
+                    "A mar feltoltott Teljesítés-összesítők kihagyasa",
                     value=True,
                     key=f"tig_bulk_skip_existing_{start_date.isoformat()}_{end_date.isoformat()}",
                 )
                 tig_confirm = st.checkbox(
-                    f"Meger?sitem {len(tig_source_rows)} TIG tomeges generalasat.",
+                    f"Meger?sitem {len(tig_source_rows)} Teljesítés-összesítő tomeges generalasat.",
                     key=f"tig_bulk_confirm_{start_date.isoformat()}_{end_date.isoformat()}",
                 )
                 if st.button(
-                    "TIG-ek tomeges generalasa es feltoltese",
+                    "Teljesítés-összesítők tomeges generalasa es feltoltese",
                     disabled=(not tig_confirm or tig_source_rows.empty),
                     use_container_width=True,
                     key=f"tig_bulk_upload_{start_date.isoformat()}_{end_date.isoformat()}",
@@ -2309,7 +2309,7 @@ def show_new_invoice_summary_page():
                         try:
                             existing_tig_lookup = read_sent_invoice_driver_names(document_month, "tig")
                         except Exception as exc:
-                            st.warning(f"A mar feltoltott TIG-ek ellenorzese nem sikerult, folytatom: {exc}")
+                            st.warning(f"A mar feltoltott Teljesítés-összesítők ellenorzese nem sikerult, folytatom: {exc}")
 
                     try:
                         tig_master_df = read_courier_master()
@@ -2338,7 +2338,7 @@ def show_new_invoice_summary_page():
                             continue
                         if tig_skip_existing and normalize_name(tig_courier_name) in existing_tig_lookup:
                             skipped_count += 1
-                            result_rows.append({"Futar": tig_courier_name, "Allapot": "Kihagyva", "Hiba": "Erre a honapra mar van TIG."})
+                            result_rows.append({"Futar": tig_courier_name, "Allapot": "Kihagyva", "Hiba": "Erre a honapra mar van Teljesítés-összesítő."})
                             progress.progress((row_index + 1) / total_tig_rows)
                             continue
 
@@ -2363,13 +2363,13 @@ def show_new_invoice_summary_page():
                                 transfer_amount_huf=transfer_amount,
                                 cash_amount_huf=0,
                             )
-                            tig_file_name = f"jitt_tig_{tig_courier_id}_{slugify_filename(tig_courier_name)}_{document_month.strftime('%Y-%m')}.pdf"
+                            tig_file_name = f"jitt_teljesites_osszesito_{tig_courier_id}_{slugify_filename(tig_courier_name)}_{document_month.strftime('%Y-%m')}.pdf"
                             upload_peopleforce_document_bytes(
                                 courier_id=tig_courier_id,
                                 courier_name=tig_courier_name,
                                 document_type="tig",
                                 document_month=document_month,
-                                title=f"TIG - {document_month.strftime('%Y-%m')}",
+                                title=f"Teljesítés-összesítő - {document_month.strftime('%Y-%m')}",
                                 note="Admin altal tomegesen generalt teljesitesi igazolas.",
                                 file_name=tig_file_name,
                                 mime_type="application/pdf",
@@ -2382,7 +2382,7 @@ def show_new_invoice_summary_page():
                                 action_key="tig",
                                 document_month=document_month,
                                 status="open",
-                                status_note="TIG tomegesen feltoltve, futar elfogadasara var.",
+                                status_note="Teljesítés-összesítő tomegesen feltoltve, futar elfogadasara var.",
                                 updated_by=str(st.session_state.get("username", "admin")),
                             )
                             uploaded_count += 1
@@ -2392,7 +2392,7 @@ def show_new_invoice_summary_page():
                         progress.progress((row_index + 1) / total_tig_rows)
 
                     st.cache_data.clear()
-                    st.success(f"TIG tomeges feltoltes kesz. Feltoltve: {uploaded_count}, kihagyva: {skipped_count}.")
+                    st.success(f"Teljesítés-összesítő tomeges feltoltes kesz. Feltoltve: {uploaded_count}, kihagyva: {skipped_count}.")
                     st.dataframe(pd.DataFrame(result_rows), use_container_width=True, hide_index=True)
 
         if selected_driver != "Mind":
@@ -2443,9 +2443,9 @@ def show_new_invoice_summary_page():
                     st.rerun()
 
             st.divider()
-            st.subheader("TIG generálása")
+            st.subheader("Teljesítés-összesítő generálása")
             st.caption(
-                "Az admin itt állítja elő a teljesítési igazolást, majd közvetlenül a futár profiljába töltheti."
+                "Az admin itt állítja elő a Teljesítés-összesítőt, majd közvetlenül a futár profiljába töltheti."
             )
 
             master_row = {}
@@ -2542,7 +2542,7 @@ def show_new_invoice_summary_page():
                     step=100,
                 )
                 generate_tig = st.form_submit_button(
-                    "TIG előállítása",
+                    "Teljesítés-összesítő előállítása",
                     use_container_width=True,
                 )
 
@@ -2573,25 +2573,25 @@ def show_new_invoice_summary_page():
                         "month": document_month,
                     }
                     st.success(
-                        "A TIG elkészült. Ellenőrizd a PDF-et, majd nyomd meg a TIG feltöltése gombot."
+                        "A Teljesítés-összesítő elkészült. Ellenőrizd a PDF-et, majd nyomd meg a Teljesítés-összesítő feltöltése gombot."
                     )
 
             generated_tig = st.session_state.get(tig_state_key)
             if generated_tig:
                 document_month = generated_tig["month"]
                 tig_file_name = (
-                    f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_"
+                    f"jitt_teljesites_osszesito_{courier_id}_{slugify_filename(courier_name)}_"
                     f"{document_month.strftime('%Y-%m')}.pdf"
                 )
                 st.download_button(
-                    "TIG letöltése ellenőrzéshez",
+                    "Teljesítés-összesítő letöltése ellenőrzéshez",
                     data=generated_tig["bytes"],
                     file_name=tig_file_name,
                     mime="application/pdf",
                     use_container_width=True,
                 )
                 if st.button(
-                    "TIG feltöltése a futár profiljába",
+                    "Teljesítés-összesítő feltöltése a futár profiljába",
                     use_container_width=True,
                     key=f"tig_send_to_courier_card_{courier_id}_{start_date.isoformat()}",
                 ):
@@ -2600,8 +2600,8 @@ def show_new_invoice_summary_page():
                         courier_name=courier_name,
                         document_type="tig",
                         document_month=document_month,
-                        title=f"TIG - {document_month.strftime('%Y-%m')}",
-                        note="Admin által generált teljesítési igazolás.",
+                        title=f"Teljesítés-összesítő - {document_month.strftime('%Y-%m')}",
+                        note="Admin által generált Teljesítés-összesítő.",
                         file_name=tig_file_name,
                         mime_type="application/pdf",
                         file_bytes=generated_tig["bytes"],
@@ -2613,17 +2613,17 @@ def show_new_invoice_summary_page():
                         action_key="tig",
                         document_month=document_month,
                         status="open",
-                        status_note="TIG elkészült, futár elfogadására vár.",
+                        status_note="Teljesítés-összesítő elkészült, futár elfogadására vár.",
                         updated_by=str(st.session_state.get("username", "admin")),
                     )
                     st.session_state.pop(tig_state_key, None)
                     st.cache_data.clear()
-                    st.success("A generált TIG bekerült a futár profiljába.")
+                    st.success("A generált Teljesítés-összesítő bekerült a futár profiljába.")
                     st.rerun()
 
         else:
             st.caption(
-                "Elszámolás vagy TIG feltöltéséhez válassz ki egy konkrét futárt."
+                "Elszámolás vagy Teljesítés-összesítő feltöltéséhez válassz ki egy konkrét futárt."
             )
     except Exception as exc:
         st.info(

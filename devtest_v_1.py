@@ -525,7 +525,7 @@ def load_courier_master() -> pd.DataFrame:
     # Ideiglenes designer státuszok. Később ezt valódi üzleti logika váltja fel.
     workflow_statuses = [
         "Elszámolásra vár",
-        "TIG-re vár",
+        "Teljesítés-összesítőre vár",
         "Bejelentések",
         "Kifizetésre vár",
     ]
@@ -1032,7 +1032,7 @@ def status_meta(status: str) -> tuple[str,str]:
         "Ellenőrzés alatt":("status-yellow","led-yellow"),
         "Jóváhagyva":("status-green","led-green"),
         "Elszámolásra vár":("status-blue","led-blue"),
-        "TIG-re vár":("status-purple","led-purple"),
+        "Teljesítés-összesítőre vár":("status-purple","led-purple"),
         "Bejelentések":("status-orange","led-orange"),
         "Kifizetésre vár":("status-green","led-green"),
     }
@@ -1042,7 +1042,7 @@ def status_meta(status: str) -> tuple[str,str]:
 def get_demo_documents() -> pd.DataFrame:
     return pd.DataFrame([
         {"Courier ID":"7486","Típus":"Elszámolás","Fájl":"elszamolas_2026_06.pdf","Feltöltve":"2026-07-03 09:12"},
-        {"Courier ID":"7486","Típus":"TIG","Fájl":"tig_2026_06.pdf","Feltöltve":"2026-07-04 10:35"},
+        {"Courier ID":"7486","Típus":"Teljesítés-összesítő","Fájl":"teljesites_osszesito_2026_06.pdf","Feltöltve":"2026-07-04 10:35"},
         {"Courier ID":"7612","Típus":"Elszámolás","Fájl":"elszamolas_2026_06.pdf","Feltöltve":"2026-07-03 09:30"},
     ])
 
@@ -1050,7 +1050,7 @@ def get_demo_documents() -> pd.DataFrame:
 def get_demo_complaints() -> pd.DataFrame:
     return pd.DataFrame([
         {"Courier ID":"7486","Típus":"Elszámolás","Státusz":"Nyitott","Dátum":"2026-07-05","Üzenet":"A bónusz összege eltér."},
-        {"Courier ID":"7612","Típus":"TIG","Státusz":"Lezárt","Dátum":"2026-07-02","Üzenet":"A vállalkozási cím javítva lett."},
+        {"Courier ID":"7612","Típus":"Teljesítés-összesítő","Státusz":"Lezárt","Dátum":"2026-07-02","Üzenet":"A vállalkozási cím javítva lett."},
     ])
 
 
@@ -1654,7 +1654,7 @@ def show_courier_dialog() -> None:
         )
         action1.download_button("Elszámolás PDF letöltése", data=pdf_bytes, file_name=f"jitt_elszamolas_{courier_id}.pdf", mime="application/pdf", type="primary", use_container_width=True, key=f"ui_settlement_generate_{courier_id}")
         action2.button(
-            "TIG generálása",
+            "Teljesítés-összesítő generálása",
             type="primary",
             use_container_width=True,
             key=f"ui_tig_generate_{courier_id}",
@@ -1668,7 +1668,7 @@ def show_courier_dialog() -> None:
             key=f"ui_settlement_upload_{courier_id}",
         )
         upload2.file_uploader(
-            "TIG feltöltése",
+            "Teljesítés-összesítő feltöltése",
             type=["pdf"],
             key=f"ui_tig_upload_{courier_id}",
         )
@@ -1709,7 +1709,7 @@ def show_courier_dialog() -> None:
         docs = pd.DataFrame(
             [
                 {"Típus": "Elszámolás", "Fájl": "elszamolas_2026_07.pdf", "Feltöltve": "2026-07-10 09:12", "Státusz": "Aktív"},
-                {"Típus": "TIG", "Fájl": "tig_2026_07.pdf", "Feltöltve": "2026-07-11 10:35", "Státusz": "Aktív"},
+                {"Típus": "Teljesítés-összesítő", "Fájl": "teljesites_osszesito_2026_07.pdf", "Feltöltve": "2026-07-11 10:35", "Státusz": "Aktív"},
                 {"Típus": "Számla", "Fájl": "szamla_2026_07.pdf", "Feltöltve": "2026-07-12 14:02", "Státusz": "Ellenőrzés alatt"},
                 {"Típus": "Szerződés", "Fájl": "szerzodes.pdf", "Feltöltve": "2026-01-15 08:20", "Státusz": "Aktív"},
             ]
@@ -1733,7 +1733,7 @@ def show_courier_dialog() -> None:
             complaint_demo = pd.DataFrame(
                 [
                     {"Dátum": "2026-07-05", "Típus": "Elszámolás", "Tárgy": "Bónusz eltérés", "Státusz": "Nyitott"},
-                    {"Dátum": "2026-06-18", "Típus": "TIG", "Tárgy": "Cím javítás", "Státusz": "Lezárt"},
+                    {"Dátum": "2026-06-18", "Típus": "Teljesítés-összesítő", "Tárgy": "Cím javítás", "Státusz": "Lezárt"},
                 ]
             )
             st.dataframe(complaint_demo, use_container_width=True, hide_index=True)
@@ -1742,7 +1742,7 @@ def show_courier_dialog() -> None:
             st.markdown("##### Új reklamáció")
             st.selectbox(
                 "Típus",
-                ["Elszámolás", "TIG", "Számla", "Egyéb"],
+                ["Elszámolás", "Teljesítés-összesítő", "Számla", "Egyéb"],
                 key=f"ui_complaint_type_{courier_id}",
             )
             st.text_input("Tárgy", key=f"ui_complaint_subject_{courier_id}")
@@ -1886,11 +1886,11 @@ def show_bulk_settlement_dialog() -> None:
             st.success("A tömeges elszámolások profilba feltöltése indulna.")
 
 
-@st.dialog("Tömeges TIG", width="large")
+@st.dialog("Tömeges Teljesítés-összesítő", width="large")
 def show_bulk_tig_dialog() -> None:
     df = st.session_state.get("current_filtered_data", load_courier_master())
 
-    st.subheader("Tömeges TIG")
+    st.subheader("Tömeges Teljesítés-összesítő")
     st.caption("Az aktuális szűrés alapján kiválasztott futárok.")
 
     if df.empty:
@@ -1913,7 +1913,7 @@ def show_bulk_tig_dialog() -> None:
     generate_key = "bulk_tig_preview_ready"
 
     if st.button(
-        "Tömeges TIG gyártása",
+        "Tömeges Teljesítés-összesítő gyártása",
         type="primary",
         use_container_width=True,
         disabled=not precheck,
@@ -1922,18 +1922,18 @@ def show_bulk_tig_dialog() -> None:
         st.session_state[generate_key] = True
 
     if st.session_state.get(generate_key):
-        st.success("A tömeges TIG gyártás designer állapota elkészült.")
+        st.success("A tömeges Teljesítés-összesítő gyártás designer állapota elkészült.")
         st.markdown("#### 1 darab minta PDF")
 
         pdf_bytes = build_demo_preview_pdf(
-            "Tömeges TIG – minta",
+            "Tömeges Teljesítés-összesítő – minta",
             f"Szűrésben szereplő futárok: {len(df)}",
         )
 
         st.download_button(
-            "Minta TIG PDF megnyitása / letöltése",
+            "Minta Teljesítés-összesítő PDF megnyitása / letöltése",
             data=pdf_bytes,
-            file_name="tomeges_tig_minta.pdf",
+            file_name="tomeges_teljesites_osszesito_minta.pdf",
             mime="application/pdf",
             use_container_width=True,
             key="bulk_tig_preview_pdf",
@@ -1949,7 +1949,7 @@ def show_bulk_tig_dialog() -> None:
             help="Csak designer gomb.",
         ):
             st.session_state["bulk_tig_accepted"] = True
-            st.success("A minta TIG elfogadott állapotot kapna.")
+            st.success("A minta Teljesítés-összesítő áttekintett állapotot kapna.")
 
         if action2.button(
             "Feltöltés profilba",
@@ -1958,7 +1958,7 @@ def show_bulk_tig_dialog() -> None:
             key="bulk_tig_upload",
             help="Csak designer gomb.",
         ):
-            st.success("A tömeges TIG-ek profilba feltöltése indulna.")
+            st.success("A tömeges Teljesítés-összesítők profilba feltöltése indulna.")
 
 
 
@@ -2519,7 +2519,7 @@ def show_new_settlement_page() -> None:
 
     workflow_cards = [
         ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
-        ("TIG-re vár", "Még nem készült TIG", "🟣"),
+        ("Teljesítés-összesítőre vár", "Még nem készült Teljesítés-összesítő", "🟣"),
         ("Bejelentések", "Nyitott ügyek", "🟠"),
         ("Kifizetésre vár", "Jóváhagyás után", "🟢"),
     ]
@@ -2559,7 +2559,7 @@ def show_new_settlement_page() -> None:
     a,b,c,d,e=st.columns(5)
     if a.button("Tömeges elszámolás",use_container_width=True):
         show_bulk_settlement_dialog()
-    if b.button("Tömeges TIG",use_container_width=True):
+    if b.button("Tömeges Teljesítés-összesítő",use_container_width=True):
         show_bulk_tig_dialog()
     if c.button("Bejelentések",use_container_width=True):
         show_reports_dialog()

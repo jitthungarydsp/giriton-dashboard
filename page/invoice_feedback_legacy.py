@@ -251,15 +251,15 @@ def render_legacy_invoice_delivery_status(route_driver_names, document_month):
         elif "tig" not in document_types:
             row_state = "waiting"
             lamp = "Sárga"
-            step = "TIG elkészítésére és feltöltésére vár"
+            step = "Teljesítés-összesítő elkészítésére és feltöltésére vár"
             courier_feedback = "Admin feladat"
             note = "Az elszámolást a futár elfogadta."
         elif not is_done(tig_status):
             row_state = "waiting"
             lamp = "Sárga"
-            step = "A futár TIG-elfogadására vár"
+            step = "A futár Teljesítés-összesítő áttekintésére vár"
             courier_feedback = "Futárnál"
-            note = str(tig_status.get("status_note") or "A TIG feltöltve.") if tig_status is not None else "A TIG feltöltve."
+            note = str(tig_status.get("status_note") or "A Teljesítés-összesítő feltöltve.") if tig_status is not None else "A Teljesítés-összesítő feltöltve."
         elif not is_done(invoice_check_status):
             row_state = "waiting"
             lamp = "Sárga"

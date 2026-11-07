@@ -96,7 +96,7 @@ function statusForRow(row, closure) {
   if (payable > 600000) {
     return "Számlaellenőrzés";
   }
-  return "TIG-re vár";
+  return "Teljesítés-összesítőre vár";
 }
 
 function buildCourierRow(row, profile, workload, closure) {
@@ -246,7 +246,7 @@ async function settlementDashboard(request, env) {
       acc.deductions += row.deductions;
       acc.payable += row.payable;
       acc.issues += row.status === "Eltérés" ? 1 : 0;
-      acc.tigWait += row.status === "TIG-re vár" ? 1 : 0;
+      acc.tigWait += row.status === "Teljesítés-összesítőre vár" ? 1 : 0;
       acc.invoiceCheck += row.status === "Számlaellenőrzés" ? 1 : 0;
       acc.payableReady += row.status === "Kifizethető" ? 1 : 0;
       return acc;

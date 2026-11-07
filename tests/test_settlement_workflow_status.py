@@ -93,7 +93,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
                 self.assertEqual(settlement_dashboard_status(**flags)["label"], "Elszámolás elfogadásra vár")
 
     def test_tig_requires_acceptance_and_a_document(self):
-        for ready, expected in ((False, "TIG-re vár"), (True, "TIG elfogadásra vár")):
+        for ready, expected in ((False, "Teljesítés-összesítőre vár"), (True, "Teljesítés-összesítő áttekintésre vár")):
             self.assertEqual(settlement_dashboard_status(
                 settlement_ready=True, settlement_done=True, tig_ready=ready, tig_done=False,
             )["label"], expected)
@@ -122,10 +122,10 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
 
     def test_old_database_label_and_open_tig_are_not_authoritative(self):
         row = dict(session_id="monthly", settlement_done=False, has_tig_document=True,
-                   dashboard_status_label="TIG elfogadásra vár")
+                   dashboard_status_label="Teljesítés-összesítő áttekintésre vár")
         self.assertEqual(settlement_dashboard_status_from_row(row)["label"], "Elszámolás elfogadásra vár")
         row.update(settlement_done=True, has_tig_document=False, tig_started=True)
-        self.assertEqual(settlement_dashboard_status_from_row(row)["label"], "TIG-re vár")
+        self.assertEqual(settlement_dashboard_status_from_row(row)["label"], "Teljesítés-összesítőre vár")
 
     def test_complaints_and_completed_payment(self):
         flags = dict(settlement_ready=True, settlement_done=True, tig_ready=True, tig_done=True)
@@ -189,7 +189,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         row = dict(courier_id="7688", courier_name="Teszt Futár", payable_huf=100,
                    loyalty_bonus_huf=9500,
                    session_id="monthly", settlement_done=False, has_tig_document=True,
-                   dashboard_status_label="TIG elfogadásra vár")
+                   dashboard_status_label="Teljesítés-összesítő áttekintésre vár")
         ns = {
             "pd": pd, "date": date, "settlement_dashboard_status_from_row": settlement_dashboard_status_from_row,
             "load_fast_admin_settlement_dashboard_rows": lambda *_: [row.copy()],

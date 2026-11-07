@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v268";
+const APP_VERSION = "v269";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -205,6 +205,14 @@ const HUNGARIAN_COUNTIES = [
   "Veszprém",
   "Zala",
 ];
+
+function summaryDocumentText(value) {
+  return String(value || "")
+    .replace(/\bTIG-(et|ed|re|ben|ből|hez|nél|nek|ek)\b/g, (_, ending) =>
+      "Teljesítés-összesítő" + ({et:"t", ed:"d", hez:"höz", ek:"k"}[ending] || ending))
+    .replace(/\bTIG\b/g, "Teljesítés-összesítő")
+    .replace(/teljesítési igazolás/gi, "Teljesítés-összesítő");
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -4600,7 +4608,7 @@ function renderAdminWorkflowActions() {
     </div>
     <div class="bulk-action-grid">
       <button class="secondary admin-workflow-action" type="button" data-action="settlement">Elszámolás elfogadása</button>
-      <button class="secondary admin-workflow-action" type="button" data-action="tig">TIG elfogadása</button>
+      <button class="secondary admin-workflow-action" type="button" data-action="tig">Teljesítés-összesítő áttekintése</button>
       <button class="secondary admin-workflow-action" type="button" data-action="invoice_submit">Számlafeltöltés jóváhagyása</button>
       <button class="secondary admin-workflow-action" type="button" data-action="invoice_check">Számlaellenőrzés jóváhagyása</button>
       <button class="secondary admin-workflow-action" type="button" data-action="invoice_payment">Kifizetés lezárása</button>
@@ -4626,7 +4634,7 @@ function documentList(documents) {
   if (!documents.length) return `<div class="empty-card">Ehhez a hónaphoz még nincs feltöltött dokumentum.</div>`;
   return `<div class="document-list">${documents.map((document) => `
     <div class="document-row">
-      <div><strong>${escapeHtml(document.title || document.file_name)}</strong><small>${escapeHtml(document.file_name)} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt</small></div>
+      <div><strong>${escapeHtml(summaryDocumentText(document.title || document.file_name))}</strong><small>${escapeHtml(document.file_name)} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt</small></div>
       <a class="download-link" href="${escapeHtml(withPreviewCourier(document.downloadUrl || "#"))}">Letöltés</a>
     </div>`).join("")}</div>`;
 }
@@ -4650,10 +4658,10 @@ function documentPreviewList(documents, courierId = "") {
       const canPreview = mime.includes("pdf") || /\.(pdf)$/i.test(fileName) || mime.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(fileName);
       return `<article class="document-preview-card">
         <div class="document-row">
-          <div><strong>${escapeHtml(document.title || fileName)}</strong><small>${escapeHtml(fileName)} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt</small></div>
+          <div><strong>${escapeHtml(summaryDocumentText(document.title || fileName))}</strong><small>${escapeHtml(fileName)} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt</small></div>
           <a class="download-link" href="${escapeHtml(url)}">Letöltés</a>
         </div>
-        ${canPreview ? `<button class="secondary" type="button" aria-expanded="false" data-document-preview-url="${escapeHtml(previewUrl)}" data-document-preview-title="${escapeHtml(document.title || fileName)}" data-document-preview-type="${mime.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(fileName) ? "image" : "pdf"}">Megtekintés</button>
+        ${canPreview ? `<button class="secondary" type="button" aria-expanded="false" data-document-preview-url="${escapeHtml(previewUrl)}" data-document-preview-title="${escapeHtml(summaryDocumentText(document.title || fileName))}" data-document-preview-type="${mime.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(fileName) ? "image" : "pdf"}">Megtekintés</button>
           <div data-document-preview-panel></div>` : `<div class="empty-card">Ehhez a fájltípushoz nincs beágyazott előnézet.</div>`}
       </article>`;
     }).join("")}
@@ -4764,7 +4772,7 @@ function documentTypeLabel(documentType) {
   const baseType = cleanType.split("__")[0];
   const labels = {
     settlement: "Elszámolás",
-    tig: "TIG",
+    tig: "Teljesítés-összesítő",
     invoice: "Számla",
     invoice_submit: "Számla",
     invoice_check: "Számla ellenőrzés",
@@ -4804,7 +4812,7 @@ function renderDocumentArchive(documents = []) {
         <div class="document-row archive">
           <div>
             <span class="document-badge">${escapeHtml(documentTypeLabel(document.document_type))}</span>
-            <strong>${escapeHtml(document.title || document.file_name || "Dokumentum")}</strong>
+            <strong>${escapeHtml(summaryDocumentText(document.title || document.file_name || "Dokumentum"))}</strong>
             <small>${escapeHtml(document.file_name || "")}${Number(document.file_size || 0) > 0 ? ` · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt` : ""}${document.uploaded_at ? ` · ${new Date(document.uploaded_at).toLocaleDateString("hu-HU")}` : ""}</small>
           </div>
           ${document.downloadUrl ? `<a class="download-link" href="${escapeHtml(withPreviewCourier(document.downloadUrl))}">Letöltés</a>` : ""}
@@ -5279,7 +5287,7 @@ function renderLegacySettlementDocumentPanel(documents, complaints, accepted, lo
 
 function renderLegacyTigDocumentPanel(documents) {
   return `
-    <div class="notice">Régi TIG dokumentum alapján kezelhető folyamat. Nyisd meg a végleges TIG PDF-et, majd fogadd el vagy küldj reklamációt.</div>
+    <div class="notice">Régi Teljesítés-összesítő dokumentum alapján kezelhető folyamat. Nyisd meg a végleges Teljesítés-összesítő PDF-et, majd tekintsd át vagy küldj reklamációt.</div>
     ${finalDocumentList(documents)}
   `;
 }
@@ -5299,7 +5307,7 @@ function workflowTigDownloadUrl() {
 
 function renderTigBreakdown(tig = state.workflow?.tigBreakdown || {}, options = {}) {
   if (!tig.available) {
-    return `<div class="notice">${escapeHtml(tig.message || "A TIG bontas meg nincs kesz.")}</div>`;
+    return `<div class="notice">${escapeHtml(tig.message || "A Teljesítés-összesítő bontas meg nincs kesz.")}</div>`;
   }
   const tigDownloadUrl = options.downloadUrl || workflowTigDownloadUrl();
   const tigMonth = tig.month || options.month || state.workflowMonth;
@@ -5347,10 +5355,10 @@ function renderTigBreakdown(tig = state.workflow?.tigBreakdown || {}, options = 
   const cashSellerBlock = renderPartyBlock({ ...seller, label: "Eladó - KP számla" }, "Eladó - KP számla");
   return `
     <div class="tig-toolbar">
-      <a class="download-link tig-download-link" href="${escapeHtml(tigDownloadUrl)}">TIG letöltése PDF-ben</a>
+      <a class="download-link tig-download-link" href="${escapeHtml(tigDownloadUrl)}">Teljesítés-összesítő letöltése PDF-ben</a>
     </div>
     <section class="tig-total-card">
-      <span>TIG végösszeg</span>
+      <span>Teljesítés-összesítő végösszeg</span>
       <strong>${tigValue(tig.finalTotalHuf)}</strong>
       <small>${escapeHtml(tigIdentifier)}</small>
     </section>
@@ -5402,7 +5410,7 @@ function renderDocumentPanel(action, title, stepNumber) {
   const useLegacySettlementDocument = action === "settlement" && !breakdown.available && documents.length > 0;
   const waitingTitle = action === "settlement"
     ? "Várakozás az elszámolás elkészítésére"
-    : "Várakozás a TIG elkészítésére";
+    : "Várakozás a Teljesítés-összesítő elkészítésére";
   const visibleTitle = documents.length ? title : waitingTitle;
   const description = locked
     ? "Az előző lépés lezárása után válik aktívvá."
@@ -5415,7 +5423,7 @@ function renderDocumentPanel(action, title, stepNumber) {
     panel.innerHTML = `
       <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>Elszámolásom</h3><p>A kártyákra nyitva látod, miből áll össze a havi összeg.</p></div></div>
       ${isExtraWorkflow()
-        ? `<div class="notice">${isKpInvoiceWorkflow() ? "Ez KP számla pótlási folyamat. A havi elszámolás helyett csak a KP TIG és a hozzá tartozó számlafeltöltés aktív." : "Ez egy egyéb folyamat. Itt nincs külön havi elszámolás vagy TIG; a következő teendő a számla feltöltése."}</div>`
+        ? `<div class="notice">${isKpInvoiceWorkflow() ? "Ez KP számla pótlási folyamat. A havi elszámolás helyett csak a KP Teljesítés-összesítő és a hozzá tartozó számlafeltöltés aktív." : "Ez egy egyéb folyamat. Itt nincs külön havi elszámolás vagy Teljesítés-összesítő; a következő teendő a számla feltöltése."}</div>`
         : locked
           ? `<div class="empty-card">🔒 Az elszámolási adatok még nem aktívak.</div>`
           : useLegacySettlementDocument
@@ -5436,14 +5444,14 @@ function renderDocumentPanel(action, title, stepNumber) {
         ? renderLegacyTigDocumentPanel(documents)
         : renderTigBreakdown();
     panel.innerHTML = `
-      <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>TIG és elfogadás</h3><p>A TIG tételes bontása itt jelenik meg, külön KP sorral.</p></div></div>
+      <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>Teljesítés-összesítő áttekintése</h3><p>A Teljesítés-összesítő tételes bontása itt jelenik meg, külön KP sorral.</p></div></div>
       ${locked ? `<div class="empty-card">Az előző lépés még nincs lezárva.</div>` : tigContent}
       ${accepted
-        ? `<div class="accept-row done">A TIG-et elfogadtad.</div>`
+        ? `<div class="accept-row done">A Teljesítés-összesítőt áttekintetted.</div>`
         : readOnly
           ? `<div class="accept-row"><button class="primary" disabled>Előnézeti módban nem módosítható</button></div>`
         : tigReady && !locked && !blocksAcceptance
-          ? `<div class="accept-row"><button class="primary" id="accept-${action}">Elfogadom a TIG-et</button></div>`
+          ? `<div class="accept-row"><button class="primary" id="accept-${action}">Áttekintettem a Teljesítés-összesítőt</button></div>`
         : tigReady && !locked && blocksAcceptance
           ? `<div class="accept-row"><button class="primary" disabled>Reklamáció lezárásáig nem fogadható el</button></div>`
           : ""}
@@ -5543,7 +5551,7 @@ function renderWorkflow() {
   renderWorkflowSteps();
   renderAdminWorkflowActions();
   renderDocumentPanel("settlement", "Elszámolás és elfogadás", 1);
-  renderDocumentPanel("tig", "TIG és elfogadás", 3);
+  renderDocumentPanel("tig", "Teljesítés-összesítő áttekintése", 3);
   const readOnly = Boolean(state.workflow?.viewerReadOnly);
   const invoiceAlreadySubmitted = invoiceUploadBlockedByExistingDocument();
   const invoiceLocked = readOnly || (!invoiceUploadReopened() && Boolean(workflowStep("invoice_submit").locked)) || invoiceAlreadySubmitted;
@@ -5584,7 +5592,7 @@ function renderWorkflow() {
   if (submitInfo) {
     submitInfo.innerHTML = `${previewNotice}${overrideNotice}${
       invoiceRequirements.requiresCashInvoice && !invoiceAlreadySubmitted
-        ? `<div class="notice">Ennél a TIG-nél külön KP számla is szükséges (${escapeHtml(formatHuf(invoiceRequirements.cashAmount))}). A véglegesítés csak az átutalásos és a KP számla feltöltése után indul.</div>`
+        ? `<div class="notice">Ennél a Teljesítés-összesítőnél külön KP számla is szükséges (${escapeHtml(formatHuf(invoiceRequirements.cashAmount))}). A véglegesítés csak az átutalásos és a KP számla feltöltése után indul.</div>`
         : ""
     }${
       invoiceAlreadySubmitted ? `<div class="notice">A számla már beérkezett ehhez a folyamathoz, új feltöltés nem indítható.</div>` : ""
@@ -5606,8 +5614,8 @@ function waitingWorkflow() {
   const titles = [
     ["settlement_document", "Várakozás az elszámolás elkészítésére", false],
     ["settlement", "Elszámolás elfogadása", true],
-    ["tig_document", "Várakozás a TIG elkészítésére", true],
-    ["tig", "TIG elfogadása", true],
+    ["tig_document", "Várakozás a Teljesítés-összesítő elkészítésére", true],
+    ["tig", "Teljesítés-összesítő áttekintése", true],
     ["invoice_submit", "Számlafeltöltés", true],
     ["invoice_check", "Számlaellenőrzés", true],
     ["invoice_payment", "Admin számlaelfogadás és kifizetés", true],
@@ -5700,8 +5708,8 @@ function openSettlementDashboardStatusEditor(courierId) {
   if (!row) return;
   const month = state.settlementDashboardMonth || previousLocalMonth();
   const options = [
-    ["settlement_wait", "Elszámolás elfogadásra vár"], ["tig_wait", "TIG-re vár"],
-    ["tig_accept", "TIG elfogadásra vár"], ["invoice_upload", "Számlafeltöltésre vár"],
+    ["settlement_wait", "Elszámolás elfogadásra vár"], ["tig_wait", "Teljesítés-összesítőre vár"],
+    ["tig_accept", "Teljesítés-összesítő áttekintésre vár"], ["invoice_upload", "Számlafeltöltésre vár"],
     ["invoice_check", "Számla ellenőrzésre vár"], ["payment_wait", "Kifizetésre vár"],
   ];
   document.querySelector("#monthly-status-editor")?.remove();
@@ -5785,8 +5793,8 @@ function settlementDashboardStatusOptions(statusCounts = {}) {
     "Elszámolás készül",
     "Elszámolás",
     "Elszámolás elfogadásra vár",
-    "TIG-re vár",
-    "TIG elfogadásra vár",
+    "Teljesítés-összesítőre vár",
+    "Teljesítés-összesítő áttekintésre vár",
     "Számlafeltöltésre vár",
     "Számla ellenőrzésre vár",
     "Kifizetésre vár",
@@ -5832,7 +5840,7 @@ function renderSettlementDashboardFlags(flags = []) {
 function settlementDashboardDetailTabs() {
   const tabs = [
     ["settlement", "Elszámolás"],
-    ["tig", "TIG"],
+    ["tig", "Teljesítés-összesítő"],
     ["complaints", "Reklamáció"],
     ["payment", "Kifizetés"],
     ["documents", "Dokumentumok"],
@@ -6001,9 +6009,9 @@ function settlementDashboardFinanceEditor(workflow = {}) {
     <section class="settlement-worksheet-section"><label>Módosítás indoka<textarea placeholder="Mi változott és miért?" rows="2" aria-label="Módosítás indoka"></textarea></label></section>
     <section class="settlement-worksheet-section">
       <div class="settlement-worksheet-totals"><div><small>Mentett kifizetendő</small><strong>${escapeHtml(formatHuf(savedTotal))}</strong></div><div><small>Tervezett kifizetendő</small><strong>—</strong></div><div><small>Eltérés</small><strong>—</strong></div></div>
-      <div class="settlement-worksheet-tig"><strong>TIG</strong><span>${tigTotal == null ? "A TIG összege ezen a nézeten még nincs betöltve." : `Mentett összeg: ${escapeHtml(formatHuf(tigTotal))}`}</span></div>
+      <div class="settlement-worksheet-tig"><strong>Teljesítés-összesítő</strong><span>${tigTotal == null ? "A Teljesítés-összesítő összege ezen a nézeten még nincs betöltve." : `Mentett összeg: ${escapeHtml(formatHuf(tigTotal))}`}</span></div>
       <div class="settlement-dashboard-editor-actions"><button class="secondary" type="button" disabled>Előnézet számítása</button><button class="primary" type="button" disabled>Változások mentése</button></div>
-      <small class="settlement-dashboard-editor-help">Az újraszámítás, mentés és TIG-módosítás ebben a vizuális változatban nem működik.</small>
+      <small class="settlement-dashboard-editor-help">Az újraszámítás, mentés és Teljesítés-összesítő-módosítás ebben a vizuális változatban nem működik.</small>
     </section>
   </div>`;
 }
@@ -6027,7 +6035,7 @@ function settlementDashboardPilotManualRow(row = {}) {
 function settlementDashboardPilotFinanceEditor(pilot) {
   return `<div class="settlement-dashboard-editor settlement-worksheet" data-pilot-worksheet data-snapshot-id="${escapeHtml(pilot.snapshotId)}" data-courier-id="${escapeHtml(pilot.courierId)}" data-month="${escapeHtml(pilot.month)}">
     <div class="settlement-dashboard-editor-head"><div><strong>Pénzügyi munkalap</strong><small>${escapeHtml(pilot.courierName || pilot.courierId)} · #${escapeHtml(pilot.courierId)} · ${escapeHtml(pilot.month)} · mentett verzió: v${escapeHtml(String(pilot.version))}</small></div><span class="settlement-dashboard-editor-badge">Szerkeszthető</span></div>
-    <div class="notice">Csak ennek a futárnak a mentett tételeit módosítja. A mentés után ugyanaz az új verzió látszik a PWA-ban és a devtest.py-ban. A meglévő TIG PDF változatlan marad.</div>
+    <div class="notice">Csak ennek a futárnak a mentett tételeit módosítja. A mentés után ugyanaz az új verzió látszik a PWA-ban és a devtest.py-ban. A meglévő Teljesítés-összesítő PDF változatlan marad.</div>
     <section class="settlement-worksheet-section"><h4>Pénzügyi értékek</h4><small>A levonások negatív előjellel szerepelnek. A darabszám módosítása önmagában nem számolja újra a díjakat.</small>
       <table class="settlement-worksheet-table"><thead><tr><th>Tétel</th><th>Mentett alapérték</th><th>Új alapérték</th></tr></thead><tbody>${pilot.rows.map(row => `<tr><td><strong>${escapeHtml(row.label)}</strong><small>${escapeHtml(row.note || "")}</small></td><td>${escapeHtml(row.amountKind === "count" ? `${formatCount(row.amountHuf)} db` : formatHuf(row.amountHuf))}</td><td><label class="settlement-worksheet-value"><input type="number" step="1" data-worksheet-key="${escapeHtml(row.key)}" value="${escapeHtml(String(row.amountHuf))}" aria-label="${escapeHtml(row.label)} új értéke"><span>${row.amountKind === "count" ? "db" : "Ft"}</span></label></td></tr>`).join("")}</tbody></table>
     </section>
@@ -6035,7 +6043,7 @@ function settlementDashboardPilotFinanceEditor(pilot) {
     ${(pilot.existingManualRows || []).length ? `<details><summary>Korábbi kézi forrástételek (${pilot.existingManualRows.length})</summary><small>A mentett alapértékek már tartalmazhatják ezeket; nem adjuk hozzá újra.</small>${pilot.existingManualRows.map(row => `<p>${escapeHtml(row.note || row.adjustment_type)} · ${escapeHtml(formatHuf(row.amount_huf))}</p>`).join("")}</details>` : ""}</section>
     <section class="settlement-worksheet-section"><label>Módosítás indoka<textarea data-worksheet-note placeholder="Mi változott és miért?" rows="2"></textarea></label></section>
     <section class="settlement-worksheet-section"><div class="settlement-worksheet-totals"><div><small>Mentett kifizetendő</small><strong>${escapeHtml(formatHuf(pilot.savedTotal))}</strong></div><div><small>Tervezett kifizetendő</small><strong data-worksheet-total>—</strong></div><div><small>Eltérés</small><strong data-worksheet-delta>—</strong></div></div>
-    <div class="settlement-worksheet-tig"><strong>TIG-bontás előnézete</strong><span data-worksheet-tig>—</span></div><div data-worksheet-changes></div>
+    <div class="settlement-worksheet-tig"><strong>Teljesítés-összesítő-bontás előnézete</strong><span data-worksheet-tig>—</span></div><div data-worksheet-changes></div>
     <div class="settlement-dashboard-editor-actions"><button type="button" class="secondary" data-worksheet-preview>Előnézet számítása</button><button type="button" class="primary" data-worksheet-commit disabled>Változások mentése</button></div><div data-worksheet-message role="status" aria-live="polite"></div></section>
   </div>`;
 }
@@ -6084,7 +6092,7 @@ async function submitPilotWorksheet(editor, commit) {
       if (state.settlementDashboardExpandedCourierId === payload.courierId && state.settlementDashboardMonth === payload.month) {
         await loadSettlementDashboardCourierDetail(payload.courierId);
         const savedMessage = document.querySelector("[data-pilot-worksheet] [data-worksheet-message]");
-        if (savedMessage) savedMessage.textContent = `Mentve: v${result.version}. A devtest.py nézetet frissítve ugyanez a mentés jelenik meg. A korábbi TIG PDF nem frissült.`;
+        if (savedMessage) savedMessage.textContent = `Mentve: v${result.version}. A devtest.py nézetet frissítve ugyanez a mentés jelenik meg. A korábbi Teljesítés-összesítő PDF nem frissült.`;
       }
     } else {
       editor.worksheetPreview = {hash: result.previewHash, payload: JSON.stringify(payload)};
@@ -6157,8 +6165,8 @@ function settlementDashboardPaymentPanel(row) {
     <div class="notice">Számlaellenőrzés: ${escapeHtml(check.status === "done" ? "Jóváhagyva" : check.status === "open" ? "Ellenőrzésre vár" : "Nincs rögzítve")}
       ${check.status_note ? `<div style="white-space:pre-wrap">${escapeHtml(check.status_note)}</div>` : ""}</div>
     <details><summary>Összeg részletei</summary>${table(payment.breakdown || [])}</details>
-    <details><summary>TIG részletei</summary>${table((payment.tigBreakdown?.rows || []).map((item) => ({label:item.label || item.key, amountHuf:item.grossHuf})))}
-      <a class="download-link" href="/api/workflow/tig.pdf?month=${encodeURIComponent(month)}&courier=${encodeURIComponent(row.courierId)}">TIG PDF megnyitása</a></details>
+    <details><summary>Teljesítés-összesítő részletei</summary>${table((payment.tigBreakdown?.rows || []).map((item) => ({label:item.label || item.key, amountHuf:item.grossHuf})))}
+      <a class="download-link" href="/api/workflow/tig.pdf?month=${encodeURIComponent(month)}&courier=${encodeURIComponent(row.courierId)}">Teljesítés-összesítő PDF megnyitása</a></details>
     <label>Kifizetési megjegyzés<textarea data-monthly-payment-admin-note ${payment.closed ? "disabled" : ""}>${escapeHtml(draft.adminNote ?? payment.adminNote ?? "")}</textarea></label>
     <label>Kifizetés lezárási megjegyzés<textarea data-monthly-payment-note ${payment.closed ? "disabled" : ""}>${escapeHtml(payment.closed ? payment.closeNote : (draft.note ?? (payment.closeNote || `Kifizetve: ${formatHuf(payment.amountHuf)}`)))}</textarea></label>
     <small>A lezárás a már elvégzett kifizetést rögzíti, banki utalást nem indít.</small>
@@ -6210,11 +6218,11 @@ function settlementDashboardTigPanel(workflow, row) {
     ? renderTigBreakdown(workflow.tigBreakdown, {month, downloadUrl: `/api/workflow/tig.pdf?${params}`})
     : documents.length
       ? documentPreviewList(documents, row.courierId)
-      : `<div class="notice">${escapeHtml(workflow.tigBreakdown?.message || "Ehhez a hónaphoz még nincs elkészített TIG.")}</div>`;
+      : `<div class="notice">${escapeHtml(workflow.tigBreakdown?.message || "Ehhez a hónaphoz még nincs elkészített Teljesítés-összesítő.")}</div>`;
   return `<section class="process-card settlement-dashboard-tab-panel ${accepted ? "accepted" : ""}">
-    <div class="process-title"><span class="step-code">3</span><div><h3>TIG és elfogadás</h3><p>A TIG tételes bontása, külön KP sorral.</p></div></div>
+    <div class="process-title"><span class="step-code">3</span><div><h3>Teljesítés-összesítő áttekintése</h3><p>A Teljesítés-összesítő tételes bontása, külön KP sorral.</p></div></div>
     ${content}
-    ${accepted ? `<div class="accept-row done">A TIG-et elfogadtad.</div>` : `<div class="notice">A TIG még nincs elfogadva.</div>`}
+    ${accepted ? `<div class="accept-row done">A Teljesítés-összesítőt áttekintetted.</div>` : `<div class="notice">A Teljesítés-összesítő áttekintésre vár.</div>`}
   </section>`;
 }
 
@@ -6872,13 +6880,13 @@ function renderSettlementImportValidation(validation = {}) {
           </div>
         </article>
         <article class="settlement-import-tig-card">
-          <span>TIG előnézet</span>
+          <span>Teljesítés-összesítő előnézet</span>
           <strong>${escapeHtml(formatHuf(tig.finalTotalHuf || 0))}</strong>
-          <small>${escapeHtml(tig.taxLabel || "TIG bontás")}</small>
+          <small>${escapeHtml(tig.taxLabel || "Teljesítés-összesítő bontás")}</small>
           <div class="settlement-import-tig-lines">
             ${(tig.rows || []).length ? (tig.rows || []).map((row) => `
               <small>${escapeHtml(row.label || "Tétel")} <b>${escapeHtml(formatHuf(row.grossHuf || 0))}</b></small>
-            `).join("") : `<small>Nincs TIG sor az előnézethez.</small>`}
+            `).join("") : `<small>Nincs Teljesítés-összesítő sor az előnézethez.</small>`}
           </div>
         </article>
       </div>
@@ -7123,7 +7131,7 @@ async function completeWorkflowAsAdmin(action) {
   if (!canUseAdminWorkflowActions()) return;
   const actionLabel = {
     settlement: "elszámolást",
-    tig: "TIG-et",
+    tig: "Teljesítés-összesítőt",
     invoice_submit: "számlafeltöltést",
     invoice_check: "számlaellenőrzést",
     invoice_payment: "kifizetést",
@@ -8654,7 +8662,7 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
     && Number(invoiceRequirements.cashGrossHuf || 0) > 1000;
   const cashOnlyInvoice = Boolean(invoiceRequirements.cashOnlyInvoice);
   if (cashInvoiceRequired && !hasCashInvoiceFile) {
-    showWorkflowMessage(`Ehhez a TIG-hez külön KP számla is kell (${formatHuf(invoiceRequirements.cashGrossHuf || 0)}). Töltsd fel a KP számlát is.`, true);
+    showWorkflowMessage(`Ehhez a Teljesítés-összesítőhöz külön KP számla is kell (${formatHuf(invoiceRequirements.cashGrossHuf || 0)}). Töltsd fel a KP számlát is.`, true);
     if (submitButton) submitButton.disabled = false;
     return;
   }

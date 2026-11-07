@@ -410,7 +410,7 @@ def notify_new_peopleforce_document(
 ) -> str:
     type_labels = {
         "settlement": "elszámolás",
-        "tig": "TIG",
+        "tig": "Teljesítés-összesítő",
         "invoice": "számla",
         "complaint_response": "reklamációs válasz",
     }

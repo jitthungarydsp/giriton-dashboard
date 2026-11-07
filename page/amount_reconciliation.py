@@ -108,9 +108,9 @@ def build_invoice_tig_comparison_rows(
             try:
                 tig_amount, tig_file = amount_loader(courier_id, document_month, "tig")
             except Exception as exc:
-                tig_amount, tig_file = 0, f"TIG hiba: {exc}"
+                tig_amount, tig_file = 0, f"Teljesítés-összesítő hiba: {exc}"
         else:
-            tig_amount, tig_file = 0, "Nincs Courier ID / TIG"
+            tig_amount, tig_file = 0, "Nincs Courier ID / Teljesítés-összesítő"
 
         tig_amount = int(tig_amount or 0)
         tig_found = bool(tig_amount)
@@ -120,16 +120,16 @@ def build_invoice_tig_comparison_rows(
                 "Futár": courier_name or tig_courier.get("courier_name") or "Ismeretlen",
                 "Courier ID": courier_id or "-",
                 "Invoice summary végösszeg": invoice_amount,
-                "TIG PDF végösszeg": tig_amount,
-                "Eltérés (invoice summary − TIG)": difference,
+                "Teljesítés-összesítő PDF végösszeg": tig_amount,
+                "Eltérés (invoice summary − Teljesítés-összesítő)": difference,
                 "Ellenőrzés": (
                     "Egyezik"
                     if tig_found and difference == 0
                     else "Eltérés"
                     if tig_found
-                    else "Hiányzó TIG/összeg"
+                    else "Hiányzó Teljesítés-összesítő/összeg"
                 ),
-                "TIG dokumentum": tig_file,
+                "Teljesítés-összesítő dokumentum": tig_file,
                 "_tig_found": tig_found,
                 "_matches": tig_found and difference == 0,
             }
@@ -138,10 +138,10 @@ def build_invoice_tig_comparison_rows(
 
 
 def show_amount_reconciliation_page():
-    st.title("Invoice summary–TIG ellenőrzés")
+    st.title("Invoice summary–Teljesítés-összesítő ellenőrzés")
     st.caption(
         "A resources/invoice_summary.py payable_total_huf végösszegét hasonlítja "
-        "össze a feltöltött TIG PDF végösszegével. Más adatforrást nem használ."
+        "össze a feltöltött Teljesítés-összesítő PDF végösszegével. Más adatforrást nem használ."
     )
 
     today = date.today()
@@ -160,7 +160,7 @@ def show_amount_reconciliation_page():
         month_end = today
 
     if not st.button(
-        "Invoice summary és TIG összehasonlítása",
+        "Invoice summary és Teljesítés-összesítő összehasonlítása",
         type="primary",
         use_container_width=True,
         key=f"run_invoice_tig_comparison_{month_start}_{selected_sheet}",
@@ -168,7 +168,7 @@ def show_amount_reconciliation_page():
         st.info("Válaszd ki a hónapot, majd indítsd el az összehasonlítást.")
         return
 
-    with st.spinner("Invoice summary végösszegek és TIG PDF-ek ellenőrzése..."):
+    with st.spinner("Invoice summary végösszegek és Teljesítés-összesítő PDF-ek ellenőrzése..."):
         try:
             data = read_invoice_data(month_start, month_end)
             driver_summary = build_current_invoice_summary(
@@ -194,18 +194,18 @@ def show_amount_reconciliation_page():
     m1.metric("Futár", len(result))
     m2.metric("Egyezik", int(matches.sum()))
     m3.metric("Eltérés", int(mismatches.sum()))
-    m4.metric("Hiányzó TIG/összeg", int(missing.sum()))
+    m4.metric("Hiányzó Teljesítés-összesítő/összeg", int(missing.sum()))
 
     view_filter = st.radio(
         "Megjelenítés",
-        ["Mindenki", "Csak eltérés", "Csak hiányzó TIG/összeg"],
+        ["Mindenki", "Csak eltérés", "Csak hiányzó Teljesítés-összesítő/összeg"],
         horizontal=True,
         key="invoice_tig_comparison_filter",
     )
     visible = result.copy()
     if view_filter == "Csak eltérés":
         visible = visible[visible["_tig_found"] & ~visible["_matches"]]
-    elif view_filter == "Csak hiányzó TIG/összeg":
+    elif view_filter == "Csak hiányzó Teljesítés-összesítő/összeg":
         visible = visible[~visible["_tig_found"]]
 
     def style_row(row):
@@ -224,8 +224,8 @@ def show_amount_reconciliation_page():
         hide_index=True,
         column_config={
             "Invoice summary végösszeg": st.column_config.NumberColumn(format="%d Ft"),
-            "TIG PDF végösszeg": st.column_config.NumberColumn(format="%d Ft"),
-            "Eltérés (invoice summary − TIG)": st.column_config.NumberColumn(
+            "Teljesítés-összesítő PDF végösszeg": st.column_config.NumberColumn(format="%d Ft"),
+            "Eltérés (invoice summary − Teljesítés-összesítő)": st.column_config.NumberColumn(
                 format="%d Ft"
             ),
         },

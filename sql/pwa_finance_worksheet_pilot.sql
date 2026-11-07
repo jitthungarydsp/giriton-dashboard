@@ -63,7 +63,7 @@ begin
              and (i->>'amount_value')::numeric = v_tig) <> 1
        or (select coalesce(sum((i->>'amount_value')::numeric),0) from jsonb_array_elements(p_prepared->'items') i
            where i->>'section' = 'tig' and i->>'item_key' not in ('tig_final_total','tig_cash_service')) <> v_tig then
-        raise exception 'A pénzügyi és TIG összesítések nem egyeznek.';
+        raise exception 'A pénzügyi és Teljesítés-összesítő összesítések nem egyeznek.';
     end if;
     insert into settlement.courier_finance_snapshot
         (courier_id,courier_name,period_start,version,source,calculation_mode,warehouse_label,session_id,

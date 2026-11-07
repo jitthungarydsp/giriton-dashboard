@@ -55,15 +55,15 @@ begin
     end if;
     if v_index >= 2 and exists (select 1 from settlement.mobile_settlement_period_config
         where period_start = p_period_start and visibility_mode = 'settlement_only') then
-        raise exception 'A TIG a hónap beállítása szerint rejtve van.';
+        raise exception 'A Teljesítés-összesítő a hónap beállítása szerint rejtve van.';
     end if;
     select exists (select 1 from public.peopleforce_documents where courier_id::text = p_courier_id
         and document_month = p_period_start and document_type = 'tig'
         and coalesce(note,'') not ilike '%Folyamat azonosító:%') into v_has_tig;
     if p_target = 'tig_wait' and v_has_tig then
-        raise exception 'Már van TIG dokumentum. Válaszd a TIG elfogadásra vár státuszt.';
+        raise exception 'Már van Teljesítés-összesítő dokumentum. Válaszd a Teljesítés-összesítő áttekintésre vár státuszt.';
     end if;
-    if v_index >= 3 and not v_has_tig then raise exception 'Előbb készítsd el a TIG dokumentumot.'; end if;
+    if v_index >= 3 and not v_has_tig then raise exception 'Előbb készítsd el a Teljesítés-összesítő dokumentumot.'; end if;
     if v_index >= 5 and not exists (select 1 from public.peopleforce_documents where courier_id::text = p_courier_id
         and document_month = p_period_start and document_type = 'invoice'
         and coalesce(note,'') not ilike '%Folyamat azonosító:%') then

@@ -128,7 +128,7 @@ def prepare_worksheet(snapshot, rows, manual_rows, note):
             deductions += amount
     total = income + deductions + correction
     if total < 0:
-        raise ValueError("Negatív kifizetendő összeghez nem készíthető TIG.")
+        raise ValueError("Negatív kifizetendő összeghez nem készíthető Teljesítés-összesítő.")
     totals = {"income_total": income, "deduction_total": deductions, "correction_total": correction, "payable_total": total}
     by_key = {r["key"]: r["amountHuf"] for r in base}
     # Preserve the current profile as input; never refetch imports or run a batch.
@@ -174,7 +174,7 @@ def prepare_worksheet(snapshot, rows, manual_rows, note):
     for row in tig["rows"]:
         items.append({"section": "tig", "item_key": "tig_" + row["key"], "item_label": row["label"],
                       "amount_value": row["grossHuf"], "amount_kind": "huf", "note": row.get("note", ""), "display_order": len(items) + 1})
-    items.append({"section": "tig", "item_key": "tig_final_total", "item_label": "TIG végösszeg", "amount_value": tig_total,
+    items.append({"section": "tig", "item_key": "tig_final_total", "item_label": "Teljesítés-összesítő végösszeg", "amount_value": tig_total,
                   "amount_kind": "huf", "note": note, "display_order": len(items) + 1})
     # Refresh aggregate aliases for existing PWA cards without counting them twice.
     for key, components, label in (("kiflis_bonus_malus", ["monthly_bonus", "monthly_malus"], "Kiflis levonások / bónuszok"),

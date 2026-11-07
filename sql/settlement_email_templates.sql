@@ -51,12 +51,12 @@ Hónap: {month}
 
 Üdvözlettel:
 JITT', true, 'system'),
-    ('tig_accepted', 'TIG elfogadva', 'TIG elfogadva',
+    ('tig_accepted', 'Teljesítés-összesítő áttekintve', 'Teljesítés-összesítő áttekintve',
      'Kedves {courier_name}!
 
-Rögzítettük, hogy elfogadtad a TIG-et.
+Rögzítettük, hogy áttekintetted a Teljesítés-összesítőt.
 Hónap: {month}
-TIG végösszeg: {amount_huf}
+Teljesítés-összesítő végösszeg: {amount_huf}
 
 Üdvözlettel:
 JITT', true, 'system'),
@@ -124,18 +124,18 @@ Belépés:
 
 Üdvözlettel:
 JITT', true, 'system'),
-    ('status_tig_missing', 'Státusz - TIG-re vár', 'A TIG előkészítés alatt van',
+    ('status_tig_missing', 'Státusz - Teljesítés-összesítőre vár', 'A Teljesítés-összesítő előkészítés alatt van',
      'Kedves {courier_name}!
 
-A {month} havi TIG még előkészítés alatt van.
+A {month} havi Teljesítés-összesítő még előkészítés alatt van.
 Amint elkészül, a PWA felületen fogod látni.
 
 Üdvözlettel:
 JITT', true, 'system'),
-    ('status_tig_acceptance_waiting', 'Státusz - TIG elfogadásra vár', 'Elfogadásra vár a TIG-ed',
+    ('status_tig_acceptance_waiting', 'Státusz - Teljesítés-összesítő áttekintésre vár', 'Áttekintésre vár a Teljesítés-összesítőd',
      'Kedves {courier_name}!
 
-A {month} havi TIG-ed elfogadásra vár.
+A {month} havi Teljesítés-összesítőd áttekintésre vár.
 Kérjük, nézd át és fogadd el a PWA felületen.
 
 Belépés:

@@ -1,12 +1,12 @@
 /*
-PWA havi elszámolás/TIG láthatósági főkapcsoló.
+PWA havi elszámolás/Teljesítés-összesítő láthatósági főkapcsoló.
 
 Supabase SQL Editorban futtasd egyszer.
 
 visibility_mode:
-- original: eredeti folyamat, TIG csak elszámolás elfogadása után aktív
-- settlement_only: csak az elszámolás látszik, TIG rejtve marad
-- settlement_and_tig: elszámolás és TIG is látszik
+- original: eredeti folyamat, Teljesítés-összesítő csak elszámolás elfogadása után aktív
+- settlement_only: csak az elszámolás látszik, Teljesítés-összesítő rejtve marad
+- settlement_and_tig: elszámolás és Teljesítés-összesítő is látszik
 */
 
 alter table settlement.mobile_settlement_period_config

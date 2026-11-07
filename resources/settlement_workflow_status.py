@@ -28,9 +28,9 @@ def settlement_dashboard_status(
     if tig_done and not invoice_submit_done:
         return status("Számlafeltöltésre vár", "Futár teendő", "waiting", 60)
     if settlement_done and not tig_ready and not tig_done:
-        return status("TIG-re vár", "TIG elkészülésére vár", "waiting", 45)
+        return status("Teljesítés-összesítőre vár", "Teljesítés-összesítő elkészülésére vár", "waiting", 45)
     if settlement_done and tig_ready and not tig_done:
-        return status("TIG elfogadásra vár", "Futár teendő", "waiting", 50)
+        return status("Teljesítés-összesítő áttekintésre vár", "Futár teendő", "waiting", 50)
     if settlement_ready:
         return status("Elszámolás", "Folyamatban", "active", 30)
     return status("Elszámolás készül", "Várakozás", "muted", 10)

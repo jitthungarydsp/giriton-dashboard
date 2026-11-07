@@ -217,13 +217,13 @@ DEFAULT_EMAIL_TEMPLATES = {
         ),
     },
     "tig_accepted": {
-        "name": "TIG elfogadva",
-        "subject": "TIG elfogadva",
+        "name": "Teljesítés-összesítő áttekintve",
+        "subject": "Teljesítés-összesítő áttekintve",
         "body": (
             "Kedves {courier_name}!\n\n"
-            "Rögzítettük, hogy elfogadtad a TIG-et.\n"
+            "Rögzítettük, hogy áttekintetted a Teljesítés-összesítőt.\n"
             "Hónap: {month}\n"
-            "TIG végösszeg: {amount_huf}\n\n"
+            "Teljesítés-összesítő végösszeg: {amount_huf}\n\n"
             "Üdvözlettel:\nJITT"
         ),
     },
@@ -294,21 +294,21 @@ DEFAULT_EMAIL_TEMPLATES = {
         ),
     },
     "status_tig_missing": {
-        "name": "Státusz - TIG-re vár",
-        "subject": "A TIG előkészítés alatt van",
+        "name": "Státusz - Teljesítés-összesítőre vár",
+        "subject": "A Teljesítés-összesítő előkészítés alatt van",
         "body": (
             "Kedves {courier_name}!\n\n"
-            "A {month} havi TIG még előkészítés alatt van.\n"
+            "A {month} havi Teljesítés-összesítő még előkészítés alatt van.\n"
             "Amint elkészül, a PWA felületen fogod látni.\n\n"
             "Üdvözlettel:\nJITT"
         ),
     },
     "status_tig_acceptance_waiting": {
-        "name": "Státusz - TIG elfogadásra vár",
-        "subject": "Elfogadásra vár a TIG-ed",
+        "name": "Státusz - Teljesítés-összesítő áttekintésre vár",
+        "subject": "Elfogadásra vár a Teljesítés-összesítőd",
         "body": (
             "Kedves {courier_name}!\n\n"
-            "A {month} havi TIG-ed elfogadásra vár.\n"
+            "A {month} havi Teljesítés-összesítőd áttekintésre vár.\n"
             "Kérjük, nézd át és fogadd el a PWA felületen.\n\n"
             "Belépés:\n{login_url}\n\n"
             "Üdvözlettel:\nJITT"
@@ -396,7 +396,9 @@ def template_variables(template_text):
 
 
 def render_template_text(subject, body, variables):
-    return _safe_format(subject, variables), _safe_format(body, variables)
+    from resources.summary_document_labels import summary_document_text
+    return (summary_document_text(_safe_format(subject, variables)),
+            summary_document_text(_safe_format(body, variables)))
 
 
 def build_custom_message(recipient, subject, body):
@@ -433,7 +435,7 @@ def build_new_document_message(
 
     labels = {
         "settlement": "elszámolás",
-        "tig": "TIG",
+        "tig": "Teljesítés-összesítő",
         "invoice": "számla",
         "complaint_response": "reklamációs válasz",
     }

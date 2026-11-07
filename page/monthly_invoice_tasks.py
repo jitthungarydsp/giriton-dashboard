@@ -87,7 +87,7 @@ def render_closed_payment_audit(document_month, driver_summary):
     st.subheader("Lezárt utalások ellenőrzése")
     st.caption(
         "A már lezárt futárnál összehasonlítja a mostani számítást, az elküldött "
-        "elszámolást és a TIG-et."
+        "elszámolást és a Teljesítés-összesítőt."
     )
     try:
         closed_couriers = _closed_couriers(document_month)
@@ -144,7 +144,7 @@ def render_closed_payment_audit(document_month, driver_summary):
     comparison_rows = [
         {"Forrás": "Mostani számítás", "Összeg": current_amount, "Dokumentum": "payable_total_huf"},
         {"Forrás": "Elszámolás", "Összeg": settlement_amount, "Dokumentum": settlement_file},
-        {"Forrás": "TIG", "Összeg": tig_amount, "Dokumentum": tig_file},
+        {"Forrás": "Teljesítés-összesítő", "Összeg": tig_amount, "Dokumentum": tig_file},
     ]
     display_rows = []
     for row in comparison_rows:
@@ -169,14 +169,14 @@ def render_closed_payment_audit(document_month, driver_summary):
     else:
         st.error(
             "Eltérés vagy hiányzó adat található. Ellenőrizd az aktuális számítást, "
-            "az elszámolást és a TIG-et."
+            "az elszámolást és a Teljesítés-összesítőt."
         )
 
 
 def show_monthly_invoice_tasks_page():
     st.title("Havi feladatok")
     st.caption(
-        "A még intézendő futárok, a havi dokumentumfolyamat és a számla–TIG ellenőrzés külön nézete."
+        "A még intézendő futárok, a havi dokumentumfolyamat és a számla–Teljesítés-összesítő ellenőrzés külön nézete."
     )
 
     today = date.today()

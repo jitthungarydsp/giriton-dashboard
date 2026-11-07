@@ -1995,7 +1995,7 @@ def render_empty_right_menu(
             invoice_compare_status = "Eltérés vagy hiányzó számla." if invoice_compare_bad else "Számlák egyeznek."
             if not panel_has_saved_tig_breakdown:
                 invoice_compare_bad = True
-                invoice_compare_status = "Nincs mentett TIG-verzió; az egyezés nem igazolt."
+                invoice_compare_status = "Nincs mentett Teljesítés-összesítő-verzió; az egyezés nem igazolt."
             invoice_compare_rows_html = (
                 '<div class="right-invoice-row"><span>Átutalásos</span>'
                 f"<strong>{html.escape(transfer_status)}</strong></div>"
@@ -2043,7 +2043,7 @@ def render_empty_right_menu(
             </div>
             <div class="right-empty-menu-card right-invoice-card {invoice_compare_class}">
                 <div class="right-empty-menu-title">Számla kontroll</div>
-                <p class="right-empty-menu-caption">TIG kontra feltöltött számlák.</p>
+                <p class="right-empty-menu-caption">Teljesítés-összesítő kontra feltöltött számlák.</p>
                 {invoice_compare_rows_html}
                 <div class="right-invoice-status">{html.escape(invoice_compare_status)}</div>{invoice_compare_action_html}
             </div>
@@ -3122,9 +3122,9 @@ def settlement_mobile_session_for_mode(calculation_mode: str, period_start: date
 
 
 MOBILE_VISIBILITY_MODE_LABELS = {
-    "original": "Eredeti folyamat: elszámolás után TIG",
+    "original": "Eredeti folyamat: elszámolás után Teljesítés-összesítő",
     "settlement_only": "Csak elszámolás látszik",
-    "settlement_and_tig": "Elszámolás és TIG is látszik",
+    "settlement_and_tig": "Elszámolás és Teljesítés-összesítő is látszik",
 }
 
 
@@ -3966,7 +3966,7 @@ def render_devtest_finance_snapshot_view(
     created_at = str(snapshot.get("created_at") or "")
     st.caption(f"DB-ből betöltött pénzügyi verzió: v{version} | {created_at}")
     if metadata.get("source") == "pwa_worksheet_pilot":
-        st.info("PWA munkalapon mentett közös pénzügyi verzió. Az összegek és a TIG-bontás ebből a mentésből származnak.")
+        st.info("PWA munkalapon mentett közös pénzügyi verzió. Az összegek és a Teljesítés-összesítő-bontás ebből a mentésből származnak.")
         st.caption(f"Módosítás indoka: {metadata.get('worksheet_note') or '-'}")
     try:
         validate_loyalty_snapshot_consistency(
@@ -4516,7 +4516,7 @@ def render_devtest_finance_snapshot_view(
             st.dataframe(pd.DataFrame(pwa_manual_rows), hide_index=True, use_container_width=True)
     st.markdown("#### Mentett pénzügyi értékek")
     st.dataframe(finance_frame, hide_index=True, use_container_width=True)
-    st.markdown("#### Mentett TIG")
+    st.markdown("#### Mentett Teljesítés-összesítő")
     st.dataframe(tig_frame, hide_index=True, use_container_width=True)
 
 
@@ -5140,10 +5140,10 @@ def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: 
     final_override = override_map.get("tig_final_total", {})
     rows.append({
         "Kulcs": "tig_final_total",
-        "MegnevezĂ©s": str(final_override.get("item_label") or "TIG vĂ©gĂ¶sszeg"),
+        "MegnevezĂ©s": str(final_override.get("item_label") or "Teljesítés-összesítő vĂ©gĂ¶sszeg"),
         "TĂ­pus": "huf",
         "Ă‰rtĂ©k": parse_huf_value(tig_breakdown.get("finalTotalHuf")),
-        "MegjegyzĂ©s": str(final_override.get("note") or "TIG elfogadĂˇsnĂˇl lĂˇthatĂł vĂ©gĂ¶sszeg"),
+        "MegjegyzĂ©s": str(final_override.get("note") or "Teljesítés-összesítő elfogadĂˇsnĂˇl lĂˇthatĂł vĂ©gĂ¶sszeg"),
     })
     return pd.DataFrame(rows, columns=["Kulcs", "MegnevezĂ©s", "TĂ­pus", "Ă‰rtĂ©k", "MegjegyzĂ©s"])
 
@@ -5168,10 +5168,10 @@ def mobile_tig_rows_from_breakdown(tig_breakdown: dict[str, object]) -> list[dic
         })
     rows.append({
         "item_key": "tig_final_total",
-        "item_label": "TIG végösszeg",
+        "item_label": "Teljesítés-összesítő végösszeg",
         "amount_kind": "huf",
         "amount_value": parse_huf_value(tig_breakdown.get("finalTotalHuf")),
-        "note": "TIG elfogadásnál látható végösszeg",
+        "note": "Teljesítés-összesítő áttekintésekor látható végösszeg",
     })
     return rows
 
@@ -7530,6 +7530,8 @@ def slugify_filename(value: object) -> str:
 def make_document_reference(courier_id: str, document_type: str, document_month: date) -> str:
     month_text = document_month.replace(day=1).strftime("%Y%m")
     doc_type = re.sub(r"[^A-Z0-9]+", "", str(document_type or "DOC").upper()) or "DOC"
+    if doc_type == "TIG":
+        doc_type = "TELJESITES-OSSZESITO"
     return f"{courier_id}-{month_text}-{doc_type}-{uuid.uuid4().hex[:8].upper()}"
 
 
@@ -7631,7 +7633,7 @@ def cash_invoice_missing_email_payload(
         f"A(z) {process_month:%Y-%m} havi elszámolásodhoz hiányzik a KP számla.\n"
         f"Bekérendő KP számla összege: {format_huf(cash_amount_huf)}.\n\n"
         "A PWA oldalon válaszd ki az 'Elszámolás és számla' résznél a "
-        f"'{process_label}' folyamatot, fogadd el a KP TIG-et, majd töltsd fel a KP számlát.\n\n"
+        f"'{process_label}' folyamatot, fogadd el a KP Teljesítés-összesítőt, majd töltsd fel a KP számlát.\n\n"
         f"Belépés: {app_login_url()}\n\n"
         "Köszönjük!\nJITT"
     )
@@ -7656,7 +7658,7 @@ def send_cash_invoice_missing_email(
     )
     process_note = (
         f"KP számla pótlási folyamat. Folyamat azonosító: {process_id}. "
-        f"KP TIG összeg: {cash_amount_huf} Ft."
+        f"KP Teljesítés-összesítő összeg: {cash_amount_huf} Ft."
     )
     context = {
         "month": process_month.strftime("%Y-%m"),
@@ -7680,7 +7682,7 @@ def send_cash_invoice_missing_email(
             action_key=process_action_key("tig", process_id),
             document_month=process_month,
             status="open",
-            status_note="KP TIG elfogadásra vár. " + process_note,
+            status_note="KP Teljesítés-összesítő áttekintésre vár. " + process_note,
             updated_by=actor,
         )
         result = send_custom_email(clean_email, subject, body)
@@ -7864,7 +7866,7 @@ def admin_expected_invoice_amount(
 
 WORKFLOW_BACKSTEP_TARGETS = {
     "settlement": {"label": "Elszamolas elfogadasara", "done": [], "open": ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]},
-    "tig": {"label": "TIG elfogadasara", "done": ["settlement"], "open": ["tig", "invoice_submit", "invoice_check", "invoice_payment"]},
+    "tig": {"label": "Teljesítés-összesítő áttekintésére", "done": ["settlement"], "open": ["tig", "invoice_submit", "invoice_check", "invoice_payment"]},
     "invoice_submit": {"label": "Szamlafeltoltesre", "done": ["settlement", "tig"], "open": ["invoice_submit", "invoice_check", "invoice_payment"]},
     "invoice_check": {"label": "Szamlaellenorzesre", "done": ["settlement", "tig", "invoice_submit"], "open": ["invoice_check", "invoice_payment"]},
     "invoice_payment": {"label": "Kifizetesre", "done": ["settlement", "tig", "invoice_submit", "invoice_check"], "open": ["invoice_payment"]},
@@ -13869,7 +13871,7 @@ def tig_payment_payload_from_row(row: pd.Series | dict[str, object], period_star
         "id": _export_row_value(row, {"Courier ID", "courier_id"}),
         "name": _export_row_value(row, {"Futár", "Futar", "courier_name"}),
         "tax_number": _export_row_value(row, {"Adószám", "Adoszam", "tax_number"}),
-        "tig_type": _export_row_value(row, {"TIG típus", "TIG tipus", "Számla típus", "Szamla tipus"}),
+        "tig_type": _export_row_value(row, {"Teljesítés-összesítő típus", "TIG típus", "TIG tipus", "Számla típus", "Szamla tipus"}),
         "vat_status": _export_row_value(row, {"FA státusz", "AFA státusz", "AFA status", "vat_status"}),
         "employment_type": _export_row_value(row, {"Jogviszony", "employment_type", "EFO státusz", "EFO statusz"}),
         "efo_status": _export_row_value(row, {"EFO státusz", "EFO statusz", "efo_status"}),
@@ -14648,8 +14650,8 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
 STATUS_EMAIL_TEMPLATE_KEYS = {
     "Elszámolásra vár": "status_settlement_missing",
     "Elszámolás elfogadásra vár": "status_settlement_acceptance_waiting",
-    "TIG-re vár": "status_tig_missing",
-    "TIG elfogadásra vár": "status_tig_acceptance_waiting",
+    "Teljesítés-összesítőre vár": "status_tig_missing",
+    "Teljesítés-összesítő áttekintésre vár": "status_tig_acceptance_waiting",
     "Számlafeltöltésre vár": "status_invoice_upload_waiting",
     "Számlaellenőrzésre vár": "status_invoice_check_waiting",
     "Bejelentések": "status_complaint_open",
@@ -15013,8 +15015,8 @@ def status_meta(status: str) -> tuple[str,str]:
         "Jóváhagyva":("status-green","led-green"),
         "Elszámolásra vár":("status-blue","led-blue"),
         "Elszámolás elfogadásra vár":("status-blue","led-blue"),
-        "TIG-re vár":("status-purple","led-purple"),
-        "TIG elfogadásra vár":("status-purple","led-purple"),
+        "Teljesítés-összesítőre vár":("status-purple","led-purple"),
+        "Teljesítés-összesítő áttekintésre vár":("status-purple","led-purple"),
         "Bejelentések":("status-orange","led-orange"),
         "Új fizetés előleg":("status-yellow","led-yellow"),
         "Kifizetésre vár (Fizetés előleg)":("status-yellow","led-yellow"),
@@ -15107,7 +15109,7 @@ def close_open_invoice_check_complaints(courier_id: str, document_month: date) -
 def get_demo_documents() -> pd.DataFrame:
     return pd.DataFrame([
         {"Courier ID":"7486","Típus":"Elszámolás","Fájl":"elszamolas_2026_06.pdf","Feltöltve":"2026-07-03 09:12"},
-        {"Courier ID":"7486","Típus":"TIG","Fájl":"tig_2026_06.pdf","Feltöltve":"2026-07-04 10:35"},
+        {"Courier ID":"7486","Típus":"Teljesítés-összesítő","Fájl":"teljesites_osszesito_2026_06.pdf","Feltöltve":"2026-07-04 10:35"},
         {"Courier ID":"7612","Típus":"Elszámolás","Fájl":"elszamolas_2026_06.pdf","Feltöltve":"2026-07-03 09:30"},
     ])
 
@@ -15115,7 +15117,7 @@ def get_demo_documents() -> pd.DataFrame:
 def get_demo_complaints() -> pd.DataFrame:
     return pd.DataFrame([
         {"Courier ID":"7486","Típus":"Elszámolás","Státusz":"Nyitott","Dátum":"2026-07-05","Üzenet":"A bónusz összege eltér."},
-        {"Courier ID":"7612","Típus":"TIG","Státusz":"Lezárt","Dátum":"2026-07-02","Üzenet":"A vállalkozási cím javítva lett."},
+        {"Courier ID":"7612","Típus":"Teljesítés-összesítő","Státusz":"Lezárt","Dátum":"2026-07-02","Üzenet":"A vállalkozási cím javítva lett."},
     ])
 
 
@@ -18869,7 +18871,7 @@ def render_courier_detail_page() -> None:
         workload_cols[5].metric("Cím / rendelés", order_total)
         doc_a, doc_b = st.columns([0.18, 0.18])
         settlement_file_name = f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{settlement_document_reference}.pdf"
-        tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
+        tig_file_name = f"jitt_teljesites_osszesito_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
         pdf_cache_suffix = (
             f"{courier_id}_{period_start:%Y%m}_{int(round(payable_total))}_"
             f"{int(round(final_total_income))}_{int(round(final_total_deduction))}_{route_total}_{order_total}"
@@ -18880,13 +18882,13 @@ def render_courier_detail_page() -> None:
             st.session_state[settlement_pdf_cache_key] = build_current_settlement_pdf()
         if st.session_state.get(settlement_pdf_cache_key):
             doc_a.download_button("Elszámolás PDF letöltése", data=st.session_state[settlement_pdf_cache_key], file_name=settlement_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
-        if doc_b.button("TIG PDF készítése", use_container_width=True, key=f"finance_prepare_tig_pdf_{courier_id}_{period_start:%Y%m}"):
+        if doc_b.button("Teljesítés-összesítő PDF készítése", use_container_width=True, key=f"finance_prepare_tig_pdf_{courier_id}_{period_start:%Y%m}"):
             st.session_state[tig_pdf_cache_key] = build_current_tig_pdf()
         if st.session_state.get(tig_pdf_cache_key):
-            doc_b.download_button("TIG PDF letöltése", data=st.session_state[tig_pdf_cache_key], file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
+            doc_b.download_button("Teljesítés-összesítő PDF letöltése", data=st.session_state[tig_pdf_cache_key], file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
         upload_a, upload_b, open_month_col, refresh_col = st.columns([0.18, 0.18, 0.28, 0.18])
         if closure_done:
-            st.warning("A havi folyamat le van zárva, új elszámolás/TIG nem tölthető fel erre a hónapra.")
+            st.warning("A havi folyamat le van zárva, új elszámolás/Teljesítés-összesítő nem tölthető fel erre a hónapra.")
         try:
             individual_statuses = read_peopleforce_card_statuses(courier_id, period_start.replace(day=1))
         except Exception:
@@ -18956,7 +18958,7 @@ def render_courier_detail_page() -> None:
                 rerun_courier_profile("Pénzügy")
             except Exception as exc:
                 st.error(f"Az elszámolás feltöltése sikertelen: {exc}")
-        if upload_b.button("TIG feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_tig_pdf_{courier_id}"):
+        if upload_b.button("Teljesítés-összesítő feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_tig_pdf_{courier_id}"):
             try:
                 tig_upload_bytes = st.session_state.get(tig_pdf_cache_key) or build_current_tig_pdf()
                 st.session_state[tig_pdf_cache_key] = tig_upload_bytes
@@ -18965,17 +18967,17 @@ def render_courier_detail_page() -> None:
                     courier_name=courier_name,
                     document_type="tig",
                     document_month=period_start.replace(day=1),
-                    title=f"TIG - {period_start:%Y-%m}",
+                    title=f"Teljesítés-összesítő - {period_start:%Y-%m}",
                     note=f"Dokumentum azonosító: {tig_document_reference}",
                     file_name=tig_file_name,
                     mime_type="application/pdf",
                     file_bytes=tig_upload_bytes,
                     uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
                 )
-                st.success("TIG PDF feltöltve a futár profiljába.")
+                st.success("Teljesítés-összesítő PDF feltöltve a futár profiljába.")
                 rerun_courier_profile("Pénzügy")
             except Exception as exc:
-                st.error(f"A TIG feltöltése sikertelen: {exc}")
+                st.error(f"A Teljesítés-összesítő feltöltése sikertelen: {exc}")
         if open_month_col.button(
             "Egyedi havi számlázás zárása" if individual_monthly_billing_open else "Egyedi havi számlázás nyitása",
             type="secondary" if individual_monthly_billing_open else "primary",
@@ -19815,8 +19817,8 @@ def render_courier_detail_page() -> None:
             else:
                 st.error("A mobil értékek mentése sikertelen. Futtasd a mobile_settlement_breakdown_overrides SQL-t.")
 
-        st.markdown("#### Mobilon lĂˇthatĂł TIG")
-        st.caption("A TIG is az oldalon jelenik meg. A KP külön soron látszik.")
+        st.markdown("#### Mobilon lĂˇthatĂł Teljesítés-összesítő")
+        st.caption("A Teljesítés-összesítő is az oldalon jelenik meg. A KP külön soron látszik.")
         edited_tig_mobile = st.data_editor(
             calculated_tig_rows,
             hide_index=True,
@@ -19831,7 +19833,7 @@ def render_courier_detail_page() -> None:
                 "MegjegyzĂ©s": st.column_config.TextColumn("MegjegyzĂ©s"),
             },
         )
-        if st.button("TIG mobil Ă©rtĂ©kek mentĂ©se", type="primary", use_container_width=True, key=f"save_mobile_tig_breakdown_{courier_id}_{period_start:%Y%m}"):
+        if st.button("Teljesítés-összesítő mobil Ă©rtĂ©kek mentĂ©se", type="primary", use_container_width=True, key=f"save_mobile_tig_breakdown_{courier_id}_{period_start:%Y%m}"):
             saved = save_mobile_breakdown_overrides(
                 courier_id,
                 period_start,
@@ -19840,10 +19842,10 @@ def render_courier_detail_page() -> None:
             )
             if saved:
                 clear_mobile_breakdown_override_cache()
-                st.success("Mobilon lĂˇthatĂł TIG mentve.")
+                st.success("Mobilon lĂˇthatĂł Teljesítés-összesítő mentve.")
                 st.rerun()
             else:
-                st.error("A TIG mobil Ă©rtĂ©kek mentĂ©se sikertelen. Futtasd a mobile_settlement_breakdown_overrides SQL-t.")
+                st.error("A Teljesítés-összesítő mobil Ă©rtĂ©kek mentĂ©se sikertelen. Futtasd a mobile_settlement_breakdown_overrides SQL-t.")
 
         payable_sources = pd.DataFrame([
             {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": display_base_total},
@@ -20463,7 +20465,7 @@ def render_courier_detail_page() -> None:
                     "rows": [
                         {
                             "key": "payment_total",
-                            "label": "TIG végösszeg",
+                            "label": "Teljesítés-összesítő végösszeg",
                             "netHuf": payment_tig_final_huf,
                             "vatHuf": 0,
                             "grossHuf": payment_tig_final_huf,
@@ -20489,7 +20491,7 @@ def render_courier_detail_page() -> None:
                 and parse_huf_value(tig_final_huf) != parse_huf_value(amount_huf)
             )
             tig_total_card_html = (
-                f'<div class="finance-kpi"><div class="finance-kpi-label">TIG végösszeg</div><div class="finance-kpi-value">{tig_final_label}</div></div>'
+                f'<div class="finance-kpi"><div class="finance-kpi-label">Teljesítés-összesítő végösszeg</div><div class="finance-kpi-value">{tig_final_label}</div></div>'
                 if show_tig_total
                 else ""
             )
@@ -20516,7 +20518,7 @@ def render_courier_detail_page() -> None:
                 ("Kifizetendő összeg", format_huf(amount_huf)),
             ]
             if show_tig_total:
-                payment_copy_items.append(("TIG végösszeg", tig_final_label))
+                payment_copy_items.append(("Teljesítés-összesítő végösszeg", tig_final_label))
             payment_copy_items.extend([
                 ("Számla összege", format_huf(invoice_amount_huf) if invoice_amount_huf else "-"),
                 ("Eltérés", invoice_difference_label),
@@ -20578,7 +20580,7 @@ def render_courier_detail_page() -> None:
             if not payment_documents.empty:
                 payment_doc_type_labels = {
                     "settlement": "Elszámolás",
-                    "tig": "TIG",
+                    "tig": "Teljesítés-összesítő",
                     "invoice": "Számla",
                 }
                 for document_item in payment_documents.to_dict("records"):
@@ -20685,7 +20687,7 @@ def render_courier_detail_page() -> None:
                     [
                         payment_tig_rows,
                         pd.DataFrame([{
-                            "Tétel": "TIG végösszeg",
+                            "Tétel": "Teljesítés-összesítő végösszeg",
                             "Nettó": "",
                             "ÁFA": "",
                             "Bruttó": format_huf(tig_final_huf),
@@ -20699,9 +20701,9 @@ def render_courier_detail_page() -> None:
                 with st.popover("Összeg részletei", use_container_width=True):
                     st.dataframe(payment_payable_sources, use_container_width=True, hide_index=True)
             with detail_right:
-                with st.popover("TIG részletei", use_container_width=True):
+                with st.popover("Teljesítés-összesítő részletei", use_container_width=True):
                     if payment_tig_rows.empty:
-                        st.info("Nincs TIG bontás ehhez a folyamathoz.")
+                        st.info("Nincs Teljesítés-összesítő bontás ehhez a folyamathoz.")
                     else:
                         st.dataframe(payment_tig_rows, use_container_width=True, hide_index=True)
 
@@ -20839,7 +20841,7 @@ def render_courier_detail_page() -> None:
 
     if selected_menu == "Számla összevetés":
         st.markdown("#### Számla összevetés")
-        st.caption("A feltöltött aktuális havi utalásos és KP számlát hasonlítja össze a TIG generált bontásával.")
+        st.caption("A feltöltött aktuális havi utalásos és KP számlát hasonlítja össze a Teljesítés-összesítő generált bontásával.")
         invoice_documents = load_courier_payment_documents(courier_id, period_start.replace(day=1))
         invoice_records = invoice_documents.to_dict("records") if not invoice_documents.empty else []
         transfer_invoice = next((item for item in invoice_records if not is_cash_invoice_document(item)), {})
@@ -20893,7 +20895,7 @@ def render_courier_detail_page() -> None:
             invoice_label = invoice_number_from_document(invoice_doc) if invoice_doc else "Nincs feltöltött számla"
             file_label = str(invoice_doc.get("title") or invoice_doc.get("file_name") or "-") if invoice_doc else "-"
             message = (
-                "Egyezik a TIG bontással."
+                "Egyezik a Teljesítés-összesítő bontással."
                 if has_invoice and is_ok
                 else (
                     "KP számla nem szükséges."
@@ -20908,7 +20910,7 @@ def render_courier_detail_page() -> None:
                 <div class="invoice-compare-row"><span>Számla</span><strong>{html.escape(invoice_label)}</strong></div>
                 <div class="invoice-compare-row"><span>Fájl</span><strong>{html.escape(file_label)}</strong></div>
                 <div class="invoice-compare-row"><span>Feltöltött számla összege</span><strong>{format_huf(uploaded_amount) if has_invoice else '-'}</strong></div>
-                <div class="invoice-compare-row"><span>TIG szerinti összeg</span><strong>{format_huf(tig_amount)}</strong></div>
+                <div class="invoice-compare-row"><span>Teljesítés-összesítő szerinti összeg</span><strong>{format_huf(tig_amount)}</strong></div>
                 <div class="{message_class}">{html.escape(message)}</div>
             </div>
             """
@@ -21536,7 +21538,7 @@ def render_courier_detail_page() -> None:
         st.markdown("#### Dokumentumok")
         type_labels = {
             "settlement": "Elszámolás",
-            "tig": "TIG",
+            "tig": "Teljesítés-összesítő",
             "invoice": "Számla",
             "contract": "Szerződés",
             "complaint_response": "Reklamáció válasz",
@@ -21545,7 +21547,7 @@ def render_courier_detail_page() -> None:
             "individual_monthly_billing": "Egyedi havi számlázás nyitva",
             "manual_invoice_skip": "Számlázás kihagyása kézzel",
             "settlement": "Elszámolás elfogadása",
-            "tig": "TIG elfogadása",
+            "tig": "Teljesítés-összesítő áttekintése",
             "invoice_check": "Számlaellenőrzés",
             "invoice_submit": "Számlafeltöltés",
             "invoice_payment": "Számla elfogadva / kifizetés",
@@ -21618,7 +21620,7 @@ def render_courier_detail_page() -> None:
                     updated_by=actor,
                 )
                 for skipped_action, skipped_status, skipped_note in [
-                    ("tig", "done", "TIG kézzel kihagyva."),
+                    ("tig", "done", "Teljesítés-összesítő kézzel kihagyva."),
                     ("invoice_submit", "done", "Számlafeltöltés kézzel kihagyva."),
                     ("invoice_check", "done", "Számlaellenőrzés kézzel kihagyva."),
                     ("invoice_payment", "open", "Számlázás kézzel kihagyva, admin kifizetésre vár."),
@@ -21966,7 +21968,7 @@ def render_courier_detail_page() -> None:
         upload_columns = st.columns([0.22, 0.22, 0.28, 0.28])
         doc_type_label = upload_columns[0].selectbox(
             "Típus",
-            ["Elszámolás", "TIG", "Számla", "Szerződés"],
+            ["Elszámolás", "Teljesítés-összesítő", "Számla", "Szerződés"],
             key=f"new_doc_type_{courier_id}",
         )
         doc_period = upload_columns[1].date_input(
@@ -21984,7 +21986,7 @@ def render_courier_detail_page() -> None:
             key=f"new_doc_upload_{courier_id}",
         )
         doc_note = st.text_input("Megjegyzés", key=f"new_doc_note_{courier_id}")
-        reverse_type_labels = {"Elszámolás": "settlement", "TIG": "tig", "Számla": "invoice", "Szerződés": "contract"}
+        reverse_type_labels = {"Elszámolás": "settlement", "Teljesítés-összesítő": "tig", "Számla": "invoice", "Szerződés": "contract"}
         selected_upload_type = reverse_type_labels.get(doc_type_label, "settlement")
         salary_advance_process_options: dict[str, dict[str, object]] = {}
         if selected_upload_type == "invoice":
@@ -22029,7 +22031,7 @@ def render_courier_detail_page() -> None:
             and not selected_salary_advance_process
         )
         if upload_month_closed:
-            st.warning("Ez a havi folyamat már le van zárva, új elszámolás/TIG/számla nem tölthető fel rá.")
+            st.warning("Ez a havi folyamat már le van zárva, új elszámolás/Teljesítés-összesítő/számla nem tölthető fel rá.")
         if st.button("Dokumentum feltöltése", type="primary", use_container_width=True, disabled=uploaded_file is None or upload_month_closed, key=f"new_doc_save_{courier_id}"):
             try:
                 upload_document_type = selected_upload_type
@@ -22055,13 +22057,13 @@ def render_courier_detail_page() -> None:
                 st.error(f"A dokumentum feltöltése sikertelen: {exc}")
 
     if selected_menu == "Egyedi dokumentum":
-        st.markdown("#### Egyedi TIG / részletező összeállítása")
+        st.markdown("#### Egyedi Teljesítés-összesítő / részletező összeállítása")
         st.caption("Nulláról készíthető PDF a futárnak, majd egy kattintással feltölthető a profiljába.")
         custom_left, custom_right = st.columns([0.45, 0.55], gap="medium")
         with custom_left:
             custom_doc_label = st.selectbox(
                 "Dokumentum típusa",
-                ["TIG", "Részletező / elszámolás"],
+                ["Teljesítés-összesítő", "Részletező / elszámolás"],
                 key=f"custom_doc_type_{courier_id}",
             )
             custom_period = st.date_input(
@@ -22073,7 +22075,7 @@ def render_courier_detail_page() -> None:
                 "Egyéb folyamat indítása",
                 value=False,
                 key=f"custom_doc_other_process_{courier_id}",
-                help="Hónap közepi vagy egyedi elszámolási/TIG folyamat. A PWA-n külön választható lesz.",
+                help="Hónap közepi vagy egyedi elszámolási/Teljesítés-összesítő folyamat. A PWA-n külön választható lesz.",
             )
             process_default = f"eloleg-{custom_period:%Y-%m-%d}" if custom_is_other_process else ""
             custom_process_label = st.text_input(
@@ -22083,8 +22085,8 @@ def render_courier_detail_page() -> None:
                 key=f"custom_doc_process_label_{courier_id}",
             )
             custom_title_default = (
-                f"TIG - {row['Futár']} - {custom_period:%Y-%m}"
-                if custom_doc_label == "TIG"
+                f"Teljesítés-összesítő - {row['Futár']} - {custom_period:%Y-%m}"
+                if custom_doc_label == "Teljesítés-összesítő"
                 else f"Elszámolási részletező - {row['Futár']} - {custom_period:%Y-%m}"
             )
             custom_title = st.text_input(
@@ -22127,7 +22129,7 @@ def render_courier_detail_page() -> None:
                 },
             )
 
-        custom_type = "tig" if custom_doc_label == "TIG" else "settlement"
+        custom_type = "tig" if custom_doc_label == "Teljesítés-összesítő" else "settlement"
         custom_process_id = ""
         if custom_is_other_process:
             custom_process_id = unicodedata.normalize("NFKD", str(custom_process_label or "")).encode("ascii", "ignore").decode("ascii")
@@ -22136,7 +22138,7 @@ def render_courier_detail_page() -> None:
                 custom_process_id = f"egyeb-{custom_period:%Y%m%d}"
         custom_month_closed = closure_done and custom_period.replace(day=1) == period_start.replace(day=1)
         if custom_month_closed:
-            st.warning("Ez a havi folyamat már le van zárva, új egyedi TIG/elszámolási folyamat nem indítható rá.")
+            st.warning("Ez a havi folyamat már le van zárva, új egyedi Teljesítés-összesítő/elszámolási folyamat nem indítható rá.")
         reference_state_key = f"custom_doc_reference_{courier_id}_{custom_type}_{custom_period:%Y%m}"
         if reference_state_key not in st.session_state:
             st.session_state[reference_state_key] = make_document_reference(courier_id, custom_type, custom_period)
@@ -22222,7 +22224,7 @@ def render_courier_detail_page() -> None:
         st.markdown("#### Reklamációk")
         complaint_type_labels = {
             "settlement": "Elszámolás",
-            "tig": "TIG",
+            "tig": "Teljesítés-összesítő",
             "invoice": "Számla",
             "invoice_check": "Számlaellenőrzés",
             "invoice_submit": "Számlafeltöltés",
@@ -22845,11 +22847,11 @@ def show_bulk_settlement_dialog() -> None:
             st.success("A tömeges elszámolások profilba feltöltése indulna.")
 
 
-@st.dialog("Tömeges TIG", width="large")
+@st.dialog("Tömeges Teljesítés-összesítő", width="large")
 def show_bulk_tig_dialog() -> None:
     df = st.session_state.get("current_filtered_data", load_courier_master())
 
-    st.subheader("Tömeges TIG")
+    st.subheader("Tömeges Teljesítés-összesítő")
     st.caption("Az aktuális szűrés alapján kiválasztott futárok.")
 
     if df.empty:
@@ -22872,7 +22874,7 @@ def show_bulk_tig_dialog() -> None:
     generate_key = "bulk_tig_preview_ready"
 
     if st.button(
-        "Tömeges TIG gyártása",
+        "Tömeges Teljesítés-összesítő gyártása",
         type="primary",
         use_container_width=True,
         disabled=not precheck,
@@ -22881,18 +22883,18 @@ def show_bulk_tig_dialog() -> None:
         st.session_state[generate_key] = True
 
     if st.session_state.get(generate_key):
-        st.success("A tömeges TIG gyártás designer állapota elkészült.")
+        st.success("A tömeges Teljesítés-összesítő gyártás designer állapota elkészült.")
         st.markdown("#### 1 darab minta PDF")
 
         pdf_bytes = build_demo_preview_pdf(
-            "Tömeges TIG – minta",
+            "Tömeges Teljesítés-összesítő – minta",
             f"Szűrésben szereplő futárok: {len(df)}",
         )
 
         st.download_button(
-            "Minta TIG PDF megnyitása / letöltése",
+            "Minta Teljesítés-összesítő PDF megnyitása / letöltése",
             data=pdf_bytes,
-            file_name="tomeges_tig_minta.pdf",
+            file_name="tomeges_teljesites_osszesito_minta.pdf",
             mime="application/pdf",
             use_container_width=True,
             key="bulk_tig_preview_pdf",
@@ -22908,7 +22910,7 @@ def show_bulk_tig_dialog() -> None:
             help="Csak designer gomb.",
         ):
             st.session_state["bulk_tig_accepted"] = True
-            st.success("A minta TIG elfogadott állapotot kapna.")
+            st.success("A minta Teljesítés-összesítő áttekintett állapotot kapna.")
 
         if action2.button(
             "Feltöltés profilba",
@@ -22917,7 +22919,7 @@ def show_bulk_tig_dialog() -> None:
             key="bulk_tig_upload",
             help="Csak designer gomb.",
         ):
-            st.success("A tömeges TIG-ek profilba feltöltése indulna.")
+            st.success("A tömeges Teljesítés-összesítők profilba feltöltése indulna.")
 
 
 
@@ -23485,7 +23487,7 @@ def _export_tax_mode_label(row: dict[str, object], period_start: date | None) ->
         return "EFO"
     courier_payload = {
         "tax_number": _export_row_value(row, {"Adószám", "tax_number"}),
-        "tig_type": _export_row_value(row, {"TIG típus", "TIG tipus", "Számla típus"}),
+        "tig_type": _export_row_value(row, {"Teljesítés-összesítő típus", "TIG típus", "TIG tipus", "Számla típus"}),
         "vat_status": _export_row_value(row, {"FA státusz", "AFA status", "vat_status"}),
         "employment_type": _export_row_value(row, {"Jogviszony", "employment_type", "EFO státusz"}),
     }
@@ -23497,7 +23499,7 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
     courier_payload = {
         "id": _export_row_value(row, {"Courier ID", "courier_id"}),
         "tax_number": _export_row_value(row, {"Adószám", "tax_number"}),
-        "tig_type": _export_row_value(row, {"TIG típus", "TIG tipus", "Számla típus"}),
+        "tig_type": _export_row_value(row, {"Teljesítés-összesítő típus", "TIG típus", "TIG tipus", "Számla típus"}),
         "vat_status": _export_row_value(row, {"FA státusz", "AFA status", "vat_status"}),
         "employment_type": _export_row_value(row, {"Jogviszony", "employment_type", "EFO státusz"}),
         "document_month": period_start,
@@ -23513,14 +23515,14 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
     cash = by_key.get("cash_service", {})
     return {
         "Adózási mód": _export_tax_mode_label(row, period_start),
-        "TIG adó mód": str(breakdown.get("taxLabel") or ""),
-        "TIG átutalás nettó": parse_huf_value(transfer.get("netHuf")),
-        "TIG átutalás FA": parse_huf_value(transfer.get("vatHuf")),
-        "TIG átutalás bruttó": parse_huf_value(transfer.get("grossHuf")),
-        "TIG KP nettó": parse_huf_value(cash.get("netHuf")),
-        "TIG KP FA": parse_huf_value(cash.get("vatHuf")),
-        "TIG KP bruttó": parse_huf_value(cash.get("grossHuf")),
-        "TIG végösszeg": parse_huf_value(breakdown.get("finalTotalHuf")),
+        "Teljesítés-összesítő adó mód": str(breakdown.get("taxLabel") or ""),
+        "Teljesítés-összesítő átutalás nettó": parse_huf_value(transfer.get("netHuf")),
+        "Teljesítés-összesítő átutalás FA": parse_huf_value(transfer.get("vatHuf")),
+        "Teljesítés-összesítő átutalás bruttó": parse_huf_value(transfer.get("grossHuf")),
+        "Teljesítés-összesítő KP nettó": parse_huf_value(cash.get("netHuf")),
+        "Teljesítés-összesítő KP FA": parse_huf_value(cash.get("vatHuf")),
+        "Teljesítés-összesítő KP bruttó": parse_huf_value(cash.get("grossHuf")),
+        "Teljesítés-összesítő végösszeg": parse_huf_value(breakdown.get("finalTotalHuf")),
     }
 
 
@@ -23576,14 +23578,14 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
     cash = by_key.get("cash_service", {})
     return {
         "AdĂłzĂˇsi mĂłd": _export_tax_mode_label(row, period_start),
-        "TIG adĂł mĂłd": str(breakdown.get("taxLabel") or ""),
-        "TIG ĂˇtutalĂˇs nettĂł": parse_huf_value(transfer.get("netHuf")),
-        "TIG ĂˇtutalĂˇs ĂFA": parse_huf_value(transfer.get("vatHuf")),
-        "TIG ĂˇtutalĂˇs bruttĂł": parse_huf_value(transfer.get("grossHuf")),
-        "TIG KP nettĂł": parse_huf_value(cash.get("netHuf")),
-        "TIG KP ĂFA": parse_huf_value(cash.get("vatHuf")),
-        "TIG KP bruttĂł": parse_huf_value(cash.get("grossHuf")),
-        "TIG vĂ©gĂ¶sszeg": parse_huf_value(breakdown.get("finalTotalHuf")),
+        "Teljesítés-összesítő adĂł mĂłd": str(breakdown.get("taxLabel") or ""),
+        "Teljesítés-összesítő ĂˇtutalĂˇs nettĂł": parse_huf_value(transfer.get("netHuf")),
+        "Teljesítés-összesítő ĂˇtutalĂˇs ĂFA": parse_huf_value(transfer.get("vatHuf")),
+        "Teljesítés-összesítő ĂˇtutalĂˇs bruttĂł": parse_huf_value(transfer.get("grossHuf")),
+        "Teljesítés-összesítő KP nettĂł": parse_huf_value(cash.get("netHuf")),
+        "Teljesítés-összesítő KP ĂFA": parse_huf_value(cash.get("vatHuf")),
+        "Teljesítés-összesítő KP bruttĂł": parse_huf_value(cash.get("grossHuf")),
+        "Teljesítés-összesítő vĂ©gĂ¶sszeg": parse_huf_value(breakdown.get("finalTotalHuf")),
     }
 
 
@@ -23666,14 +23668,14 @@ def build_excel_export(df: pd.DataFrame, period_start: date | None = None, perio
             }
         added_columns: dict[str, list[float | str]] = {
             "Adózási mód": [],
-            "TIG adó mód": [],
-            "TIG átutalás nettó": [],
-            "TIG átutalás FA": [],
-            "TIG átutalás bruttó": [],
-            "TIG KP nettó": [],
-            "TIG KP FA": [],
-            "TIG KP bruttó": [],
-            "TIG végösszeg": [],
+            "Teljesítés-összesítő adó mód": [],
+            "Teljesítés-összesítő átutalás nettó": [],
+            "Teljesítés-összesítő átutalás FA": [],
+            "Teljesítés-összesítő átutalás bruttó": [],
+            "Teljesítés-összesítő KP nettó": [],
+            "Teljesítés-összesítő KP FA": [],
+            "Teljesítés-összesítő KP bruttó": [],
+            "Teljesítés-összesítő végösszeg": [],
             "Céltartalék nyitó": [],
             "Céltartalék levonás 10%": [],
             "Életbiztosítás 10 000 Ft": [],
@@ -23689,14 +23691,14 @@ def build_excel_export(df: pd.DataFrame, period_start: date | None = None, perio
             tig_values = _export_tig_values(enriched_row, period_start)
             for column in [
                 "Adózási mód",
-                "TIG adó mód",
-                "TIG átutalás nettó",
-                "TIG átutalás FA",
-                "TIG átutalás bruttó",
-                "TIG KP nettó",
-                "TIG KP FA",
-                "TIG KP bruttó",
-                "TIG végösszeg",
+                "Teljesítés-összesítő adó mód",
+                "Teljesítés-összesítő átutalás nettó",
+                "Teljesítés-összesítő átutalás FA",
+                "Teljesítés-összesítő átutalás bruttó",
+                "Teljesítés-összesítő KP nettó",
+                "Teljesítés-összesítő KP FA",
+                "Teljesítés-összesítő KP bruttó",
+                "Teljesítés-összesítő végösszeg",
             ]:
                 added_columns[column].append(tig_values.get(column, 0))
 
@@ -23729,10 +23731,10 @@ def build_payment_tig_audit_export(df: pd.DataFrame, period_start: date | None =
         "Raktár",
         "Adózás",
         "Pénzügy végösszeg",
-        "TIG végösszeg",
+        "Teljesítés-összesítő végösszeg",
         "Kifizetésnél összeg",
-        "Eltérés Pénzügy - TIG",
-        "Eltérés TIG - Kifizetés",
+        "Eltérés Pénzügy - Teljesítés-összesítő",
+        "Eltérés Teljesítés-összesítő - Kifizetés",
         "Ellenőrzés",
     ]
     rows: list[dict[str, object]] = []
@@ -23782,10 +23784,10 @@ def build_payment_tig_audit_export(df: pd.DataFrame, period_start: date | None =
                 "Raktár": _export_row_value(row, {"Raktár", "Raktar", "warehouse"}),
                 "Adózás": _export_tax_mode_label(row, period_start),
                 "Pénzügy végösszeg": round(finance_total),
-                "TIG végösszeg": round(tig_total),
+                "Teljesítés-összesítő végösszeg": round(tig_total),
                 "Kifizetésnél összeg": round(payment_total),
-                "Eltérés Pénzügy - TIG": round(finance_tig_delta),
-                "Eltérés TIG - Kifizetés": round(tig_payment_delta),
+                "Eltérés Pénzügy - Teljesítés-összesítő": round(finance_tig_delta),
+                "Eltérés Teljesítés-összesítő - Kifizetés": round(tig_payment_delta),
                 "Ellenőrzés": (
                     "OK"
                     if round(finance_tig_delta) == 0 and round(tig_payment_delta) == 0
@@ -23813,14 +23815,14 @@ def build_payment_tig_audit_export(df: pd.DataFrame, period_start: date | None =
         "Raktár",
         "Adózás",
         "Pénzügy végösszeg",
-        "TIG végösszeg",
+        "Teljesítés-összesítő végösszeg",
         "Kifizetésnél összeg",
         "PWA végösszeg",
-        "PWA TIG végösszeg",
-        "Eltérés Pénzügy - TIG",
-        "Eltérés TIG - Kifizetés",
+        "PWA Teljesítés-összesítő végösszeg",
+        "Eltérés Pénzügy - Teljesítés-összesítő",
+        "Eltérés Teljesítés-összesítő - Kifizetés",
         "Eltérés Pénzügy - PWA",
-        "Eltérés TIG - PWA TIG",
+        "Eltérés Teljesítés-összesítő - PWA Teljesítés-összesítő",
         "Ellenőrzés",
     ]
     rows: list[dict[str, object]] = []
@@ -23896,14 +23898,14 @@ def build_payment_tig_audit_export(df: pd.DataFrame, period_start: date | None =
                 "Raktár": _export_row_value(row, {"Raktár", "Raktar", "warehouse"}),
                 "Adózás": _export_tax_mode_label(row, period_start),
                 "Pénzügy végösszeg": round(finance_total),
-                "TIG végösszeg": round(tig_total),
+                "Teljesítés-összesítő végösszeg": round(tig_total),
                 "Kifizetésnél összeg": round(payment_total),
                 "PWA végösszeg": "" if pwa_payable is None else round(pwa_payable),
-                "PWA TIG végösszeg": "" if pwa_tig_total is None else round(pwa_tig_total),
-                "Eltérés Pénzügy - TIG": round(finance_tig_delta),
-                "Eltérés TIG - Kifizetés": round(tig_payment_delta),
+                "PWA Teljesítés-összesítő végösszeg": "" if pwa_tig_total is None else round(pwa_tig_total),
+                "Eltérés Pénzügy - Teljesítés-összesítő": round(finance_tig_delta),
+                "Eltérés Teljesítés-összesítő - Kifizetés": round(tig_payment_delta),
                 "Eltérés Pénzügy - PWA": "" if finance_pwa_delta is None else round(finance_pwa_delta),
-                "Eltérés TIG - PWA TIG": "" if tig_pwa_delta is None else round(tig_pwa_delta),
+                "Eltérés Teljesítés-összesítő - PWA Teljesítés-összesítő": "" if tig_pwa_delta is None else round(tig_pwa_delta),
                 "Ellenőrzés": "OK" if all(value == 0 for value in checks) else "Eltérés",
             })
 
@@ -23936,9 +23938,9 @@ def build_monthly_period_document_plan(data: pd.DataFrame, period_start: date, p
             "period_start": period_start,
             "period_end": period_end,
             "settlement_reference": f"{reference_base}-SETTLEMENT",
-            "tig_reference": f"{reference_base}-TIG",
+            "tig_reference": f"{reference_base}-TELJESITES-OSSZESITO",
             "settlement_file": f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}.pdf",
-            "tig_file": f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}.pdf",
+            "tig_file": f"jitt_teljesites_osszesito_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}.pdf",
             "payable_huf": amount_huf,
         })
     return planned
@@ -24008,7 +24010,7 @@ def build_monthly_period_documents(data: pd.DataFrame, period_start: date, perio
             "company_name": str(row.get("Vállalkozás neve") or row.get("Futár") or courier_name),
             "address": str(row.get("Cím") or ""),
             "tax_number": str(row.get("Adószám") or ""),
-            "tig_type": str(row.get("TIG típus") or row.get("TIG tipus") or row.get("Számla típus") or row.get("FA státusz") or row.get("vat_status") or ""),
+            "tig_type": str(row.get("Teljesítés-összesítő típus") or row.get("TIG típus") or row.get("TIG tipus") or row.get("Számla típus") or row.get("FA státusz") or row.get("vat_status") or ""),
             "vat_status": str(row.get("FA státusz") or row.get("vat_status") or ""),
             "employment_type": str(row.get("Jogviszony") or row.get("employment_type") or ""),
             "efo_status": str(row.get("EFO státusz") or row.get("efo_status") or ""),
@@ -24152,7 +24154,7 @@ def open_individual_monthly_billing(
         title = (
             f"Elszámolás - {period_start:%Y-%m}"
             if document_type == "settlement"
-            else f"TIG - {period_start:%Y-%m}"
+            else f"Teljesítés-összesítő - {period_start:%Y-%m}"
         )
         note = (
             "Egyedi havi számlázás nyitása. "
@@ -24197,7 +24199,7 @@ def open_individual_monthly_billing(
             action_key="tig",
             document_month=period_start.replace(day=1),
             status="open",
-            status_note="Admin előnézeti TIG elkészült; futárnak elszámolás elfogadása után aktív.",
+            status_note="Admin előnézeti Teljesítés-összesítő elkészült; futárnak elszámolás elfogadása után aktív.",
             updated_by=actor,
         )
     return deleted, uploaded, courier_count
@@ -24260,7 +24262,7 @@ def open_monthly_billing_visibility(
             action_key="tig",
             document_month=period_month,
             status="open",
-            status_note="TIG admin előnézetben elérhető; futárnak elszámolás elfogadása után aktív.",
+            status_note="Teljesítés-összesítő admin előnézetben elérhető; futárnak elszámolás elfogadása után aktív.",
             updated_by=actor,
         )
         opened += 1
@@ -25192,8 +25194,8 @@ def show_new_settlement_page() -> None:
                 "Összes",
                 "Elszámolásra vár",
                 "Elszámolás elfogadásra vár",
-                "TIG-re vár",
-                "TIG elfogadásra vár",
+                "Teljesítés-összesítőre vár",
+                "Teljesítés-összesítő áttekintésre vár",
                 "Számlafeltöltésre vár",
                 "Számlaellenőrzésre vár",
                 "Bejelentések",
@@ -25245,7 +25247,7 @@ def show_new_settlement_page() -> None:
                 use_container_width=True,
                 disabled=data.empty or not mobile_source_session_id,
                 key=f"save_devtest_finance_snapshots_{mobile_period_start:%Y%m}_{calculation_mode}",
-                help="Az aktuális devtest pénzügyi és TIG értékeket verziózottan elmenti DB-be.",
+                help="Az aktuális devtest pénzügyi és Teljesítés-összesítő értékeket verziózottan elmenti DB-be.",
             ):
                 with st.spinner("Adatok mentése..."):
                     snapshot_data = data
@@ -25800,9 +25802,9 @@ def show_new_settlement_page() -> None:
         index=visibility_default_index,
         key=f"mobile_visibility_mode_{balance_period_start:%Y%m}",
         help=(
-            "Eredeti: a TIG csak elszámolás elfogadása után aktív. "
-            "Csak elszámolás: TIG nem látszik. "
-            "Elszámolás és TIG: mindkettő azonnal látszik."
+            "Eredeti: a Teljesítés-összesítő csak elszámolás elfogadása után aktív. "
+            "Csak elszámolás: Teljesítés-összesítő nem látszik. "
+            "Elszámolás és Teljesítés-összesítő: mindkettő azonnal látszik."
         ),
     )
     visibility_mode = normalize_mobile_visibility_mode(visibility_mode_label)
@@ -25811,7 +25813,7 @@ def show_new_settlement_page() -> None:
         use_container_width=True,
         disabled=selected_calculation_mode != "Excel",
         key=f"save_mobile_visibility_mode_{balance_period_start:%Y%m}",
-        help="Már megnyitott hónapnál is átállítja, hogy a futár csak elszámolást, TIG-et is, vagy az eredeti folyamatot lássa.",
+        help="Már megnyitott hónapnál is átállítja, hogy a futár csak elszámolást, Teljesítés-összesítőt is, vagy az eredeti folyamatot lássa.",
     ):
         snapshot_session_id = (
             import_session_id
@@ -26081,8 +26083,8 @@ def show_new_settlement_page() -> None:
     workflow_cards = [
         ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
         ("Elszámolás elfogadásra vár", "Futár elfogadására vár", "🔵"),
-        ("TIG-re vár", "Még nem készült TIG", "🟣"),
-        ("TIG elfogadásra vár", "Futár TIG elfogadására vár", "🟣"),
+        ("Teljesítés-összesítőre vár", "Még nem készült Teljesítés-összesítő", "🟣"),
+        ("Teljesítés-összesítő áttekintésre vár", "Futár Teljesítés-összesítő áttekintésére vár", "🟣"),
         ("Számlafeltöltésre vár", "Futár számlafeltöltésére vár", "🟡"),
         ("Számlaellenőrzésre vár", "Admin ellenőrzésre vár", "🟡"),
         ("Bejelentések", "Nyitott ügyek", "🟠"),
@@ -26154,7 +26156,7 @@ def show_new_settlement_page() -> None:
     a,b,c,d,e,f=st.columns(6)
     if a.button("Tömeges elszámolás",use_container_width=True):
         show_bulk_settlement_dialog()
-    if b.button("Tömeges TIG",use_container_width=True):
+    if b.button("Tömeges Teljesítés-összesítő",use_container_width=True):
         show_bulk_tig_dialog()
     if c.button("Bejelentések",use_container_width=True):
         show_reports_dialog()
@@ -26175,7 +26177,7 @@ def show_new_settlement_page() -> None:
             use_container_width=True,
             key=f"download_{export_key}",
         )
-    if f.button("Penzugy/TIG/Kifizetes Excel", use_container_width=True, key=f"build_{audit_export_key}"):
+    if f.button("Penzugy/Teljesítés-összesítő/Kifizetes Excel", use_container_width=True, key=f"build_{audit_export_key}"):
         with st.spinner("Ellenőrző export készítése..."):
             st.session_state[audit_export_key] = build_payment_tig_audit_export(filtered, balance_period_start)
     if st.session_state.get(audit_export_key):

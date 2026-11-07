@@ -43,7 +43,7 @@ else:
         "Elszámolás",
         "Havi feladatok",
         "Havi számla",
-        "Havi TIG",
+        "Havi Teljesítés-összesítő",
         "Összeg ellenőrzés",
         "Konfiguráció",
         "Bónusz / Málusz",
@@ -61,7 +61,7 @@ elif selected_page == "Havi feladatok":
     show_monthly_invoice_tasks_page()
 elif selected_page == "Havi számla":
     show_monthly_invoice_editor_page()
-elif selected_page == "Havi TIG":
+elif selected_page == "Havi Teljesítés-összesítő":
     show_monthly_tig_editor_page()
 elif selected_page == "Összeg ellenőrzés":
     show_amount_reconciliation_page()

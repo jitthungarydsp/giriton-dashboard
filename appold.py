@@ -156,7 +156,7 @@ elif selected_page == "PeopleForce":
     # Jogosultsági szint szimulálása (ezt később adatbázisból/loginból szedjük)
     user_role = "Admin" # Lehet: "Admin", "Diszpécser", "Futár"
     
-    tab1, tab2 = st.tabs(["Számlák & TIG", "Adminisztrációs Panel"])
+    tab1, tab2 = st.tabs(["Számlák & Teljesítés-összesítő", "Adminisztrációs Panel"])
     
     with tab1:
         st.subheader("Dokumentumok kezelése")

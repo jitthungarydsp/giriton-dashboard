@@ -8,8 +8,8 @@
     <link rel="manifest" href="/manifest.webmanifest?v=244" />
     <link rel="icon" href="/icon.svg?v=244" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg?v=244" />
-    <link rel="stylesheet" href="/styles.css?v=268" />
-    <link rel="stylesheet" href="/webshop.css?v=268" />
+    <link rel="stylesheet" href="/styles.css?v=269" />
+    <link rel="stylesheet" href="/webshop.css?v=269" />
     <title>Jitt</title>
   </head>
   <body>
@@ -142,11 +142,11 @@
         <section id="tig-panel" class="process-card"></section>
 
         <section id="invoice-submit-panel" class="process-card">
-          <div class="process-title"><span class="step-code">5</span><div><h3>Számlafeltöltés</h3><p>A TIG elfogadása után válik aktívvá. A dokumentum mindenképpen beérkezik hozzánk.</p></div></div>
+          <div class="process-title"><span class="step-code">5</span><div><h3>Számlafeltöltés</h3><p>A Teljesítés-összesítő áttekintése után válik aktívvá. A dokumentum mindenképpen beérkezik hozzánk.</p></div></div>
           <form id="invoice-submit-form" class="process-form two-column">
             <label>Számla sorszáma<input id="invoice-number" name="invoice_number" placeholder="Pl. BG-2026-16" aria-describedby="invoice-number-help" autocomplete="off" required /><small id="invoice-number-help">A számlán szereplő sorszámot add meg, ne a bankszámlaszámot.</small></label>
             <label><span id="gross-amount-label">Átutalásos számla bruttó összege (Ft)</span><input id="gross-amount" name="gross_amount" type="number" min="1" step="1" required /></label>
-            <label>TIG / elszámolás azonosító<input id="tig-reference" name="tig_reference" /></label>
+            <label>Teljesítés-összesítő / elszámolás azonosító<input id="tig-reference" name="tig_reference" /></label>
             <label>Megjegyzés<input id="invoice-note" name="note" /></label>
             <label class="full-width checkbox-line"><input id="skip-invoice-number-match" name="skip_invoice_number_match" type="checkbox" value="true" /> Számlaszám egyezés ellenőrzés kihagyása</label>
             <label class="full-width"><span id="invoice-submit-file-label">Számla feltöltése (üresen az 5. lépésben ellenőrzött fájlt küldi be)</span><input id="invoice-submit-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" /></label>
@@ -351,7 +351,7 @@
           <div>
             <p class="eyebrow">DOKUMENTUMOK</p>
             <h2>Futár dokumentumai</h2>
-            <p class="muted">Hónapokra bontva látod az elszámolást, TIG-et, feltöltött számlákat és egyéb dokumentumokat.</p>
+            <p class="muted">Hónapokra bontva látod az elszámolást, Teljesítés-összesítőt, feltöltött számlákat és egyéb dokumentumokat.</p>
           </div>
         </section>
         <section id="documents-list" class="process-card"></section>
@@ -362,7 +362,7 @@
           <div>
             <p class="eyebrow">PROFIL</p>
             <h2>Számlázási adatok</h2>
-            <p class="muted">Ezek az adatok kerülnek a TIG-re és a számlaellenőrzéshez is ezeket használjuk. A bankszámlaszámot itt tudod frissíteni.</p>
+            <p class="muted">Ezek az adatok kerülnek a Teljesítés-összesítőre és a számlaellenőrzéshez is ezeket használjuk. A bankszámlaszámot itt tudod frissíteni.</p>
           </div>
         </section>
 
@@ -934,9 +934,9 @@
         </section>
       </dialog>
     </main>
-    <script src="/webshop.js?v=268" defer></script>
-    <script src="/invoice_raw.js?v=268" defer></script>
-    <script src="/gate.js?v=268" defer></script>
-    <script src="/app.js?v=268" defer></script>
+    <script src="/webshop.js?v=269" defer></script>
+    <script src="/invoice_raw.js?v=269" defer></script>
+    <script src="/gate.js?v=269" defer></script>
+    <script src="/app.js?v=269" defer></script>
   </body>
 </html>

@@ -74,7 +74,7 @@
         <section id="tig-panel" class="process-card"></section>
 
         <section id="invoice-check-panel" class="process-card">
-          <div class="process-title"><span class="step-code">5</span><div><h3>Számlaellenőrzés</h3><p>A TIG elfogadása után válik aktívvá.</p></div></div>
+          <div class="process-title"><span class="step-code">5</span><div><h3>Számlaellenőrzés</h3><p>A Teljesítés-összesítő áttekintése után válik aktívvá.</p></div></div>
           <form id="invoice-check-form" class="process-form">
             <label>PDF számla<input id="invoice-check-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" required /></label>
             <button class="primary" type="submit">Számla ellenőrzése</button>
@@ -87,7 +87,7 @@
           <form id="invoice-submit-form" class="process-form two-column">
             <label>Számlaszám<input id="invoice-number" name="invoice_number" required /></label>
             <label>Bruttó összeg (Ft)<input id="gross-amount" name="gross_amount" type="number" min="1" step="1" required /></label>
-            <label>TIG / elszámolás azonosító<input id="tig-reference" name="tig_reference" /></label>
+            <label>Teljesítés-összesítő / elszámolás azonosító<input id="tig-reference" name="tig_reference" /></label>
             <label>Megjegyzés<input id="invoice-note" name="note" /></label>
             <label class="full-width checkbox-line"><input id="skip-invoice-number-match" name="skip_invoice_number_match" type="checkbox" value="true" /> Számlaszám egyezés ellenőrzés kihagyása</label>
             <label class="full-width">Végleges PDF számla<input id="invoice-submit-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" required /></label>

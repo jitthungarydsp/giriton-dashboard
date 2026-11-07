@@ -2136,7 +2136,7 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
         if "settlement" not in document_types:
             return "Elszámolásra vár"
         if "tig" not in document_types:
-            return "TIG-re vár"
+            return "Teljesítés-összesítőre vár"
         if action_statuses.get("invoice_payment") == "done":
             return "Kifizetve"
         if (
@@ -2146,7 +2146,7 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
             or "invoice" in document_types
         ):
             return "Kifizetésre vár"
-        return "TIG-re vár"
+        return "Teljesítés-összesítőre vár"
 
     result["Státusz"] = courier_ids.map(workflow_status)
     return result
@@ -2168,6 +2168,8 @@ def slugify_filename(value: object) -> str:
 def make_document_reference(courier_id: str, document_type: str, document_month: date) -> str:
     month_text = document_month.replace(day=1).strftime("%Y%m")
     doc_type = re.sub(r"[^A-Z0-9]+", "", str(document_type or "DOC").upper()) or "DOC"
+    if doc_type == "TIG":
+        doc_type = "TELJESITES-OSSZESITO"
     return f"{courier_id}-{month_text}-{doc_type}-{uuid.uuid4().hex[:8].upper()}"
 
 
@@ -4642,7 +4644,7 @@ def status_meta(status: str) -> tuple[str,str]:
         "Ellenőrzés alatt":("status-yellow","led-yellow"),
         "Jóváhagyva":("status-green","led-green"),
         "Elszámolásra vár":("status-blue","led-blue"),
-        "TIG-re vár":("status-purple","led-purple"),
+        "Teljesítés-összesítőre vár":("status-purple","led-purple"),
         "Bejelentések":("status-orange","led-orange"),
         "Kifizetésre vár":("status-yellow","led-yellow"),
         "Kifizetve":("status-green","led-green"),
@@ -4653,7 +4655,7 @@ def status_meta(status: str) -> tuple[str,str]:
 def get_demo_documents() -> pd.DataFrame:
     return pd.DataFrame([
         {"Courier ID":"7486","Típus":"Elszámolás","Fájl":"elszamolas_2026_06.pdf","Feltöltve":"2026-07-03 09:12"},
-        {"Courier ID":"7486","Típus":"TIG","Fájl":"tig_2026_06.pdf","Feltöltve":"2026-07-04 10:35"},
+        {"Courier ID":"7486","Típus":"Teljesítés-összesítő","Fájl":"teljesites_osszesito_2026_06.pdf","Feltöltve":"2026-07-04 10:35"},
         {"Courier ID":"7612","Típus":"Elszámolás","Fájl":"elszamolas_2026_06.pdf","Feltöltve":"2026-07-03 09:30"},
     ])
 
@@ -4661,7 +4663,7 @@ def get_demo_documents() -> pd.DataFrame:
 def get_demo_complaints() -> pd.DataFrame:
     return pd.DataFrame([
         {"Courier ID":"7486","Típus":"Elszámolás","Státusz":"Nyitott","Dátum":"2026-07-05","Üzenet":"A bónusz összege eltér."},
-        {"Courier ID":"7612","Típus":"TIG","Státusz":"Lezárt","Dátum":"2026-07-02","Üzenet":"A vállalkozási cím javítva lett."},
+        {"Courier ID":"7612","Típus":"Teljesítés-összesítő","Státusz":"Lezárt","Dátum":"2026-07-02","Üzenet":"A vállalkozási cím javítva lett."},
     ])
 
 
@@ -6362,12 +6364,12 @@ def show_courier_dialog() -> None:
         workload_cols[4].metric("Cím / rendelés", order_total)
         doc_a, doc_b = st.columns([0.18, 0.18])
         settlement_file_name = f"jitt_elszamolas_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{settlement_document_reference}.pdf"
-        tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
+        tig_file_name = f"jitt_teljesites_osszesito_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
         doc_a.download_button("Elszámolás PDF", data=pdf_bytes, file_name=settlement_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
-        doc_b.download_button("TIG PDF", data=tig_bytes, file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
+        doc_b.download_button("Teljesítés-összesítő PDF", data=tig_bytes, file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
         upload_a, upload_b, refresh_col = st.columns([0.18, 0.18, 0.18])
         if closure_done:
-            st.warning("A havi folyamat le van zárva, új elszámolás/TIG nem tölthető fel erre a hónapra.")
+            st.warning("A havi folyamat le van zárva, új elszámolás/Teljesítés-összesítő nem tölthető fel erre a hónapra.")
         if upload_a.button("Elszámolás feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_settlement_pdf_{courier_id}"):
             try:
                 upload_peopleforce_document_bytes(
@@ -6386,24 +6388,24 @@ def show_courier_dialog() -> None:
                 rerun_courier_profile("Pénzügy")
             except Exception as exc:
                 st.error(f"Az elszámolás feltöltése sikertelen: {exc}")
-        if upload_b.button("TIG feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_tig_pdf_{courier_id}"):
+        if upload_b.button("Teljesítés-összesítő feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_tig_pdf_{courier_id}"):
             try:
                 upload_peopleforce_document_bytes(
                     courier_id=courier_id,
                     courier_name=str(row["Futár"]),
                     document_type="tig",
                     document_month=period_start.replace(day=1),
-                    title=f"TIG - {period_start:%Y-%m}",
+                    title=f"Teljesítés-összesítő - {period_start:%Y-%m}",
                     note=f"Dokumentum azonosító: {tig_document_reference}",
                     file_name=tig_file_name,
                     mime_type="application/pdf",
                     file_bytes=tig_bytes,
                     uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
                 )
-                st.success("TIG PDF feltöltve a futár profiljába.")
+                st.success("Teljesítés-összesítő PDF feltöltve a futár profiljába.")
                 rerun_courier_profile("Pénzügy")
             except Exception as exc:
-                st.error(f"A TIG feltöltése sikertelen: {exc}")
+                st.error(f"A Teljesítés-összesítő feltöltése sikertelen: {exc}")
         if refresh_col.button("Adatok frissítése", use_container_width=True, key=f"finance_refresh_data_{courier_id}"):
             refresh_settlement_profile_data()
             st.toast("Futárprofil adatok frissítve.", icon="✅")
@@ -7543,14 +7545,14 @@ def show_courier_dialog() -> None:
         st.markdown("#### Dokumentumok")
         type_labels = {
             "settlement": "Elszámolás",
-            "tig": "TIG",
+            "tig": "Teljesítés-összesítő",
             "invoice": "Számla",
             "contract": "Szerződés",
             "complaint_response": "Reklamáció válasz",
         }
         workflow_action_labels = {
             "settlement": "Elszámolás elfogadása",
-            "tig": "TIG elfogadása",
+            "tig": "Teljesítés-összesítő áttekintése",
             "invoice_check": "Számlaellenőrzés",
             "invoice_submit": "Számlafeltöltés",
             "invoice_payment": "Számla elfogadva / kifizetés",
@@ -7674,7 +7676,7 @@ def show_courier_dialog() -> None:
         upload_columns = st.columns([0.22, 0.22, 0.28, 0.28])
         doc_type_label = upload_columns[0].selectbox(
             "Típus",
-            ["Elszámolás", "TIG", "Számla", "Szerződés"],
+            ["Elszámolás", "Teljesítés-összesítő", "Számla", "Szerződés"],
             key=f"new_doc_type_{courier_id}",
         )
         doc_period = upload_columns[1].date_input(
@@ -7693,7 +7695,7 @@ def show_courier_dialog() -> None:
             key=f"new_doc_upload_{courier_id}",
         )
         doc_note = st.text_input("Megjegyzés", key=f"new_doc_note_{courier_id}")
-        reverse_type_labels = {"Elszámolás": "settlement", "TIG": "tig", "Számla": "invoice", "Szerződés": "contract"}
+        reverse_type_labels = {"Elszámolás": "settlement", "Teljesítés-összesítő": "tig", "Számla": "invoice", "Szerződés": "contract"}
         selected_upload_type = reverse_type_labels.get(doc_type_label, "settlement")
         upload_month_closed = (
             closure_done
@@ -7701,7 +7703,7 @@ def show_courier_dialog() -> None:
             and selected_upload_type in {"settlement", "tig", "invoice"}
         )
         if upload_month_closed:
-            st.warning("Ez a havi folyamat már le van zárva, új elszámolás/TIG/számla nem tölthető fel rá.")
+            st.warning("Ez a havi folyamat már le van zárva, új elszámolás/Teljesítés-összesítő/számla nem tölthető fel rá.")
         if st.button("Dokumentum feltöltése", type="primary", use_container_width=True, disabled=uploaded_file is None or upload_month_closed, key=f"new_doc_save_{courier_id}"):
             try:
                 upload_peopleforce_document(
@@ -7720,13 +7722,13 @@ def show_courier_dialog() -> None:
                 st.error(f"A dokumentum feltöltése sikertelen: {exc}")
 
     if selected_menu == "Egyedi dokumentum":
-        st.markdown("#### Egyedi TIG / részletező összeállítása")
+        st.markdown("#### Egyedi Teljesítés-összesítő / részletező összeállítása")
         st.caption("Nulláról készíthető PDF a futárnak, majd egy kattintással feltölthető a profiljába.")
         custom_left, custom_right = st.columns([0.45, 0.55], gap="medium")
         with custom_left:
             custom_doc_label = st.selectbox(
                 "Dokumentum típusa",
-                ["TIG", "Részletező / elszámolás"],
+                ["Teljesítés-összesítő", "Részletező / elszámolás"],
                 key=f"custom_doc_type_{courier_id}",
             )
             custom_period = st.date_input(
@@ -7738,7 +7740,7 @@ def show_courier_dialog() -> None:
                 "Egyéb folyamat indítása",
                 value=False,
                 key=f"custom_doc_other_process_{courier_id}",
-                help="Hónap közepi vagy egyedi elszámolási/TIG folyamat. A PWA-n külön választható lesz.",
+                help="Hónap közepi vagy egyedi elszámolási/Teljesítés-összesítő folyamat. A PWA-n külön választható lesz.",
             )
             process_default = f"eloleg-{custom_period:%Y-%m-%d}" if custom_is_other_process else ""
             custom_process_label = st.text_input(
@@ -7748,8 +7750,8 @@ def show_courier_dialog() -> None:
                 key=f"custom_doc_process_label_{courier_id}",
             )
             custom_title_default = (
-                f"TIG - {row['Futár']} - {custom_period:%Y-%m}"
-                if custom_doc_label == "TIG"
+                f"Teljesítés-összesítő - {row['Futár']} - {custom_period:%Y-%m}"
+                if custom_doc_label == "Teljesítés-összesítő"
                 else f"Elszámolási részletező - {row['Futár']} - {custom_period:%Y-%m}"
             )
             custom_title = st.text_input(
@@ -7792,7 +7794,7 @@ def show_courier_dialog() -> None:
                 },
             )
 
-        custom_type = "tig" if custom_doc_label == "TIG" else "settlement"
+        custom_type = "tig" if custom_doc_label == "Teljesítés-összesítő" else "settlement"
         custom_process_id = ""
         if custom_is_other_process:
             custom_process_id = unicodedata.normalize("NFKD", str(custom_process_label or "")).encode("ascii", "ignore").decode("ascii")
@@ -7801,7 +7803,7 @@ def show_courier_dialog() -> None:
                 custom_process_id = f"egyeb-{custom_period:%Y%m%d}"
         custom_month_closed = closure_done and custom_period.replace(day=1) == period_start.replace(day=1)
         if custom_month_closed:
-            st.warning("Ez a havi folyamat már le van zárva, új egyedi TIG/elszámolási folyamat nem indítható rá.")
+            st.warning("Ez a havi folyamat már le van zárva, új egyedi Teljesítés-összesítő/elszámolási folyamat nem indítható rá.")
         reference_state_key = f"custom_doc_reference_{courier_id}_{custom_type}_{custom_period:%Y%m}"
         if reference_state_key not in st.session_state:
             st.session_state[reference_state_key] = make_document_reference(courier_id, custom_type, custom_period)
@@ -7887,7 +7889,7 @@ def show_courier_dialog() -> None:
         st.markdown("#### Reklamációk")
         complaint_type_labels = {
             "settlement": "Elszámolás",
-            "tig": "TIG",
+            "tig": "Teljesítés-összesítő",
             "invoice": "Számla",
             "invoice_check": "Számlaellenőrzés",
             "invoice_submit": "Számlafeltöltés",
@@ -7952,7 +7954,7 @@ def show_courier_dialog() -> None:
             st.markdown("##### Új reklamáció")
             new_complaint_type_label = st.selectbox(
                 "Típus",
-                ["Elszámolás", "TIG", "Számlaellenőrzés", "Számlafeltöltés", "Számla", "Egyéb"],
+                ["Elszámolás", "Teljesítés-összesítő", "Számlaellenőrzés", "Számlafeltöltés", "Számla", "Egyéb"],
                 key=f"ui_complaint_type_{courier_id}",
             )
             new_complaint_subject = st.text_input("Tárgy", key=f"ui_complaint_subject_{courier_id}")
@@ -8296,11 +8298,11 @@ def show_bulk_settlement_dialog() -> None:
             st.success("A tömeges elszámolások profilba feltöltése indulna.")
 
 
-@st.dialog("Tömeges TIG", width="large")
+@st.dialog("Tömeges Teljesítés-összesítő", width="large")
 def show_bulk_tig_dialog() -> None:
     df = st.session_state.get("current_filtered_data", load_courier_master())
 
-    st.subheader("Tömeges TIG")
+    st.subheader("Tömeges Teljesítés-összesítő")
     st.caption("Az aktuális szűrés alapján kiválasztott futárok.")
 
     if df.empty:
@@ -8323,7 +8325,7 @@ def show_bulk_tig_dialog() -> None:
     generate_key = "bulk_tig_preview_ready"
 
     if st.button(
-        "Tömeges TIG gyártása",
+        "Tömeges Teljesítés-összesítő gyártása",
         type="primary",
         use_container_width=True,
         disabled=not precheck,
@@ -8332,18 +8334,18 @@ def show_bulk_tig_dialog() -> None:
         st.session_state[generate_key] = True
 
     if st.session_state.get(generate_key):
-        st.success("A tömeges TIG gyártás designer állapota elkészült.")
+        st.success("A tömeges Teljesítés-összesítő gyártás designer állapota elkészült.")
         st.markdown("#### 1 darab minta PDF")
 
         pdf_bytes = build_demo_preview_pdf(
-            "Tömeges TIG – minta",
+            "Tömeges Teljesítés-összesítő – minta",
             f"Szűrésben szereplő futárok: {len(df)}",
         )
 
         st.download_button(
-            "Minta TIG PDF megnyitása / letöltése",
+            "Minta Teljesítés-összesítő PDF megnyitása / letöltése",
             data=pdf_bytes,
-            file_name="tomeges_tig_minta.pdf",
+            file_name="tomeges_teljesites_osszesito_minta.pdf",
             mime="application/pdf",
             use_container_width=True,
             key="bulk_tig_preview_pdf",
@@ -8359,7 +8361,7 @@ def show_bulk_tig_dialog() -> None:
             help="Csak designer gomb.",
         ):
             st.session_state["bulk_tig_accepted"] = True
-            st.success("A minta TIG elfogadott állapotot kapna.")
+            st.success("A minta Teljesítés-összesítő áttekintett állapotot kapna.")
 
         if action2.button(
             "Feltöltés profilba",
@@ -8368,7 +8370,7 @@ def show_bulk_tig_dialog() -> None:
             key="bulk_tig_upload",
             help="Csak designer gomb.",
         ):
-            st.success("A tömeges TIG-ek profilba feltöltése indulna.")
+            st.success("A tömeges Teljesítés-összesítők profilba feltöltése indulna.")
 
 
 
@@ -8869,9 +8871,9 @@ def build_monthly_period_document_plan(data: pd.DataFrame, period_start: date, p
             "period_start": period_start,
             "period_end": period_end,
             "settlement_reference": f"{reference_base}-SETTLEMENT",
-            "tig_reference": f"{reference_base}-TIG",
+            "tig_reference": f"{reference_base}-TELJESITES-OSSZESITO",
             "settlement_file": f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}.pdf",
-            "tig_file": f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}.pdf",
+            "tig_file": f"jitt_teljesites_osszesito_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}.pdf",
             "payable_huf": amount_huf,
         })
     return planned
@@ -8991,7 +8993,7 @@ def show_new_settlement_page() -> None:
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
         calculation_mode=st.selectbox("Számítás módja",["API","Excel","Összes"],key="new_calculation_mode")
         warehouse=st.selectbox("Raktár",["Összes"]+sorted(data["Raktár"].unique().tolist()),key="new_warehouse")
-        status=st.selectbox("Elszámolás állapota",["Összes","Elszámolásra vár","TIG-re vár","Bejelentések","Kifizetésre vár","Kifizetve"],key="new_status")
+        status=st.selectbox("Elszámolás állapota",["Összes","Elszámolásra vár","Teljesítés-összesítőre vár","Bejelentések","Kifizetésre vár","Kifizetve"],key="new_status")
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
         mobile_period_start = parse_month_option(selected_month)
         mobile_source_session_id = settlement_mobile_session_for_mode(calculation_mode, mobile_period_start, warehouse)
@@ -9502,7 +9504,7 @@ def show_new_settlement_page() -> None:
         disabled=period_start_clicked or selected_calculation_mode not in {"API", "Excel"},
         use_container_width=True,
         key=f"monthly_period_start_{balance_period_start:%Y%m}",
-        help="Egyszeri inditas: a futar PWA-ban megkapja az elszamolasi idoszakot. TIG csak elszamolas elfogadasa utan keszul.",
+        help="Egyszeri inditas: a futar PWA-ban megkapja az elszamolasi idoszakot. Teljesítés-összesítő csak elszamolas elfogadasa utan keszul.",
     ):
         snapshot_session_id = settlement_mobile_session_for_mode(
             selected_calculation_mode,
@@ -9569,7 +9571,7 @@ def show_new_settlement_page() -> None:
 
     workflow_cards = [
         ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
-        ("TIG-re vár", "Még nem készült TIG", "🟣"),
+        ("Teljesítés-összesítőre vár", "Még nem készült Teljesítés-összesítő", "🟣"),
         ("Bejelentések", "Nyitott ügyek", "🟠"),
         ("Kifizetésre vár", "Jóváhagyás után", "🟡"),
         ("Kifizetve", "Havi zárás kész", "🟢"),
@@ -9612,7 +9614,7 @@ def show_new_settlement_page() -> None:
     a,b,c,d,e=st.columns(5)
     if a.button("Tömeges elszámolás",use_container_width=True):
         show_bulk_settlement_dialog()
-    if b.button("Tömeges TIG",use_container_width=True):
+    if b.button("Tömeges Teljesítés-összesítő",use_container_width=True):
         show_bulk_tig_dialog()
     if c.button("Bejelentések",use_container_width=True):
         show_reports_dialog()

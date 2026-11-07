@@ -24,7 +24,7 @@ where status_row.document_month::date = date '2026-09-01'
       where reset_targets.courier_id = status_row.courier_id::text
   );
 
--- Remove settlement/TIG/invoice documents so they cannot reopen the workflow.
+-- Remove settlement/Teljesítés-összesítő/invoice documents so they cannot reopen the workflow.
 -- Complaint documents and complaints are intentionally preserved.
 with reset_targets as (
     select distinct courier_id::text as courier_id

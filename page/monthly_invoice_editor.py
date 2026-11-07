@@ -408,11 +408,11 @@ def build_default_tig_lines(summary_row):
             **line_row(
                 "service_fee",
                 "Szallitasi dij",
-                "A TIG fo szolgaltatasi sora. A borravalo nelkuli atutalando resz.",
+                "A Teljesítés-összesítő fo szolgaltatasi sora. A borravalo nelkuli atutalando resz.",
                 service_amount,
                 "Elszamolas fizetendo osszeg",
             ),
-            "TIG-be szamit": True,
+            "Teljesítés-összesítő-be szamit": True,
         },
         {
             **line_row(
@@ -422,17 +422,17 @@ def build_default_tig_lines(summary_row):
                 tip_amount,
                 "Elszamolas tip",
             ),
-            "TIG-be szamit": True,
+            "Teljesítés-összesítő-be szamit": True,
         },
         {
             **line_row(
                 "cash_info",
                 "KP tajekoztato",
-                "KP / ATM informacios sor. Alapesetben nem novel TIG vegosszeget.",
+                "KP / ATM informacios sor. Alapesetben nem novel Teljesítés-összesítő vegosszeget.",
                 cash_amount,
                 "ATM / KP",
             ),
-            "TIG-be szamit": False,
+            "Teljesítés-összesítő-be szamit": False,
         },
     ]
     non_zero_rows = [
@@ -492,13 +492,13 @@ def normalize_editor_df(df):
 
 def normalize_tig_editor_df(df):
     df = normalize_editor_df(df)
-    if "TIG-be szamit" not in df.columns:
-        df["TIG-be szamit"] = True
-    df["TIG-be szamit"] = df["TIG-be szamit"].fillna(True).astype(bool)
+    if "Teljesítés-összesítő-be szamit" not in df.columns:
+        df["Teljesítés-összesítő-be szamit"] = True
+    df["Teljesítés-összesítő-be szamit"] = df["Teljesítés-összesítő-be szamit"].fillna(True).astype(bool)
     return df[
         [
             "Aktiv",
-            "TIG-be szamit",
+            "Teljesítés-összesítő-be szamit",
             "Kod",
             "Megnevezes",
             "Szoveg",
@@ -749,10 +749,10 @@ def show_monthly_invoice_editor_page():
 
 
 def show_monthly_tig_editor_page():
-    st.title("Havi TIG")
+    st.title("Havi Teljesítés-összesítő")
     st.caption(
-        "A TIG-ben szereplo osszegek es szoveges sorok szerkesztheto nezete. "
-        "A 'TIG-be szamit' kapcsoloval dontheto el, hogy egy sor beleszamoljon-e a vegosszegbe."
+        "A Teljesítés-összesítőben szereplo osszegek es szoveges sorok szerkesztheto nezete. "
+        "A 'Teljesítés-összesítő-be szamit' kapcsoloval dontheto el, hogy egy sor beleszamoljon-e a vegosszegbe."
     )
 
     start_date, end_date, selected_sheet = render_month_filters("monthly_tig_editor")
@@ -764,7 +764,7 @@ def show_monthly_tig_editor_page():
             selected_sheet,
         )
     except Exception as exc:
-        st.error(f"TIG adatok betoltese sikertelen: {exc}")
+        st.error(f"Teljesítés-összesítő adatok betoltese sikertelen: {exc}")
         return
 
     if final_df is None or final_df.empty:
@@ -788,7 +788,7 @@ def show_monthly_tig_editor_page():
     default_lines = normalize_tig_editor_df(build_default_tig_lines(summary_row))
 
     top_cols = st.columns([1, 1, 1, 1])
-    top_cols[0].metric("PDF/TIG alap", format_huf(summary_row.get("payable_total_huf")))
+    top_cols[0].metric("PDF/Teljesítés-összesítő alap", format_huf(summary_row.get("payable_total_huf")))
     top_cols[1].metric("Szolgaltatasi resz", format_huf(max(to_number(summary_row.get("payable_total_huf")) - max(to_number(summary_row.get("tip_huf")), 0), 0)))
     top_cols[2].metric("Borravalo", format_huf(summary_row.get("tip_huf")))
     top_cols[3].metric("KP info", format_huf(abs(to_number(summary_row.get("atm_balance_huf")))))
@@ -817,19 +817,19 @@ def show_monthly_tig_editor_page():
     if action_cols[0].button("Alaphelyzet", key=f"{state_key}_reset"):
         st.session_state[state_key] = default_lines
         st.rerun()
-    if action_cols[1].button("Ures TIG sor hozzaadasa", key=f"{state_key}_add"):
+    if action_cols[1].button("Ures Teljesítés-összesítő sor hozzaadasa", key=f"{state_key}_add"):
         current = normalize_tig_editor_df(st.session_state[state_key])
         new_row = pd.DataFrame(
             [
                 {
                     **line_row(
                         "manual",
-                        "Uj TIG tetel",
-                        "Kezzel rogzitett TIG sor.",
+                        "Uj Teljesítés-összesítő tetel",
+                        "Kezzel rogzitett Teljesítés-összesítő sor.",
                         0,
                         "Manualis",
                     ),
-                    "TIG-be szamit": True,
+                    "Teljesítés-összesítő-be szamit": True,
                 }
             ]
         )
@@ -847,7 +847,7 @@ def show_monthly_tig_editor_page():
         num_rows="dynamic",
         column_config={
             "Aktiv": st.column_config.CheckboxColumn("Aktiv"),
-            "TIG-be szamit": st.column_config.CheckboxColumn("TIG-be szamit"),
+            "Teljesítés-összesítő-be szamit": st.column_config.CheckboxColumn("Teljesítés-összesítő-be szamit"),
             "Kod": st.column_config.TextColumn("Kod"),
             "Megnevezes": st.column_config.TextColumn("Megnevezes"),
             "Szoveg": st.column_config.TextColumn("Szoveg", width="large"),
@@ -861,14 +861,14 @@ def show_monthly_tig_editor_page():
     edited = normalize_tig_editor_df(edited)
     st.session_state[state_key] = edited
 
-    if st.button("Torlesre jelolt TIG sorok kivetele", key=f"{state_key}_delete"):
+    if st.button("Torlesre jelolt Teljesítés-összesítő sorok kivetele", key=f"{state_key}_delete"):
         st.session_state[state_key] = edited[~edited["Torles"]].reset_index(drop=True)
         st.rerun()
 
     tig_rows = edited[
         (edited["Aktiv"])
         & (~edited["Torles"])
-        & (edited["TIG-be szamit"])
+        & (edited["Teljesítés-összesítő-be szamit"])
     ].copy()
     tig_total = int(round(tig_rows["Osszeg (Ft)"].sum())) if not tig_rows.empty else 0
     source_total = int(round(to_number(summary_row.get("payable_total_huf"))))
@@ -876,16 +876,16 @@ def show_monthly_tig_editor_page():
 
     st.divider()
     result_cols = st.columns([1, 1, 1])
-    result_cols[0].metric("Szerkesztett TIG vegosszeg", format_huf(tig_total))
-    result_cols[1].metric("TIG-be szamito sorok", len(tig_rows))
-    result_cols[2].metric("Elteres a TIG alaphoz kepest", format_huf(delta))
+    result_cols[0].metric("Szerkesztett Teljesítés-összesítő vegosszeg", format_huf(tig_total))
+    result_cols[1].metric("Teljesítés-összesítő-be szamito sorok", len(tig_rows))
+    result_cols[2].metric("Elteres a Teljesítés-összesítő alaphoz kepest", format_huf(delta))
 
     courier_name = str(st.session_state.get(f"{state_key}_seller_name") or summary_row.get("driver_name") or "").strip()
     period_label = f"{start_date} - {end_date}"
     pdf_rows = edited[(edited["Aktiv"]) & (~edited["Torles"])].copy()
     pdf_bytes = build_editor_pdf_bytes(
-        title="JITT TIG előnézet",
-        subtitle="Szerkesztett teljesítési igazolás sorok az admin munkanézet alapján.",
+        title="JITT Teljesítés-összesítő előnézet",
+        subtitle="Szerkesztett Teljesítés-összesítő sorok az admin munkanézet alapján.",
         courier_id=courier_id,
         courier_name=courier_name,
         period_label=period_label,
@@ -893,7 +893,7 @@ def show_monthly_tig_editor_page():
         total_huf=tig_total,
     )
     tig_file_name = (
-        f"jitt_tig_elonezet_"
+        f"jitt_teljesites_osszesito_elonezet_"
         f"{courier_id or 'futar'}_"
         f"{slugify_filename(courier_name)}_"
         f"{start_date:%Y_%m}.pdf"
@@ -907,19 +907,19 @@ def show_monthly_tig_editor_page():
 
     download_cols = st.columns([1, 1, 1])
     download_cols[0].download_button(
-        "TIG elonezet PDF letoltese",
+        "Teljesítés-összesítő elonezet PDF letoltese",
         data=pdf_bytes,
         file_name=tig_file_name,
         mime="application/pdf",
     )
     download_cols[1].download_button(
-        "Szerkesztett TIG CSV",
+        "Szerkesztett Teljesítés-összesítő CSV",
         data=export_df.to_csv(index=False).encode("utf-8-sig"),
         file_name=f"havi_tig_{courier_id or 'futar'}_{start_date:%Y_%m}.csv",
         mime="text/csv",
     )
     if download_cols[2].button(
-        "TIG feltoltes a profilba",
+        "Teljesítés-összesítő feltoltes a profilba",
         key=f"{state_key}_upload_profile",
         disabled=not bool(courier_id),
     ):
@@ -930,16 +930,16 @@ def show_monthly_tig_editor_page():
                 document_type="tig",
                 action_key="tig",
                 document_month=month_start(start_date),
-                title=f"TIG - {start_date:%Y-%m}",
-                note="Havi TIG szerkesztőből feltöltött előnézeti TIG.",
+                title=f"Teljesítés-összesítő - {start_date:%Y-%m}",
+                note="Havi Teljesítés-összesítő szerkesztőből feltöltött előnézeti Teljesítés-összesítő.",
                 file_name=tig_file_name,
                 pdf_bytes=pdf_bytes,
             )
-            st.success("A TIG felkerült a futár profiljába.")
+            st.success("A Teljesítés-összesítő felkerült a futár profiljába.")
         except Exception as exc:
-            st.error(f"TIG profil feltoltes sikertelen: {exc}")
+            st.error(f"Teljesítés-összesítő profil feltoltes sikertelen: {exc}")
 
     st.info(
-        "Ez most TIG munkalap. Ha a sorlogika rendben van, a kovetkezo korben "
-        "osszekotjuk DB mentessel es TIG PDF generalassal."
+        "Ez most Teljesítés-összesítő munkalap. Ha a sorlogika rendben van, a kovetkezo korben "
+        "osszekotjuk DB mentessel es Teljesítés-összesítő PDF generalassal."
     )

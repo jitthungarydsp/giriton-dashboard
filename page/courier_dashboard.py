@@ -1629,19 +1629,19 @@ def build_invoice_checks(
 
     if invoice_month and performance_date:
         if (performance_date.year, performance_date.month) == (invoice_month.year, invoice_month.month):
-            add("ok", "TIG időszaka", "A teljesítés hónapja egyezik a kiválasztott TIG hónappal.")
+            add("ok", "Teljesítés-összesítő időszaka", "A teljesítés hónapja egyezik a kiválasztott Teljesítés-összesítő hónappal.")
         else:
-            add("error", "TIG időszaka", f"A teljesítés {performance_date:%Y-%m}, a kiválasztott TIG {invoice_month:%Y-%m}.")
+            add("error", "Teljesítés-összesítő időszaka", f"A teljesítés {performance_date:%Y-%m}, a kiválasztott Teljesítés-összesítő {invoice_month:%Y-%m}.")
 
     pdf_gross = float(invoice_fields.get("gross_total") or 0)
     expected_gross = float(expected_gross_amount or 0)
     if expected_gross:
         if pdf_gross == expected_gross:
-            add("ok", "TIG szerinti végösszeg", f"A számla és a TIG összege egyezik: {format_currency(pdf_gross)}.")
+            add("ok", "Teljesítés-összesítő szerinti végösszeg", f"A számla és a Teljesítés-összesítő összege egyezik: {format_currency(pdf_gross)}.")
         else:
-            add("error", "TIG szerinti végösszeg", f"Számla: {format_currency(pdf_gross)}; TIG: {format_currency(expected_gross)}; eltérés: {format_currency(pdf_gross - expected_gross)}.")
+            add("error", "Teljesítés-összesítő szerinti végösszeg", f"Számla: {format_currency(pdf_gross)}; Teljesítés-összesítő: {format_currency(expected_gross)}; eltérés: {format_currency(pdf_gross - expected_gross)}.")
     elif pdf_gross:
-        add("warn", "TIG szerinti végösszeg", f"A számlán {format_currency(pdf_gross)} szerepel, de nincs kiolvasható TIG összeg az összevetéshez.")
+        add("warn", "Teljesítés-összesítő szerinti végösszeg", f"A számlán {format_currency(pdf_gross)} szerepel, de nincs kiolvasható Teljesítés-összesítő összeg az összevetéshez.")
 
     if require_invoice_fields:
         if clean_display_text(invoice_number):
@@ -1763,7 +1763,7 @@ def render_invoice_submission_panel(row, user, selected_month=None):
                 value=0,
             )
             tig_reference = st.text_input(
-                "TIG / elszámolás azonosító",
+                "Teljesítés-összesítő / elszámolás azonosító",
                 placeholder="ha van",
             )
             note = st.text_area(
@@ -1859,13 +1859,13 @@ def render_invoice_submission_panel(row, user, selected_month=None):
             if expected_total:
                 st.info(
                     "Tobb szamla feltoltesekor a KP/KPT es az atutalasos szamla nem kerul "
-                    "egyosszegu TIG-ellenorzesre. Az egyes szamlak sajat adatellenorzese fut le; "
+                    "egyosszegu Teljesítés-összesítő-ellenorzesre. Az egyes szamlak sajat adatellenorzese fut le; "
                     f"kiolvasott brutto osszesen: {format_currency(parsed_gross_total)}."
                 )
             else:
                 st.warning(
                     f"A k?t sz?mla kiolvasott ?sszege ?sszesen {format_currency(parsed_gross_total)}, "
-                    "de nincs TIG/megadott ?sszeg az ?sszevet?shez."
+                    "de nincs Teljesítés-összesítő/megadott ?sszeg az ?sszevet?shez."
                 )
 
         if not has_error:
@@ -1881,7 +1881,7 @@ def render_invoice_submission_panel(row, user, selected_month=None):
                     document_month=invoice_month.replace(day=1),
                     title=upload_title,
                     note=(
-                        f"Brutt?: {gross_amount} Ft; TIG/elsz?mol?s: {tig_reference}. "
+                        f"Brutt?: {gross_amount} Ft; Teljesítés-összesítő/elsz?mol?s: {tig_reference}. "
                         f"{note}"
                     ).strip(),
                     uploaded_file=uploaded_invoice,
@@ -2205,9 +2205,9 @@ def get_peopleforce_document_config(action_key):
     configs = {
         "tig": {
             "document_type": "tig",
-            "title": "TIG havi nézet",
-            "empty": "Ehhez a hónaphoz még nincs feltöltött TIG.",
-            "upload_label": "TIG feltöltése",
+            "title": "Teljesítés-összesítő havi nézet",
+            "empty": "Ehhez a hónaphoz még nincs feltöltött Teljesítés-összesítő.",
+            "upload_label": "Teljesítés-összesítő feltöltése",
             "complaint": True,
         },
         "settlement": {
@@ -2790,7 +2790,7 @@ def render_peopleforce_monthly_documents(action_key, row, user, selected_month=N
         st.info(config["empty"])
     elif hide_uploaded_documents:
         st.caption(
-            "Az elszámolás és a TIG adatai ezen az oldalon láthatók. "
+            "Az elszámolás és a Teljesítés-összesítő adatai ezen az oldalon láthatók. "
             "A feltöltött PDF-et itt nem jelenítjük meg külön."
         )
     else:
@@ -2867,8 +2867,8 @@ def get_peopleforce_cards():
         {
             "key": "tig",
             "code": "TG",
-            "title": "TIG",
-            "description": "Teljesítésigazolással kapcsolatos ügyek és státuszok.",
+            "title": "Teljesítés-összesítő",
+            "description": "Teljesítés-összesítővel kapcsolatos ügyek és státuszok.",
         },
         {
             "key": "settlement",
@@ -3145,7 +3145,7 @@ else:
 
 WORKFLOW_PREREQUISITES = {
     "tig": ("settlement", "az elszámolás futár általi jóváhagyása"),
-    "invoice_check": ("tig", "a teljesítményigazolás futár általi jóváhagyása"),
+    "invoice_check": ("tig", "a Teljesítés-összesítő futár általi áttekintése"),
     "invoice_submit": ("invoice_check", "a sikeres számlaellenőrzés"),
     "my_invoices": ("invoice_submit", "a számla sikeres feltöltése"),
 }

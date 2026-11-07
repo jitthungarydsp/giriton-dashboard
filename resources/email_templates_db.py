@@ -15,6 +15,7 @@ from resources.email_sender import (
     validate_email,
 )
 from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
+from resources.summary_document_labels import summary_document_text
 
 
 EMAIL_TEMPLATE_TABLE = "email_templates"
@@ -105,6 +106,10 @@ def read_email_templates(active_only: bool = False) -> list[dict[str, Any]]:
     for default_row in default_template_rows():
         by_key.setdefault(default_row["template_key"], default_row)
     merged_rows = list(by_key.values())
+    merged_rows = [dict(row, **{
+        field: summary_document_text(row.get(field))
+        for field in ("template_name", "subject", "body")
+    }) for row in merged_rows]
     if active_only:
         merged_rows = [row for row in merged_rows if bool(row.get("is_active", True))]
     return sorted(merged_rows, key=lambda row: str(row.get("template_name") or row.get("template_key") or ""))

@@ -12913,7 +12913,7 @@ def workflow_invoice_requirements(
             "cashGrossHuf": max(cash_gross, 0),
             "totalGrossHuf": max(cash_gross, 0),
         }
-    # Monthly TIG finalTotalHuf already contains only transfer service + tip.
+    # Monthly Teljesítés-összesítő finalTotalHuf already contains only transfer service + tip.
     # The cash_service row is invoiced separately and must not be subtracted again.
     transfer_gross = total_gross
     total_gross = transfer_gross + max(cash_gross, 0)
@@ -13071,7 +13071,7 @@ def build_workflow_tig_breakdown(
         return {
             "available": False,
             "month": month.strftime("%Y-%m"),
-            "message": "A TIG bontĂˇs az elszĂˇmolĂˇsi adatok elkĂ©szĂĽlte utĂˇn lĂˇthatĂł.",
+            "message": "A Teljesítés-összesítő bontĂˇs az elszĂˇmolĂˇsi adatok elkĂ©szĂĽlte utĂˇn lĂˇthatĂł.",
             "rows": [],
         }
     snapshot_tig = build_tig_breakdown_from_snapshot(user, month, financial_breakdown)
@@ -13081,7 +13081,7 @@ def build_workflow_tig_breakdown(
         return {
             "available": False,
             "month": month.strftime("%Y-%m"),
-            "message": "Ehhez a hónaphoz még nincs mentett TIG snapshot.",
+            "message": "Ehhez a hónaphoz még nincs mentett Teljesítés-összesítő snapshot.",
             "rows": [],
         }
     profile_rows = optional_supabase_rows(
@@ -13187,7 +13187,7 @@ def build_kp_invoice_tig_breakdown(
         "cashGrossHuf": cash_amount,
         "finalTotalHuf": cash_amount,
         "processType": "kp_invoice",
-        "message": "KP számla pótlási TIG, csak a készpénzes részre.",
+        "message": "KP számla pótlási Teljesítés-összesítő, csak a készpénzes részre.",
     }
     return result
 
@@ -18196,7 +18196,7 @@ def sync_invoice_skip_progress(
             upsert_workflow_status(user, month, action, "done", note, process_id)
             states[action] = {"status": "done", "status_note": note}
     if not workflow_action_visible(states, "invoice_payment"):
-        note = f"{note_prefix}: TIG elfogadva, admin kifizetésre vár."
+        note = f"{note_prefix}: Teljesítés-összesítő áttekintve, admin kifizetésre vár."
         open_payment_waiting_status(user, month, note, process_id)
         states["invoice_payment"] = {"status": "open", "status_note": note}
 
@@ -18266,7 +18266,7 @@ def combine_invoice_validation_results(
                 "detail": f"Átutalásos számla: {main_gross_total:,} Ft; megadva: {declared_gross_amount:,} Ft.".replace(",", " "),
             }
         )
-    # Each document's TIG amount is validated by its own validate_invoice call.
+    # Each document's Teljesítés-összesítő amount is validated by its own validate_invoice call.
 
     errors = sum(check.get("status") == "error" for check in checks)
     warnings = sum(check.get("status") == "warn" for check in checks)
@@ -18332,7 +18332,7 @@ def format_snapshot_huf(value: Any) -> str:
 def acceptance_action_label(action: str) -> str:
     return {
         "settlement": "Elszámolás",
-        "tig": "TIG",
+        "tig": "Teljesítés-összesítő",
     }.get(str(action or "").strip(), str(action or "").strip() or "Dokumentum")
 
 
@@ -18462,7 +18462,7 @@ def build_acceptance_snapshot_pdf(payload: dict[str, Any]) -> bytes:
         Spacer(1, 6 * mm),
         Table(
             [
-                [Paragraph("PWA elszámolás végösszeg", styles["body"]), Paragraph("TIG végösszeg", styles["body"])],
+                [Paragraph("PWA elszámolás végösszeg", styles["body"]), Paragraph("Teljesítés-összesítő végösszeg", styles["body"])],
                 [
                     Paragraph(format_snapshot_huf(payload.get("payable_huf")), styles["amount"]),
                     Paragraph(format_snapshot_huf(payload.get("tig_final_total_huf")), styles["amount"]),
@@ -18533,7 +18533,7 @@ def upload_acceptance_snapshot_document(payload: dict[str, Any], pdf_bytes: byte
             process_marker,
             f"PWA elfogadási másolat: {action_label}.",
             f"PWA végösszeg: {format_snapshot_huf(payload.get('payable_huf'))}.",
-            f"TIG végösszeg: {format_snapshot_huf(payload.get('tig_final_total_huf'))}.",
+            f"Teljesítés-összesítő végösszeg: {format_snapshot_huf(payload.get('tig_final_total_huf'))}.",
             f"Elfogadva: {str(payload.get('accepted_at') or '')}.",
         ]
         if part
@@ -18648,7 +18648,7 @@ def build_workflow(
     mobile_config = read_mobile_settlement_period_config(month) if not process_id else {}
     visibility_mode = normalize_mobile_visibility_mode(mobile_config.get("visibility_mode"))
     # Admin preview is intentionally a full read-only view of the selected
-    # courier. Mobile visibility settings must not hide the settlement/TIG
+    # courier. Mobile visibility settings must not hide the settlement/Teljesítés-összesítő
     # details from the administrator who opened that preview.
     tig_hidden_by_admin = not preview_read_only and not process_id and visibility_mode == "settlement_only"
     tig_open_by_admin = preview_read_only or (not process_id and visibility_mode == "settlement_and_tig")
@@ -18673,7 +18673,7 @@ def build_workflow(
     )
     # A mentett snapshot marad az elsődleges forrás a PWA-n, de hiányos vagy
     # régebbi snapshot esetén legyen élő fallback is. Enélkül a workflow lépései
-    # aktívak maradhattak, miközben az elszámolás/TIG elfogadási panel eltűnt.
+    # aktívak maradhattak, miközben az elszámolás/Teljesítés-összesítő elfogadási panel eltűnt.
     preview_snapshot_only = False
     financial_breakdown = build_financial_breakdown(
         user,
@@ -18739,7 +18739,7 @@ def build_workflow(
         tig_breakdown = {
             "available": False,
             "month": month.strftime("%Y-%m"),
-            "message": "Admin beállítás szerint a TIG most nem látható." if tig_hidden_by_admin else "A TIG az elszámolás elfogadása után töltődik be.",
+            "message": "Admin beállítás szerint a Teljesítés-összesítő most nem látható." if tig_hidden_by_admin else "A Teljesítés-összesítő az elszámolás elfogadása után töltődik be.",
             "rows": [],
         }
     efo_invoice_skip = not process_id and settlement_done and courier_has_efo_assignment(user, month)
@@ -18778,17 +18778,17 @@ def build_workflow(
         },
         {
             "key": "tig_document",
-            "title": "TIG admin beállítás szerint rejtve" if tig_hidden_by_admin else "KP TIG elkészült" if kp_invoice_process and tig_ready else "TIG azonnal látható" if tig_open_by_admin else "TIG nem szükséges ehhez a folyamathoz" if process_id else (
-                "TIG elkészült"
+            "title": "Teljesítés-összesítő admin beállítás szerint rejtve" if tig_hidden_by_admin else "KP Teljesítés-összesítő elkészült" if kp_invoice_process and tig_ready else "Teljesítés-összesítő azonnal látható" if tig_open_by_admin else "Teljesítés-összesítő nem szükséges ehhez a folyamathoz" if process_id else (
+                "Teljesítés-összesítő elkészült"
                 if tig_ready
-                else "Várakozás a TIG elkészítésére"
+                else "Várakozás a Teljesítés-összesítő elkészítésére"
             ),
             "done": tig_ready or process_invoice_flow_ready,
             "locked": False if tig_open_by_admin and tig_ready else not settlement_done,
         },
         {
             "key": "tig",
-            "title": "TIG elfogadása" if not tig_hidden_by_admin else "TIG rejtve",
+            "title": "Teljesítés-összesítő áttekintése" if not tig_hidden_by_admin else "Teljesítés-összesítő rejtve",
             "done": tig_done,
             "locked": False if tig_open_by_admin and tig_ready else not settlement_done or ((not process_id or kp_invoice_process) and not tig_ready),
         },
@@ -18822,12 +18822,12 @@ def build_workflow(
         efo_billing_done = efo_tig_done
         efo_step_updates = {
             "tig_document": {
-                "title": "TIG elfogadva EFO folyamatnál" if efo_tig_done else "TIG elkészült",
+                "title": "Teljesítés-összesítő áttekintve EFO folyamatnál" if efo_tig_done else "Teljesítés-összesítő elkészült",
                 "done": tig_ready or efo_tig_done,
                 "locked": not settlement_done,
             },
             "tig": {
-                "title": "TIG elfogadása" if not efo_tig_done else "TIG elfogadva EFO folyamatnál",
+                "title": "Teljesítés-összesítő áttekintése" if not efo_tig_done else "Teljesítés-összesítő áttekintve EFO folyamatnál",
                 "done": efo_billing_done,
                 "locked": not tig_ready or efo_tig_done,
             },
@@ -18850,12 +18850,12 @@ def build_workflow(
     elif manual_invoice_skip:
         manual_step_updates = {
             "tig_document": {
-                "title": "TIG kézzel kihagyva",
+                "title": "Teljesítés-összesítő kézzel kihagyva",
                 "done": settlement_done,
                 "locked": not settlement_done,
             },
             "tig": {
-                "title": "TIG kézzel kihagyva",
+                "title": "Teljesítés-összesítő kézzel kihagyva",
                 "done": settlement_done,
                 "locked": True,
             },
@@ -19080,11 +19080,11 @@ def read_courier_document_archive(user: dict[str, Any]) -> list[dict[str, Any]]:
                 "id": f"tig-{courier_id}-{month_key}",
                 "document_type": "tig",
                 "document_month": period_start,
-                "title": f"TIG - {month_key}",
-                "file_name": "Generált TIG PDF",
+                "title": f"Teljesítés-összesítő - {month_key}",
+                "file_name": "Generált Teljesítés-összesítő PDF",
                 "mime_type": "application/pdf",
                 "file_size": 0,
-                "note": "A mentett havi pénzügyi adatokból generált TIG.",
+                "note": "A mentett havi pénzügyi adatokból generált Teljesítés-összesítő.",
                 "uploaded_by": "rendszer",
                 "uploaded_at": created_at,
                 "virtual": True,
@@ -20245,7 +20245,8 @@ def slugify_filename(value: Any) -> str:
 def make_document_reference(courier_id: str, document_type: str, document_month: date) -> str:
     month_text = document_month.replace(day=1).strftime("%Y%m")
     digest = hashlib.sha1(f"{courier_id}:{document_type}:{month_text}".encode("utf-8")).hexdigest()[:8]
-    return f"{courier_id}-{document_type.upper()}-{month_text}-{digest}"
+    public_type = "TELJESITES-OSSZESITO" if document_type == "tig" else document_type.upper()
+    return f"{courier_id}-{public_type}-{month_text}-{digest}"
 
 
 def workflow_tig_document_exists(user: dict[str, Any], month: date, process_id: str | None = "") -> bool:
@@ -20345,7 +20346,7 @@ def generate_tig_after_settlement_accept(user: dict[str, Any], month: date, proc
         tig_breakdown=tig_breakdown,
     )
     note_parts = [
-        "Automatikus TIG generálás elszámolás elfogadása után.",
+        "Automatikus Teljesítés-összesítő generálás elszámolás elfogadása után.",
         f"Elszámolási összeg: {payable} Ft.",
     ]
     process_marker = process_note_marker(clean_process_id)
@@ -20359,8 +20360,8 @@ def generate_tig_after_settlement_accept(user: dict[str, Any], month: date, proc
             "courier_name": courier_name,
             "document_type": "tig",
             "document_month": month.isoformat(),
-            "title": f"TIG - {month:%Y-%m}",
-            "file_name": f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{month:%Y-%m}_{reference}.pdf",
+            "title": f"Teljesítés-összesítő - {month:%Y-%m}",
+            "file_name": f"jitt_teljesites_osszesito_{courier_id}_{slugify_filename(courier_name)}_{month:%Y-%m}_{reference}.pdf",
             "mime_type": "application/pdf",
             "file_size": len(pdf_bytes),
             "file_content_base64": base64.b64encode(pdf_bytes).decode("ascii"),
@@ -20381,7 +20382,7 @@ def require_prerequisite(user: dict[str, Any], month: date, action: str, process
     clean_process_id = normalize_process_id(process_id)
     if is_kp_invoice_process(clean_process_id) and prerequisite == "tig":
         if not workflow_done(status_map(status_rows, clean_process_id), "tig"):
-            raise HTTPException(status_code=409, detail="Előbb szükséges: a KP TIG elfogadása.")
+            raise HTTPException(status_code=409, detail="Előbb szükséges: a KP Teljesítés-összesítő áttekintése.")
         return
     if clean_process_id and prerequisite in {"settlement", "tig"}:
         process_documents = [row for row in documents if document_belongs_to_process(row, clean_process_id)]
@@ -20406,7 +20407,7 @@ def require_prerequisite(user: dict[str, Any], month: date, action: str, process
     if not workflow_done(status_map(status_rows, process_id), prerequisite):
         labels = {
             "settlement": "az elszámolás elfogadása",
-            "tig": "a TIG elfogadása",
+            "tig": "a Teljesítés-összesítő áttekintése",
             "invoice_check": "a sikeres számlaellenőrzés",
         }
         raise HTTPException(status_code=409, detail=f"Előbb szükséges: {labels[prerequisite]}.")
@@ -23754,7 +23755,7 @@ def workflow_tig_pdf(
         read_mobile_settlement_period_config(month_value).get("visibility_mode")
     )
     if not normalize_process_id(process) and visibility_mode == "settlement_only" and not privileged_viewer:
-        raise HTTPException(status_code=404, detail="A TIG admin beállítás szerint most nem látható.")
+        raise HTTPException(status_code=404, detail="A Teljesítés-összesítő admin beállítás szerint most nem látható.")
     process_id = normalize_process_id(process)
     financial_breakdown = build_financial_breakdown(
         view_user,
@@ -23767,7 +23768,7 @@ def workflow_tig_pdf(
         else build_workflow_tig_breakdown(view_user, month_value, financial_breakdown)
     )
     if not tig_breakdown.get("available"):
-        raise HTTPException(status_code=404, detail="Ehhez a hónaphoz még nincs letölthető TIG.")
+        raise HTTPException(status_code=404, detail="Ehhez a hónaphoz még nincs letölthető Teljesítés-összesítő.")
     _documents, status_rows, _complaints = read_workflow_rows(view_user, month_value)
     states = status_map(status_rows, process_id)
 
@@ -23811,7 +23812,7 @@ def workflow_tig_pdf(
         {"payable": payable, "cash": cash_amount, "tip": tip_amount},
         tig_breakdown=tig_breakdown,
     )
-    filename = f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{month_value:%Y-%m}_{reference}.pdf"
+    filename = f"jitt_teljesites_osszesito_{courier_id}_{slugify_filename(courier_name)}_{month_value:%Y-%m}_{reference}.pdf"
     if isinstance(preview_page, int) and preview_page > 0:
         return render_pdf_preview_page(pdf_bytes, preview_page)
     return StreamingResponse(
@@ -24144,7 +24145,7 @@ def admin_recheck_latest_monthly_invoice(
     tig = build_workflow_tig_breakdown(view_user, month, financial)
     requirements = workflow_invoice_requirements(financial, tig)
     if not tig.get("available"):
-        raise HTTPException(status_code=409, detail="Az ellenőrzéshez nincs elérhető havi TIG.")
+        raise HTTPException(status_code=409, detail="Az ellenőrzéshez nincs elérhető havi Teljesítés-összesítő.")
     require_cash = bool(requirements.get("requiresCashInvoice"))
     selected = read_latest_monthly_invoices(courier_id, month, require_cash)
     if "transfer" not in selected:
@@ -24184,7 +24185,7 @@ def admin_recheck_latest_monthly_invoice(
     checks = [{**check, "title": f"{label}: {check.get('title') or ''}"}
               for label, validation in validations for check in validation.get("checks", [])]
     if require_cash and "cash" not in selected:
-        checks.append({"status": "error", "title": "KP számla", "detail": "A TIG alapján külön KP számla szükséges, de nincs feltöltve."})
+        checks.append({"status": "error", "title": "KP számla", "detail": "A Teljesítés-összesítő alapján külön KP számla szükséges, de nincs feltöltve."})
     ok = all(validation.get("ok") for _, validation in validations) and not any(check.get("status") == "error" for check in checks)
     validation = {"ok": ok, "checks": checks}
     _documents, status_rows, _complaints = read_workflow_rows(view_user, month)
@@ -24372,7 +24373,7 @@ def admin_settlement_dashboard_detail(
     ) if include_tig else {
         "available": False,
         "month": month_value.strftime("%Y-%m"),
-        "message": "A TIG a TIG fül megnyitásakor töltődik be.",
+        "message": "A Teljesítés-összesítő a Teljesítés-összesítő fül megnyitásakor töltődik be.",
         "rows": [],
     }
     if latest_snapshot and draft_rows:
@@ -25208,7 +25209,7 @@ def accept_workflow_document(
         read_mobile_settlement_period_config(month).get("visibility_mode")
     )
     if not process_id and action == "tig" and visibility_mode == "settlement_only":
-        raise HTTPException(status_code=409, detail="A TIG admin beállítás szerint most nem látható.")
+        raise HTTPException(status_code=409, detail="A Teljesítés-összesítő admin beállítás szerint most nem látható.")
     if action == "tig":
         if process_id or visibility_mode != "settlement_and_tig":
             require_prerequisite(user, month, "tig", process_id)
@@ -25258,7 +25259,7 @@ def accept_workflow_document(
             month,
             "tig",
             "done",
-            f"{skip_note_prefix}: TIG nem szükséges.",
+            f"{skip_note_prefix}: Teljesítés-összesítő nem szükséges.",
             process_id,
         )
         upsert_workflow_status(
@@ -25305,7 +25306,7 @@ def accept_workflow_document(
         open_payment_waiting_status(
             user,
             month,
-            f"{skip_note_prefix}: TIG elfogadva, admin kifizetésre vár.",
+            f"{skip_note_prefix}: Teljesítés-összesítő áttekintve, admin kifizetésre vár.",
             process_id,
         )
     elif action == "tig" and not invoice_skip:
@@ -25314,7 +25315,7 @@ def accept_workflow_document(
             month,
             "invoice_submit",
             "open",
-            "TIG elfogadva, számlafeltöltésre vár.",
+            "Teljesítés-összesítő áttekintve, számlafeltöltésre vár.",
             process_id,
         )
     return {"ok": True, "workflow": build_workflow(user, month, process_id)}
@@ -25375,14 +25376,14 @@ def admin_complete_workflow_action(
                 try:
                     generate_tig_after_settlement_accept(view_user, month, process_id)
                 except Exception as exc:
-                    print("Admin TIG generation skipped:", exc)
+                    print("Admin Teljesítés-összesítő generation skipped:", exc)
         elif item == "tig":
             upsert_workflow_status(
                 view_user,
                 month,
                 "tig",
                 "done",
-                admin_note("TIG admin által elfogadva a futár nevében."),
+                admin_note("Teljesítés-összesítő admin által áttekintve a futár nevében."),
                 process_id,
             )
         elif item == "invoice_submit":
@@ -25531,7 +25532,7 @@ def create_workflow_complaint(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     if payload.action not in {"settlement", "tig", "invoice_check", "invoice_submit"}:
-        raise HTTPException(status_code=422, detail="Reklamáció csak elszámoláshoz vagy TIG-hez küldhető.")
+        raise HTTPException(status_code=422, detail="Reklamáció csak elszámoláshoz vagy Teljesítés-összesítőhöz küldhető.")
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=422, detail="Írd le röviden a reklamációt.")
@@ -25707,7 +25708,7 @@ def download_document(
         if document_month_date and normalize_mobile_visibility_mode(
             read_mobile_settlement_period_config(document_month_date).get("visibility_mode")
         ) == "settlement_only" and not can_view_financial_amounts(user):
-            raise HTTPException(status_code=404, detail="A TIG admin beállítás szerint most nem látható.")
+            raise HTTPException(status_code=404, detail="A Teljesítés-összesítő admin beállítás szerint most nem látható.")
     try:
         content = base64.b64decode(row.get("file_content_base64") or "", validate=True)
     except Exception as exc:
@@ -25856,7 +25857,7 @@ async def submit_invoice(
         raise HTTPException(
             status_code=422,
             detail=(
-                "Ehhez a TIG-hez külön KP számla is szükséges. "
+                "Ehhez a Teljesítés-összesítőhöz külön KP számla is szükséges. "
                 f"Töltsd fel a KP számlát is ({format_email_huf(expected_cash_amount)})."
             ),
         )
@@ -25967,7 +25968,7 @@ async def submit_invoice(
                 (process_note_marker(process_id) + "; " if process_note_marker(process_id) else "")
                 +
                 f"Fizetési mód: {document['payment_type']}; bruttó összesen: {document.get('gross_amount') or 0} Ft; "
-                f"TIG/elszámolás: {tig_reference}. {note}"
+                f"Teljesítés-összesítő/elszámolás: {tig_reference}. {note}"
             ).strip(),
             "uploaded_by": courier_name,
         }
@@ -26361,7 +26362,7 @@ def admin_approve_salary_advance_request(
     workflow_user["username"] = courier_name
     for workflow_action, status, status_note in [
         ("settlement", "done", f"Fizetés előleg jóváhagyva: {amount_huf} Ft."),
-        ("tig", "done", "Fizetés előleghez TIG nem szükséges."),
+        ("tig", "done", "Fizetés előleghez Teljesítés-összesítő nem szükséges."),
         ("invoice_submit", "open", f"Fizetés előleg jóváhagyva, számlafeltöltésre vár: {amount_huf} Ft."),
     ]:
         upsert_workflow_status(
@@ -26503,7 +26504,7 @@ async def create_expense_request(
     )
     for action, status, status_note in [
         ("settlement", "done", f"{type_label} költségfolyamat létrehozva."),
-        ("tig", "done", f"{type_label} költségfolyamat TIG nélkül."),
+        ("tig", "done", f"{type_label} költségfolyamat Teljesítés-összesítő nélkül."),
         ("invoice_submit", "done", f"{type_label} számla feltöltve."),
         ("invoice_check", "done", f"{type_label} számla admin kifizetésre előkészítve."),
         ("invoice_payment", "open", f"{type_label} kifizetésre vár: {amount_value} Ft."),

@@ -136,7 +136,7 @@ def render_compensation_rule_settings() -> None:
     st.subheader("Elszámolási alap- és minőségi díjszabályok")
     st.info(
         "Előkészítő konfiguráció: ezek a szabályok még nem módosítják sem az elszámolást, "
-        "sem a TIG-et, sem a számlát."
+        "sem a Teljesítés-összesítőt, sem a számlát."
     )
     with st.form("new_compensation_rule", clear_on_submit=True):
         rule_name = st.text_input("Feltétel / szabály neve")

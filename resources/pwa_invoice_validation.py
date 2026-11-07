@@ -588,19 +588,19 @@ def validate_invoice(
         note_matches_month = (invoice_month.year, invoice_month.month) in invoice_periods
         add(
             "ok" if same_month or note_matches_month else "warn",
-            "TIG időszaka",
+            "Teljesítés-összesítő időszaka",
             (
-                f"Rendben: a számla megjegyzése tartalmazza a TIG hónapot ({invoice_month:%Y-%m})."
+                f"Rendben: a számla megjegyzése tartalmazza a Teljesítés-összesítő hónapot ({invoice_month:%Y-%m})."
                 if note_matches_month and not same_month
-                else f"Figyelem: a számlán nem szerepel egyértelműen a TIG hónapja ({invoice_month:%Y-%m}); a teljesítés hónapja {performance_date:%Y-%m}. Ez nem blokkolja a beküldést, ha az összeg és az adatok egyeznek."
+                else f"Figyelem: a számlán nem szerepel egyértelműen a Teljesítés-összesítő hónapja ({invoice_month:%Y-%m}); a teljesítés hónapja {performance_date:%Y-%m}. Ez nem blokkolja a beküldést, ha az összeg és az adatok egyeznek."
             ),
         )
     pdf_gross = int(fields.get("gross_total") or 0)
     comparable_gross = pdf_gross or (metadata_gross if image_only_metadata_fallback else 0)
     if expected_gross_amount:
-        add("ok" if comparable_gross == expected_gross_amount else "error", "TIG szerinti végösszeg", f"Számla: {_format_huf(comparable_gross)}; TIG: {_format_huf(expected_gross_amount)}.")
+        add("ok" if comparable_gross == expected_gross_amount else "error", "Teljesítés-összesítő szerinti végösszeg", f"Számla: {_format_huf(comparable_gross)}; Teljesítés-összesítő: {_format_huf(expected_gross_amount)}.")
     elif pdf_gross:
-        add("warn", "TIG szerinti végösszeg", f"A számlán {_format_huf(pdf_gross)} szerepel, de a TIG-ből nem olvasható ki összeg.")
+        add("warn", "Teljesítés-összesítő szerinti végösszeg", f"A számlán {_format_huf(pdf_gross)} szerepel, de a Teljesítés-összesítőből nem olvasható ki összeg.")
 
     if require_submission_fields:
         add("ok" if invoice_number.strip() else "error", "Számlaszám", invoice_number.strip() or "Kötelező mező.")

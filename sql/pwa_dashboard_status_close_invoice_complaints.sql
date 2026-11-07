@@ -50,7 +50,7 @@ begin
     get diagnostics v_closed = row_count;
 
     -- All original safeguards still apply, including other unanswered
-    -- complaints, uploaded invoice/TIG and already closed payments. Any
+    -- complaints, uploaded invoice/Teljesítés-összesítő and already closed payments. Any
     -- exception rolls back the complaint closure as well as the status change.
     v_result := settlement.pwa_change_monthly_status(
         p_courier_id, p_period_start, p_target, p_note, p_actor
