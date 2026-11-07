@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v270";
+const APP_VERSION = "v271";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1651,6 +1651,7 @@ async function loadQualityComplaints() {
       const topics = { lateShift: "Műszakkésés", noShow: "No-show", uncleanedTimeWindowLate: "Nem mentesített címkésés", cleanedTimeWindowLate: "Mentesített címkésés" };
       return `<article class="shift-card" data-complaint-id="${escapeHtml(item.id)}">
         <div class="shift-top"><div><h3>${escapeHtml(item.courier_name)} · #${escapeHtml(item.courier_id)}</h3><p>${escapeHtml(topics[item.topic] || item.topic)} · ${escapeHtml(shortDateTime(item.created_at))}</p></div><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></div>
+        <p class="quality-complaint-work-date"><strong>Érintett nap: ${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></p>
         <p class="complaint-text">${escapeHtml(item.message)}</p>
         ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
         <details><summary>Érintett tételek és előzmények</summary>
@@ -1713,136 +1714,184 @@ function showQualitySubmissionProgress(phase, message, complaintDialog) {
   return progress;
 }
 
+function qualityComplaintDraftKey(courier, month, topic) {
+  return `jitt-quality-days-v1:${encodeURIComponent(String(state.user?.username || state.user?.courierId || ""))}:${encodeURIComponent(courier || "self")}:${month}:${topic}`;
+}
+
+function qualityComplaintDays(rows, drafts = {}) {
+  if (!drafts || typeof drafts !== "object") drafts = {};
+  const groups = new Map();
+  rows.forEach(row => {
+    const date = String(row.date || "");
+    if (!groups.has(date)) groups.set(date, []);
+    groups.get(date).push(row);
+  });
+  return Array.from(groups, ([date, items]) => {
+    const draft = drafts[date] || {};
+    return { date, rows: items, message: draft.message || "", selected: Boolean(draft.selected),
+      requestId: draft.requestId || crypto.randomUUID(), complaintId: draft.complaintId || "",
+      submittedPayload: draft.submittedPayload || null,
+      saved: Boolean(draft.saved), photos: draft.photos || [], uploaded: draft.uploaded || 0,
+      expectedPhotos: draft.expectedPhotos || 0, expanded: Boolean(draft.expanded) };
+  });
+}
+
+function rememberQualityComplaintDays(context) {
+  state.qualityDayDrafts ||= {};
+  state.qualityDayDrafts[context.draftKey] = Object.fromEntries(context.days.map(day => [day.date, day]));
+  const stored = Object.fromEntries(context.days.map(day => [day.date, {
+    message: day.message, selected: day.selected, requestId: day.requestId,
+    complaintId: day.complaintId, saved: day.saved, expanded: day.expanded,
+    submittedPayload: day.submittedPayload,
+    expectedPhotos: day.expectedPhotos || day.photos.length,
+  }]));
+  try { localStorage.setItem(context.draftKey, JSON.stringify(stored)); } catch (_) { /* Memory draft remains available. */ }
+}
+
+async function submitQualityComplaintDays(context, report = () => {}) {
+  const selected = context.days.filter(day => day.selected && !day.saved);
+  if (!selected.length) throw new Error("Jelöld be legalább egy napnál a Reklamáció elküldése mezőt.");
+  for (const day of selected) {
+    if (day.message.trim().length < 5) throw new Error(`${day.date}: legalább 5 karakteres indoklást adj meg.`);
+    if (day.photos.length > 5 || day.photos.some(file => file.size > 8 * 1024 * 1024))
+      throw new Error(`${day.date}: legfeljebb 5 képet válassz, egyenként maximum 8 MB méretben.`);
+    if (day.expectedPhotos > day.photos.length) throw new Error(`${day.date}: válaszd ki újra a csatolni kívánt képeket.`);
+  }
+  for (const [index, day] of selected.entries()) {
+    report(`${day.date} · ${index + 1}/${selected.length} nap mentése…`);
+    if (!day.complaintId) {
+      day.submittedPayload ||= {
+        request_id: day.requestId, courier: context.courier, topic: context.topic, month: context.month,
+        items: day.rows, message: day.message.trim(),
+      };
+      rememberQualityComplaintDays(context);
+      const result = await api("/api/quality/complaints", { method: "POST", body: JSON.stringify(day.submittedPayload), silentLoading: true });
+      if (!result.ok || !result.id) throw new Error(`${day.date}: a mentés nem igazolható.`);
+      day.complaintId = result.id;
+      rememberQualityComplaintDays(context);
+    }
+    for (let photo = day.uploaded; photo < day.photos.length; photo++) {
+      report(`${day.date} · Képfeltöltés: ${photo + 1}/${day.photos.length}…`);
+      const form = new FormData(); form.append("photo", day.photos[photo]);
+      const result = await api(`/api/quality/complaints/${encodeURIComponent(day.complaintId)}/photos`,
+        { method: "POST", body: form, silentLoading: true });
+      if (!result.ok) throw new Error(`${day.date}: a kép feltöltése nem igazolható.`);
+      day.uploaded = photo + 1;
+    }
+    day.saved = true;
+    rememberQualityComplaintDays(context);
+  }
+  return selected.length;
+}
+
 function ensureQualityReclamationDialog() {
   let dialog = $("#quality-reclamation-dialog");
   if (dialog) return dialog;
   dialog = document.createElement("dialog");
   dialog.id = "quality-reclamation-dialog";
   dialog.className = "worker-shift-dialog quality-reclamation-dialog";
-  dialog.innerHTML = `
-    <form method="dialog" class="worker-shift-dialog-card">
-      <div class="worker-shift-dialog-head">
-        <div><span>MINŐSÉGI ELLENŐRZÉS</span><strong data-quality-reclamation-title>Reklamáció</strong><small data-quality-reclamation-subtitle></small></div>
-        <button type="button" class="icon-button" data-quality-reclamation-close aria-label="Bezárás">×</button>
-      </div>
-      <div data-quality-reclamation-body></div>
-      <label>Reklamáció indoka<textarea data-quality-reclamation-note placeholder="Ide írható a reklamáció rövid indoklása..."></textarea></label>
-      <label>Képek csatolása (nem kötelező)<input data-quality-reclamation-photos type="file" accept="image/jpeg,image/png,image/webp" multiple /></label>
-      <small>Legfeljebb 5 kép, képenként maximum 8 MB. JPG, PNG vagy WebP.</small>
-      <p data-quality-reclamation-status role="status" aria-live="polite"></p>
-      <div class="dialog-actions"><button type="button" class="secondary" data-quality-reclamation-close>Bezárás</button><button type="button" class="primary" data-quality-reclamation-submit>Reklamáció beküldése</button></div>
-    </form>
-  `;
+  dialog.innerHTML = `<form method="dialog" class="worker-shift-dialog-card">
+    <div class="worker-shift-dialog-head"><div><span>MINŐSÉGI ELLENŐRZÉS</span>
+      <strong data-quality-reclamation-title>Reklamáció</strong><small data-quality-reclamation-subtitle></small></div>
+      <button type="button" class="icon-button" data-quality-reclamation-close aria-label="Bezárás">×</button></div>
+    <p class="muted">Nyisd le az érintett napokat, írd meg az indoklást, és jelöld be a beküldeni kívánt reklamációkat. A piszkozatok megmaradnak.</p>
+    <div data-quality-reclamation-body></div><p data-quality-reclamation-status role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-quality-reclamation-close>Bezárás</button>
+      <button type="button" class="primary" data-quality-reclamation-submit>Reklamáció beküldése</button></div></form>`;
   document.body.appendChild(dialog);
   dialog.querySelector("[data-quality-reclamation-submit]").addEventListener("click", async () => {
-    const button = dialog.querySelector("[data-quality-reclamation-submit]");
-    const status = dialog.querySelector("[data-quality-reclamation-status]");
-    const note = dialog.querySelector("[data-quality-reclamation-note]");
-    const photoInput = dialog.querySelector("[data-quality-reclamation-photos]");
     const context = dialog.complaintContext;
-    if (!context || context.saved || context.submitting || button.disabled) return;
-    const message = note.value.trim();
-    if (message.length < 5) { status.textContent = "Legalább 5 karakteres indoklást adj meg."; return; }
-    const photos = context.photos || Array.from(photoInput.files || []);
-    if (photos.length > 5 || photos.some(file => file.size > 8 * 1024 * 1024)) {
-      status.textContent = "Legfeljebb 5 képet válassz, egyenként maximum 8 MB méretben."; return;
-    }
-    button.disabled = true;
-    note.disabled = true;
-    photoInput.disabled = true;
-    context.submitting=true;
-    button.textContent="Beküldés folyamatban…";
-    dialog.querySelectorAll("[data-quality-reclamation-close]").forEach(button=>button.disabled=true);
-    status.textContent = "Mentés folyamatban…";
-    status.className="";
-    showQualitySubmissionProgress("loading","A reklamáció mentése folyamatban van.",dialog);
+    if (!context || context.saved || context.submitting || dialog.querySelector("[data-quality-reclamation-submit]").disabled) return;
+    const status = dialog.querySelector("[data-quality-reclamation-status]");
+    context.submitting = true;
+    dialog.querySelectorAll("button,input,textarea").forEach(node => node.disabled = true);
+    showQualitySubmissionProgress("loading", "A kijelölt napok mentése folyamatban van.", dialog);
     try {
-      if (!context.complaintId) {
-        const result = await api("/api/quality/complaints", { method: "POST", body: JSON.stringify({
-          request_id: context.requestId, courier: context.courier, topic: context.topic, month: context.month, items: context.rows, message,
-        }), silentLoading:true });
-        if (!result.ok || !result.id) throw new Error("A mentés nem igazolható.");
-        context.complaintId = result.id;
-        context.photos = photos;
-        context.uploaded = 0;
-      }
-      for (let index = context.uploaded; index < context.photos.length; index++) {
-        status.textContent = `Reklamáció elmentve. Képfeltöltés: ${index + 1}/${context.photos.length}…`;
-        showQualitySubmissionProgress("loading",`Képek feltöltése: ${index + 1}/${context.photos.length}…`,dialog);
-        const form = new FormData();
-        form.append("photo", context.photos[index]);
-        const uploaded = await api(`/api/quality/complaints/${encodeURIComponent(context.complaintId)}/photos`, { method: "POST", body: form, silentLoading:true });
-        if (!uploaded.ok) throw new Error("A kép feltöltése nem igazolható.");
-        context.uploaded = index + 1;
-      }
+      const count = await submitQualityComplaintDays(context, message => {
+        status.textContent = message; showQualitySubmissionProgress("loading", message, dialog);
+      });
       context.saved = true;
-      const success=`${context.uploaded ? `A reklamációt és ${context.uploaded} képet elmentettük.` : "A reklamációt elmentettük."} Azonosító: ${context.complaintId}`;
-      status.textContent = `Sikeres beküldés. ${success}`;status.className="notice quality-submit-success";
-      button.textContent="Beküldve";
+      const remaining = context.days.filter(day => !day.saved);
+      rememberQualityComplaintDays({ ...context, days: remaining });
       dialog.close();
-      showQualitySubmissionProgress("success",success,dialog);
-      Promise.resolve().then(()=>refreshCourierQualityComplaints()).catch(()=>{});
+      showQualitySubmissionProgress("success", `${count} napi reklamációt külön ügyként elmentettünk.`, dialog);
     } catch (error) {
-      status.textContent = context.complaintId
-        ? `A reklamáció elmentve, de a képfeltöltés nem fejeződött be: ${error.message} A beküldés gombbal folytathatod.`
-        : `Nem sikerült menteni: ${error.message} Az indoklás és a képek megmaradtak, újrapróbálhatod.`;
-      status.className="notice error";
-      showQualitySubmissionProgress("error",status.textContent,dialog);
-      if (context.complaintId) Promise.resolve().then(()=>refreshCourierQualityComplaints()).catch(()=>{});
-      if (dialog.complaintContext === context) {
-        button.disabled = false;
-        button.textContent=context.complaintId ? "Képfeltöltés folytatása" : "Reklamáció beküldése";
-        note.disabled = Boolean(context.complaintId);
-        photoInput.disabled = Boolean(context.complaintId);
-      }
+      const saved = context.days.filter(day => day.saved).length;
+      status.textContent = `${saved ? `${saved} nap már sikeresen beküldve. ` : ""}${error.message} A többi piszkozat megmaradt; újrapróbálhatod.`;
+      status.className = "notice error";
+      showQualitySubmissionProgress("error", status.textContent, dialog);
     } finally {
-      context.submitting=false;
-      dialog.querySelectorAll("[data-quality-reclamation-close]").forEach(button=>button.disabled=false);
+      context.submitting = false;
+      dialog.querySelectorAll("button,input,textarea").forEach(node => node.disabled = false);
+      syncQualityComplaintDayControls(dialog);
+      Promise.resolve().then(() => refreshCourierQualityComplaints()).catch(() => {});
     }
   });
-  dialog.querySelectorAll("[data-quality-reclamation-close]").forEach((button) => button.addEventListener("click", () => {if(!dialog.complaintContext?.submitting)dialog.close();}));
-  dialog.addEventListener("cancel",event=>{if(dialog.complaintContext?.submitting)event.preventDefault();});
-  dialog.addEventListener("click", (event) => {
-    if (event.target === dialog && !dialog.complaintContext?.submitting) dialog.close();
-  });
+  dialog.querySelectorAll("[data-quality-reclamation-close]").forEach(button => button.addEventListener("click", () => {
+    if (!dialog.complaintContext?.submitting) dialog.close();
+  }));
+  dialog.addEventListener("cancel", event => { if (dialog.complaintContext?.submitting) event.preventDefault(); });
+  dialog.addEventListener("click", event => { if (event.target === dialog && !dialog.complaintContext?.submitting) dialog.close(); });
   return dialog;
+}
+
+function syncQualityComplaintDayControls(dialog) {
+  const context = dialog.complaintContext;
+  if (!context) return;
+  dialog.querySelectorAll("[data-quality-day]").forEach((section, index) => {
+    const day = context.days[index];
+    section.classList.toggle("selected", day.selected && !day.saved);
+    section.querySelector("[data-quality-day-saved]").textContent = day.saved ? "Beküldve" : "";
+    section.querySelector("textarea").disabled = Boolean(day.complaintId || day.submittedPayload);
+    section.querySelector("[data-quality-day-selected]").disabled = Boolean(day.complaintId || day.submittedPayload);
+    section.querySelector("[data-quality-day-photos]").disabled = day.saved || (Boolean(day.complaintId) && day.photos.length > 0);
+  });
+  const count = context.days.filter(day => day.selected && !day.saved).length;
+  dialog.querySelector("[data-quality-reclamation-submit]").textContent = `Reklamáció beküldése (${count} nap)`;
 }
 
 function openQualityReclamation(topic) {
   const dialog = ensureQualityReclamationDialog();
-  if (dialog.querySelector("[data-quality-reclamation-note]").disabled && !dialog.complaintContext?.saved) {
-    dialog.showModal();
-    return;
-  }
-  const summary = state.statistics?.qualitySummary || {};
-  const details = summary.details || {};
+  if (dialog.complaintContext?.submitting) return;
+  const details = state.statistics?.qualitySummary?.details || {};
   const rows = topic === "noShow" ? pastQualityDetails(details.noShow || []) : (details[topic] || []);
-  const labels = {
-    lateShift: "Műszakkésés reklamáció",
-    uncleanedTimeWindowLate: "Nem mentesített címkésés reklamáció",
-    cleanedTimeWindowLate: "Mentesített címkésés reklamáció",
-    noShow: "No-show reklamáció",
-  };
-  dialog.querySelector("[data-quality-reclamation-title]").textContent = labels[topic] || "Reklamáció";
-  dialog.querySelector("[data-quality-reclamation-subtitle]").textContent = `${rows.length} érintett tétel`;
-  dialog.querySelector("[data-quality-reclamation-body]").innerHTML = rows.length
-    ? `<div class="quality-reclamation-list">${rows.map((row) => `<div class="stat-row"><span>${escapeHtml(row.date || "-")} · ${escapeHtml(row.label || "Műszak")}${qualityShiftTimes(row, topic)}</span><strong>${escapeHtml(row.note || "")}</strong></div>`).join("")}</div>`
-    : `<p class="updated-at">Ehhez a jelzéshez nincs részletes adat.</p>`;
-  dialog.querySelector("[data-quality-reclamation-note]").value = "";
-  dialog.querySelector("[data-quality-reclamation-note]").disabled = false;
-  dialog.querySelector("[data-quality-reclamation-photos]").value = "";
-  dialog.querySelector("[data-quality-reclamation-photos]").disabled = false;
   const courier = String(previewCourierValue() || state.workflowPreviewCourierId || "").trim();
-  const preview = Boolean(courier);
-  const canSubmitPreview = ["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase());
-  dialog.complaintContext = { topic, month: state.statistics?.month || state.statisticsMonth,
-    rows, courier, requestId: crypto.randomUUID(), saved: false };
-  dialog.querySelector("[data-quality-reclamation-submit]").disabled = (preview && !canSubmitPreview) || !rows.length;
-  dialog.querySelector("[data-quality-reclamation-submit]").textContent="Reklamáció beküldése";
-  dialog.querySelector("[data-quality-reclamation-status]").className="";
-  dialog.querySelector("[data-quality-reclamation-status]").textContent = preview
-    ? (canSubmitPreview ? "A reklamáció a kiválasztott futárhoz kerül. A beküldő admin nevét naplózzuk."
-      : "Másik futár nevében csak admin küldhet be reklamációt.") : "";
+  const month = state.statistics?.month || state.statisticsMonth;
+  const draftKey = qualityComplaintDraftKey(courier, month, topic);
+  let stored = {};
+  try { stored = JSON.parse(localStorage.getItem(draftKey) || "{}"); } catch (_) {}
+  const days = qualityComplaintDays(rows, state.qualityDayDrafts?.[draftKey] || stored);
+  const context = { topic, courier, month, draftKey, days, saved: false, submitting: false };
+  dialog.complaintContext = context;
+  const labels = { lateShift: "Műszakkésés reklamáció", uncleanedTimeWindowLate: "Nem mentesített címkésés reklamáció",
+    cleanedTimeWindowLate: "Mentesített címkésés reklamáció", noShow: "No-show reklamáció" };
+  dialog.querySelector("[data-quality-reclamation-title]").textContent = labels[topic] || "Reklamáció";
+  dialog.querySelector("[data-quality-reclamation-subtitle]").textContent = `${days.length} nap · ${rows.length} érintett tétel`;
+  dialog.querySelector("[data-quality-reclamation-body]").innerHTML = days.length ? days.map((day, index) => `
+    <details class="quality-day" data-quality-day ${day.expanded ? "open" : ""}>
+      <summary><strong>${escapeHtml(day.date)}</strong><span>${day.rows.length} tétel</span><span data-quality-day-saved></span></summary>
+      <div class="quality-day-content">${day.rows.map(row => `<div class="stat-row"><span>${escapeHtml(row.label || "Műszak")}${qualityShiftTimes(row, topic)}</span><strong>${escapeHtml(row.note || "")}</strong></div>`).join("")}
+      <label>Reklamáció indoka<textarea maxlength="5000" data-quality-day-note placeholder="Írd le az ehhez a naphoz tartozó reklamációdat…">${escapeHtml(day.message)}</textarea></label>
+      <label class="quality-day-check"><input type="checkbox" data-quality-day-selected ${day.selected ? "checked" : ""}>Reklamáció elküldése</label>
+      <label>Képek csatolása ehhez a naphoz<input data-quality-day-photos type="file" accept="image/jpeg,image/png,image/webp" multiple></label>
+      <small data-quality-day-photo-label>${day.photos.length ? `${day.photos.length} kép kiválasztva` : day.expectedPhotos ? "A képeket válaszd ki újra." : "Legfeljebb 5 kép, képenként maximum 8 MB. JPG, PNG vagy WebP."}</small>
+      </div></details>`).join("") : '<p class="muted">Ehhez a jelzéshez nincs részletes adat.</p>';
+  dialog.querySelectorAll("[data-quality-day]").forEach((section, index) => {
+    const day = days[index];
+    section.addEventListener("toggle", () => { day.expanded = section.open; rememberQualityComplaintDays(context); });
+    section.querySelector("[data-quality-day-note]").addEventListener("input", event => { day.message = event.target.value; rememberQualityComplaintDays(context); });
+    section.querySelector("[data-quality-day-selected]").addEventListener("change", event => { day.selected = event.target.checked; rememberQualityComplaintDays(context); syncQualityComplaintDayControls(dialog); });
+    section.querySelector("[data-quality-day-photos]").addEventListener("change", event => {
+      day.photos = Array.from(event.target.files || []); day.expectedPhotos = day.photos.length; day.uploaded = 0;
+      section.querySelector("[data-quality-day-photo-label]").textContent = `${day.photos.length} kép kiválasztva`;
+      rememberQualityComplaintDays(context);
+    });
+  });
+  const canSubmit = !courier || ["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase());
+  dialog.querySelector("[data-quality-reclamation-submit]").disabled = !canSubmit || !days.length;
+  const status = dialog.querySelector("[data-quality-reclamation-status]"); status.className = "";
+  status.textContent = courier ? (canSubmit ? "A reklamációk a kiválasztott futárhoz kerülnek. A beküldő admin nevét naplózzuk." : "Másik futár nevében csak admin küldhet be reklamációt.") : "";
+  syncQualityComplaintDayControls(dialog);
   dialog.showModal();
 }
 

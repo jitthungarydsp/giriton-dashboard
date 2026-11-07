@@ -76,6 +76,21 @@ class QualityComplaintTest(unittest.TestCase):
             fn(self.payload(items=[{'date': '2026-11-01'}]))
         self.assertEqual(error.exception.status_code, 422)
 
+    def test_mixed_days_rejected_before_database_write(self):
+        fn = self.function(lambda *a, **k: self.fail('Mixed dates must not be saved'))
+        with self.assertRaises(ApiError) as error:
+            fn(self.payload(items=[{'date': '2026-10-13'}, {'date': '2026-10-14'}]))
+        self.assertEqual(error.exception.status_code, 422)
+
+    def test_multiple_routes_same_day_remain_one_case(self):
+        calls = []
+        def db(*args, **kwargs):
+            calls.append(kwargs['payload'])
+            return [{'id': 'day-case'}]
+        result = self.function(db)(self.payload(items=[{'date': '2026-10-13', 'routeId': '1'}, {'date': '2026-10-13', 'routeId': '2'}]))
+        self.assertEqual(result['id'], 'day-case')
+        self.assertEqual(len(calls[0]['affected_items']), 2)
+
 
 class ComplaintManagementTest(unittest.TestCase):
     def functions(self, role, db):

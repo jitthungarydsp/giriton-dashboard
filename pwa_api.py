@@ -22670,6 +22670,8 @@ def create_quality_complaint(
             raise HTTPException(status_code=422, detail="A műszak nem a kiválasztott hónaphoz tartozik.")
         items.append({key: str(item.get(key) or "")[:500] for key in
                       ("date", "label", "note", "routeId", "giritonLoginAt", "queueStartedAt")})
+    if not items or len({item["date"] for item in items}) != 1:
+        raise HTTPException(status_code=422, detail="Egy reklamáció egy naphoz tartozhat. A napokat külön küldd be.")
     # Idempotent retries: a lost response must not create a second complaint.
     saved = supabase_rest("POST", "pwa_quality_complaints",
         params={"on_conflict": "request_id"},

@@ -1452,6 +1452,17 @@ textarea { min-height: 96px; resize: vertical; }
 [id="coordinator-hub-refresh-status"] { min-height: 4.5em; }
 .quality-reclamation-dialog .dialog-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; margin-top: 16px; }
 .quality-reclamation-dialog .dialog-actions button { min-height: 52px; padding: 12px 18px; border-radius: 16px; font: inherit; font-weight: 800; }
+.quality-reclamation-dialog .quality-day { border: 1px solid var(--line); border-radius: 18px; margin: 12px 0; background: var(--surface); overflow: hidden; }
+.quality-reclamation-dialog .quality-day.selected { border-color: var(--green-dark); background: #f2f8ee; }
+.quality-reclamation-dialog .quality-day summary { cursor: pointer; padding: 18px; color: var(--green-dark); overflow-wrap: anywhere; }
+.quality-reclamation-dialog .quality-day summary > span { margin-left: 12px; font-size: .9em; }
+.quality-reclamation-dialog .quality-day-content { padding: 0 18px 18px; display: grid; gap: 14px; }
+.quality-reclamation-dialog .quality-day-content label { display: grid; gap: 8px; margin: 0; }
+.quality-reclamation-dialog .quality-day-content textarea { min-height: 130px; width: 100%; box-sizing: border-box; }
+.quality-reclamation-dialog .quality-day-content .quality-day-check { display: flex; align-items: center; gap: 10px; color: var(--green-dark); font-weight: 800; }
+.quality-reclamation-dialog .quality-day-check input { width: 22px; height: 22px; flex: 0 0 22px; margin: 0; accent-color: var(--green-dark); }
+.quality-reclamation-dialog .quality-day .stat-row { flex-wrap: wrap; gap: 8px; }
+.quality-reclamation-dialog .quality-day input[type="file"] { max-width: 100%; box-sizing: border-box; }
 .quality-submission-dialog { padding: 0; border: 0; border-radius: 24px; max-width: calc(100vw - 32px); color: var(--ink); background: var(--surface); }
 .quality-submission-dialog::backdrop { background: #17231c88; backdrop-filter: blur(4px); }
 .quality-submission-dialog .global-loading-card { width: min(420px, calc(100vw - 32px)); max-width: 100%; box-sizing: border-box; }
