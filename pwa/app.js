@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v271";
+const APP_VERSION = "v272";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1565,6 +1565,7 @@ function renderCourierQualityComplaints(payload = {}) {
     const status = ["open", "forwarded", "closed"].includes(item.status) ? item.status : "unknown";
     return `<article class="courier-complaint-card">
       <div class="courier-complaint-top"><h4>${escapeHtml(labels[item.topic] || "Reklamáció")}</h4><span class="courier-complaint-badge ${status}">${escapeHtml(qualityComplaintStatus(item.status))}</span></div>
+      ${(item.affected_items || []).find(row => row.category) ? `<p class="muted">Kategória: ${escapeHtml(item.affected_items.find(row => row.category).category)}</p>` : ""}
       <p class="courier-complaint-description">${escapeHtml(explanations[status] || "Az ügy állapota frissítésre vár.")}</p>
       <div class="courier-complaint-dates"><span>Beküldve <strong>${escapeHtml(shortDateTime(item.created_at))}</strong></span>${item.forwarded_at ? `<span>Továbbítva <strong>${escapeHtml(shortDateTime(item.forwarded_at))}</strong></span>` : ""}${item.closed_at ? `<span>Lezárva <strong>${escapeHtml(shortDateTime(item.closed_at))}</strong></span>` : ""}</div>
       ${item.admin_response ? `<div class="courier-complaint-response"><strong>Válasz a reklamációdra</strong>${item.responded_at ? `<small>${escapeHtml(shortDateTime(item.responded_at))}</small>` : ""}<p class="complaint-text">${escapeHtml(item.admin_response)}</p></div>` : ""}
@@ -1718,7 +1719,11 @@ function qualityComplaintDraftKey(courier, month, topic) {
   return `jitt-quality-days-v1:${encodeURIComponent(String(state.user?.username || state.user?.courierId || ""))}:${encodeURIComponent(courier || "self")}:${month}:${topic}`;
 }
 
-function qualityComplaintDays(rows, drafts = {}) {
+function qualityComplaintCategories() {
+  return ["Túra alatti késés", "Futárbüntetés", "Pénztárca/tankolás", "Elszámolás", "Jármű", "Műszak"];
+}
+
+function qualityComplaintDays(rows, drafts = {}, defaultCategory = "Túra alatti késés") {
   if (!drafts || typeof drafts !== "object") drafts = {};
   const groups = new Map();
   rows.forEach(row => {
@@ -1729,6 +1734,7 @@ function qualityComplaintDays(rows, drafts = {}) {
   return Array.from(groups, ([date, items]) => {
     const draft = drafts[date] || {};
     return { date, rows: items, message: draft.message || "", selected: Boolean(draft.selected),
+      category: qualityComplaintCategories().includes(draft.category) ? draft.category : defaultCategory,
       requestId: draft.requestId || crypto.randomUUID(), complaintId: draft.complaintId || "",
       submittedPayload: draft.submittedPayload || null,
       saved: Boolean(draft.saved), photos: draft.photos || [], uploaded: draft.uploaded || 0,
@@ -1741,6 +1747,7 @@ function rememberQualityComplaintDays(context) {
   state.qualityDayDrafts[context.draftKey] = Object.fromEntries(context.days.map(day => [day.date, day]));
   const stored = Object.fromEntries(context.days.map(day => [day.date, {
     message: day.message, selected: day.selected, requestId: day.requestId,
+    category: day.category,
     complaintId: day.complaintId, saved: day.saved, expanded: day.expanded,
     submittedPayload: day.submittedPayload,
     expectedPhotos: day.expectedPhotos || day.photos.length,
@@ -1752,6 +1759,7 @@ async function submitQualityComplaintDays(context, report = () => {}) {
   const selected = context.days.filter(day => day.selected && !day.saved);
   if (!selected.length) throw new Error("Jelöld be legalább egy napnál a Reklamáció elküldése mezőt.");
   for (const day of selected) {
+    if (!qualityComplaintCategories().includes(day.category)) throw new Error(`${day.date}: válassz reklamációkategóriát.`);
     if (day.message.trim().length < 5) throw new Error(`${day.date}: legalább 5 karakteres indoklást adj meg.`);
     if (day.photos.length > 5 || day.photos.some(file => file.size > 8 * 1024 * 1024))
       throw new Error(`${day.date}: legfeljebb 5 képet válassz, egyenként maximum 8 MB méretben.`);
@@ -1762,7 +1770,7 @@ async function submitQualityComplaintDays(context, report = () => {}) {
     if (!day.complaintId) {
       day.submittedPayload ||= {
         request_id: day.requestId, courier: context.courier, topic: context.topic, month: context.month,
-        items: day.rows, message: day.message.trim(),
+        items: day.rows, message: day.message.trim(), category: day.category,
       };
       rememberQualityComplaintDays(context);
       const result = await api("/api/quality/complaints", { method: "POST", body: JSON.stringify(day.submittedPayload), silentLoading: true });
@@ -1804,7 +1812,7 @@ function ensureQualityReclamationDialog() {
     if (!context || context.saved || context.submitting || dialog.querySelector("[data-quality-reclamation-submit]").disabled) return;
     const status = dialog.querySelector("[data-quality-reclamation-status]");
     context.submitting = true;
-    dialog.querySelectorAll("button,input,textarea").forEach(node => node.disabled = true);
+    dialog.querySelectorAll("button,input,textarea,select").forEach(node => node.disabled = true);
     showQualitySubmissionProgress("loading", "A kijelölt napok mentése folyamatban van.", dialog);
     try {
       const count = await submitQualityComplaintDays(context, message => {
@@ -1822,7 +1830,7 @@ function ensureQualityReclamationDialog() {
       showQualitySubmissionProgress("error", status.textContent, dialog);
     } finally {
       context.submitting = false;
-      dialog.querySelectorAll("button,input,textarea").forEach(node => node.disabled = false);
+      dialog.querySelectorAll("button,input,textarea,select").forEach(node => node.disabled = false);
       syncQualityComplaintDayControls(dialog);
       Promise.resolve().then(() => refreshCourierQualityComplaints()).catch(() => {});
     }
@@ -1843,6 +1851,7 @@ function syncQualityComplaintDayControls(dialog) {
     section.classList.toggle("selected", day.selected && !day.saved);
     section.querySelector("[data-quality-day-saved]").textContent = day.saved ? "Beküldve" : "";
     section.querySelector("textarea").disabled = Boolean(day.complaintId || day.submittedPayload);
+    section.querySelector("[data-quality-day-category]").disabled = Boolean(day.complaintId || day.submittedPayload);
     section.querySelector("[data-quality-day-selected]").disabled = Boolean(day.complaintId || day.submittedPayload);
     section.querySelector("[data-quality-day-photos]").disabled = day.saved || (Boolean(day.complaintId) && day.photos.length > 0);
   });
@@ -1860,7 +1869,8 @@ function openQualityReclamation(topic) {
   const draftKey = qualityComplaintDraftKey(courier, month, topic);
   let stored = {};
   try { stored = JSON.parse(localStorage.getItem(draftKey) || "{}"); } catch (_) {}
-  const days = qualityComplaintDays(rows, state.qualityDayDrafts?.[draftKey] || stored);
+  const days = qualityComplaintDays(rows, state.qualityDayDrafts?.[draftKey] || stored,
+    ["lateShift", "noShow"].includes(topic) ? "Műszak" : "Túra alatti késés");
   const context = { topic, courier, month, draftKey, days, saved: false, submitting: false };
   dialog.complaintContext = context;
   const labels = { lateShift: "Műszakkésés reklamáció", uncleanedTimeWindowLate: "Nem mentesített címkésés reklamáció",
@@ -1871,6 +1881,7 @@ function openQualityReclamation(topic) {
     <details class="quality-day" data-quality-day ${day.expanded ? "open" : ""}>
       <summary><strong>${escapeHtml(day.date)}</strong><span>${day.rows.length} tétel</span><span data-quality-day-saved></span></summary>
       <div class="quality-day-content">${day.rows.map(row => `<div class="stat-row"><span>${escapeHtml(row.label || "Műszak")}${qualityShiftTimes(row, topic)}</span><strong>${escapeHtml(row.note || "")}</strong></div>`).join("")}
+      <label>Kategória<select data-quality-day-category>${qualityComplaintCategories().map(category => `<option value="${escapeHtml(category)}" ${day.category === category ? "selected" : ""}>${escapeHtml(category)}</option>`).join("")}</select></label>
       <label>Reklamáció indoka<textarea maxlength="5000" data-quality-day-note placeholder="Írd le az ehhez a naphoz tartozó reklamációdat…">${escapeHtml(day.message)}</textarea></label>
       <label class="quality-day-check"><input type="checkbox" data-quality-day-selected ${day.selected ? "checked" : ""}>Reklamáció elküldése</label>
       <label>Képek csatolása ehhez a naphoz<input data-quality-day-photos type="file" accept="image/jpeg,image/png,image/webp" multiple></label>
@@ -1880,6 +1891,7 @@ function openQualityReclamation(topic) {
     const day = days[index];
     section.addEventListener("toggle", () => { day.expanded = section.open; rememberQualityComplaintDays(context); });
     section.querySelector("[data-quality-day-note]").addEventListener("input", event => { day.message = event.target.value; rememberQualityComplaintDays(context); });
+    section.querySelector("[data-quality-day-category]").addEventListener("change", event => { day.category = event.target.value; rememberQualityComplaintDays(context); });
     section.querySelector("[data-quality-day-selected]").addEventListener("change", event => { day.selected = event.target.checked; rememberQualityComplaintDays(context); syncQualityComplaintDayControls(dialog); });
     section.querySelector("[data-quality-day-photos]").addEventListener("change", event => {
       day.photos = Array.from(event.target.files || []); day.expectedPhotos = day.photos.length; day.uploaded = 0;

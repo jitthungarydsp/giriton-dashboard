@@ -351,6 +351,7 @@ class QualityComplaintRequest(BaseModel):
     courier: str = Field(default="", max_length=200)
     month: str
     topic: str
+    category: str = Field(default="", max_length=80)
     message: str = Field(min_length=5, max_length=5000)
     items: list[dict[str, Any]] = Field(min_length=1, max_length=200)
 
@@ -22653,6 +22654,11 @@ def create_quality_complaint(
     view_user, _preview = workflow_view_user(user, target_courier)
     if payload.topic not in {"lateShift", "uncleanedTimeWindowLate", "cleanedTimeWindowLate", "noShow"}:
         raise HTTPException(status_code=422, detail="Ismeretlen reklamációtípus.")
+    category = str(getattr(payload, "category", "") or "").strip()
+    if not category:
+        category = "Műszak" if payload.topic in {"lateShift", "noShow"} else "Túra alatti késés"
+    if category not in {"Túra alatti késés", "Futárbüntetés", "Pénztárca/tankolás", "Elszámolás", "Jármű", "Műszak"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen reklamációkategória.")
     month = parse_month(payload.month)
     message = payload.message.strip()
     if len(message) < 5:
@@ -22670,6 +22676,7 @@ def create_quality_complaint(
             raise HTTPException(status_code=422, detail="A műszak nem a kiválasztott hónaphoz tartozik.")
         items.append({key: str(item.get(key) or "")[:500] for key in
                       ("date", "label", "note", "routeId", "giritonLoginAt", "queueStartedAt")})
+        items[-1]["category"] = category
     if not items or len({item["date"] for item in items}) != 1:
         raise HTTPException(status_code=422, detail="Egy reklamáció egy naphoz tartozhat. A napokat külön küldd be.")
     # Idempotent retries: a lost response must not create a second complaint.

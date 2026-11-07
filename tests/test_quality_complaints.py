@@ -91,6 +91,28 @@ class QualityComplaintTest(unittest.TestCase):
         self.assertEqual(result['id'], 'day-case')
         self.assertEqual(len(calls[0]['affected_items']), 2)
 
+    def test_category_is_saved_on_every_affected_item(self):
+        for category in ['Túra alatti késés', 'Futárbüntetés', 'Pénztárca/tankolás', 'Elszámolás', 'Jármű', 'Műszak']:
+            calls = []
+            def db(*args, **kwargs):
+                calls.append(kwargs['payload'])
+                return [{'id': 'category-case'}]
+            self.function(db)(self.payload(category=category, items=[{'date': '2026-10-13', 'category': 'wrong'}]))
+            self.assertEqual(calls[0]['affected_items'][0]['category'], category)
+
+    def test_invalid_category_rejected_before_write(self):
+        with self.assertRaises(ApiError) as error:
+            self.function(lambda *a, **k: self.fail('Invalid category must not write'))(self.payload(category='unknown'))
+        self.assertEqual(error.exception.status_code, 422)
+
+    def test_legacy_request_gets_shift_category(self):
+        calls = []
+        def db(*args, **kwargs):
+            calls.append(kwargs['payload'])
+            return [{'id': 'legacy'}]
+        self.function(db)(self.payload())
+        self.assertEqual(calls[0]['affected_items'][0]['category'], 'Műszak')
+
 
 class ComplaintManagementTest(unittest.TestCase):
     def functions(self, role, db):

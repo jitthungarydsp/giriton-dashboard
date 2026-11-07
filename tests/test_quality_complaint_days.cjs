@@ -28,17 +28,32 @@ test('several routes of one day form one complaint, with separate messages for o
   assert.equal(calls.length,2);
   assert.equal(calls[0].items.length,2);
   assert.equal(calls[0].message,'Indoklás 0');assert.equal(calls[1].message,'Indoklás 1');
+  assert.equal(calls[0].category,'Túra alatti késés');
   assert.notEqual(calls[0].request_id,calls[1].request_id);
 });
 test('notes and selections survive closing/rebuilding, isolated by courier, month and topic', () => {
   const {context,storage}=setup();const ctx=draft(context);
   ctx.days[0].expanded=true;ctx.days[1].selected=false;
+  ctx.days[0].category='Jármű';
   context.rememberQualityComplaintDays(ctx);
   const saved=JSON.parse(storage.get('draft'));
   const restored=context.qualityComplaintDays(ctx.days.flatMap(day=>day.rows),saved);
   assert.equal(restored[0].message,'Indoklás 0');assert.equal(restored[0].selected,true);
   assert.equal(restored[1].selected,false);assert.equal(restored[0].requestId,ctx.days[0].requestId);
+  assert.equal(restored[0].category,'Jármű');
   assert.notEqual(context.qualityComplaintDraftKey('1','2026-10','lateShift'),context.qualityComplaintDraftKey('2','2026-10','lateShift'));
+});
+
+test('all six categories are selectable, sent per day, with shift defaults for shift complaints', async () => {
+  const calls=[];const {context}=setup(async(url,options)=>{
+    calls.push(JSON.parse(options.body));return {ok:true,id:String(calls.length)};
+  });
+  assert.equal(context.qualityComplaintCategories().length,6);
+  for(const category of context.qualityComplaintCategories()){
+    const ctx=draft(context);ctx.days[1].selected=false;ctx.days[0].category=category;
+    await context.submitQualityComplaintDays(ctx);assert.equal(calls.at(-1).category,category);
+  }
+  assert.equal(context.qualityComplaintDays([{date:'2026-10-17'}],{},'Műszak')[0].category,'Műszak');
 });
 test('failed second day retries only that day with the same request identity', async () => {
   const calls=[];let fail=true;
