@@ -362,6 +362,13 @@ class QualityComplaintActionRequest(BaseModel):
     reference: str = Field(default="", max_length=500)
 
 
+class QualityComplaintApprovalRequest(BaseModel):
+    category: str = Field(default="", max_length=80)
+    route_id: str = Field(default="", max_length=500)
+    license_plate: str = Field(default="", max_length=30)
+
+
+
 class RouteDelayAlertRequest(BaseModel):
     route_id: str | int
     order_id: str = ""
@@ -22616,7 +22623,45 @@ def list_quality_complaints(
             raise HTTPException(status_code=403, detail="Hiányzó futárazonosító.")
         params["courier_id"] = f"eq.{courier_id}"
     rows = supabase_rest("GET", "pwa_quality_complaints", params=params)
-    return {"items": rows[:50], "hasMore": len(rows) > 50, "canManage": manager}
+    forwarding_enabled = manager and load_setting("QUALITY_FORM_FORWARDING_ENABLED").lower() == "true"
+    if forwarding_enabled and rows:
+        ids = ",".join(str(UUID(str(row["id"]))) for row in rows[:50])
+        deliveries = supabase_rest("GET", "pwa_quality_complaint_deliveries", params={
+            "select": "complaint_id,state,approved_by,approved_at,updated_at,last_error,confirmation",
+            "complaint_id": f"in.({ids})"})
+        by_id = {str(item["complaint_id"]): item for item in deliveries}
+        for row in rows[:50]:
+            row["delivery"] = by_id.get(str(row["id"]))
+    return {"items": rows[:50], "hasMore": len(rows) > 50, "canManage": manager, "forwardingEnabled": forwarding_enabled}
+
+
+@app.post("/api/quality/complaints/{complaint_id}/approve")
+def approve_quality_complaint(
+    complaint_id: UUID,
+    payload: QualityComplaintApprovalRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    from resources.quality_form_forwarding import build_payload
+    user = require_user(giriton_pwa_session)
+    if not quality_complaint_manager(user):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    if load_setting("QUALITY_FORM_FORWARDING_ENABLED").lower() != "true":
+        raise HTTPException(status_code=503, detail="A Google Forms robot még nincs bekapcsolva. Adatbázis-telepítés és Google-bejelentkezés szükséges.")
+    rows = supabase_rest("GET", "pwa_quality_complaints", params={"select": "*", "id": f"eq.{complaint_id}", "limit": "1"})
+    if not rows:
+        raise HTTPException(status_code=404, detail="A reklamáció nem található.")
+    if rows[0].get("status") != "open":
+        raise HTTPException(status_code=409, detail="Csak nyitott reklamáció hagyható jóvá.")
+    try:
+        prepared = build_payload(rows[0], payload.category, payload.route_id, payload.license_plate)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result = supabase_rest("POST", "rpc/pwa_approve_quality_delivery", payload={
+        "p_id": str(complaint_id), "p_actor": str(user.get("username") or "admin"), "p_payload": prepared})
+    if not result:
+        raise HTTPException(status_code=502, detail="A jóváhagyás mentése nem igazolható.")
+    return {"ok": True, "state": result[0]["state"]}
+
 
 
 @app.post("/api/quality/complaints/{complaint_id}/actions")

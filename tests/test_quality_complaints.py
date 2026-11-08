@@ -128,6 +128,7 @@ class ComplaintManagementTest(unittest.TestCase):
                   courier_identity=lambda _: ('6498', 'Futár'),
                   workflow_view_user=lambda user, courier: (user, False),
                   parse_month=lambda value: date.fromisoformat(value + '-01'),
+                  load_setting=lambda name: '',
                   HTTPException=ApiError, supabase_rest=db)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'management', 'exec'), ns)
         return ns
