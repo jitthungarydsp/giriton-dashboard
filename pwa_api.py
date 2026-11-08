@@ -368,6 +368,10 @@ class QualityComplaintApprovalRequest(BaseModel):
     license_plate: str = Field(default="", max_length=30)
 
 
+class PasswordLinkRequest(BaseModel):
+    token: str = Field(min_length=40, max_length=100)
+    password: str = Field(min_length=12, max_length=128)
+
 
 class RouteDelayAlertRequest(BaseModel):
     route_id: str | int
@@ -1573,17 +1577,14 @@ def authenticate_legacy_json_user(username: str, password: str) -> dict[str, Any
 
 def authenticate(username: str, password: str) -> dict[str, Any] | None:
     try:
-        db_user = authenticate_pwa_db_user(username, password)
-        if db_user:
-            return db_user
-    except Exception:
-        # If the DB user table is not deployed yet, keep the legacy users.json login working.
-        pass
-
-    legacy_user = authenticate_legacy_json_user(username, password)
-    if legacy_user:
-        return legacy_user
-    return None
+        db_user = find_pwa_user_by_login(username)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="A belépési adatbázis átmenetileg nem elérhető.") from exc
+    if db_user:
+        if db_user.get("active") is not True:
+            return None
+        return public_pwa_user(db_user) if verify_password(password, str(db_user.get("password_hash") or "")) else None
+    return authenticate_legacy_json_user(username, password)
 
 
 def user_courier_id(user: dict[str, Any]) -> str:
@@ -1668,7 +1669,7 @@ def create_session(user: dict[str, Any]) -> str:
         [
             str(user.get("username") or ""),
             str(user.get("courierId") or user.get("courier_id") or ""),
-            str(int(time.time())),
+            str(time.time_ns()),
             secrets.token_urlsafe(10),
         ]
     )
@@ -1686,7 +1687,8 @@ def read_session(token: str) -> dict[str, Any] | None:
             return None
 
         username, courier_id, issued_at, _nonce = payload.split("|", 3)
-        if time.time() - int(issued_at) > SESSION_TTL_SECONDS:
+        issued_seconds = int(issued_at) / 1_000_000_000 if len(issued_at) >= 18 else float(issued_at)
+        if time.time() - issued_seconds > SESSION_TTL_SECONDS or issued_seconds > time.time() + 60:
             return None
     except (ValueError, TypeError):
         return None
@@ -1694,10 +1696,15 @@ def read_session(token: str) -> dict[str, Any] | None:
     try:
         db_user = find_pwa_user_by_login(username)
     except Exception:
-        db_user = None
+        return None
+    if db_user and not bool(db_user.get("active", True)):
+        return None
     if db_user and bool(db_user.get("active", True)):
         db_courier_id = str(db_user.get("courier_id") or db_user.get("courierId") or "")
         if db_courier_id == courier_id:
+            changed = local_datetime(db_user.get("password_updated_at"))
+            if changed and changed.timestamp() > issued_seconds:
+                return None
             return public_pwa_user(db_user)
 
     for user in load_users():
@@ -17928,11 +17935,9 @@ def save_password_reset_request(payload: PasswordResetRequest) -> dict[str, Any]
             status_code=403,
             detail="A megadott e-mail cím nem egyezik a rögzített e-mail címmel.",
         )
+    # A public request cannot establish a trusted destination for account recovery.
     if not existing_email:
-        if master_row:
-            email_updated = update_master_email_if_missing(master_row, email)
-        if pwa_user:
-            email_updated = update_pwa_user_email_if_missing(courier_id, email) or email_updated
+        raise HTTPException(status_code=403, detail="Nincs korábban rögzített e-mail-cím. Kérd az admin segítségét.")
 
     courier_name = str(
         (pwa_user or {}).get("username")
@@ -21144,16 +21149,10 @@ def register(payload: RegistrationRequest):
             "emailUpdated": False,
         }
 
-    master_row = read_master_auth_row(courier_id)
-    if master_row:
-        existing_email = master_email(master_row)
-        if not existing_email:
-            update_master_email_if_missing(master_row, email)
-
     request_row = save_registration_request(payload)
     return {
         "ok": True,
-        "message": "A regisztrációs kérelmet rögzítettük. Admin jóváhagyás után lesz belépésed.",
+        "message": "A regisztrációs kérelmet rögzítettük. Egyező törzsadatoknál jelszóbeállító linket küldünk; eltérésnél adminellenőrzés szükséges.",
         "request": request_row,
     }
 
@@ -21190,6 +21189,10 @@ def admin_approve_registration_request(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_registration_admin(require_user(giriton_pwa_session))
+    if load_setting("PWA_ACCOUNT_AUTOMATION_ENABLED").lower() == "true":
+        from resources.account_automation import enqueue
+        job = enqueue("registration", request_id, str(user.get("username") or "admin"))
+        return {"ok": True, "message": "Háttérfeldolgozásra átadva; ez még nem jelent levélküldést.", "job": job}
     request_row = read_registration_request_by_id(request_id)
     status = str(request_row.get("status") or "new").strip().lower()
     if status == "approved":
@@ -21224,12 +21227,28 @@ def admin_reject_registration_request(
     }
 
 
+@app.post("/api/password-reset/complete")
+def complete_password_reset(payload: PasswordLinkRequest, response: Response):
+    if load_setting("PWA_ACCOUNT_AUTOMATION_ENABLED").lower() != "true":
+        raise HTTPException(status_code=503, detail="A jelszóbeállító link használata még nincs bekapcsolva.")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{43}", payload.token):
+        raise HTTPException(status_code=400, detail="Érvénytelen vagy lejárt hivatkozás.")
+    result = supabase_rest("POST", "rpc/pwa_auth_redeem", payload={
+        "p_hash": hashlib.sha256(payload.token.encode()).hexdigest(),
+        "p_password_hash": hash_password(payload.password)})
+    response.headers["Cache-Control"] = "no-store"
+    if result is not True:
+        raise HTTPException(status_code=400, detail="Érvénytelen, már felhasznált vagy lejárt hivatkozás. Kérj új linket.")
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True, "message": "A jelszavadat beállítottuk. Lépj be az új jelszóval."}
+
+
 @app.post("/api/password-reset")
 def password_reset(payload: PasswordResetRequest):
     request_row = save_password_reset_request(payload)
     return {
         "ok": True,
-        "message": "A jelszó-visszaállítási kérésed beérkezett. Admin jóváhagyás után küldjük az új jelszót.",
+        "message": "A kérésed beérkezett. Egyező fiókadatok esetén jelszóbeállító linket küldünk, egyébként adminellenőrzés szükséges.",
         "emailUpdated": bool(request_row.get("email_updated")),
         "status": str(request_row.get("status") or "new"),
     }
@@ -21267,6 +21286,10 @@ def admin_approve_password_reset_request(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_registration_admin(require_user(giriton_pwa_session))
+    if load_setting("PWA_ACCOUNT_AUTOMATION_ENABLED").lower() == "true":
+        from resources.account_automation import enqueue
+        job = enqueue("reset", request_id, str(user.get("username") or "admin"))
+        return {"ok": True, "message": "Háttérfeldolgozásra átadva; ez még nem jelent levélküldést.", "job": job}
     request_row = read_password_reset_request_by_id(request_id)
     status = str(request_row.get("status") or "new").strip().lower()
     if status == "sent":

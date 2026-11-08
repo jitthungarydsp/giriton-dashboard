@@ -184,6 +184,10 @@ def update_pwa_registration_request_status(request_id: int, status: str, note: s
 
 
 def approve_pwa_registration_request(request_id: int, note: str, actor: dict[str, object]) -> dict[str, object]:
+    from resources.account_automation import enabled, enqueue
+    if enabled():
+        job = enqueue("registration", request_id, str(actor.get("username") or "admin"))
+        return {"queued": True, "job": job}
     request_row = read_pwa_registration_request(request_id)
     status = str(request_row.get("status") or "new").strip().lower()
     if status == "approved":
@@ -287,6 +291,10 @@ def update_pwa_password_reset_request_status(request_id: int, status: str, note:
 
 
 def send_pwa_password_reset_request(request_id: int, note: str, actor: dict[str, object]) -> dict[str, object]:
+    from resources.account_automation import enabled, enqueue
+    if enabled():
+        job = enqueue("reset", request_id, str(actor.get("username") or "admin"))
+        return {"queued": True, "job": job}
     request_row = read_pwa_password_reset_request(request_id)
     status = str(request_row.get("status") or "new").strip().lower()
     if status == "sent":
@@ -493,7 +501,7 @@ def render_pwa_password_reset_panel(expanded: bool = False) -> None:
             ):
                 try:
                     result = send_pwa_password_reset_request(request_id, note, user)
-                    st.success(f"Új jelszó kiküldve: {result['username']} · {result['email']}")
+                    st.success("Háttérfeldolgozásra átadva. A levélküldés eredménye a kérelem megjegyzésében lesz látható." if result.get("queued") else f"Új jelszó kiküldve: {result['username']} · {result['email']}")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"A jelszó kiküldése sikertelen: {exc}")
@@ -530,7 +538,7 @@ def show_pwa_registration_approval_page() -> None:
         return
 
     st.markdown("### Futárok jóváhagyása")
-    st.caption("Ide érkeznek a PWA regisztrációs kérelmek. Jóváhagyáskor a futár bekerül a futártörzsbe, létrejön a mobil belépése, és e-mailben megkapja a jelszót.")
+    st.caption("Ide érkeznek a PWA regisztrációs kérelmek. Bekapcsolt automatikus fiókkezelésnél az egyező törzsadatokat a háttérfolyamat ellenőrzi és jelszóbeállító linket küld. Az eltérések adminellenőrzésre maradnak.")
 
     status_label = st.radio(
         "Státusz",
@@ -609,7 +617,7 @@ def show_pwa_registration_approval_page() -> None:
             ):
                 try:
                     result = approve_pwa_registration_request(request_id, note, user)
-                    st.success(f"Jóváhagyva: {result['courier_name']} ({result['email']}).")
+                    st.success("Ellenőrzésre és háttérfeldolgozásra átadva." if result.get("queued") else f"Jóváhagyva: {result['courier_name']} ({result['email']}).")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"A jóváhagyás sikertelen: {exc}")

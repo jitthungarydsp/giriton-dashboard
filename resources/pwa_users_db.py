@@ -64,7 +64,7 @@ def find_pwa_user_by_login(username: str) -> dict[str, Any] | None:
         "GET",
         PWA_USERS_TABLE,
         params={
-            "select": "username,courier_id,role,active,password_hash,email",
+            "select": "username,courier_id,role,active,password_hash,email,password_updated_at",
             "username": f"eq.{wanted}",
             "limit": "1",
         },
@@ -77,8 +77,7 @@ def find_pwa_user_by_login(username: str) -> dict[str, Any] | None:
         "GET",
         PWA_USERS_TABLE,
         params={
-            "select": "username,courier_id,role,active,password_hash,email",
-            "active": "eq.true",
+            "select": "username,courier_id,role,active,password_hash,email,password_updated_at",
             "limit": "10000",
         },
     ) or []

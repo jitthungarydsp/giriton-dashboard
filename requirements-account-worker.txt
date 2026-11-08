@@ -1,0 +1,3 @@
+# Only the imports needed by the independent account/email worker.
+requests
+streamlit

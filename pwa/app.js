@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v276";
+const APP_VERSION = "v277";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -11461,7 +11461,7 @@ function renderPasswordResetRequests() {
   container.innerHTML = `
     <div class="process-title">
       <span class="step-code">${rows.length}</span>
-      <div><h3>Jelszó-visszaállítási kérelmek</h3><p>A PWA csak jóváhagyásra jelöli, az új jelszót a devtest job küldi ki.</p></div>
+      <div><h3>Jelszó-visszaállítási kérelmek</h3><p>Az egyező adatú kérelmeket a bekapcsolt háttérfolyamat kezeli. Eltérésnél adminellenőrzés szükséges.</p></div>
     </div>
     <div class="financial-card-grid salary-advance-grid">
       ${rows.map((item) => renderAdminRequestCard(item, {
@@ -11997,7 +11997,7 @@ $("#password-reset-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
-  setAuthMessage("#password-reset-message", "Új jelszó küldése...");
+  setAuthMessage("#password-reset-message", "Jelszó-visszaállítás kérése…");
   if (button) button.disabled = true;
   try {
     const response = await api("/api/password-reset", {
@@ -12011,8 +12011,8 @@ $("#password-reset-form")?.addEventListener("submit", async (event) => {
     setAuthMessage(
       "#password-reset-message",
       response.emailUpdated
-        ? "E-mail cím frissítve, a kérésed beérkezett. Admin jóváhagyás után küldjük az új jelszót."
-        : response.message || "A kérésed beérkezett. Admin jóváhagyás után küldjük az új jelszót."
+        ? "A kérésed beérkezett. A feldolgozás eredményéről e-mailben értesítünk."
+        : response.message || "A kérésed beérkezett. Egyező adatoknál jelszóbeállító linket küldünk."
     );
   } catch (error) {
     setAuthMessage("#password-reset-message", error.message, true);
@@ -12710,4 +12710,4 @@ async function start() {
   }
 }
 
-start();
+if (!window.PWA_ACCOUNT_SETUP) start();
