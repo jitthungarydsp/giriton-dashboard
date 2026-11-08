@@ -22,6 +22,35 @@ def enqueue(kind, request_id, actor='admin'):
     return rpc('pwa_auth_enqueue', {'p_kind': kind, 'p_request_id': int(request_id), 'p_actor': actor})
 
 
+def dispatch_pending(job, request=None, dispatch=None):
+    """Claim one immediate dispatch per queued job; the schedule is the fallback."""
+    if job.get('state') != 'queued':
+        return {**job, 'dispatch': 'not_queued'}
+    if request is None:
+        from resources.pwa_users_db import _request
+        request = _request
+    if dispatch is None:
+        from resources.github_actions import dispatch_workflow
+        dispatch = dispatch_workflow
+    try:
+        claimed = request('PATCH', 'pwa_account_jobs', params={
+            'id': 'eq.' + str(job['id']), 'state': 'eq.queued', 'note': 'eq.'},
+            payload={'note': 'GitHub-job indítása kérve.'}, prefer='return=representation')
+        if not claimed:
+            return {**job, 'dispatch': 'already_requested'}
+        dispatch('pwa-account-automation.yml', inputs={'enqueue_existing': 'false'})
+        return {**job, 'dispatch': 'accepted'}
+    except Exception:
+        # The request and DB queue remain valid; never expose provider secrets/errors.
+        return {**job, 'dispatch': 'scheduled_fallback'}
+
+
+def queue_and_dispatch(kind, request_id, actor='automatic'):
+    if not enabled():
+        return {'dispatch': 'disabled'}
+    return dispatch_pending(enqueue(kind, request_id, actor))
+
+
 def public_url(value):
     parsed = urlsplit(str(value).strip())
     if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('', '/'):

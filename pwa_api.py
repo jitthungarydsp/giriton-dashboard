@@ -21150,10 +21150,13 @@ def register(payload: RegistrationRequest):
         }
 
     request_row = save_registration_request(payload)
+    from resources.account_automation import queue_and_dispatch
+    automation = queue_and_dispatch("registration", request_row["id"])
     return {
         "ok": True,
-        "message": "A regisztrációs kérelmet rögzítettük. Egyező törzsadatoknál jelszóbeállító linket küldünk; eltérésnél adminellenőrzés szükséges.",
+        "message": ("A regisztrációs kérelmet rögzítettük, a GitHub-job indítását elfogadta. Sikeres ellenőrzés után jelszóbeállító linket küldünk." if automation.get("dispatch") == "accepted" else "A regisztrációs kérelmet rögzítettük. Egyező törzsadatoknál jelszóbeállító linket küldünk; eltérésnél adminellenőrzés szükséges."),
         "request": request_row,
+        "automation": automation.get("dispatch"),
     }
 
 
@@ -21190,8 +21193,8 @@ def admin_approve_registration_request(
 ):
     user = require_registration_admin(require_user(giriton_pwa_session))
     if load_setting("PWA_ACCOUNT_AUTOMATION_ENABLED").lower() == "true":
-        from resources.account_automation import enqueue
-        job = enqueue("registration", request_id, str(user.get("username") or "admin"))
+        from resources.account_automation import queue_and_dispatch
+        job = queue_and_dispatch("registration", request_id, str(user.get("username") or "admin"))
         return {"ok": True, "message": "Háttérfeldolgozásra átadva; ez még nem jelent levélküldést.", "job": job}
     request_row = read_registration_request_by_id(request_id)
     status = str(request_row.get("status") or "new").strip().lower()
@@ -21246,9 +21249,12 @@ def complete_password_reset(payload: PasswordLinkRequest, response: Response):
 @app.post("/api/password-reset")
 def password_reset(payload: PasswordResetRequest):
     request_row = save_password_reset_request(payload)
+    from resources.account_automation import queue_and_dispatch
+    automation = queue_and_dispatch("reset", request_row["id"])
     return {
         "ok": True,
-        "message": "A kérésed beérkezett. Egyező fiókadatok esetén jelszóbeállító linket küldünk, egyébként adminellenőrzés szükséges.",
+        "message": ("A kérésed beérkezett, a GitHub-job indítását elfogadta. Sikeres ellenőrzés után e-mailben küldjük a jelszóbeállító linket." if automation.get("dispatch") == "accepted" else "A kérésed beérkezett. Egyező fiókadatok esetén jelszóbeállító linket küldünk, egyébként adminellenőrzés szükséges."),
+        "automation": automation.get("dispatch"),
         "emailUpdated": bool(request_row.get("email_updated")),
         "status": str(request_row.get("status") or "new"),
     }
@@ -21287,8 +21293,8 @@ def admin_approve_password_reset_request(
 ):
     user = require_registration_admin(require_user(giriton_pwa_session))
     if load_setting("PWA_ACCOUNT_AUTOMATION_ENABLED").lower() == "true":
-        from resources.account_automation import enqueue
-        job = enqueue("reset", request_id, str(user.get("username") or "admin"))
+        from resources.account_automation import queue_and_dispatch
+        job = queue_and_dispatch("reset", request_id, str(user.get("username") or "admin"))
         return {"ok": True, "message": "Háttérfeldolgozásra átadva; ez még nem jelent levélküldést.", "job": job}
     request_row = read_password_reset_request_by_id(request_id)
     status = str(request_row.get("status") or "new").strip().lower()

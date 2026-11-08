@@ -48,7 +48,10 @@ class ApiTests(unittest.TestCase):
       'find_pwa_user_by_courier_id':lambda _:None,'save_registration_request':lambda _: {'id':1},
       'read_master_auth_row':lambda _:self.fail('Public registration must not bind master email'),
       'update_master_email_if_missing':lambda *a:self.fail('Untrusted email write')}
-  result=self.function('register',ns)(SimpleNamespace(courier_id=123,email='untrusted@example.test'))
+  import sys
+  from unittest.mock import patch
+  with patch.dict(sys.modules, {'resources.account_automation':SimpleNamespace(queue_and_dispatch=lambda *a:{'dispatch':'accepted'})}):
+   result=self.function('register',ns)(SimpleNamespace(courier_id=123,email='untrusted@example.test'))
   self.assertTrue(result['ok'])
  def test_missing_recovery_email_cannot_be_added_by_request(self):
   class Denied(Exception):
@@ -89,4 +92,34 @@ class ApiTests(unittest.TestCase):
       'hash_password':lambda value:'HASHED_PASSWORD','supabase_rest':lambda *a,**kw:calls.append(kw) or True,'SESSION_COOKIE':'session'}
   result=self.function('complete_password_reset',ns)(SimpleNamespace(token='a'*43,password='long-password'),SimpleNamespace(headers={},delete_cookie=deleted.append))
   self.assertTrue(result['ok']);self.assertEqual(calls[0]['payload']['p_password_hash'],'HASHED_PASSWORD');self.assertNotIn('a'*43,str(calls));self.assertEqual(deleted,['session'])
+class DispatchTests(unittest.TestCase):
+ def test_dispatch_uses_fixed_workflow_without_personal_inputs(self):
+  writes=[];calls=[]
+  result=module.dispatch_pending({'id':'job-id','state':'queued'},lambda *a,**k:writes.append(k) or [{'id':'job-id'}],lambda *a,**k:calls.append((a,k)))
+  self.assertEqual(result['dispatch'],'accepted')
+  self.assertEqual(writes[0]['params'],{'id':'eq.job-id','state':'eq.queued','note':'eq.'})
+  self.assertEqual(calls,[(('pwa-account-automation.yml',),{'inputs':{'enqueue_existing':'false'}})])
+ def test_concurrent_or_repeat_request_does_not_dispatch_again(self):
+  result=module.dispatch_pending({'id':'job-id','state':'queued'},lambda *a,**k:[],lambda *a,**k:self.fail('Duplicate dispatch'))
+  self.assertEqual(result['dispatch'],'already_requested')
+ def test_github_failure_preserves_scheduled_fallback(self):
+  def broken(*a,**k):raise RuntimeError('private provider details')
+  result=module.dispatch_pending({'id':'job-id','state':'queued'},lambda *a,**k:[{}],broken)
+  self.assertEqual(result['dispatch'],'scheduled_fallback');self.assertNotIn('private',str(result))
+ def test_completed_manual_and_processing_jobs_do_not_start(self):
+  for state in ['manual','sent','uncertain','processing','sending']:
+   self.assertEqual(module.dispatch_pending({'id':'job-id','state':state},lambda *a,**k:self.fail('Unexpected DB write'),lambda *a,**k:self.fail('Unexpected dispatch'))['dispatch'],'not_queued')
+ def test_feature_off_never_enqueues(self):
+  from unittest.mock import patch
+  with patch.object(module,'enabled',return_value=False),patch.object(module,'enqueue',side_effect=AssertionError('Unexpected enqueue')):
+   self.assertEqual(module.queue_and_dispatch('reset',1),{'dispatch':'disabled'})
+ def test_reset_api_saves_before_dispatch(self):
+  import sys
+  from unittest.mock import patch
+  calls=[]
+  ns={'PasswordResetRequest':object,'save_password_reset_request':lambda _:calls.append('save') or {'id':17}}
+  def kick(*args):calls.append(args);return {'dispatch':'accepted'}
+  with patch.dict(sys.modules,{'resources.account_automation':SimpleNamespace(queue_and_dispatch=kick)}):
+   result=ApiTests().function('password_reset',ns)(object())
+  self.assertEqual(calls,['save',('reset',17)]);self.assertEqual(result['automation'],'accepted')
 if __name__=='__main__':unittest.main()

@@ -184,9 +184,9 @@ def update_pwa_registration_request_status(request_id: int, status: str, note: s
 
 
 def approve_pwa_registration_request(request_id: int, note: str, actor: dict[str, object]) -> dict[str, object]:
-    from resources.account_automation import enabled, enqueue
+    from resources.account_automation import enabled, queue_and_dispatch
     if enabled():
-        job = enqueue("registration", request_id, str(actor.get("username") or "admin"))
+        job = queue_and_dispatch("registration", request_id, str(actor.get("username") or "admin"))
         return {"queued": True, "job": job}
     request_row = read_pwa_registration_request(request_id)
     status = str(request_row.get("status") or "new").strip().lower()
@@ -291,9 +291,9 @@ def update_pwa_password_reset_request_status(request_id: int, status: str, note:
 
 
 def send_pwa_password_reset_request(request_id: int, note: str, actor: dict[str, object]) -> dict[str, object]:
-    from resources.account_automation import enabled, enqueue
+    from resources.account_automation import enabled, queue_and_dispatch
     if enabled():
-        job = enqueue("reset", request_id, str(actor.get("username") or "admin"))
+        job = queue_and_dispatch("reset", request_id, str(actor.get("username") or "admin"))
         return {"queued": True, "job": job}
     request_row = read_pwa_password_reset_request(request_id)
     status = str(request_row.get("status") or "new").strip().lower()

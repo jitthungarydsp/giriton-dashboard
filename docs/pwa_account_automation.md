@@ -26,13 +26,14 @@ Ugyanaz a kérelem csak egyszer szerepel a várólistán. Az újabb kérelmek se
 
 ### GitHub Actions – PWA SMTP és Render háttérfolyamat nélkül
 
-A `.github/workflows/pwa-account-automation.yml` az önálló feldolgozót futtatja, ötperces cron ütemezéssel és kézi indítással. Az ütemezés késhet. Nem szükséges Render Background Worker, és a PWA-nál nem kell SMTP-beállítás.
+A PWA a regisztráció vagy jelszó-visszaállítás mentése után azonnal kéri a `.github/workflows/pwa-account-automation.yml` futtatását. Az adminjóváhagyás is indítást kér. Egy sorba állított munkához csak egyszer kérünk indítást; a párhuzamos kéréseket adatbázis-feltételes frissítés védi. Az ötperces cron tartalék: GitHub-indítási hiba esetén a mentett kérelem megmarad. A GitHub várólistája miatt az elfogadott indítás sem jelent azonnali levélküldést. Az ütemezés késhet. Nem szükséges Render Background Worker, és a PWA-nál nem kell SMTP-beállítás.
 
 1. Előbb alkalmazd az alábbi SQL-migrációt, majd telepítsd a jelszóbeállító PWA-t. A PWA és a devtest környezetében legyen `PWA_ACCOUNT_AUTOMATION_ENABLED=true`.
-2. GitHub → Settings → Secrets and variables → Actions → Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SMTP_USERNAME` (system@jitt.hu), `SMTP_PASSWORD` (a jelenlegi Google-alkalmazásjelszó). Ezeket ne írd a YAML-ba vagy a repóba.
-3. Ugyanitt Variables: `PWA_PUBLIC_URL=https://futar.jitt.hu`. A `PWA_ACCOUNT_AUTOMATION_ENABLED=true` változót csak a migráció és a PWA telepítése után add meg. Addig a job kihagyott állapotú.
-4. Actions → PWA_ACCOUNT_AUTOMATION → Run workflow. A korábbi nyitott kérelmek felvételét csak akkor jelöld be, ha azokat is fel kell dolgozni; alapértelmezésben az új kérelmek mennek.
-5. Az első éles levélküldés eredményét a job kimenetében és a kérelem adminmegjegyzésében ellenőrizd. Sikeres küldés után a kapott linkkel tesztelhető a jelszóbeállítás.
+2. Render Environment és devtest Secrets: `GITHUB_ACTIONS_TOKEN` a repó Actions írási jogosultságával. A token kizárólag a szerveren legyen. Ez indítja a jobot; az SMTP marad GitHubon.
+3. GitHub → Settings → Secrets and variables → Actions → Secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SMTP_USERNAME` (system@jitt.hu), `SMTP_PASSWORD` (a jelenlegi Google-alkalmazásjelszó). Ezeket ne írd a YAML-ba vagy a repóba.
+4. Ugyanitt Variables: `PWA_PUBLIC_URL=https://futar.jitt.hu`. A `PWA_ACCOUNT_AUTOMATION_ENABLED=true` változót csak a migráció és a PWA telepítése után add meg. Addig a job kihagyott állapotú.
+5. Actions → PWA_ACCOUNT_AUTOMATION → Run workflow. A korábbi nyitott kérelmek felvételét csak akkor jelöld be, ha azokat is fel kell dolgozni; alapértelmezésben az új kérelmek mennek.
+6. Az első éles levélküldés eredményét a job kimenetében és a kérelem adminmegjegyzésében ellenőrizd. Sikeres küldés után a kapott linkkel tesztelhető a jelszóbeállítás.
 
 A GitHub Actions futások a repóhoz tartozó Actions-keretet fogyasztják; nem állítjuk, hogy a futtatás korlátlanul ingyenes. A job nem készít adatokat vagy levelezési titkokat tartalmazó artifactot, és nem commitol.
 
