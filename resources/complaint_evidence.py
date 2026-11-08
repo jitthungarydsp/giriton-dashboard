@@ -6,6 +6,35 @@ from zoneinfo import ZoneInfo
 LOCAL = ZoneInfo('Europe/Budapest')
 
 
+def form_defaults(complaint, routes, raw_rows):
+    """Only suggest routes tied to the affected item, never an arbitrary daily tour."""
+    import re
+    items = complaint.get('affected_items') or []
+    ids = {str(x.get('routeId')) for x in items if x.get('routeId')}
+    clocks = {m.group() for x in items for m in [re.search(r'\b\d{1,2}:\d{2}', str(x.get('label') or ''))] if m}
+    def clock(text):
+        m = re.search(r'\b\d{1,2}:\d{2}', str(text or ''))
+        return m.group().zfill(5) if m else ''
+    matching = [r for r in routes if str(r['route_id']) in ids] if ids else [
+        r for r in routes if clock(r.get('shift_name')) in {c.zfill(5) for c in clocks}]
+    if not ids and not clocks and len(routes) == 1:
+        matching = routes
+    matched_ids = {str(r['route_id']) for r in matching}
+    plates = {str(r.get('vehicle_plate') or '').strip().upper() for r in matching if r.get('vehicle_plate')}
+    for raw in raw_rows:
+        if str(raw['route_id']) in matched_ids:
+            plate = (raw.get('response_json') or {}).get('shift', {}).get('vehiclePlate')
+            if plate:
+                plates.add(str(plate).strip().upper())
+    notes = []
+    if not matching and not ids:
+        notes.append('Az érintett műszakhoz nem találtunk egyértelmű túrát. Add meg kézzel, vagy ellenőrizd a részletes adatokat.')
+    if len(plates) > 1:
+        notes.append('Több rendszám tartozik az érintett túrákhoz: ' + ', '.join(sorted(plates)) + '. Válassz kézzel.')
+    return {'routeId': ', '.join(sorted(ids or matched_ids)),
+            'licensePlate': next(iter(plates)) if len(plates) == 1 else '', 'notes': notes}
+
+
 def display_time(value):
     text = str(value or '')
     if not text:
@@ -35,7 +64,7 @@ def complaint_evidence(complaint, read):
         'giriton_attendance_raw': {'select': 'work_date,courier_name,shift_text,checkin_start,checkin_end,activity_status,updated_at',
             'work_date': 'eq.' + day, 'courier_name': 'eq.' + str(complaint.get('courier_name') or ''), 'limit': '20'},
         'courier_shift_overview': {**scoped, 'select': 'warehouse_id,raw_shift,updated_at'},
-        'courier_hub_route_statistics': {**scoped, 'select': 'route_id,warehouse_code,shift_name,queue_started_at,actual_shift_start_at,route_assigned_at,departed_at,returned_at,updated_at'},
+        'courier_hub_route_statistics': {**scoped, 'select': 'route_id,warehouse_code,shift_name,vehicle_plate,queue_started_at,actual_shift_start_at,route_assigned_at,departed_at,returned_at,updated_at'},
         'pwa_courier_route_quality_report': {**scoped, 'select': 'route_id,shift_start_at,queue_started_at,queued_on_time,late_start_minutes,quality_ok,updated_at'},
     }
     data = {}
@@ -88,6 +117,7 @@ def complaint_evidence(complaint, read):
     if late and any(r.get('queued_on_time') is True for r in data['pwa_courier_route_quality_report']):
         warnings.append('Eltérő napi minősítések: a Hub késést, a PWA legalább egy túrán időben történő sorba állást jelez. Kézi ellenőrzés szükséges.')
     ids = sorted({str(int(r['route_id'])) for r in routes})
+    raw_rows = []
     if ids:
         try:
             raw_rows = read('courier_route_performance_detail_raw', {'select': 'route_id,response_json,fetched_at',
@@ -106,4 +136,5 @@ def complaint_evidence(complaint, read):
             warnings.append('A nyers Hub-eseménynapló most nem olvasható.')
     if not data['giriton_attendance_raw']:
         warnings.append('Nincs pontos névegyezéssel talált Giriton-adat; a jelenlét ebből nem dönthető el.')
-    return {'day': day, 'sections': sections, 'warnings': warnings}
+    return {'day': day, 'sections': sections, 'warnings': warnings,
+            'formDefaults': form_defaults(complaint, routes, raw_rows)}

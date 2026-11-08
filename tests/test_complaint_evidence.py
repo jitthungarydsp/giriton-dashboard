@@ -4,6 +4,25 @@ from types import SimpleNamespace
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('evidence',ROOT/'resources/complaint_evidence.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 class EvidenceTests(unittest.TestCase):
+ def test_prefill_only_uses_affected_shift_and_its_plate(self):
+  complaint=self.complaint()
+  result=module.form_defaults(complaint,[{'route_id':1,'shift_name':'08:00','vehicle_plate':'OTHER'},
+      {'route_id':1569692,'shift_name':'19:00'}],
+      [{'route_id':1569692,'response_json':{'shift':{'vehiclePlate':'SHF512'}}}])
+  self.assertEqual(result['routeId'],'1569692');self.assertEqual(result['licensePlate'],'SHF512')
+ def test_explicit_route_takes_precedence_over_shift_label(self):
+  complaint=self.complaint();complaint['affected_items'][0]['routeId']='2'
+  result=module.form_defaults(complaint,[{'route_id':1,'shift_name':'19:00','vehicle_plate':'WRONG'},
+      {'route_id':2,'shift_name':'08:00','vehicle_plate':'RIGHT'}],[])
+  self.assertEqual(result['routeId'],'2');self.assertEqual(result['licensePlate'],'RIGHT')
+ def test_ambiguous_plates_are_not_guessed(self):
+  result=module.form_defaults(self.complaint(),[{'route_id':1,'shift_name':'19:00','vehicle_plate':'AAA123'},
+      {'route_id':2,'shift_name':'19:00','vehicle_plate':'BBB123'}],[])
+  self.assertEqual(result['routeId'],'1, 2');self.assertEqual(result['licensePlate'],'')
+  self.assertTrue(any('Több rendszám' in text for text in result['notes']))
+ def test_unmatched_shift_does_not_pick_another_tour(self):
+  result=module.form_defaults(self.complaint(),[{'route_id':1,'shift_name':'08:00','vehicle_plate':'AAA123'}],[])
+  self.assertEqual(result['routeId'],'');self.assertEqual(result['licensePlate'],'');self.assertTrue(result['notes'])
  def complaint(self):return {'courier_id':'7018','courier_name':'Mocsáry Attila','affected_items':[{'date':'2026-10-12','label':'19:00-23:30','giritonLoginAt':'18:30'}]}
  def test_conflicts_and_missing_raw_queue_are_visible_without_invented_event(self):
   calls=[]

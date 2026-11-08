@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v275";
+const APP_VERSION = "v276";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1683,10 +1683,11 @@ async function loadQualityComplaints() {
         ${renderComplaintShiftDetails(item)}
         ${payload.canManage ? `<details data-complaint-evidence><summary>Részletes műszak- és Hub-események</summary><div data-evidence-content role="status">Lenyitáskor betöltjük az érintett nap adatbázisadatait.</div><button type="button" class="secondary" data-evidence-refresh>Adatok újraellenőrzése</button></details>` : ""}
         ${delivery ? `<div class="notice ${["failed", "uncertain", "login_required"].includes(delivery.state) ? "error" : ""}"><strong>${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}</strong><p>${escapeHtml(delivery.last_error || "")}</p><small>${escapeHtml(delivery.approved_by)} · ${escapeHtml(shortDateTime(delivery.approved_at))}</small></div>` : ""}
-        ${payload.canManage && item.status === "open" && !["queued", "processing", "uncertain", "prepared", "sent"].includes(delivery?.state) ? `<details><summary>Jóváhagyás és Google-űrlap kitöltése</summary>
+        ${payload.canManage && item.status === "open" && !["queued", "processing", "uncertain", "prepared", "sent"].includes(delivery?.state) ? `<details data-complaint-approval><summary>Jóváhagyás és Google-űrlap kitöltése</summary>
           <label>Kategória<select data-complaint-category>${qualityComplaintCategories().map(value => `<option ${value === category ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
           <label>Túraszám / Cargo ID (túrakésésnél kötelező)<input data-complaint-route maxlength="500" value="${escapeHtml([...new Set((item.affected_items || []).map(row => row.routeId).filter(Boolean))].join(", "))}"></label>
           <label>Rendszám (járműpanasznál kötelező)<input data-complaint-plate maxlength="30"></label>
+          <p class="muted" data-prefill-status role="status">Lenyitáskor előtöltjük a műszakhoz kapcsolható túraszámot és rendszámot. A mezők szerkeszthetők.</p>
           <p class="muted">A robot kitölti az űrlapot a futár adataival és az indoklással. A Küldés gombot az admin nyomja meg a robot gépén megnyíló böngészőben. A képek a PWA-ban maradnak: ezen a Google-űrlapon nincs képfeltöltő mező.</p>
           ${payload.forwardingEnabled ? '<button class="primary" type="button" data-complaint-action="approve">Jóváhagyás és kitöltés</button>' : '<p class="notice">A robot bekapcsolásához adatbázis-telepítés és Google-bejelentkezés szükséges.</p>'}</details>` : ""}
         ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
@@ -1707,6 +1708,10 @@ async function loadQualityComplaints() {
     target.querySelectorAll("[data-complaint-evidence]").forEach(panel => {
       const content = panel.querySelector("[data-evidence-content]");
       const refresh = panel.querySelector("[data-evidence-refresh]");
+      const card = panel.closest("[data-complaint-id]");
+      const prefillStatus = card.querySelector("[data-prefill-status]");
+      card.querySelectorAll("[data-complaint-route], [data-complaint-plate]").forEach(input =>
+        input.addEventListener("input", () => { input.dataset.edited = "true"; }));
       let loaded = false, loading = false;
       const loadEvidence = async () => {
         if (loading) return;
@@ -1715,17 +1720,31 @@ async function loadQualityComplaints() {
         try {
           const id = panel.closest("[data-complaint-id]").dataset.complaintId;
           const evidence = await api(`/api/quality/complaints/${encodeURIComponent(id)}/evidence`);
+          const defaults = evidence.formDefaults || {};
+          for (const [selector, value] of [["[data-complaint-route]", defaults.routeId], ["[data-complaint-plate]", defaults.licensePlate]]) {
+            const input = card.querySelector(selector);
+            if (input && !input.dataset.edited && !input.value.trim() && value) input.value = value;
+          }
+          if (prefillStatus) prefillStatus.textContent = [
+            "Az elérhető adatokat előtöltöttük az érintett futár és nap alapján. Ellenőrizd, szükség esetén javítsd.",
+            ...defaults.notes || [],
+            ...(evidence.warnings || []).filter(text => text.includes("nem olvasható")),
+            defaults.licensePlate ? "" : "Nincs egyértelmű rendszám: szükség esetén add meg kézzel."
+          ].filter(Boolean).join(" ");
           content.innerHTML = `<p class="muted">Adatbázisban tárolt adatok, budapesti idő szerint. Nem élő Hub-lekérdezés.</p>
             ${(evidence.warnings || []).map(text => `<div class="notice error">${escapeHtml(text)}</div>`).join("")}
             ${(evidence.sections || []).map(section => `<section class="complaint-shift-details"><h4>${escapeHtml(section.title)}</h4>
               ${(section.rows || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join("")}
               <small>Forrás: ${escapeHtml(section.source)} · Utolsó mentés: ${escapeHtml(shortDateTime(section.updatedAt) || "Nincs adat")}</small></section>`).join("")}`;
           loaded = true;
-        } catch (error) { content.textContent = error.message; }
+        } catch (error) { content.textContent = error.message; if (prefillStatus) prefillStatus.textContent = "Az előtöltés nem sikerült. A mezők kézzel kitölthetők. " + error.message; }
         finally { loading = false; refresh.disabled = false; }
       };
       panel.addEventListener("toggle", () => { if (panel.open && !loaded) loadEvidence(); });
       refresh.addEventListener("click", loadEvidence);
+      card.querySelector("[data-complaint-approval]")?.addEventListener("toggle", event => {
+        if (event.currentTarget.open && !loaded) loadEvidence();
+      });
     });
     target.querySelectorAll("[data-complaint-action]").forEach(button => button.addEventListener("click", async () => {
       const card = button.closest("[data-complaint-id]");
