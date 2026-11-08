@@ -22635,6 +22635,20 @@ def list_quality_complaints(
     return {"items": rows[:50], "hasMore": len(rows) > 50, "canManage": manager, "forwardingEnabled": forwarding_enabled}
 
 
+@app.get("/api/quality/complaints/{complaint_id}/evidence")
+def quality_complaint_evidence(complaint_id: UUID, giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_user(giriton_pwa_session)
+    if not quality_complaint_manager(user):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    rows = supabase_rest("GET", "pwa_quality_complaints", params={"select": "id,courier_id,courier_name,created_at,affected_items",
+        "id": f"eq.{complaint_id}", "limit": "1"})
+    if not rows:
+        raise HTTPException(status_code=404, detail="A reklamáció nem található.")
+    from resources.complaint_evidence import complaint_evidence
+    return complaint_evidence(rows[0], lambda table, params: supabase_rest("GET", table, params=params, timeout=12))
+
+
+
 @app.post("/api/quality/complaints/{complaint_id}/approve")
 def approve_quality_complaint(
     complaint_id: UUID,

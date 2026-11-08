@@ -1,0 +1,11 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync('pwa/app.js','utf8');
+const start=source.indexOf('function renderComplaintShiftDetails('),end=source.indexOf('\nfunction ',start+1);
+const context={escapeHtml:x=>String(x).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'),Intl,Date};vm.createContext(context);vm.runInContext(source.slice(start,end),context);
+const render=context.renderComplaintShiftDetails;
+const html=render({topic:'lateShift',affected_items:[{date:'2026-11-02',label:'08:45-13:15',giritonLoginAt:'08:12',queueStartedAt:''}]});
+assert.match(html,/08:45-13:15/);assert.match(html,/08:12/);assert.match(html,/Sorba állás<\/span><strong>Nincs adat/);
+const utc=render({topic:'lateShift',affected_items:[{label:'<script>',giritonLoginAt:'2026-11-02T07:12:00Z',queueStartedAt:'2026-11-02T07:40:00Z'}]});
+assert.match(utc,/08:12/);assert.match(utc,/08:40/);assert.ok(!utc.includes('<script>'));assert.match(utc,/&lt;script&gt;/);
+assert.equal(render({topic:'uncleanedTimeWindowLate'}),'');assert.match(render({topic:'noShow',affected_items:[]}),/Nincs mentett műszakadat/);
+console.log('Complaint shift rendering checks passed: saved times, missing queue, Budapest timezone, escaping, topic selection.');

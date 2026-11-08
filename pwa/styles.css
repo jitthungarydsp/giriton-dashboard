@@ -1517,3 +1517,9 @@ textarea { min-height: 96px; resize: vertical; }
 @media(max-width:560px) { .invoice-confirm-dialog .settlement-import-actions { display: grid; grid-template-columns: 1fr; } }
 
 .invoice-raw-panel .settlement-import-actions button { white-space: normal; overflow-wrap: anywhere; }
+
+.complaint-shift-details { margin: 1rem 0; padding: 1rem; border: 1px solid var(--border, #dce3da); border-radius: 18px; background: var(--surface, #f4f7f1); }
+.complaint-shift-details h4 { margin: 0 0 .6rem; }
+.complaint-shift-entry + .complaint-shift-entry { margin-top: 1rem; border-top: 1px solid #dce3da; padding-top: .6rem; }
+.complaint-shift-details .stat-row { gap: .75rem; flex-wrap: wrap; }
+.complaint-shift-details .stat-row strong { overflow-wrap: anywhere; }

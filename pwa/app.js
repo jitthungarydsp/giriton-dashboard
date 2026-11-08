@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v273";
+const APP_VERSION = "v275";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1634,6 +1634,28 @@ function renderQualitySummaryDetails(topic, details = {}) {
   `;
 }
 
+function renderComplaintShiftDetails(item) {
+  if (!["lateShift", "noShow"].includes(item.topic)) return "";
+  const rows = Array.isArray(item.affected_items) ? item.affected_items : [];
+  const clock = value => {
+    if (!value) return "Nincs adat";
+    if (/^\d{2}:\d{2}(?::\d{2})?$/.test(value)) return value.slice(0, 5);
+    const timestamp = new Date(value);
+    return Number.isNaN(timestamp.getTime()) ? "Nincs adat" : new Intl.DateTimeFormat("hu-HU", {
+      hour: "2-digit", minute: "2-digit", timeZone: "Europe/Budapest"
+    }).format(timestamp);
+  };
+  return `<section class="complaint-shift-details" aria-label="Érintett műszak és bejelentkezés">
+    <h4>Műszak és bejelentkezés</h4>
+    ${rows.length ? rows.map(row => `<div class="complaint-shift-entry">
+      <div class="stat-row"><span>Érintett műszak · ${escapeHtml(row.date || "Nincs dátum")}</span><strong>${escapeHtml(row.label || "Nincs adat")}</strong></div>
+      <div class="stat-row"><span>Giriton-bejelentkezés</span><strong>${escapeHtml(clock(row.giritonLoginAt))}</strong></div>
+      <div class="stat-row"><span>Sorba állás</span><strong>${escapeHtml(clock(row.queueStartedAt))}</strong></div>
+    </div>`).join("") : '<p>Nincs mentett műszakadat.</p>'}
+    <small>A reklamációhoz mentett adatok · az időpontok budapesti idő szerint.</small>
+  </section>`;
+}
+
 function qualityComplaintStatus(value) {
   return ({ open: "Nyitott", forwarded: "Továbbított", closed: "Lezárt" })[value] || value;
 }
@@ -1658,6 +1680,8 @@ async function loadQualityComplaints() {
         <div class="shift-top"><div><h3>${escapeHtml(item.courier_name)} · #${escapeHtml(item.courier_id)}</h3><p>${escapeHtml(topics[item.topic] || item.topic)} · ${escapeHtml(shortDateTime(item.created_at))}</p></div><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></div>
         <p class="quality-complaint-work-date"><strong>Érintett nap: ${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></p>
         <p class="complaint-text">${escapeHtml(item.message)}</p>
+        ${renderComplaintShiftDetails(item)}
+        ${payload.canManage ? `<details data-complaint-evidence><summary>Részletes műszak- és Hub-események</summary><div data-evidence-content role="status">Lenyitáskor betöltjük az érintett nap adatbázisadatait.</div><button type="button" class="secondary" data-evidence-refresh>Adatok újraellenőrzése</button></details>` : ""}
         ${delivery ? `<div class="notice ${["failed", "uncertain", "login_required"].includes(delivery.state) ? "error" : ""}"><strong>${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}</strong><p>${escapeHtml(delivery.last_error || "")}</p><small>${escapeHtml(delivery.approved_by)} · ${escapeHtml(shortDateTime(delivery.approved_at))}</small></div>` : ""}
         ${payload.canManage && item.status === "open" && !["queued", "processing", "uncertain", "prepared", "sent"].includes(delivery?.state) ? `<details><summary>Jóváhagyás és Google-űrlap kitöltése</summary>
           <label>Kategória<select data-complaint-category>${qualityComplaintCategories().map(value => `<option ${value === category ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
@@ -1680,6 +1704,29 @@ async function loadQualityComplaints() {
     $("#quality-complaints-prev").disabled = !(state.qualityComplaintOffset > 0);
     $("#quality-complaints-next").disabled = !payload.hasMore;
     status.textContent = `${payload.items.length} reklamáció ezen az oldalon`;
+    target.querySelectorAll("[data-complaint-evidence]").forEach(panel => {
+      const content = panel.querySelector("[data-evidence-content]");
+      const refresh = panel.querySelector("[data-evidence-refresh]");
+      let loaded = false, loading = false;
+      const loadEvidence = async () => {
+        if (loading) return;
+        loading = true; refresh.disabled = true;
+        content.textContent = "Műszak- és Hub-események betöltése…";
+        try {
+          const id = panel.closest("[data-complaint-id]").dataset.complaintId;
+          const evidence = await api(`/api/quality/complaints/${encodeURIComponent(id)}/evidence`);
+          content.innerHTML = `<p class="muted">Adatbázisban tárolt adatok, budapesti idő szerint. Nem élő Hub-lekérdezés.</p>
+            ${(evidence.warnings || []).map(text => `<div class="notice error">${escapeHtml(text)}</div>`).join("")}
+            ${(evidence.sections || []).map(section => `<section class="complaint-shift-details"><h4>${escapeHtml(section.title)}</h4>
+              ${(section.rows || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join("")}
+              <small>Forrás: ${escapeHtml(section.source)} · Utolsó mentés: ${escapeHtml(shortDateTime(section.updatedAt) || "Nincs adat")}</small></section>`).join("")}`;
+          loaded = true;
+        } catch (error) { content.textContent = error.message; }
+        finally { loading = false; refresh.disabled = false; }
+      };
+      panel.addEventListener("toggle", () => { if (panel.open && !loaded) loadEvidence(); });
+      refresh.addEventListener("click", loadEvidence);
+    });
     target.querySelectorAll("[data-complaint-action]").forEach(button => button.addEventListener("click", async () => {
       const card = button.closest("[data-complaint-id]");
       const result = card.querySelector("[data-complaint-result]");
