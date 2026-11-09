@@ -1,4 +1,4 @@
-"""Book Hub API OVERLAP failures in Giriton, one candidate at a time."""
+"""Retry Hub API overlap, already-assigned and API failures in Giriton."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def read_candidates(path: Path) -> list[dict[str, Any]]:
     seen: set[str] = set()
     for row in payload:
         reason = clean(row.get("reason")).lower()
-        if reason != "hub_api_rejected_overlap":
+        if reason not in {"hub_api_rejected_overlap", "hub_api_rejected_already_assigned"} and not reason.startswith("api_booking_failed "):
             continue
         date = clean(row.get("work_date"))
         warehouse = clean(row.get("warehouse"))

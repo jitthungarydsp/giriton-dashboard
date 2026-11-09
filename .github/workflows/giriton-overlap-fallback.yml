@@ -11,7 +11,7 @@ on:
         required: true
         default: ""
       max_items:
-        description: "Maximális OVERLAP jelölt; üresen mind"
+        description: "Maximális Hub-elutasítás/API-hiba jelölt; üresen mind"
         required: false
         default: ""
       dry_run:
@@ -72,7 +72,7 @@ jobs:
             --dir results/hub-job-autobooking
           test -f results/hub-job-autobooking/failures.json
 
-      - name: Run Giriton overlap fallback batch
+      - name: Run Giriton fallback for overlap, already assigned and API errors
         shell: bash
         run: |
           CMD=(python scripts/run_giriton_overlap_fallback.py \
@@ -96,7 +96,7 @@ jobs:
           fi
           COUNT="$(python -c 'import json; from pathlib import Path; print(json.loads(Path("results/giriton-overlap-fallback/summary.json").read_text())["candidate_count"])')"
           if [ "$COUNT" = "0" ]; then
-            echo "No OVERLAP candidates; ROBOTLOG sync skipped."
+            echo "No eligible Hub rejection/API error candidates; ROBOTLOG sync skipped."
             exit 0
           fi
           python scripts/sync_giriton_robotlog_sheet.py \
