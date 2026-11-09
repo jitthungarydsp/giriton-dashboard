@@ -119,7 +119,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v277";
+const APP_VERSION = "v278";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1688,8 +1688,8 @@ async function loadQualityComplaints() {
           <label>Túraszám / Cargo ID (túrakésésnél kötelező)<input data-complaint-route maxlength="500" value="${escapeHtml([...new Set((item.affected_items || []).map(row => row.routeId).filter(Boolean))].join(", "))}"></label>
           <label>Rendszám (járműpanasznál kötelező)<input data-complaint-plate maxlength="30"></label>
           <p class="muted" data-prefill-status role="status">Lenyitáskor előtöltjük a műszakhoz kapcsolható túraszámot és rendszámot. A mezők szerkeszthetők.</p>
-          <p class="muted">A robot kitölti az űrlapot a futár adataival és az indoklással. A Küldés gombot az admin nyomja meg a robot gépén megnyíló böngészőben. A képek a PWA-ban maradnak: ezen a Google-űrlapon nincs képfeltöltő mező.</p>
-          ${payload.forwardingEnabled ? '<button class="primary" type="button" data-complaint-action="approve">Jóváhagyás és kitöltés</button>' : '<p class="notice">A robot bekapcsolásához adatbázis-telepítés és Google-bejelentkezés szükséges.</p>'}</details>` : ""}
+          <p class="muted">A reklamáció adataival előkitöltött Google-űrlap új lapon nyílik meg. Ellenőrizd a Google-fiókot, majd a Következő gombbal lépj a részletekre. A Küldés gombot te nyomod meg. A megnyitás nem ment jóváhagyást és nem rögzít továbbítást. A képek nem kerülnek át az űrlapba.</p>
+          <button class="primary" type="button" data-complaint-action="approve">Jóváhagyás és kitöltés</button></details>` : ""}
         ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
         <details><summary>Érintett tételek és előzmények</summary>
           ${(item.affected_items || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.date)} · ${escapeHtml(row.label)}</span><strong>${escapeHtml(row.note)}</strong></div>`).join("")}
@@ -1754,7 +1754,22 @@ async function loadQualityComplaints() {
       const reference = card.querySelector("[data-complaint-reference]")?.value.trim() || "";
       if (!["forward", "approve"].includes(action) && message.length < 5) { result.textContent = "Legalább 5 karakteres válasz szükséges."; return; }
       if (action === "forward" && reference.length < 3) { result.textContent = "Add meg a továbbítás hivatkozását."; return; }
-      if (action === "approve" && !window.confirm("Jóváhagyod a Google-űrlap kitöltését? A beküldést te végzed el a robot gépén.")) return;
+      if (action === "approve") {
+        try {
+          const item = payload.items.find(item => String(item.id) === card.dataset.complaintId);
+          if (!item) throw new Error("A reklamáció nem található. Frissítsd a listát.");
+          const url = qualityComplaintFormUrl(item,
+            card.querySelector("[data-complaint-category]").value,
+            card.querySelector("[data-complaint-route]").value,
+            card.querySelector("[data-complaint-plate]").value);
+          const link = document.createElement("a");
+          link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer";
+          link.textContent = "Előkitöltött űrlap megnyitása";
+          result.replaceChildren("Ha nem nyílt új lap, kattints ide: ", link);
+          link.click();
+        } catch (error) { result.textContent = error.message; }
+        return;
+      }
       const buttons = card.querySelectorAll("button");
       buttons.forEach(b => b.disabled = true);
       result.textContent = "Mentés…";
