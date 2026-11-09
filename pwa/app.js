@@ -12089,6 +12089,7 @@ $("#nav-gate").addEventListener("click", () => showSection("gate"));
 $("#nav-webshop").addEventListener("click", () => showSection("webshop"));
 $("#nav-quality-complaints").addEventListener("click", () => showSection("quality-complaints"));
 $("#quality-complaints-refresh").addEventListener("click", () => loadQualityComplaints());
+$("#quality-form-test")?.addEventListener("click", () => openQualityFormTest());
 $("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintOffset = 0; loadQualityComplaints(); });
 $("#quality-complaints-prev").addEventListener("click", () => { state.qualityComplaintOffset = Math.max(0, (state.qualityComplaintOffset || 0) - 50); loadQualityComplaints(); });
 $("#quality-complaints-next").addEventListener("click", () => { state.qualityComplaintOffset = (state.qualityComplaintOffset || 0) + 50; loadQualityComplaints(); });

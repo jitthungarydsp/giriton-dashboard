@@ -749,6 +749,11 @@
       <div id="quality-complaints-content" class="hidden">
         <section class="section-heading"><div><p class="eyebrow">REKLAMÁCIÓK</p><h2 id="quality-complaints-title">Futár reklamációk kezelése</h2></div><button id="quality-complaints-refresh" class="secondary" type="button">Frissítés</button></section>
         <label>Státusz<select id="quality-complaints-filter"><option value="all">Összes</option><option value="open">Nyitott</option><option value="forwarded">Továbbított</option><option value="closed">Lezárt</option></select></label>
+        <section class="shift-card">
+          <h3>Google-űrlap teszt</h3>
+          <p>Kitalált adatokkal nyitja meg az űrlapot új lapon. Nem ment jóváhagyást és nem küldi be az űrlapot. A Google a válaszokat piszkozatként automatikusan mentheti.</p>
+          <button id="quality-form-test" class="secondary" type="button">Űrlap tesztkitöltése</button>
+        </section>
         <p id="quality-complaints-status" role="status" aria-live="polite"></p>
         <section id="quality-complaints-list" class="shift-list"></section>
         <div class="dialog-actions"><button id="quality-complaints-prev" class="secondary" type="button">Előző</button><button id="quality-complaints-next" class="secondary" type="button">Következő</button></div>
@@ -938,6 +943,7 @@
     <script src="/invoice_raw.js?v=277" defer></script>
     <script src="/gate.js?v=277" defer></script>
     <script src="/account_setup.js?v=277" defer></script>
+    <script src="/quality_form_test.js?v=1" defer></script>
     <script src="/app.js?v=277" defer></script>
   </body>
 </html>
