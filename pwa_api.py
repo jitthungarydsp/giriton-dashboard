@@ -23506,11 +23506,18 @@ def route_details_excel(
     route_id: str = Query(default=""),
     warehouse: str = Query(default="all"),
     route_type: str = Query(default="all"),
+    columns: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
     if not can_preview_couriers(user):
         raise HTTPException(status_code=403, detail="A túra részletezőhöz admin jogosultság szükséges.")
+    if columns:
+        from resources.route_report_export import selected_columns
+        try:
+            selected_columns(columns)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
     month_value = parse_month(month)
     if str(courier or "").strip():
         view_user, _preview = workflow_view_user(user, courier)
@@ -23532,85 +23539,89 @@ def route_details_excel(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Tura reszletek"
-    headers = [
-        "Raktár",
-        "Futár ID",
-        "Futár neve",
-        "Route ID",
-        "Műszak neve",
-        "Sorbaállt",
-        "Tényleges műszak kezdés",
-        "Túrát kapott",
-        "Várakozás túrakiosztásig perc",
-        "Bepakolási idő perc",
-        "Indulás a raktárból",
-        "Késés a túrán (db)",
-        "Tervezett hossz/idő",
-        "Tervezett visszaérkezés",
-        "Tervezett km",
-        "Túra bepakolás nélkül",
-        "Túra bepakolással",
-        "Tényleges visszaérkezés",
-        "Hub tényleges km",
-        "Címekből számolt km",
-        "Km bontás raktár-cím-cím-raktár",
-        "Hub mileage km",
-        "Újraszámolt címek száma",
-        "Következő műszak aznap",
-        "Túra típusa",
-        "Borravaló",
-        "Borravaló forrás",
-        "Dátum",
-        "Raktár cím",
-        "Címek / stopok",
-        "Km eltérés (Tényleges - Tervezett)",
-        "Km eltérés %",
-        "Forrás",
-        "Szöveges részletező",
-    ]
-    sheet.append(headers)
+    if columns:
+        from resources.route_report_export import populate_selected_sheet
+        populate_selected_sheet(sheet, payload.get("rows") or [], columns)
+    else:
+        headers = [
+            "Raktár",
+            "Futár ID",
+            "Futár neve",
+            "Route ID",
+            "Műszak neve",
+            "Sorbaállt",
+            "Tényleges műszak kezdés",
+            "Túrát kapott",
+            "Várakozás túrakiosztásig perc",
+            "Bepakolási idő perc",
+            "Indulás a raktárból",
+            "Késés a túrán (db)",
+            "Tervezett hossz/idő",
+            "Tervezett visszaérkezés",
+            "Tervezett km",
+            "Túra bepakolás nélkül",
+            "Túra bepakolással",
+            "Tényleges visszaérkezés",
+            "Hub tényleges km",
+            "Címekből számolt km",
+            "Km bontás raktár-cím-cím-raktár",
+            "Hub mileage km",
+            "Újraszámolt címek száma",
+            "Következő műszak aznap",
+            "Túra típusa",
+            "Borravaló",
+            "Borravaló forrás",
+            "Dátum",
+            "Raktár cím",
+            "Címek / stopok",
+            "Km eltérés (Tényleges - Tervezett)",
+            "Km eltérés %",
+            "Forrás",
+            "Szöveges részletező",
+        ]
+        sheet.append(headers)
+        for item in payload.get("rows") or []:
+            distance_check = route_distance_check_values(item)
+            sheet.append([
+                item.get("warehouse"),
+                item.get("courierId"),
+                item.get("courierName"),
+                item.get("routeId"),
+                item.get("shiftName"),
+                route_detail_time_text(item.get("queueStartedAt")),
+                route_detail_time_text(item.get("actualShiftStartAt")),
+                route_detail_time_text(item.get("routeAssignedAt")),
+                item.get("waitingMinutes"),
+                item.get("loadingMinutes"),
+                route_detail_time_text(item.get("departedAt")),
+                item.get("routeDelayCount"),
+                route_detail_duration_text(item.get("plannedRouteMinutes")),
+                route_detail_time_text(item.get("plannedReturnAt")),
+                distance_check.get("kifliKm"),
+                route_detail_duration_text(item.get("routeMinutes")),
+                route_detail_duration_text(item.get("totalMinutes")),
+                route_detail_time_text(item.get("returnedAt")),
+                item.get("actualKm"),
+                item.get("calculatedRouteKm") or distance_check.get("calculatedKm"),
+                route_detail_leg_summary(item),
+                item.get("hubMileageKm"),
+                distance_check.get("stopAddressCount"),
+                item.get("nextShiftSameDay"),
+                item.get("routeTypeLabel"),
+                item.get("tipHuf"),
+                item.get("tipSource"),
+                item.get("date"),
+                item.get("warehouseAddress"),
+                f"{item.get('orders') or 0} / {item.get('stops') or 0}",
+                distance_check.get("deltaKm"),
+                distance_check.get("deltaPercent"),
+                item.get("dataSource"),
+                item.get("narrative"),
+            ])
     header_fill = PatternFill("solid", fgColor="17231C")
     for cell in sheet[1]:
         cell.font = Font(color="FFFFFF", bold=True)
         cell.fill = header_fill
-    for item in payload.get("rows") or []:
-        distance_check = route_distance_check_values(item)
-        sheet.append([
-            item.get("warehouse"),
-            item.get("courierId"),
-            item.get("courierName"),
-            item.get("routeId"),
-            item.get("shiftName"),
-            route_detail_time_text(item.get("queueStartedAt")),
-            route_detail_time_text(item.get("actualShiftStartAt")),
-            route_detail_time_text(item.get("routeAssignedAt")),
-            item.get("waitingMinutes"),
-            item.get("loadingMinutes"),
-            route_detail_time_text(item.get("departedAt")),
-            item.get("routeDelayCount"),
-            route_detail_duration_text(item.get("plannedRouteMinutes")),
-            route_detail_time_text(item.get("plannedReturnAt")),
-            distance_check.get("kifliKm"),
-            route_detail_duration_text(item.get("routeMinutes")),
-            route_detail_duration_text(item.get("totalMinutes")),
-            route_detail_time_text(item.get("returnedAt")),
-            item.get("actualKm"),
-            item.get("calculatedRouteKm") or distance_check.get("calculatedKm"),
-            route_detail_leg_summary(item),
-            item.get("hubMileageKm"),
-            distance_check.get("stopAddressCount"),
-            item.get("nextShiftSameDay"),
-            item.get("routeTypeLabel"),
-            item.get("tipHuf"),
-            item.get("tipSource"),
-            item.get("date"),
-            item.get("warehouseAddress"),
-            f"{item.get('orders') or 0} / {item.get('stops') or 0}",
-            distance_check.get("deltaKm"),
-            distance_check.get("deltaPercent"),
-            item.get("dataSource"),
-            item.get("narrative"),
-        ])
     for column_cells in sheet.columns:
         max_length = max(len(str(cell.value or "")) for cell in column_cells[:200])
         sheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 10), 55)

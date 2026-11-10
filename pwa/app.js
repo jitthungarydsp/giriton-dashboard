@@ -3582,6 +3582,7 @@ function routeDetailsExcelUrl() {
   const warehouse = $("#route-stats-warehouse")?.value || "all";
   if (!month) return "";
   const params = new URLSearchParams({ month });
+  params.set("columns", routeReportSelectedFields().map(field => field.key).join(","));
   if (courier) params.set("courier", courier);
   if (query) params.set("q", query);
   if (routeId) params.set("route_id", routeId);
