@@ -1,0 +1,116 @@
+{
+  "feature": "PWA itemized finance editor and snapshot/import preservation",
+  "baseCommit": "0fa0353fdd5e8e80411c80591e51b0ae6ae41d94",
+  "desiredPilot": {
+    "courierName": "Gurzó Balázs",
+    "courierId": "7644",
+    "month": "2026-10",
+    "implemented": false
+  },
+  "productionChanged": false,
+  "backupDirectory": "C:\\Users\\gbgyu\\.codex\\backups\\giriton-dashboard\\finance-workflow-20261110-202050",
+  "files": [
+    {
+      "path": "devtest.py",
+      "activeSha256": "7afe3cd35f65b3fd8a187b047c9b0f8deedd0aee0ce66f1019acc795612cd181",
+      "parkedSha256": "684add9428e2d61b3a47f2d3f91643e9218a4cd36d2d9db7e00d29ff0f137753",
+      "newFile": false
+    },
+    {
+      "path": "pwa_api.py",
+      "activeSha256": "686412a9322ff034e5be8ec1e429771c87f3d939d241ba53787f5de402c1fad0",
+      "parkedSha256": "a31adf946caaa95e810e61fb64f58beb9e54610d31b76dbaed5410f77d41eca9",
+      "newFile": false
+    },
+    {
+      "path": "pwa/app.js",
+      "activeSha256": "3266636bf3ec3ceabfaeee0053ad4ed0b5fc13ed2801dc1f2c79d485bded6792",
+      "parkedSha256": "2a9a9580398cf85ddc786fcb7f6723993dfa47c2cc6183e07547cc89365a89d2",
+      "newFile": false
+    },
+    {
+      "path": "pwa/index.html",
+      "activeSha256": "340f6bf65bf3db0f9a9454a5b97570ad85681ab82990dbfc17c85cd2f3e8c5eb",
+      "parkedSha256": "b1f0d14c4d885ba1b4dd7e39b304eb0f52aefe99ed2d5b476fc1e101c8ace2f8",
+      "newFile": false
+    },
+    {
+      "path": "pwa/sw.js",
+      "activeSha256": "dfad9e43d2959aae90fcf1fd87e9ec717470aa87c9a8b0210d55f0a8b6ebe3fe",
+      "parkedSha256": "79a7c6726b736d88cb513e7bc7fe80bc1f76010f0ab1f77fe341b512591443dc",
+      "newFile": false
+    },
+    {
+      "path": "resources/pwa_finance_worksheet.py",
+      "activeSha256": "3efa4d5be47059b3e5b033211d3f8bccda55fd3cfbb98313fe6c44176869464b",
+      "parkedSha256": "b09e56111a1d0727f1445c3794804065f8b19418a1e3305ebc3a6c8f582624c5",
+      "newFile": false
+    },
+    {
+      "path": "resources/finance_adjustment_details.py",
+      "activeSha256": "ac0b17f8e5f65311450b3981cd2211b4f8c94eadf0d72a94a44566ae26aa3b98",
+      "parkedSha256": "672a4605ba04e6b3fd93c615ed01c829876bfa47101afe2284e5f8b00d30e168",
+      "newFile": false
+    },
+    {
+      "path": "tests/test_pwa_finance_worksheet.py",
+      "activeSha256": "5c2c79c19672f577db846cef1f03f16affa1d5fe01bd8a6b68292a54cb385a4b",
+      "parkedSha256": "f09623d440987e7db0c6b80d4542329bd238531f1a433fdcff7bf256044e7a07",
+      "newFile": false
+    },
+    {
+      "path": "tests/test_pwa_worksheet_ui.cjs",
+      "activeSha256": "876a730e8e42aa04a9849c7677193e3647bb8c7db1943a3e895ec0952d3bcb68",
+      "parkedSha256": "0bb8835e63af61ccaa9d1734bce4415da9c3687a5ea6f9cee3f1c42eecc21213",
+      "newFile": false
+    },
+    {
+      "path": "tests/test_reserve_card_snapshot.py",
+      "activeSha256": "3c8a7ae2fbb38ce167ca0f4e53a69d0316e78e74298691de3f0ce7d2ccf913d1",
+      "parkedSha256": "ba1911a7d6536d139456acebb6400a9a7d9bf274765067a84af2751dc6ba4413",
+      "newFile": false
+    },
+    {
+      "path": "tests/test_finance_sidebar_snapshot.py",
+      "activeSha256": "4d633900c4be9b94fd6142a5d07e262703fba1f57f54fb7b4622b15b800ca9f1",
+      "parkedSha256": "fb9982b0f2ba709e8bca348a64643c1f7cc6955f09d9acf817e1bc07d6ac7a59",
+      "newFile": false
+    },
+    {
+      "path": "resources/finance_snapshot_persistence.py",
+      "activeSha256": "776687e11d68be138de4d62abe162d7266f0ce967507f765fb55a252097eb1d0",
+      "parkedSha256": null,
+      "newFile": true
+    },
+    {
+      "path": "docs/finance_snapshot_preserve_pwa.md",
+      "activeSha256": "a510ae8d9f306cd52bf108be33b425ba04e4b1e809dfaa5ab7f6a809d0e72509",
+      "parkedSha256": null,
+      "newFile": true
+    },
+    {
+      "path": "sql/finance_snapshot_preserve_pwa.sql",
+      "activeSha256": "77bfb254f49180b3e99d3c5edc25a3d02b3739f77895cbc1e1499e82e7905c19",
+      "parkedSha256": null,
+      "newFile": true
+    },
+    {
+      "path": "tests/test_finance_snapshot_persistence.py",
+      "activeSha256": "532ac81d67d9202fd9ffc1677240ba93c8cfa1896fb211d2e34340b7195b533b",
+      "parkedSha256": null,
+      "newFile": true
+    },
+    {
+      "path": "tests/test_finance_snapshot_persistence_sql.cjs",
+      "activeSha256": "11fb7a09f46de1adac0f935f9daf3da2dfa846b7ca5cb16d585804384c47ca0a",
+      "parkedSha256": null,
+      "newFile": true
+    },
+    {
+      "path": "tests/test_worksheet_group_editor.cjs",
+      "activeSha256": "2ce40eb215ab36074ebbaadfd1dc0dbdf65be7f4c3d6cca338105991b2819436",
+      "parkedSha256": null,
+      "newFile": true
+    }
+  ]
+}

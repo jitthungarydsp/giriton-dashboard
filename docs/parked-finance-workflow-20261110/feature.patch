@@ -1,0 +1,1418 @@
+diff --git a/devtest.py b/devtest.py
+--- a/devtest.py
++++ b/devtest.py
+@@ -3473,6 +3473,7 @@
+     source_payloads: list[dict[str, object]] | None = None,
+     metadata: dict[str, object],
+     updated_by: str,
++    base_snapshot_id: str | None = None,
+ ) -> dict[str, object]:
+     clean_courier_id = _courier_id_key(courier_id)
+     if not clean_courier_id:
+@@ -3480,6 +3481,8 @@
+     validate_loyalty_snapshot_consistency(finance_rows, source_payloads)
+     period = period_start.replace(day=1).isoformat()
+     safe_metadata = _snapshot_json_safe(metadata)
++    if base_snapshot_id:
++        safe_metadata["worksheet_effective_base_snapshot_id"] = str(base_snapshot_id)
+     items = [
+         *_finance_snapshot_item_rows(finance_rows, "finance"),
+         *_finance_snapshot_item_rows(tig_rows, "tig"),
+@@ -3498,92 +3501,21 @@
+             "payload": payload if payload is not None else {},
+             "row_count": row_count,
+         })
+-    canonical = {
+-        "period_start": period,
+-        "courier_id": clean_courier_id,
++    # Every Excel/API/manual recalculation uses the same version guard as PWA edits.
++    # Import failure deliberately leaves the previous complete snapshot published.
++    from resources.finance_snapshot_persistence import save_imported_finance_snapshot
++    candidate = {
++        "id": "import-base", "version": 0, "courier_id": clean_courier_id,
++        "courier_name": courier_name, "period_start": period,
+         "calculation_mode": str(calculation_mode or ""),
+-        "warehouse_label": str(warehouse_label or ""),
+-        "session_id": str(session_id or ""),
+-        "metadata": safe_metadata,
+-        "sources": sorted(normalized_sources, key=lambda item: str(item.get("source_key") or "")),
+-        "items": sorted(
+-            items,
+-            key=lambda item: (
+-                str(item.get("section") or ""),
+-                str(item.get("item_key") or ""),
+-                int(item.get("display_order") or 0),
+-            ),
+-        ),
++        "warehouse_label": str(warehouse_label or ""), "session_id": str(session_id or ""),
++        "metadata": safe_metadata, "items": items, "sources": normalized_sources,
+     }
+-    fingerprint = hashlib.sha256(
+-        json.dumps(canonical, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+-    ).hexdigest()
+     try:
+-        latest_rows = (
+-            get_db().schema("settlement").table("courier_finance_snapshot")
+-            .select("id,version,fingerprint")
+-            .eq("period_start", period)
+-            .eq("courier_id", clean_courier_id)
+-            .order("version", desc=True)
+-            .limit(1)
+-            .execute().data or []
+-        )
+-        latest = latest_rows[0] if latest_rows else {}
+-        if str(latest.get("fingerprint") or "") == fingerprint:
+-            return {
+-                "saved": False,
+-                "unchanged": True,
+-                "version": int(latest.get("version") or 0),
+-                "snapshot_id": str(latest.get("id") or ""),
+-            }
+-        version = int(latest.get("version") or 0) + 1
+-        snapshot_payload = {
+-            "period_start": period,
+-            "courier_id": clean_courier_id,
+-            "courier_name": courier_name,
+-            "version": version,
+-            "source": "devtest_finance",
+-            "calculation_mode": str(calculation_mode or ""),
+-            "warehouse_label": str(warehouse_label or ""),
+-            "session_id": str(session_id or ""),
+-            "fingerprint": fingerprint,
+-            "metadata": safe_metadata,
+-            "previous_snapshot_id": str(latest.get("id") or "") or None,
+-            "previous_fingerprint": str(latest.get("fingerprint") or "") or None,
+-            "changed_from_previous": str(latest.get("fingerprint") or "") != fingerprint,
+-            "created_by": updated_by,
+-        }
+-        inserted = (
+-            get_db().schema("settlement").table("courier_finance_snapshot")
+-            .insert(snapshot_payload)
+-            .execute().data or []
+-        )
+-        snapshot_id = str((inserted[0] if inserted else {}).get("id") or "")
+-        if not snapshot_id:
+-            return {"saved": False, "reason": "missing_snapshot_id"}
+-        item_payloads = [
+-            {
+-                "snapshot_id": snapshot_id,
+-                **item,
+-            }
+-            for item in items
+-        ]
+-        if item_payloads:
+-            get_db().schema("settlement").table("courier_finance_snapshot_item").insert(item_payloads).execute()
+-        source_rows = [
+-            {
+-                "snapshot_id": snapshot_id,
+-                "source_key": str(source.get("source_key") or ""),
+-                "source_table": str(source.get("source_table") or ""),
+-                "payload": source.get("payload") if source.get("payload") is not None else {},
+-                "row_count": int(source.get("row_count") or 0),
+-            }
+-            for source in normalized_sources
+-        ]
+-        if source_rows:
+-            get_db().schema("settlement").table("courier_finance_snapshot_source").insert(source_rows).execute()
+-        return {"saved": True, "version": version, "snapshot_id": snapshot_id}
+-    except BaseException as exc:
++        result = save_imported_finance_snapshot(get_db().schema("settlement"), candidate, updated_by)
++        clear_devtest_finance_snapshot_cache()
++        return result
++    except Exception as exc:
+         return {"saved": False, "reason": str(exc)}
+ 
+ 
+@@ -3856,12 +3788,15 @@
+         result[column] = _snapshot_amount(snapshot, key)
+     result["Számolt túrák"] = result["Útvonalak"]
+     result["Nettó bevétel"] = result["Alapdíj"]
+-    result["Korrekció"] = result["Korrekció +"] - result["Korrekció -"]
++    result["Korrekció"] = result["Korrekció +"] + result["Korrekció -"]
+     if (snapshot.get("metadata") or {}).get("source") == "pwa_worksheet_pilot":
+         result["Korrekció"] = _snapshot_amount(snapshot, "correction")
+     bonus_malus = result["JITT bónusz"]
+     result["JITT bónusz"] = max(bonus_malus, 0)
+     result["JITT malus"] = abs(min(bonus_malus, 0))
++    if (snapshot.get("metadata") or {}).get("source") == "pwa_worksheet_pilot":
++        result["JITT bónusz"] = _snapshot_amount(snapshot, "manual_bonus")
++        result["JITT malus"] = abs(_snapshot_amount(snapshot, "manual_malus"))
+     return result
+ 
+ 
+@@ -3961,6 +3896,10 @@
+ ) -> None:
+     metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+     reserve_funding_status = target_reserve_funding_status(_snapshot_amount(snapshot, "target_reserve_close"), period_start)
++    if courier_id and period_start and st.button("Mentett PWA módosítások frissítése",
++            key=f"refresh_saved_pwa_finance_{courier_id}_{period_start:%Y%m}"):
++        clear_devtest_finance_snapshot_cache()
++        st.rerun()
+     version = int(parse_huf_value(snapshot.get("version")))
+     created_at = str(snapshot.get("created_at") or "")
+     st.caption(f"DB-ből betöltött pénzügyi verzió: v{version} | {created_at}")
+@@ -4011,7 +3950,8 @@
+         manual_rows = snapshot_manual_adjustment_details(snapshot, detail_label)
+         if manual_rows:
+             total_key = {"Korrekció": "correction", "Korrekció +": "correction_income",
+-                         "Korrekció -": "correction_deduction", "JITT bónusz / malus": "bonus_malus"}[detail_label]
++                         "Korrekció -": "correction_deduction", "JITT bónusz / malus": "bonus_malus",
++                         "Kiflis levonások / bónuszok": "kiflis_bonus_malus"}[detail_label]
+             detail_total = sum(item["Összeg"] for item in manual_rows)
+             saved_total = _snapshot_amount(snapshot, total_key)
+             if detail_label in {"Korrekció +", "Korrekció -"}:
+@@ -4507,6 +4447,17 @@
+             except Exception as exc:
+                 st.error(f"A kézi tételek törlése sikertelen. Részlet: {exc}")
+ 
++    ledger_groups = _snapshot_source_payload(snapshot, "pwa_worksheet_group_items")
++    if isinstance(ledger_groups, list):
++        st.markdown("#### PWA-ban kezelt pénzügyi tételek")
++        st.caption("Ezek a tételek már szerepelnek a fenti összegekben. Új Excel-importnál a kézi hozzáadások és kivételek megmaradnak.")
++        for group in ledger_groups:
++            st.markdown(f"**{group['label']}**")
++            if group["items"]:
++                st.dataframe(pd.DataFrame([{"Tétel": i["label"], "Összeg (Ft)": i["amountHuf"], "Indok": i["note"]}
++                                           for i in group["items"]]), hide_index=True, use_container_width=True)
++            else:
++                st.caption("Nincs aktív tétel.")
+     if metadata.get("source") == "pwa_worksheet_pilot":
+         pwa_manual_rows = _snapshot_source_payload(snapshot, "pwa_worksheet_manual_rows")
+         if pwa_manual_rows:
+@@ -7079,6 +7030,7 @@
+             warehouse_label=warehouse_label, finance_rows=update["finance_rows"],
+             tig_rows=tig_editor_rows_from_breakdown(tig).to_dict("records"),
+             source_payloads=sources, metadata=metadata, updated_by=updated_by,
++            base_snapshot_id=str(snapshot["id"]),
+         )
+         if not result.get("saved") and not result.get("unchanged"):
+             raise ValueError(f"A céltartalék elszámolása nem menthető: {result.get('reason')}")
+diff --git a/pwa_api.py b/pwa_api.py
+--- a/pwa_api.py
++++ b/pwa_api.py
+@@ -257,6 +257,7 @@
+ 
+ 
+ class WorksheetPilotRequest(BaseModel):
++    groups: list[dict[str, Any]] | None = None
+     month: str
+     courierId: str
+     snapshotId: str
+@@ -11190,53 +11191,16 @@
+         source for source in snapshot.get("sources") or []
+         if isinstance(source, dict) and str(source.get("source_key") or "")
+     ]
+-    canonical = {
+-        "period_start": period,
+-        "courier_id": courier_id,
+-        "calculation_mode": str(snapshot.get("calculation_mode") or "admin_editor"),
+-        "warehouse_label": str(snapshot.get("warehouse_label") or ""),
+-        "session_id": str(snapshot.get("session_id") or ""),
+-        "metadata": preview.get("metadata") or {},
+-        "sources": sorted(sources, key=lambda row: str(row.get("source_key") or "")),
+-        "items": sorted(items, key=lambda row: (str(row.get("section") or ""), str(row.get("item_key") or ""), money_int(row.get("display_order")))),
+-    }
+-    fingerprint = hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+-    client = settlement_supabase_client().schema("settlement")
+-    latest_rows = client.table("courier_finance_snapshot").select("id,version,fingerprint").eq(
+-        "period_start", period
+-    ).eq("courier_id", courier_id).order("version", desc=True).limit(1).execute().data or []
+-    latest = latest_rows[0] if latest_rows else {}
+-    if str(latest.get("fingerprint") or "") == fingerprint:
+-        return {"saved": False, "unchanged": True, "snapshotId": str(latest.get("id") or ""), "version": money_int(latest.get("version")), "totals": totals}
+-    version = money_int(latest.get("version")) + 1
++    if snapshot_source_payload(snapshot, "pwa_worksheet_group_items") is not None:
++        raise HTTPException(status_code=409, detail="A PWA tételeit a tételes munkalapon lehet módosítani.")
++    from resources.finance_snapshot_persistence import save_imported_finance_snapshot
++    candidate = {**preview, "sources": sources}
++    candidate["courier_name"] = courier_name
++    candidate["period_start"] = period
+     updated_by = str(user.get("username") or user.get("courierId") or "admin")
+-    payload = {
+-        "period_start": period,
+-        "courier_id": courier_id,
+-        "courier_name": courier_name,
+-        "version": version,
+-        "source": "pwa_admin_editor",
+-        "calculation_mode": str(snapshot.get("calculation_mode") or "admin_editor"),
+-        "warehouse_label": str(snapshot.get("warehouse_label") or ""),
+-        "session_id": str(snapshot.get("session_id") or ""),
+-        "fingerprint": fingerprint,
+-        "metadata": preview.get("metadata") or {},
+-        "previous_snapshot_id": str(latest.get("id") or "") or None,
+-        "previous_fingerprint": str(latest.get("fingerprint") or "") or None,
+-        "changed_from_previous": True,
+-        "created_by": updated_by,
+-    }
+-    inserted = client.table("courier_finance_snapshot").insert(payload).execute().data or []
+-    snapshot_id = str((inserted[0] if inserted else {}).get("id") or "")
+-    if not snapshot_id:
+-        raise RuntimeError("Az új pénzügyi snapshot azonosítója hiányzik.")
+-    item_payloads = [{"snapshot_id": snapshot_id, **item} for item in items]
+-    if item_payloads:
+-        client.table("courier_finance_snapshot_item").insert(item_payloads).execute()
+-    source_payloads = [{"snapshot_id": snapshot_id, **source} for source in sources]
+-    if source_payloads:
+-        client.table("courier_finance_snapshot_source").insert(source_payloads).execute()
+-    return {"saved": True, "snapshotId": snapshot_id, "version": version, "totals": totals}
++    result = save_imported_finance_snapshot(settlement_supabase_client().schema("settlement"), candidate, updated_by)
++    return {"saved": result["saved"], "unchanged": result["unchanged"], "snapshotId": result["snapshot_id"],
++            "version": result["version"], "totals": result["totals"]}
+ 
+ 
+ def snapshot_items_by_section(snapshot: dict[str, Any], section: str) -> list[dict[str, Any]]:
+@@ -11642,6 +11606,14 @@
+         {"key": "corrections", "label": "Korrekciók", "amountHuf": correction_total, "tone": "info", "items": detail_or_fallback("corrections", ["correction_income", "correction_deduction", "correction"])},
+         {"key": "performance", "label": "Teljesítmény", "amountHuf": amount("orders"), "amountKind": "count", "tone": "info", "items": route_items},
+     ]
++    ledger_groups = snapshot_source_payload(snapshot, "pwa_worksheet_group_items")
++    if isinstance(ledger_groups, list):
++        for group in ledger_groups:
++            card = next((c for c in cards if c["key"] == group["key"]), None)
++            if card is not None:
++                card["items"] = [{"key": group["key"] + ":" + i["id"], "label": i["label"],
++                                  "amountHuf": i["amountHuf"], "note": i["note"], "amountKind": "huf"} for i in group["items"]]
++                card["amountHuf"] = sum(i["amountHuf"] for i in group["items"])
+     cards = annotate_quality_financial_cards(cards, quality_notes)
+     complaint_options = [
+         {"key": current["key"], "label": current["label"], "amountHuf": current["amountHuf"], "amountKind": current.get("amountKind", "huf")}
+@@ -13248,7 +13220,7 @@
+         courier_id,
+         month,
+         include_sources=True,
+-        source_keys={"card_drilldowns", "manual_adjustments"} if snapshot_only else None,
++        source_keys={"card_drilldowns", "manual_adjustments", "pwa_worksheet_group_items", "tig_breakdown"} if snapshot_only else None,
+     )
+     snapshot_breakdown = (
+         build_financial_breakdown_from_snapshot(
+@@ -24698,7 +24670,7 @@
+ 
+ 
+ def prepare_pilot_request(payload: WorksheetPilotRequest) -> tuple[dict[str, Any], dict[str, Any]]:
+-    from resources.pwa_finance_worksheet import require_pilot, prepare_worksheet
++    from resources.pwa_finance_worksheet import require_pilot, prepare_group_worksheet
+     try:
+         require_pilot(payload.courierId, payload.month)
+     except ValueError as exc:
+@@ -24716,8 +24688,9 @@
+     if closure or paid:
+         raise HTTPException(status_code=409, detail="A kifizetés lezárt. A munkalap nem módosítható.")
+     try:
+-        result = prepare_worksheet(snapshot, [r.model_dump() for r in payload.rows],
+-                                   [r.model_dump() for r in payload.manualRows], payload.note)
++        if payload.rows or payload.manualRows:
++            raise ValueError("Csak a három tételcsoport tételei módosíthatók.")
++        result = prepare_group_worksheet(snapshot, payload.groups, payload.note)
+     except (ValueError, TypeError) as exc:
+         raise HTTPException(status_code=422, detail=str(exc)) from exc
+     return snapshot, result
+diff --git a/pwa/app.js b/pwa/app.js
+--- a/pwa/app.js
++++ b/pwa/app.js
+@@ -119,7 +119,7 @@
+   settlementImportDraggedColumnId: "",
+   settlementImportDraggedSheetId: "",
+ };
+-const APP_VERSION = "v279";
++const APP_VERSION = "v286";
+ const $ = (selector) => document.querySelector(selector);
+ 
+ const ROUTE_REPORT_FIELDS = [
+@@ -6335,38 +6335,7 @@
+       && workflow.worksheetPilot.month === state.settlementDashboardMonth) {
+     return settlementDashboardPilotFinanceEditor(workflow.worksheetPilot);
+   }
+-  const rows = settlementDashboardEditorRows(workflow);
+-  const totals = new Set(["payable", "income", "deductions"]);
+-  if (rows.some(row => ["correction_income", "correction_deduction"].includes(row.key))) totals.add("correction");
+-  const values = rows.filter(row => !totals.has(row.key));
+-  const savedTotal = workflow.financialBreakdown?.totalPayableHuf ?? rows.find(row => row.key === "payable")?.amountHuf ?? 0;
+-  const tigTotal = workflow.tigBreakdown?.finalTotalHuf;
+-  return `<div class="settlement-dashboard-editor settlement-worksheet" data-visual-only-editor>
+-    <div class="settlement-dashboard-editor-head">
+-      <div><strong>Pénzügyi munkalap</strong><small>A mezők kipróbálhatók. A módosítások csak ezen a képernyőn látszanak, bezáráskor elvesznek.</small></div>
+-      <span class="settlement-dashboard-editor-badge">Vizuális előnézet</span>
+-    </div>
+-    <section class="settlement-worksheet-section">
+-      <h4>Pénzügyi értékek</h4>
+-      <table class="settlement-worksheet-table"><thead><tr><th>Tétel</th><th>Mentett érték</th><th>Új érték</th></tr></thead><tbody>
+-        ${values.map(row => `<tr><td><strong>${escapeHtml(row.label || row.key)}</strong><small>${escapeHtml(row.note || "")}</small></td>
+-          <td>${escapeHtml(row.amountKind === "count" ? `${formatCount(row.amountHuf || 0)} db` : formatHuf(row.amountHuf || 0))}</td>
+-          <td><label class="settlement-worksheet-value"><input type="number" value="${escapeHtml(String(row.amountHuf ?? 0))}" step="1" aria-label="${escapeHtml(row.label || row.key)} új értéke"><span>${row.amountKind === "count" ? "db" : "Ft"}</span></label></td></tr>`).join("") || `<tr><td colspan="3">Nincs szerkeszthető pénzügyi tétel.</td></tr>`}
+-      </tbody></table>
+-      <small class="settlement-dashboard-editor-help">Az összesített végösszegek külön, az előnézetben jelennek meg.</small>
+-    </section>
+-    <section class="settlement-worksheet-section">
+-      <div class="settlement-dashboard-editor-head"><div><h4>Kézi tételek</h4><small>Új módosítások tervezete. A meglévő összegek a fenti táblázatban láthatók.</small></div><button class="secondary" type="button" data-dashboard-editor-add>+ Új tétel</button></div>
+-      <div data-worksheet-manual-rows>${settlementDashboardManualPreviewRow()}</div>
+-    </section>
+-    <section class="settlement-worksheet-section"><label>Módosítás indoka<textarea placeholder="Mi változott és miért?" rows="2" aria-label="Módosítás indoka"></textarea></label></section>
+-    <section class="settlement-worksheet-section">
+-      <div class="settlement-worksheet-totals"><div><small>Mentett kifizetendő</small><strong>${escapeHtml(formatHuf(savedTotal))}</strong></div><div><small>Tervezett kifizetendő</small><strong>—</strong></div><div><small>Eltérés</small><strong>—</strong></div></div>
+-      <div class="settlement-worksheet-tig"><strong>Teljesítés-összesítő</strong><span>${tigTotal == null ? "A Teljesítés-összesítő összege ezen a nézeten még nincs betöltve." : `Mentett összeg: ${escapeHtml(formatHuf(tigTotal))}`}</span></div>
+-      <div class="settlement-dashboard-editor-actions"><button class="secondary" type="button" disabled>Előnézet számítása</button><button class="primary" type="button" disabled>Változások mentése</button></div>
+-      <small class="settlement-dashboard-editor-help">Az újraszámítás, mentés és Teljesítés-összesítő-módosítás ebben a vizuális változatban nem működik.</small>
+-    </section>
+-  </div>`;
++  return `<div class="notice">A tételek szerkesztéséhez töltsd újra a futár mentett elszámolását.</div>`;
+ }
+ 
+ function settlementDashboardPilotManualRow(row = {}) {
+@@ -6389,11 +6358,7 @@
+   return `<div class="settlement-dashboard-editor settlement-worksheet" data-pilot-worksheet data-snapshot-id="${escapeHtml(pilot.snapshotId)}" data-courier-id="${escapeHtml(pilot.courierId)}" data-month="${escapeHtml(pilot.month)}">
+     <div class="settlement-dashboard-editor-head"><div><strong>Pénzügyi munkalap</strong><small>${escapeHtml(pilot.courierName || pilot.courierId)} · #${escapeHtml(pilot.courierId)} · ${escapeHtml(pilot.month)} · mentett verzió: v${escapeHtml(String(pilot.version))}</small></div><span class="settlement-dashboard-editor-badge">Szerkeszthető</span></div>
+     <div class="notice">Csak ennek a futárnak a mentett tételeit módosítja. A mentés után ugyanaz az új verzió látszik a PWA-ban és a devtest.py-ban. A meglévő Teljesítés-összesítő PDF változatlan marad.</div>
+-    <section class="settlement-worksheet-section"><h4>Pénzügyi értékek</h4><small>A levonások negatív előjellel szerepelnek. A darabszám módosítása önmagában nem számolja újra a díjakat.</small>
+-      <table class="settlement-worksheet-table"><thead><tr><th>Tétel</th><th>Mentett alapérték</th><th>Új alapérték</th></tr></thead><tbody>${pilot.rows.map(row => `<tr><td><strong>${escapeHtml(row.label)}</strong><small>${escapeHtml(row.note || "")}</small></td><td>${escapeHtml(row.amountKind === "count" ? `${formatCount(row.amountHuf)} db` : formatHuf(row.amountHuf))}</td><td><label class="settlement-worksheet-value"><input type="number" step="1" data-worksheet-key="${escapeHtml(row.key)}" value="${escapeHtml(String(row.amountHuf))}" aria-label="${escapeHtml(row.label)} új értéke"><span>${row.amountKind === "count" ? "db" : "Ft"}</span></label></td></tr>`).join("")}</tbody></table>
+-    </section>
+-    <section class="settlement-worksheet-section"><div class="settlement-dashboard-editor-head"><div><h4>PWA kézi tételek</h4><small>Ezek az alapértékeken felüli módosítások. Egy sor eltávolítása csak ezt a sort veszi ki a tervezetből.</small></div><button type="button" class="secondary" data-dashboard-editor-add>+ Új tétel</button></div><div data-worksheet-manual-rows>${(pilot.manualRows || []).map(settlementDashboardPilotManualRow).join("")}</div>
+-    ${(pilot.existingManualRows || []).length ? `<details><summary>Korábbi kézi forrástételek (${pilot.existingManualRows.length})</summary><small>A mentett alapértékek már tartalmazhatják ezeket; nem adjuk hozzá újra.</small>${pilot.existingManualRows.map(row => `<p>${escapeHtml(row.note || row.adjustment_type)} · ${escapeHtml(formatHuf(row.amount_huf))}</p>`).join("")}</details>` : ""}</section>
++    ${(pilot.groups || []).map(group => `<section class="settlement-worksheet-section" data-ledger-group="${escapeHtml(group.key)}"><div class="settlement-dashboard-editor-head"><h4>${escapeHtml(group.label)} · <span data-ledger-total>${escapeHtml(formatHuf(group.items.reduce((sum, row) => sum + row.amountHuf, 0)))}</span></h4><button type="button" class="secondary" data-ledger-add>+ Új tétel</button></div><div data-ledger-items>${group.items.map(row => settlementLedgerRow(row, true)).join("")}</div></section>`).join("")}
+     <section class="settlement-worksheet-section"><label>Módosítás indoka<textarea data-worksheet-note placeholder="Mi változott és miért?" rows="2"></textarea></label></section>
+     <section class="settlement-worksheet-section"><div class="settlement-worksheet-totals"><div><small>Mentett kifizetendő</small><strong>${escapeHtml(formatHuf(pilot.savedTotal))}</strong></div><div><small>Tervezett kifizetendő</small><strong data-worksheet-total>—</strong></div><div><small>Eltérés</small><strong data-worksheet-delta>—</strong></div></div>
+     <div class="settlement-worksheet-tig"><strong>Teljesítés-összesítő-bontás előnézete</strong><span data-worksheet-tig>—</span></div><div data-worksheet-changes></div>
+@@ -6401,18 +6366,31 @@
+   </div>`;
+ }
+ 
++function settlementLedgerRow(row = {}, saved = false) {
++  const id = row.id || `new-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
++  return `<div class="settlement-worksheet-manual-row" data-dashboard-editor-row data-ledger-id="${escapeHtml(id)}" data-ledger-saved="${saved}">
++    <label>Tétel<input data-ledger-field="label" value="${escapeHtml(row.label || "")}" ${saved ? "readonly" : ""}></label>
++    <label>Összeg (Ft, levonás negatívan)<input type="number" step="1" data-ledger-field="amountHuf" value="${escapeHtml(String(row.amountHuf ?? 0))}" ${saved ? "readonly" : ""}></label>
++    <label>Indok<input data-ledger-field="note" value="${escapeHtml(row.note || "")}" ${saved ? "readonly" : ""}></label>
++    <button type="button" class="secondary" data-dashboard-editor-delete>Tétel kivétele</button></div>`;
++}
++
+ function readPilotWorksheet(editor) {
+-  return { month: editor.dataset.month, courierId: editor.dataset.courierId, snapshotId: editor.dataset.snapshotId,
++  return {month: editor.dataset.month, courierId: editor.dataset.courierId, snapshotId: editor.dataset.snapshotId,
+     note: editor.querySelector("[data-worksheet-note]").value.trim(),
+-    rows: [...editor.querySelectorAll("[data-worksheet-key]")].map(input => ({key: input.dataset.worksheetKey, amountHuf: Number(input.value)})),
+-    manualRows: [...editor.querySelectorAll("[data-manual-id]")].map(row => {
+-      const value = key => row.querySelector(`[data-manual-field="${key}"]`).value;
+-      return {id: row.dataset.manualId, type: value("type"), amountHuf: Number(value("amountHuf")), note: value("note").trim(), validFrom: value("validFrom"), validTo: value("validTo")};
+-    }) };
++    groups: [...editor.querySelectorAll("[data-ledger-group]")].map(group => ({key: group.dataset.ledgerGroup,
++      items: [...group.querySelectorAll("[data-ledger-id]")].map(row => {
++        const value = key => row.querySelector(`[data-ledger-field="${key}"]`).value;
++        return {id: row.dataset.ledgerId, label: value("label"), amountHuf: Number(value("amountHuf")), note: value("note")};
++      })}))};
+ }
+ 
+ function invalidatePilotWorksheet(editor) {
+   if (!editor) return;
++  editor.querySelectorAll("[data-ledger-group]").forEach(group => {
++    const total = [...group.querySelectorAll('[data-ledger-field="amountHuf"]')].reduce((sum, input) => sum + Number(input.value || 0), 0);
++    group.querySelector("[data-ledger-total]").textContent = formatHuf(total);
++  });
+   editor.worksheetPreview = null;
+   editor.querySelector("[data-worksheet-commit]").disabled = true;
+   editor.querySelector("[data-worksheet-total]").textContent = "—";
+@@ -12692,6 +12670,12 @@
+     }
+     return;
+   }
++  const ledgerAdd = event.target.closest("[data-ledger-add]");
++  if (ledgerAdd) {
++    ledgerAdd.closest("[data-ledger-group]").querySelector("[data-ledger-items]").insertAdjacentHTML("beforeend", settlementLedgerRow());
++    invalidatePilotWorksheet(ledgerAdd.closest("[data-pilot-worksheet]"));
++    return;
++  }
+   const addEditorRow = event.target.closest("[data-dashboard-editor-add]");
+   if (addEditorRow) {
+     const pilot = addEditorRow.closest("[data-pilot-worksheet]");
+diff --git a/pwa/index.html b/pwa/index.html
+--- a/pwa/index.html
++++ b/pwa/index.html
+@@ -8,7 +8,7 @@
+     <link rel="manifest" href="/manifest.webmanifest?v=244" />
+     <link rel="icon" href="/icon.svg?v=244" type="image/svg+xml" />
+     <link rel="apple-touch-icon" href="/icon.svg?v=244" />
+-    <link rel="stylesheet" href="/styles.css?v=285" />
++    <link rel="stylesheet" href="/styles.css?v=286" />
+     <link rel="stylesheet" href="/webshop.css?v=277" />
+     <title>Jitt</title>
+   </head>
+@@ -950,6 +950,6 @@
+     <script src="/gate.js?v=277" defer></script>
+     <script src="/account_setup.js?v=277" defer></script>
+     <script src="/quality_form_test.js?v=2" defer></script>
+-    <script src="/app.js?v=285" defer></script>
++    <script src="/app.js?v=286" defer></script>
+   </body>
+ </html>
+diff --git a/pwa/sw.js b/pwa/sw.js
+--- a/pwa/sw.js
++++ b/pwa/sw.js
+@@ -1,5 +1,5 @@
+-const CACHE = "jitt-pwa-v285";
+-const APP_SHELL = ["/quality_form_test.js?v=2", "/account_setup.js?v=277", "/", "/styles.css?v=285", "/app.js?v=285", "/gate.js?v=277", "/invoice_raw.js?v=277", "/webshop.js?v=277", "/webshop.css?v=277", "/sw.js?v=285", "/manifest.webmanifest?v=277", "/icon.svg?v=277"];
++const CACHE = "jitt-pwa-v286";
++const APP_SHELL = ["/quality_form_test.js?v=2", "/account_setup.js?v=277", "/", "/styles.css?v=286", "/app.js?v=286", "/gate.js?v=277", "/invoice_raw.js?v=277", "/webshop.js?v=277", "/webshop.css?v=277", "/sw.js?v=286", "/manifest.webmanifest?v=277", "/icon.svg?v=277"];
+ 
+ self.addEventListener("install", (event) => {
+   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
+diff --git a/resources/pwa_finance_worksheet.py b/resources/pwa_finance_worksheet.py
+--- a/resources/pwa_finance_worksheet.py
++++ b/resources/pwa_finance_worksheet.py
+@@ -68,6 +68,7 @@
+         "manualRows": source_payload(snapshot, "pwa_worksheet_manual_rows") or [],
+         "savedTotal": int(next((i["amount_value"] for i in finance if i["item_key"] == "payable"), 0)),
+         "tigTotal": (snapshot.get("metadata") or {}).get("tig_final_total"),
++        "groups": worksheet_groups(snapshot),
+         "existingManualRows": source_payload(snapshot, "manual_adjustments") or [],
+     }
+ 
+@@ -207,3 +208,199 @@
+     digest = hashlib.sha256(json.dumps(prepared, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+     return {"prepared": prepared, "previewHash": digest, "totals": totals, "tig": tig, "changes": changes,
+             "previousTotal": baseline["savedTotal"], "delta": total - baseline["savedTotal"], "manualRows": clean_manual}
++
++
++EDIT_GROUPS = {
++    "kiflis_bonus_malus": ("Kiflis levonások / bónuszok", ("monthly_bonus", "monthly_malus"), ("kiflis_bonus_", "kiflis_malus_")),
++    "bonus_malus": ("JITT bónusz / malus", ("manual_bonus", "manual_malus"), ("jitt_bonus_", "jitt_malus_")),
++    "corrections": ("Korrekciók", ("correction_income", "correction_deduction"), ("correction_periodic_",)),
++}
++
++
++def worksheet_groups(snapshot):
++    saved = source_payload(snapshot, "pwa_worksheet_group_items")
++    if isinstance(saved, list):
++        return deepcopy(saved)
++    finance = {i["item_key"]: i for i in snapshot.get("items", []) if i.get("section") == "finance"}
++    from resources.finance_adjustment_details import snapshot_manual_adjustment_details
++    groups = []
++    for key, (label, components, prefixes) in EDIT_GROUPS.items():
++        items = []
++        manual_details = snapshot_manual_adjustment_details(snapshot, "Korrekció" if key == "corrections" else label)
++        for side, component in enumerate(components):
++            amount = int(finance.get(component, {}).get("amount_value") or 0)
++            if not any(c in finance for c in components):
++                net = int(finance.get("correction" if key == "corrections" else key, {}).get("amount_value") or 0)
++                amount = max(net, 0) if side == 0 else min(net, 0)
++            detail = [i for k, i in finance.items() if k.startswith(prefixes)
++                      and k not in {key, "kiflis_bonus_total", "kiflis_malus_total"}
++                      and (int(i.get("amount_value") or 0) >= 0) == (side == 0)]
++            manual_side = [i for i in manual_details if (int(i.get("Összeg") or 0) >= 0) == (side == 0)]
++            if manual_side and sum(int(i.get("Összeg") or 0) for i in manual_side) == amount:
++                detail = [{"item_key": component + "_source_" + str(n), "item_label": i.get("Tétel") or label,
++                           "amount_value": i["Összeg"], "note": i.get("Megjegyzés") or ""} for n, i in enumerate(manual_side)]
++            if sum(int(i.get("amount_value") or 0) for i in detail) != amount:
++                detail = [finance.get(component, {"item_key": component, "item_label": label, "amount_value": amount})] if amount else []
++            for item in detail:
++                items.append({"id": str(item["item_key"]), "label": item.get("item_label") or label,
++                              "amountHuf": int(item.get("amount_value") or 0), "note": item.get("note") or ""})
++        groups.append({"key": key, "label": label, "items": items})
++    return groups
++
++
++def prepare_group_worksheet(snapshot, groups, note):
++    """Only additions/removals in the three allowed ledgers; saved entries are immutable."""
++    baseline = worksheet_groups(snapshot)
++    if not isinstance(groups, list) or len(groups) != len(EDIT_GROUPS):
++        raise ValueError("Mindhárom tételcsoport megadása kötelező.")
++    existing = {g["key"]: {i["id"]: i for i in g["items"]} for g in baseline}
++    clean, seen = [], set()
++    for group in groups:
++        if not isinstance(group, dict) or not isinstance(group.get("items"), list):
++            raise ValueError("Érvénytelen tételcsoport.")
++        key = group.get("key")
++        if key not in EDIT_GROUPS or key in seen:
++            raise ValueError("Ismeretlen vagy ismétlődő tételcsoport.")
++        seen.add(key)
++        entries, ids = [], set()
++        for row in group.get("items", []):
++            if not isinstance(row, dict):
++                raise ValueError("Érvénytelen tétel.")
++            ident, amount = str(row.get("id") or ""), row.get("amountHuf")
++            if not ident or len(ident) > 80 or ident in ids:
++                raise ValueError("Érvénytelen vagy ismétlődő tételazonosító.")
++            ids.add(ident)
++            if ident in existing[key]:
++                old = existing[key][ident]
++                if any(row.get(k, "") != old[k] for k in ("amountHuf", "label", "note")):
++                    raise ValueError("Mentett tétel nem írható át; távolítsd el és adj hozzá új tételt.")
++                entries.append(deepcopy(old))
++            else:
++                if (isinstance(amount, bool) or not isinstance(amount, int) or not 0 < abs(amount) <= 1_000_000_000
++                        or not str(row.get("label") or "").strip() or not str(row.get("note") or "").strip()):
++                    raise ValueError("Az új tételhez megnevezés, indok és nem nulla egész forint szükséges.")
++                entries.append({"id": ident, "label": str(row["label"]).strip(), "note": str(row["note"]).strip(), "amountHuf": amount})
++        clean.append({"key": key, "label": EDIT_GROUPS[key][0], "items": entries})
++    working = deepcopy(snapshot)
++    working["sources"] = [s for s in working.get("sources", []) if s["source_key"] not in
++                          {"pwa_worksheet_audit", "pwa_worksheet_manual_rows", "pwa_worksheet_group_items", "pwa_worksheet_overrides"}]
++    remove = {k for _, components, _ in EDIT_GROUPS.values() for k in components} | {"kiflis_bonus_malus", "bonus_malus", "correction"}
++    prefixes = tuple(p for _, _, pp in EDIT_GROUPS.values() for p in pp)
++    working["items"] = [i for i in working["items"] if i.get("section") != "finance" or
++                        (i["item_key"] not in remove and not i["item_key"].startswith(prefixes))]
++    for group in clean:
++        for side, component in enumerate(EDIT_GROUPS[group["key"]][1]):
++            amount = sum(i["amountHuf"] for i in group["items"] if (i["amountHuf"] >= 0) == (side == 0))
++            working["items"].append({"section": "finance", "item_key": component, "item_label": component, "amount_value": amount, "amount_kind": "huf"})
++    result = prepare_worksheet(working, [], [], note)
++    prepared = result["prepared"]
++    saved_keys = {(i["section"], i["item_key"]) for i in prepared["items"]}
++    for item in working["items"]:
++        if (item["section"], item["item_key"]) not in saved_keys and item["section"] != "tig":
++            prepared["items"].append({k: deepcopy(item.get(k)) for k in
++                                     ("section", "item_key", "item_label", "amount_value", "amount_kind", "note", "display_order")})
++    prepared["sources"].append({"source_key": "pwa_worksheet_group_items", "payload": clean,
++                                 "row_count": sum(len(g["items"]) for g in clean), "source_table": "pwa_finance_worksheet"})
++    overrides = update_group_overrides(snapshot, clean, note)
++    prepared["sources"].append({"source_key": "pwa_worksheet_overrides", "payload": overrides,
++                                 "row_count": sum(len(g["removed"]) + len(g["added"]) for g in overrides["groups"]),
++                                 "source_table": "pwa_finance_worksheet"})
++    # Both applications render the authoritative ledger rather than old import details.
++    drilldowns = source_payload(prepared, "card_drilldowns")
++    for group in clean:
++        rows = [{"Tétel": r["label"], "Összeg": r["amountHuf"], "Megjegyzés": r["note"], "Érvényesség": ""} for r in group["items"]]
++        drilldowns["Korrekció" if group["key"] == "corrections" else group["label"]] = rows
++    for group in clean:
++        prefixes = EDIT_GROUPS[group["key"]][2]
++        for n, row in enumerate(group["items"]):
++            prefix = prefixes[0] if row["amountHuf"] >= 0 or len(prefixes) == 1 else prefixes[1]
++            prepared["items"].append({"section": "finance", "item_key": prefix + "ledger_" + str(n),
++                "item_label": row["label"], "amount_value": row["amountHuf"], "amount_kind": "huf", "note": row["note"], "display_order": len(prepared["items"]) + 1})
++    result["changes"] = [{"key": g["key"], "label": g["label"], "before": sum(i["amountHuf"] for i in existing[g["key"]].values()),
++                          "after": sum(i["amountHuf"] for i in g["items"])} for g in clean]
++    for n, item in enumerate(prepared["items"], 1):
++        item["display_order"] = int(item.get("display_order") or n)
++    result["previewHash"] = hashlib.sha256(json.dumps(prepared, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
++    return result
++
++
++def update_group_overrides(snapshot, clean, note):
++    """Persist edits independently of the imported financial base."""
++    previous = source_payload(snapshot, "pwa_worksheet_overrides")
++    overrides = deepcopy(previous) if isinstance(previous, dict) else {"version": 1, "groups": []}
++    indexed = {g["key"]: g for g in overrides["groups"]}
++    old_groups = {g["key"]: g for g in worksheet_groups(snapshot)}
++    for group in clean:
++        patch = indexed.setdefault(group["key"], {"key": group["key"], "removed": [], "added": []})
++        before = {r["id"]: r for r in old_groups[group["key"]]["items"]}
++        after = {r["id"]: r for r in group["items"]}
++        for ident in sorted(before.keys() - after.keys()):
++            if any(r["id"] == ident for r in patch["added"]):
++                patch["added"] = [r for r in patch["added"] if r["id"] != ident]
++            else:
++                patch["removed"].append(deepcopy(before[ident]))
++        patch["added"].extend(deepcopy(after[ident]) for ident in sorted(after.keys() - before.keys()))
++    overrides["groups"] = [indexed[key] for key in EDIT_GROUPS]
++    overrides["note"] = str(note).strip()
++    return overrides
++
++
++def _entry_signature(row):
++    return (str(row.get("label") or "").strip(), str(row.get("note") or "").strip(), int(row["amountHuf"]))
++
++
++def carry_forward_worksheet_changes(candidate, previous):
++    """Rebase manual additions/deletions on a new import. Never reuse old base fees."""
++    patch = source_payload(previous, "pwa_worksheet_overrides")
++    legacy_groups = source_payload(previous, "pwa_worksheet_group_items")
++    if patch is None and legacy_groups is None:
++        return deepcopy(candidate)
++    if str(previous.get("courier_id")) != str(candidate.get("courier_id")) or str(previous.get("period_start"))[:10] != str(candidate.get("period_start"))[:10]:
++        raise ValueError("A kézi módosítás másik futárhoz vagy hónaphoz tartozik.")
++    if source_payload(candidate, "pwa_worksheet_group_items") is not None:
++        # Reserve movements already operate on the published effective ledger.
++        # They must name its version and preserve every edited component.
++        if str((candidate.get("metadata") or {}).get("worksheet_effective_base_snapshot_id") or "") != str(previous["id"]):
++            raise ValueError("A már módosított elszámolás alapverziója eltér. Töltsd újra az adatokat.")
++        if (source_payload(candidate, "pwa_worksheet_group_items") != legacy_groups
++                or source_payload(candidate, "pwa_worksheet_overrides") != patch):
++            raise ValueError("A művelet nem írhatja át a PWA tételmódosításait.")
++        keys = {k for _, components, _ in EDIT_GROUPS.values() for k in components} | {"kiflis_bonus_malus", "bonus_malus", "correction"}
++        def amounts(saved):
++            return {i["item_key"]: i["amount_value"] for i in saved["items"] if i.get("section") == "finance" and i["item_key"] in keys}
++        if amounts(candidate) != amounts(previous):
++            raise ValueError("A művelet nem módosíthatja a PWA-ban kezelt pénzügyi csoportokat.")
++        effective = deepcopy(candidate)
++        effective["metadata"]["worksheet_import_source"] = effective["metadata"].get("source")
++        effective["metadata"]["source"] = "pwa_worksheet_pilot"
++        return effective
++    groups = worksheet_groups(candidate)
++    if patch is None:
++        # Earlier versions retained only the final ledger. Preserve that ledger
++        # until its changes can be explicitly reviewed rather than losing it.
++        groups = deepcopy(legacy_groups)
++    else:
++        if patch.get("version") != 1 or {g["key"] for g in patch.get("groups", [])} != set(EDIT_GROUPS):
++            raise ValueError("Ismeretlen kézi módosításformátum; az előző snapshot megmarad.")
++        patches = {g["key"]: g for g in patch["groups"]}
++        for group in groups:
++            current = list(group["items"])
++            for removed in patches[group["key"]]["removed"]:
++                matches = [n for n, row in enumerate(current) if _entry_signature(row) == _entry_signature(removed)]
++                if matches:
++                    current.pop(matches[0])  # Multiset: one deletion removes one occurrence.
++                elif any(_entry_signature(row)[:2] == _entry_signature(removed)[:2] for row in current):
++                    raise ValueError("Egy korábban kivett tétel összege megváltozott az importban. Ellenőrzés szükséges; az előző snapshot megmarad.")
++            current.extend(deepcopy(patches[group["key"]]["added"]))
++            if len({r["id"] for r in current}) != len(current):
++                raise ValueError("Az import és a kézi tételek azonosítói ütköznek.")
++            group["items"] = current
++    note = str((patch or {}).get("note") or "Korábbi PWA tételmódosítások megőrzése")
++    result = prepare_group_worksheet(candidate, groups, note)["prepared"]
++    if patch is not None:
++        saved_patch = next(s for s in result["sources"] if s["source_key"] == "pwa_worksheet_overrides")
++        saved_patch["payload"] = deepcopy(patch)
++        saved_patch["row_count"] = sum(len(g["removed"]) + len(g["added"]) for g in patch["groups"])
++    result["metadata"]["worksheet_rebased_from_snapshot_id"] = str((previous.get("metadata") or {}).get("worksheet_rebased_from_snapshot_id") or previous["id"])
++    result["metadata"]["worksheet_import_source"] = (candidate.get("metadata") or {}).get("source")
++    return {**deepcopy(candidate), **result}
+diff --git a/resources/finance_adjustment_details.py b/resources/finance_adjustment_details.py
+--- a/resources/finance_adjustment_details.py
++++ b/resources/finance_adjustment_details.py
+@@ -16,6 +16,18 @@
+     correction_side = label if label in {"Korrekció +", "Korrekció -"} else None
+     if correction_side:
+         label = "Korrekció"
++    ledger = next((s.get("payload") for s in snapshot.get("sources", [])
++                   if s.get("source_key") == "pwa_worksheet_group_items"), None)
++    ledger_key = {"Korrekció": "corrections", "JITT bónusz / malus": "bonus_malus",
++                  "Kiflis levonások / bónuszok": "kiflis_bonus_malus"}.get(label)
++    if isinstance(ledger, list) and ledger_key:
++        group = next((g for g in ledger if g["key"] == ledger_key), None)
++        if group is not None:
++            rows = [{"Tétel": i["label"], "Összeg": i["amountHuf"], "Megjegyzés": i["note"], "Érvényesség": ""}
++                    for i in group["items"]]
++            if correction_side:
++                rows = [r for r in rows if (r["Összeg"] > 0 if correction_side == "Korrekció +" else r["Összeg"] < 0)]
++            return rows
+     groups = {
+         "Korrekció": ({"correction", "manual_correction", "correction_income",
+                         "correction_deduction", "manual_correction_deduction", "other_expense"}, "correction"),
+diff --git a/tests/test_pwa_finance_worksheet.py b/tests/test_pwa_finance_worksheet.py
+--- a/tests/test_pwa_finance_worksheet.py
++++ b/tests/test_pwa_finance_worksheet.py
+@@ -7,7 +7,7 @@
+ from unittest.mock import Mock
+ 
+ from fastapi import HTTPException
+-from resources.pwa_finance_worksheet import prepare_worksheet, require_pilot, worksheet_state
++from resources.pwa_finance_worksheet import prepare_worksheet, prepare_group_worksheet, require_pilot, worksheet_state, worksheet_groups
+ 
+ 
+ def snapshot():
+@@ -105,7 +105,13 @@
+                    "read_latest_courier_finance_snapshot": self.read, "supabase_rest": self.rest,
+                    "require_user": lambda _: {"username": "admin"}, "require_settlement_dashboard_admin": lambda u: u}
+         exec(compile(ast.Module(body=nodes, type_ignores=[]), "pwa_api.py", "exec"), self.ns)
+-        self.payload = SimpleNamespace(courierId="12345", month="2026-09", snapshotId="base-id", rows=[], manualRows=[], note="Teszt", previewHash="")
++        self.payload = SimpleNamespace(courierId="12345", month="2026-09", snapshotId="base-id", rows=[], manualRows=[], groups=worksheet_groups(snapshot()), note="Teszt", previewHash="")
++
++    def test_unrestricted_edits_are_rejected(self):
++        self.payload.rows = [SimpleNamespace(model_dump=lambda: {"key": "base", "amountHuf": 1})]
++        with self.assertRaises(HTTPException) as caught:
++            self.ns["admin_worksheet_pilot_preview"](self.payload)
++        self.assertEqual(caught.exception.status_code, 422)
+ 
+     def test_preview_is_read_only(self):
+         result = self.ns["admin_worksheet_pilot_preview"](self.payload)
+@@ -194,5 +200,54 @@
+         previous.assert_not_called()
+ 
+ 
++
++
++class GroupWorksheetTest(unittest.TestCase):
++    def test_add_remove_reopen_preserves_unrelated_amounts(self):
++        saved = snapshot()
++        groups = worksheet_groups(saved)
++        groups[0]["items"] = [i for i in groups[0]["items"] if i["amountHuf"] >= 0]
++        groups[1]["items"].append({"id": "new-bonus", "label": "Extra", "amountHuf": 2500, "note": "Indok"})
++        result = prepare_group_worksheet(saved, groups, "Tételek javítása")
++        self.assertEqual(result["delta"], 3000)
++        values = {i["item_key"]: i["amount_value"] for i in result["prepared"]["items"] if i["section"] == "finance"}
++        self.assertEqual(values["base"], 100000)
++        self.assertEqual(values["tip"], 20000)
++        reopened = {**saved, **result["prepared"], "id": "new-id", "version": 11}
++        again = prepare_group_worksheet(reopened, worksheet_groups(reopened), "Újramentés")
++        self.assertEqual(again["delta"], 0)
++        self.assertEqual(again["totals"], result["totals"])
++
++    def test_unrelated_saved_detail_is_preserved(self):
++        saved = snapshot()
++        result = prepare_group_worksheet(saved, worksheet_groups(saved), "Egyeztetés")
++        values = {i["item_key"]: i["amount_value"] for i in result["prepared"]["items"] if i["section"] == "finance"}
++        self.assertEqual(values["base_detail_1"], 100000)
++
++    def test_legacy_net_only_groups_are_preserved(self):
++        saved = snapshot()
++        components = {"monthly_bonus", "monthly_malus", "manual_bonus", "manual_malus", "correction_income", "correction_deduction"}
++        saved["items"] = [i for i in saved["items"] if i["item_key"] not in components]
++        result = prepare_group_worksheet(saved, worksheet_groups(saved), "Régi verzió")
++        self.assertEqual(result["delta"], 0)
++
++    def test_existing_amount_cannot_be_overwritten(self):
++        groups = worksheet_groups(snapshot())
++        groups[0]["items"][0]["amountHuf"] += 1
++        with self.assertRaises(ValueError):
++            prepare_group_worksheet(snapshot(), groups, "Indok")
++
++    def test_unknown_or_missing_group_is_rejected(self):
++        for groups in [[], None, [{"key": "base", "items": []}] * 3]:
++            with self.assertRaises(ValueError):
++                prepare_group_worksheet(snapshot(), groups, "Indok")
++
++    def test_manual_effective_values_are_not_readded(self):
++        first = prepare_worksheet(snapshot(), [], [manual(), manual("atm", "atm_deduction", 1000)], "Első")
++        saved = {**snapshot(), **first["prepared"]}
++        result = prepare_group_worksheet(saved, worksheet_groups(saved), "Tételes megnyitás")
++        self.assertEqual(result["delta"], 0)
++
++
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_pwa_worksheet_ui.cjs b/tests/test_pwa_worksheet_ui.cjs
+--- a/tests/test_pwa_worksheet_ui.cjs
++++ b/tests/test_pwa_worksheet_ui.cjs
+@@ -13,11 +13,11 @@
+     const state={settlementDashboardExpandedCourierId:'12345',settlementDashboardMonth:'2026-09',settlementDashboardEditCourierId:'12345',settlementDashboardDetailCache:{}};
+     const $=s=>document.querySelector(s);const escapeHtml=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
+     const formatCount=String;const formatHuf=n=>new Intl.NumberFormat('hu-HU').format(n)+' Ft';const previousLocalMonth=()=> '2026-09';
+-    const pilot={courierId:'12345',courierName:'Bagoly Zoltán',month:'2026-09',snapshotId:'original',version:10,savedTotal:0,rows:[{key:'base',label:'Alapdíj',amountHuf:0,amountKind:'huf'}],manualRows:[],existingManualRows:[{note:'Korábbi bónusz',amount_huf:500}]};
++    const pilot={courierId:'12345',courierName:'Bagoly Zoltán',month:'2026-09',snapshotId:'original',version:10,savedTotal:10000,groups:[{key:'kiflis_bonus_malus',label:'Kifli',items:[]},{key:'bonus_malus',label:'JITT',items:[{id:'old',label:'Mentett jutalom',amountHuf:10000,note:'Indok'}]},{key:'corrections',label:'Korrekció',items:[]}],rows:[{key:'base',label:'Alapdíj',amountHuf:0,amountKind:'huf'}],manualRows:[],existingManualRows:[{note:'Korábbi bónusz',amount_huf:500}]};
+     const workflow={worksheetPilot:pilot,editableFinanceRows:pilot.rows,financialBreakdown:{totalPayableHuf:0}};
+     const calls=[];window.calls=calls;
+     async function api(url,options){const payload=JSON.parse(options.body);calls.push({url,payload});
+-      if(url.endsWith('/commit')){pilot.snapshotId='saved';pilot.version=11;pilot.savedTotal=10500;pilot.rows=payload.rows.map(r=>({...r,label:'Alapdíj',amountKind:'huf'}));pilot.manualRows=payload.manualRows;return {ok:true,version:11};}
++      if(url.endsWith('/commit')){pilot.snapshotId='saved';pilot.version=11;pilot.savedTotal=10500;pilot.groups=payload.groups;return {ok:true,version:11};}
+       return {previewHash:'verified',totals:{payable_total:10500},delta:10500,tig:{finalTotalHuf:10500,cashGrossHuf:0},changes:[{label:'Alapdíj',before:0,after:10000}]};
+     }
+     async function loadSettlementDashboard(){}async function loadSettlementDashboardCourierDetail(courierId){state.settlementDashboardExpandedCourierId=courierId;state.settlementDashboardDetail={workflow};renderSettlementDashboard();}
+@@ -25,7 +25,7 @@
+     function renderSettlementDashboard(){document.getElementById('settlement-dashboard-panel').innerHTML=
+       '<div class="settlement-dashboard-row"><button type="button" class="settlement-dashboard-row-main" data-courier-id="'+pilot.courierId+'"><strong>'+pilot.courierName+'</strong></button><button type="button" data-settlement-dashboard-edit="'+pilot.courierId+'">Szerkesztés</button></div>'+
+       (state.settlementDashboardExpandedCourierId&&state.settlementDashboardEditCourierId===state.settlementDashboardExpandedCourierId?settlementDashboardFinanceEditor(workflow):'');}
+-    window.switchToOther=()=>{state.settlementDashboardExpandedCourierId='7767';state.settlementDashboardEditCourierId='7767';state.settlementDashboardMonth='2026-10';Object.assign(pilot,{courierId:'7767',courierName:'Kanyó Krisztián',month:'2026-10',snapshotId:'other-snapshot',manualRows:[]});renderSettlementDashboard();};
++    window.switchToOther=()=>{state.settlementDashboardExpandedCourierId='7767';state.settlementDashboardEditCourierId='7767';state.settlementDashboardMonth='2026-10';Object.assign(pilot,{courierId:'7767',courierName:'Kanyó Krisztián',month:'2026-10',snapshotId:'other-snapshot',groups:pilot.groups.map(g=>({...g,items:[]})),manualRows:[]});renderSettlementDashboard();};
+     window.mismatchTarget=()=>{state.settlementDashboardExpandedCourierId='6909';state.settlementDashboardEditCourierId='6909';renderSettlementDashboard();};
+     window.noDataMutation=()=>workflow.editableFinanceRows[0].amountHuf===0;
+   `;
+@@ -35,36 +35,23 @@
+     const errors=[];page.on('pageerror',e=>errors.push(e.message));let network=0;page.on('request',()=>network++);
+     const css=fs.readFileSync(path.join(__dirname,'../pwa/styles.css'),'utf8');
+     await page.setContent('<html lang="hu"><style>'+css+'body{padding:20px}</style><div id="settlement-dashboard-panel"></div><script>'+setup+helpers+'renderSettlementDashboard();'+handlers+'</script>');
+-    await page.locator('[data-worksheet-key="base"]').fill('10000');
+-    await page.locator('[data-worksheet-note]').fill('Pilot szerkesztés');
++    assert.equal(await page.locator('[data-worksheet-key]').count(),0);
++    assert.equal(await page.locator('[data-ledger-id="old"] [data-ledger-field="amountHuf"]').getAttribute('readonly'),'');
++    await page.locator('[data-worksheet-note]').fill('Tételes szerkesztés');
+     const worksheetBefore=await page.locator('[data-pilot-worksheet]').elementHandle();
+-    await page.locator('[data-pilot-worksheet] summary').click();
+-    assert.equal(await worksheetBefore.evaluate(el=>el.isConnected),true,'Opening source items must not close or replace the worksheet');
+-    assert.equal(await page.locator('[data-pilot-worksheet] details').getAttribute('open'),'');
+-    await page.locator('[data-pilot-worksheet] summary').click();
+-    await page.locator('[data-dashboard-editor-add]').click();
+-    await page.locator('[data-manual-field="amountHuf"]').fill('500');
+-    await page.locator('[data-manual-field="note"]').fill('Bónusz teszt');
+-    for(const selector of ['[data-worksheet-key="base"]','[data-manual-field="type"]','[data-manual-field="amountHuf"]','[data-manual-field="note"]','[data-manual-field="validFrom"]','[data-manual-field="validTo"]','[data-worksheet-note]']){
+-      await page.locator(selector).click();
+-      if(selector==='[data-manual-field="type"]')await page.keyboard.press('Escape');
+-      assert.equal(await worksheetBefore.evaluate(el=>el.isConnected),true,'Clicking '+selector+' must preserve the worksheet');
+-    }
+-    await page.getByRole('heading',{name:'PWA kézi tételek',exact:true}).click();
+-    assert.equal(await page.locator('[data-worksheet-key="base"]').inputValue(),'10000');
+-    assert.equal(await page.locator('[data-worksheet-note]').inputValue(),'Pilot szerkesztés');
+-    assert.equal(await page.locator('[data-manual-field="note"]').inputValue(),'Bónusz teszt');
+-    await page.locator('[data-dashboard-editor-add]').click();
+-    await page.locator('[data-dashboard-editor-delete]').last().click();
+-    assert.equal(await page.locator('[data-manual-id]').count(),1);
+-    assert.equal((await page.evaluate(()=>window.calls)).length,0,'Local worksheet clicks must not make API calls');
++    await page.locator('[data-ledger-group="bonus_malus"] [data-ledger-add]').click();
++    const newRow=page.locator('[data-ledger-saved="false"]');
++    await newRow.locator('[data-ledger-field="label"]').fill('Új jutalom');
++    await newRow.locator('[data-ledger-field="amountHuf"]').fill('500');
++    await newRow.locator('[data-ledger-field="note"]').fill('Bónusz teszt');
++    assert.equal(await worksheetBefore.evaluate(el=>el.isConnected),true,'Editing preserves the worksheet');
+     await page.locator('[data-worksheet-preview]').click();
+     await page.waitForFunction(()=>!document.querySelector('[data-worksheet-commit]').disabled);
+     assert.match(await page.locator('[data-worksheet-total]').innerText(),/10\s*500/);
+     assert.equal((await page.evaluate(()=>window.calls)).filter(c=>c.url.endsWith('/commit')).length,0);
+-    await page.locator('[data-manual-field="amountHuf"]').fill('600');
++    await page.locator('[data-ledger-saved="false"] [data-ledger-field="amountHuf"]').fill('600');
+     assert.equal(await page.locator('[data-worksheet-commit]').isDisabled(),true);
+-    await page.locator('[data-manual-field="amountHuf"]').fill('500');
++    await page.locator('[data-ledger-saved="false"] [data-ledger-field="amountHuf"]').fill('500');
+     await page.locator('[data-worksheet-preview]').click();
+     await page.waitForFunction(()=>!document.querySelector('[data-worksheet-commit]').disabled);
+     await page.locator('[data-worksheet-commit]').click();
+@@ -72,17 +59,19 @@
+     const commits=(await page.evaluate(()=>window.calls)).filter(c=>c.url.endsWith('/commit'));
+     assert.equal(commits.length,1);assert.equal(commits[0].payload.courierId,'12345');assert.equal(commits[0].payload.month,'2026-09');
+     assert.equal(commits[0].payload.snapshotId,'original');assert.equal(commits[0].payload.previewHash,'verified');
+-    assert.equal(await page.locator('[data-manual-id]').count(),1);
++    assert.equal(await page.locator('[data-ledger-id]').count(),2);
++    assert.equal(commits[0].payload.groups[1].items.length,2);
++    assert.equal(commits[0].payload.rows,undefined);
+     assert.equal(await page.evaluate(()=>window.noDataMutation()),true);
+     await page.setViewportSize({width:360,height:1300});
+     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+     await page.evaluate(()=>window.switchToOther());
+     assert.equal(await page.locator('[data-pilot-worksheet]').count(),1);
+     assert.match(await page.locator('.settlement-dashboard-editor-head').first().innerText(),/Kanyó Krisztián/);
+-    await page.locator('[data-dashboard-editor-add]').click();
+-    assert.equal(await page.locator('[data-manual-field="validFrom"]').inputValue(),'2026-10-01');
+-    assert.equal(await page.locator('[data-manual-field="validTo"]').inputValue(),'2026-10-31');
+-    await page.locator('[data-manual-field="note"]').fill('Másik futár októberi tétele');
++    await page.locator('[data-ledger-group="corrections"] [data-ledger-add]').click();
++    await page.locator('[data-ledger-field="label"]').fill('Korrekció');
++    await page.locator('[data-ledger-field="amountHuf"]').fill('-500');
++    await page.locator('[data-ledger-field="note"]').fill('Másik futár októberi tétele');
+     await page.locator('[data-worksheet-note]').fill('Októberi szerkesztés');
+     await page.locator('[data-worksheet-preview]').click();
+     await page.waitForFunction(()=>!document.querySelector('[data-worksheet-commit]').disabled);
+@@ -97,6 +86,6 @@
+     await page.evaluate(()=>window.mismatchTarget());
+     assert.equal(await page.locator('[data-pilot-worksheet]').count(),0);
+     assert.equal(network,0);assert.deepEqual(errors,[]);
+-    console.log('Worksheet UI passed: full click handler, draft preservation, manual rows, details toggle, courier header, multiple couriers/months, scoped commits, reload and mobile.');
++    console.log('Worksheet UI passed: locked saved amounts, three ledgers, additions, preview invalidation, scoped commits, reopening and courier navigation.');
+   } finally { await browser.close(); }
+ })().catch(e=>{console.error(e);process.exitCode=1;});
+diff --git a/tests/test_reserve_card_snapshot.py b/tests/test_reserve_card_snapshot.py
+--- a/tests/test_reserve_card_snapshot.py
++++ b/tests/test_reserve_card_snapshot.py
+@@ -9,7 +9,7 @@
+     def setUp(self):
+         source = (Path(__file__).resolve().parents[1] / "pwa_api.py").read_text(encoding="utf-8")
+         names = {"build_financial_breakdown_from_snapshot", "snapshot_item_map",
+-                 "snapshot_items_by_section", "snapshot_signed_item", "signed_item"}
++                 "snapshot_items_by_section", "snapshot_signed_item", "signed_item", "snapshot_source_payload"}
+         nodes = [n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name in names]
+         self.ns = {"Any": Any, "date": date, "money_int": lambda v: int(v or 0),
+                    "courier_identity": lambda u: ("6686", "Magyar Csilla"),
+diff --git a/tests/test_finance_sidebar_snapshot.py b/tests/test_finance_sidebar_snapshot.py
+--- a/tests/test_finance_sidebar_snapshot.py
++++ b/tests/test_finance_sidebar_snapshot.py
+@@ -177,7 +177,8 @@
+         ns[node.name]("7817")
+         ns[node.name]("")
+         self.assertEqual(state.pop("courier_rebuild_request_7817"), {"target_menu": "Fizetés előleg"})
+-        self.assertEqual(state, {"courier_menu_7817": "Fizetés előleg"})
++        self.assertEqual(state, {"courier_menu_7817": "Fizetés előleg",
++                                 "preserve_snapshot_components_7817": True})
+ 
+     def test_rating_uses_route_alias_when_kor_is_zero(self):
+         node = next(node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+diff --git a/resources/finance_snapshot_persistence.py b/resources/finance_snapshot_persistence.py
+new file mode 100644
+--- /dev/null
++++ b/resources/finance_snapshot_persistence.py
+@@ -0,0 +1,54 @@
++"""Publish imports atomically, retaining the latest PWA item adjustments."""
++from copy import deepcopy
++import hashlib
++import json
++
++from resources.pwa_finance_worksheet import carry_forward_worksheet_changes
++
++
++def _snapshot_children(client, table, snapshot_id, *, source_keys=None):
++    rows = []
++    while True:
++        query = client.table(table).select("source_key,payload" if source_keys else "*").eq("snapshot_id", snapshot_id)
++        if source_keys:
++            query = query.in_("source_key", source_keys)
++        page = query.order("id").range(len(rows), len(rows) + 999).execute().data or []
++        rows.extend(page)
++        if len(page) < 1000:
++            return rows
++
++
++def save_imported_finance_snapshot(client, candidate, actor):
++    """No cached reads, partial inserts, silent fallbacks or conflict retries."""
++    rows = (client.table("courier_finance_snapshot").select("*")
++            .eq("courier_id", str(candidate["courier_id"]))
++            .eq("period_start", str(candidate["period_start"])[:10])
++            .order("version", desc=True).limit(1).execute().data or [])
++    latest = dict(rows[0]) if rows else {}
++    if latest:
++        latest["sources"] = _snapshot_children(client, "courier_finance_snapshot_source", latest["id"],
++                                               source_keys=["pwa_worksheet_overrides", "pwa_worksheet_group_items"])
++        # Fresh imports need only the small change log, not old route data or
++        # finance rows. Reserve updates additionally verify effective components.
++        if any(s.get("source_key") == "pwa_worksheet_group_items" for s in candidate["sources"]):
++            latest["items"] = _snapshot_children(client, "courier_finance_snapshot_item", latest["id"])
++    effective = carry_forward_worksheet_changes(candidate, latest) if latest else deepcopy(candidate)
++    for n, item in enumerate(effective["items"], 1):
++        item["display_order"] = int(item.get("display_order") or n)
++    canonical = {k: effective.get(k) for k in ("courier_id", "period_start", "calculation_mode", "warehouse_label", "session_id", "metadata")}
++    canonical["items"] = sorted(effective["items"], key=lambda r: (r["section"], r["item_key"]))
++    canonical["sources"] = sorted(effective["sources"], key=lambda r: r["source_key"])
++    fingerprint = hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
++    response = client.rpc("commit_imported_finance_snapshot", {
++        "p_courier_id": str(candidate["courier_id"]), "p_period_start": str(candidate["period_start"])[:10],
++        "p_base_snapshot_id": str(latest["id"]) if latest else None,
++        "p_fingerprint": fingerprint, "p_actor": str(actor),
++        "p_header": {k: effective.get(k) for k in ("courier_name", "calculation_mode", "warehouse_label", "session_id")},
++        "p_prepared": {k: effective[k] for k in ("items", "sources", "metadata")},
++    }).execute().data
++    if not isinstance(response, dict) or not response.get("ok"):
++        raise RuntimeError("A közös pénzügyi snapshot mentése nem igazolható.")
++    return {"saved": not response.get("unchanged", False), "unchanged": bool(response.get("unchanged")),
++            "version": response["version"], "snapshot_id": str(response["snapshotId"]),
++            "totals": {k: effective["metadata"].get(k) for k in
++                       ("income_total", "deduction_total", "correction_total", "payable_total")}}
+diff --git a/docs/finance_snapshot_preserve_pwa.md b/docs/finance_snapshot_preserve_pwa.md
+new file mode 100644
+--- /dev/null
++++ b/docs/finance_snapshot_preserve_pwa.md
+@@ -0,0 +1,64 @@
++# PWA tételmódosítások megőrzése új importnál
++
++A PWA, a devtest oldalsávja és a pénzügyi részletező ugyanazt a legfrissebb
++`settlement.courier_finance_snapshot` verziót olvassa futáronként és hónaponként.
++A PWA mentése az összesítőket, a TIG-bontást és a tétellistát együtt menti.
++Meglévő PDF-et ez nem generál újra.
++
++## A kézi módosítások megőrzése
++
++A snapshot forrásai között a `pwa_worksheet_group_items` a megjelenített tétellista,
++a `pwa_worksheet_overrides` pedig a kézi hozzáadások és kivételek naplója.
++Az új Excel/API számítás friss alapadatokat szolgáltat; a napló változásai ezekre
++kerülnek rá. Az ismételt import nem adja hozzá még egyszer a kézi tételeket.
++A kézi tétel későbbi kivétele az importokból is eltávolítja ezt a hozzáadást.
++
++A kivett importtételeket a megnevezés, indok és összeg alapján egyeztetjük,
++nem az Excel változó sorszáma alapján. Azonos tételekből egy kivétel egy
++előfordulást távolít el. Az importból már hiányzó tétel kivétele megmarad a
++naplóban, így egy későbbi feltöltés sem hozza vissza.
++Ha ugyanaz a megnevezés/indok eltérő összeggel jelenik meg, a publikálás megáll:
++az előző teljes snapshot marad érvényben, és az import eredményében megjelenik
++az ellenőrzést kérő hiba. Új, eltérő tételeket az import továbbra is hozzáadhat.
++
++Korábbi, csak végleges tétellistát tartalmazó PWA-verziónál a teljes három
++csoportot megőrizzük: a rendszer nem találja ki utólag az elveszett változásnaplót.
++Ilyen elszámolásnál az új import csoporttételeit külön ellenőrizni kell.
++
++## Mentés és verzióvédelem
++
++A devtest összes snapshot-publikálása és a korábbi admin-szerkesztő a közös
++`resources/finance_snapshot_persistence.py` mentési pontot használja.
++Az új `settlement.commit_imported_finance_snapshot` RPC egy tranzakcióban menti
++a verziót, a tételeket és a forrásokat. Ugyanazt a futár/hónap zárolást használja,
++mint a PWA munkalapja. Elavult alapverzió, lezárt kifizetés vagy hiányzó/módosult
++PWA-napló esetén nincs mentés és nincs automatikus újrapróbálás.
++Az import hibája a futár eredményében látszik; nem írunk részleges új verziót.
++
++A céltartalék-mozgás már a végleges snapshotból indul, ezért megadja annak
++azonosítóját: ilyenkor a PWA-tételeket nem alkalmazzuk másodszor.
++A devtest „Mentett PWA módosítások frissítése” gombja csak a mentett adatokat
++olvassa újra; nem indít új számítást vagy Excel-importot.
++
++## Élesítési sorrend
++
++1. Ha még nincs telepítve, futtasd a `sql/pwa_finance_worksheet_pilot.sql` fájlt.
++2. Futtasd a `sql/finance_snapshot_preserve_pwa.sql` migrációt az adatbázisban.
++   A migráció újrafuttatható, meglévő futáradatot nem módosít.
++3. Élesítsd együtt az új PWA/API és devtest kódot.
++
++A migráció nélkül az új import mentési hibát jelez és megtartja az előző
++snapshotot. Nincs visszaesés a régi, kézi módosításokat elveszítő mentésre.
++A helyi tesztek nem módosítják az éles adatbázist.
++
++## Ellenőrzés
++
++- `tests/test_finance_snapshot_persistence.py`: új alapadatok, megőrzött
++  hozzáadás/kivétel, ismételt import, duplikált forrássorok, módosult összeg,
++  céltartalék-mozgás, devtest összegek és tételbontás, atomikus mentés hívása.
++- `tests/test_finance_snapshot_persistence_sql.cjs`: PGlite PostgreSQL-ben
++  közös verziólánc, elveszett napló tiltása, verzióütközés, rollback,
++  összesítések és jogosultságok. Futtatás: `node tests/test_finance_snapshot_persistence_sql.cjs`
++  telepített `@electric-sql/pglite` mellett; külön csomagútvonalhoz `PGLITE_MODULE`.
++- `tests/test_pwa_worksheet_ui.cjs`: helyi, hálózati hívások nélküli böngészőteszt
++  a tényleges eseménykezelőkkel, előnézettel, mentéssel és újranyitással.
+diff --git a/sql/finance_snapshot_preserve_pwa.sql b/sql/finance_snapshot_preserve_pwa.sql
+new file mode 100644
+--- /dev/null
++++ b/sql/finance_snapshot_preserve_pwa.sql
+@@ -0,0 +1,92 @@
++-- Run after pwa_finance_worksheet_pilot.sql. Changes no existing courier data.
++-- All import publishers must use this RPC; missing migration fails closed.
++begin;
++create or replace function settlement.commit_imported_finance_snapshot(
++    p_courier_id text, p_period_start date, p_base_snapshot_id uuid,
++    p_fingerprint text, p_actor text, p_header jsonb, p_prepared jsonb
++) returns jsonb language plpgsql security invoker set search_path = pg_catalog
++as $$
++declare
++    v_latest settlement.courier_finance_snapshot%rowtype;
++    v_id uuid;
++    v_patch jsonb;
++    v_next_patch jsonb;
++    v_total numeric;
++begin
++    if nullif(trim(p_courier_id), '') is null or p_period_start is null
++       or p_period_start <> date_trunc('month', p_period_start)::date
++       or nullif(trim(p_actor), '') is null or nullif(p_fingerprint, '') is null
++       or jsonb_typeof(p_prepared->'items') is distinct from 'array'
++       or jsonb_typeof(p_prepared->'sources') is distinct from 'array'
++       or jsonb_typeof(p_prepared->'metadata') is distinct from 'object' then
++        raise exception 'Hiányos pénzügyi snapshot.';
++    end if;
++    perform pg_advisory_xact_lock(hashtextextended('pwa_monthly_payment:' || p_courier_id || ':' || p_period_start, 0));
++    select * into v_latest from settlement.courier_finance_snapshot
++    where courier_id = p_courier_id and period_start = p_period_start
++    order by version desc limit 1 for update;
++    if exists (select 1 from settlement.courier_monthly_closure where courier_id = p_courier_id
++               and period_start = p_period_start and status = 'done')
++       or exists (select 1 from public.peopleforce_card_statuses where courier_id::text = p_courier_id
++                  and document_month = p_period_start and action_key = 'invoice_payment' and status = 'done') then
++        raise exception 'A kifizetés lezárt. Az import nem írhatja át az elszámolást.';
++    end if;
++    if v_latest.fingerprint = p_fingerprint then
++        return jsonb_build_object('ok', true, 'snapshotId', v_latest.id, 'version', v_latest.version, 'unchanged', true);
++    end if;
++    if v_latest.id is distinct from p_base_snapshot_id then
++        raise exception 'Az elszámolás verziója megváltozott. Az importot újra kell számolni.';
++    end if;
++    select payload into v_patch from settlement.courier_finance_snapshot_source
++    where snapshot_id = v_latest.id and source_key = 'pwa_worksheet_overrides';
++    select s->'payload' into v_next_patch from jsonb_array_elements(p_prepared->'sources') s
++    where s->>'source_key' = 'pwa_worksheet_overrides';
++    if v_patch is not null and v_next_patch is distinct from v_patch then
++        raise exception 'Az import nem törölheti és nem írhatja át a PWA módosításait.';
++    end if;
++    if exists (select 1 from settlement.courier_finance_snapshot_source
++               where snapshot_id = v_latest.id and source_key = 'pwa_worksheet_group_items')
++       and not exists (select 1 from jsonb_array_elements(p_prepared->'sources') s
++                       where s->>'source_key' = 'pwa_worksheet_group_items') then
++        raise exception 'Az importból hiányzik a megőrzött PWA tétellista.';
++    end if;
++    if exists (select 1 from jsonb_array_elements(p_prepared->'items') i
++               group by i->>'section', i->>'item_key' having count(*) > 1)
++       or exists (select 1 from jsonb_array_elements(p_prepared->'sources') s
++                  group by s->>'source_key' having count(*) > 1) then
++        raise exception 'Ismétlődő pénzügyi tétel vagy forrás.';
++    end if;
++    v_total := (p_prepared->'metadata'->>'payable_total')::numeric;
++    if v_total is null or v_total is distinct from
++        (p_prepared->'metadata'->>'income_total')::numeric +
++        (p_prepared->'metadata'->>'deduction_total')::numeric +
++        (p_prepared->'metadata'->>'correction_total')::numeric
++       or (select count(*) from jsonb_array_elements(p_prepared->'items') i
++           where i->>'section' = 'tig' and i->>'item_key' = 'tig_final_total'
++             and (i->>'amount_value')::numeric = (p_prepared->'metadata'->>'tig_final_total')::numeric) <> 1
++       or (select count(*) from jsonb_array_elements(p_prepared->'items') i
++        where i->>'section' = 'finance' and i->>'item_key' = 'payable'
++          and (i->>'amount_value')::numeric = v_total) <> 1 then
++        raise exception 'A pénzügyi végösszeg nem egyezik a snapshot tételeivel.';
++    end if;
++    insert into settlement.courier_finance_snapshot
++        (courier_id,courier_name,period_start,version,source,calculation_mode,warehouse_label,session_id,
++         fingerprint,previous_snapshot_id,previous_fingerprint,changed_from_previous,metadata,created_by)
++    values (p_courier_id,coalesce(p_header->>'courier_name',p_courier_id),p_period_start,coalesce(v_latest.version,0)+1,
++            'devtest_finance',p_header->>'calculation_mode',p_header->>'warehouse_label',nullif(p_header->>'session_id',''),
++            p_fingerprint,v_latest.id,v_latest.fingerprint,true,p_prepared->'metadata',p_actor) returning id into v_id;
++    insert into settlement.courier_finance_snapshot_item
++        (snapshot_id,section,item_key,item_label,amount_value,amount_kind,note,display_order)
++    select v_id,x.section,x.item_key,x.item_label,x.amount_value,x.amount_kind,x.note,x.display_order
++    from jsonb_to_recordset(p_prepared->'items') as x(section text,item_key text,item_label text,
++         amount_value numeric,amount_kind text,note text,display_order integer);
++    insert into settlement.courier_finance_snapshot_source (snapshot_id,source_key,source_table,payload,row_count)
++    select v_id,x.source_key,x.source_table,x.payload,x.row_count
++    from jsonb_to_recordset(p_prepared->'sources') as x(source_key text,source_table text,payload jsonb,row_count integer);
++    return jsonb_build_object('ok',true,'snapshotId',v_id,'version',coalesce(v_latest.version,0)+1);
++end;
++$$;
++revoke all on function settlement.commit_imported_finance_snapshot(text,date,uuid,text,text,jsonb,jsonb) from public,anon,authenticated;
++grant execute on function settlement.commit_imported_finance_snapshot(text,date,uuid,text,text,jsonb,jsonb) to service_role;
++notify pgrst, 'reload schema';
++commit;
+diff --git a/tests/test_finance_snapshot_persistence.py b/tests/test_finance_snapshot_persistence.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_finance_snapshot_persistence.py
+@@ -0,0 +1,166 @@
++import ast
++from copy import deepcopy
++from datetime import date
++from pathlib import Path
++from types import SimpleNamespace
++import unittest
++from unittest.mock import Mock
++
++from resources.pwa_finance_worksheet import (worksheet_groups, prepare_group_worksheet,
++    carry_forward_worksheet_changes, source_payload)
++from resources.finance_snapshot_persistence import save_imported_finance_snapshot
++from resources.finance_adjustment_details import snapshot_manual_adjustment_details
++from tests.test_pwa_finance_worksheet import snapshot
++
++
++def edited_snapshot():
++    raw = snapshot()
++    groups = worksheet_groups(raw)
++    groups[0]["items"] = [r for r in groups[0]["items"] if r["amountHuf"] >= 0]
++    groups[1]["items"].append({"id": "new-1", "label": "JITT jutalom", "amountHuf": 2500, "note": "Jóváhagyott jutalom"})
++    result = prepare_group_worksheet(raw, groups, "Egyeztetés")
++    return {**raw, **result["prepared"], "id": "pwa-edit", "version": 11}
++
++
++def values(saved):
++    return {i["item_key"]: i["amount_value"] for i in saved["items"] if i["section"] == "finance"}
++
++
++class ImportOverlayTest(unittest.TestCase):
++    def test_fresh_excel_updates_base_while_preserving_addition_and_removal(self):
++        previous = edited_snapshot()
++        raw = snapshot()
++        next(i for i in raw["items"] if i["item_key"] == "base")["amount_value"] = 110000
++        next(i for i in raw["items"] if i["item_key"] == "tip")["amount_value"] = 21000
++        original = deepcopy(raw)
++        saved = carry_forward_worksheet_changes(raw, previous)
++        self.assertEqual(raw, original)
++        self.assertEqual(values(saved)["base"], 110000)
++        self.assertEqual(values(saved)["tip"], 21000)
++        self.assertEqual(values(saved)["monthly_malus"], 0)
++        self.assertEqual(values(saved)["manual_bonus"], 3500)
++        self.assertEqual(values(saved)["payable"], 149500)
++        self.assertEqual(source_payload(saved, "pwa_worksheet_overrides"), source_payload(previous, "pwa_worksheet_overrides"))
++
++    def test_repeated_import_is_idempotent(self):
++        previous = edited_snapshot()
++        first = carry_forward_worksheet_changes(snapshot(), previous)
++        second = carry_forward_worksheet_changes(snapshot(), {**first, "id": "next-import", "version": 12})
++        self.assertEqual(first["items"], second["items"])
++        self.assertEqual(first["sources"], second["sources"])
++        self.assertEqual(first["metadata"], second["metadata"])
++        self.assertEqual(values(second)["manual_bonus"], 3500)
++
++    def test_new_imported_deduction_is_not_hidden(self):
++        raw = snapshot()
++        next(i for i in raw["items"] if i["item_key"] == "monthly_malus")["amount_value"] = -1500
++        raw["items"].extend([
++            {"section": "finance", "item_key": "kiflis_malus_1", "item_label": "monthly_malus", "amount_value": -500, "amount_kind": "huf"},
++            {"section": "finance", "item_key": "kiflis_malus_2", "item_label": "Új levonás", "amount_value": -1000, "amount_kind": "huf"}])
++        saved = carry_forward_worksheet_changes(raw, edited_snapshot())
++        self.assertEqual(values(saved)["monthly_malus"], -1000)
++
++    def test_changed_previously_removed_amount_requires_review(self):
++        raw = snapshot()
++        next(i for i in raw["items"] if i["item_key"] == "monthly_malus")["amount_value"] = -600
++        with self.assertRaisesRegex(ValueError, "Ellenőrzés"):
++            carry_forward_worksheet_changes(raw, edited_snapshot())
++
++    def test_duplicate_source_rows_remove_one_occurrence(self):
++        raw = snapshot()
++        next(i for i in raw["items"] if i["item_key"] == "monthly_malus")["amount_value"] = -1000
++        raw["items"].extend([{"section": "finance", "item_key": "kiflis_malus_" + str(n), "item_label": "Késés",
++                             "amount_value": -500, "amount_kind": "huf", "note": "Ugyanaz"} for n in [1, 2]])
++        groups = worksheet_groups(raw)
++        groups[0]["items"].remove(next(i for i in groups[0]["items"] if i["amountHuf"] == -500))
++        previous = {**raw, **prepare_group_worksheet(raw, groups, "Egy kivétel")["prepared"], "id": "edit"}
++        self.assertEqual(values(carry_forward_worksheet_changes(raw, previous))["monthly_malus"], -500)
++
++    def test_removing_manual_addition_stays_removed_after_next_import(self):
++        first = carry_forward_worksheet_changes(snapshot(), edited_snapshot())
++        groups = worksheet_groups(first)
++        groups[1]["items"] = [i for i in groups[1]["items"] if i["id"] != "new-1"]
++        previous = {**first, **prepare_group_worksheet(first, groups, "Jutalom visszavonása")["prepared"], "id": "edit-2"}
++        saved = carry_forward_worksheet_changes(snapshot(), previous)
++        self.assertEqual(values(saved)["manual_bonus"], 1000)
++        self.assertEqual(values(saved)["monthly_malus"], 0)
++
++    def test_effective_reserve_update_keeps_ledger_without_reapplying(self):
++        previous = edited_snapshot()
++        candidate = deepcopy(previous)
++        candidate["metadata"]["worksheet_effective_base_snapshot_id"] = previous["id"]
++        candidate["metadata"]["source"] = "devtest.reserve_release"
++        candidate["items"].append({"section": "finance", "item_key": "reserve_payment_credit", "amount_value": 1000})
++        effective = carry_forward_worksheet_changes(candidate, previous)
++        self.assertEqual(values(effective)["manual_bonus"], 3500)
++        self.assertEqual(values(effective)["reserve_payment_credit"], 1000)
++        with self.assertRaises(ValueError):
++            carry_forward_worksheet_changes(candidate, {**previous, "id": "newer"})
++
++    def test_no_adjustment_leaves_import_unchanged_and_other_scope_is_rejected(self):
++        raw = snapshot()
++        self.assertEqual(carry_forward_worksheet_changes(raw, raw), raw)
++        for changed in [{"courier_id": "other"}, {"period_start": "2026-10-01"}]:
++            with self.assertRaises(ValueError):
++                carry_forward_worksheet_changes({**raw, **changed}, edited_snapshot())
++
++    def test_devtest_uses_same_ledger_details_and_totals(self):
++        saved = carry_forward_worksheet_changes(snapshot(), edited_snapshot())
++        details = snapshot_manual_adjustment_details(saved, "JITT bónusz / malus")
++        self.assertEqual(sum(i["Összeg"] for i in details), 3500)
++        self.assertTrue(any(i["Tétel"] == "JITT jutalom" for i in details))
++        tree = ast.parse(Path('devtest.py').read_text(encoding='utf-8'))
++        names = {"_snapshot_amount", "finance_snapshot_display_row"}
++        ns = {"parse_huf_value": lambda v: float(v or 0)}
++        exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names], type_ignores=[]), 'devtest.py', 'exec'), ns)
++        row = ns['finance_snapshot_display_row']({}, saved)
++        self.assertEqual(row['Kifizetendő'], values(saved)['payable'])
++        self.assertEqual(row['JITT bónusz'], 3500)
++        self.assertEqual(row['Korrekció'], 9000)
++
++
++class SnapshotPublisherTest(unittest.TestCase):
++    def client(self, latest=None):
++        client = Mock()
++        def table(name):
++            query = Mock()
++            for operation in ['select', 'eq', 'order', 'limit', 'range', 'in_']:
++                getattr(query, operation).return_value = query
++            rows = ([{k: v for k,v in latest.items() if k not in {'items','sources'}}] if latest else []) if name == 'courier_finance_snapshot' else (latest['items'] if name.endswith('_item') else latest['sources'])
++            query.execute.return_value = SimpleNamespace(data=rows)
++            return query
++        client.table.side_effect = table
++        client.rpc.return_value.execute.return_value = SimpleNamespace(data={"ok": True, "snapshotId": "saved", "version": 12})
++        return client
++
++    def test_import_uses_fresh_scoped_reads_and_one_atomic_rpc(self):
++        client = self.client(edited_snapshot())
++        result = save_imported_finance_snapshot(client, snapshot(), 'admin')
++        self.assertTrue(result['saved'])
++        name, payload = client.rpc.call_args.args
++        self.assertEqual(name, 'commit_imported_finance_snapshot')
++        self.assertEqual(payload['p_base_snapshot_id'], 'pwa-edit')
++        self.assertEqual(payload['p_courier_id'], '12345')
++        self.assertEqual(values(payload['p_prepared'])['manual_bonus'], 3500)
++        client.rpc.assert_called_once()
++        self.assertNotIn('courier_finance_snapshot_item', [c.args[0] for c in client.table.call_args_list])
++
++    def test_no_partial_write_or_retry_on_rpc_failure(self):
++        client = self.client(edited_snapshot())
++        client.rpc.return_value.execute.side_effect = RuntimeError('version conflict')
++        with self.assertRaisesRegex(RuntimeError, 'version conflict'):
++            save_imported_finance_snapshot(client, snapshot(), 'admin')
++        client.rpc.assert_called_once()
++
++    def test_first_import_and_identical_import_use_same_transaction(self):
++        client = self.client()
++        save_imported_finance_snapshot(client, snapshot(), 'admin')
++        self.assertIsNone(client.rpc.call_args.args[1]['p_base_snapshot_id'])
++        client.rpc.return_value.execute.return_value = SimpleNamespace(data={"ok": True, "snapshotId": "saved", "version": 12, "unchanged": True})
++        result = save_imported_finance_snapshot(client, snapshot(), 'admin')
++        self.assertTrue(result['unchanged'])
++        self.assertFalse(result['saved'])
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/tests/test_finance_snapshot_persistence_sql.cjs b/tests/test_finance_snapshot_persistence_sql.cjs
+new file mode 100644
+--- /dev/null
++++ b/tests/test_finance_snapshot_persistence_sql.cjs
+@@ -0,0 +1,81 @@
++// Isolated PostgreSQL test: no production credentials or data.
++const {PGlite} = require(process.env.PGLITE_MODULE || '@electric-sql/pglite');
++const {readFileSync} = require('node:fs');
++const assert = require('node:assert/strict');
++function prepared(base, edited) {
++  const values = {base, tip:20000, monthly_bonus:1000, monthly_malus:edited?0:-500,
++    manual_bonus:edited?3500:1000, manual_malus:0, customer_rating:5000,
++    correction_income:10000, correction_deduction:-1000};
++  const income = base + 20000 + 1000 + values.manual_bonus + 5000;
++  const payable = income + values.monthly_malus + 9000;
++  Object.assign(values,{income,deductions:values.monthly_malus,correction:9000,payable,
++    kiflis_bonus_malus:1000+values.monthly_malus,bonus_malus:values.manual_bonus});
++  const row = (key,amount,section='finance') => ({section,item_key:key,item_label:key,amount_value:amount,amount_kind:'huf',display_order:1,note:''});
++  const result = {items:Object.entries(values).map(([k,v])=>row(k,v)),sources:[],metadata:{
++    income_total:income,deduction_total:values.monthly_malus,correction_total:9000,payable_total:payable,
++    tig_final_total:payable,source:edited?'pwa_worksheet_pilot':'devtest.bulk_finance_snapshot',
++    worksheet_courier_id:'12345',worksheet_period_start:'2026-09-01',worksheet_note:'Egyeztetés'}};
++  result.items.push(row('tig_service',payable,'tig'),row('tig_final_total',payable,'tig'));
++  if(edited) {
++    const entry = (id,amountHuf) => ({id,label:id,amountHuf,note:'Indok'});
++    const groups = [
++      {key:'kiflis_bonus_malus',label:'Kifli',items:[entry('monthly_bonus',1000)]},
++      {key:'bonus_malus',label:'JITT',items:[entry('manual_bonus',1000),entry('new-1',2500)]},
++      {key:'corrections',label:'Korrekció',items:[entry('correction_income',10000),entry('correction_deduction',-1000)]}];
++    const patch = {version:1,note:'Egyeztetés',groups:[
++      {key:'kiflis_bonus_malus',removed:[entry('monthly_malus',-500)],added:[]},
++      {key:'bonus_malus',removed:[],added:[entry('new-1',2500)]},
++      {key:'corrections',removed:[],added:[]}]};
++    result.sources.push({source_key:'pwa_worksheet_overrides',payload:patch,row_count:2,source_table:'test'},
++      {source_key:'pwa_worksheet_group_items',payload:groups,row_count:5,source_table:'test'});
++  }
++  return result;
++}
++const fixture = {raw:prepared(100000,false),pwa:prepared(100000,true),reimport:prepared(110000,true)};
++(async () => {
++  const db = new PGlite();
++  let checked = 0;
++  try {
++    await db.exec(`create role anon; create role authenticated; create role service_role;
++      create schema settlement;
++      create table settlement.courier_monthly_closure(courier_id text,period_start date,status text);
++      create table public.peopleforce_card_statuses(courier_id text,document_month date,action_key text,status text);`);
++    await db.exec(readFileSync('sql/settlement_courier_finance_snapshot.sql','utf8').replace(/^\uFEFF/,''));
++    await db.exec(readFileSync('sql/pwa_finance_worksheet_pilot.sql','utf8').replace(/^\uFEFF/,''));
++    const migration = readFileSync('sql/finance_snapshot_preserve_pwa.sql','utf8').replace(/^\uFEFF/,'');
++    await db.exec(migration); await db.exec(migration);
++    const header = {courier_name:'Teszt',calculation_mode:'Excel',warehouse_label:'BUD1',session_id:'new-excel-session'};
++    const publish = async (base, hash, prepared) => (await db.query(`select settlement.commit_imported_finance_snapshot($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb) as result`,
++      ['12345','2026-09-01',base,hash,'admin',JSON.stringify(header),JSON.stringify(prepared)])).rows[0].result;
++    const first = await publish(null,'import-1',fixture.raw);
++    assert.equal(first.version,1); checked++;
++    const edited = (await db.query(`select settlement.pwa_commit_worksheet_pilot($1,$2,$3,$4,$5,$6::jsonb) as result`,
++      ['12345','2026-09-01',first.snapshotId,'pwa-2','admin',JSON.stringify(fixture.pwa)])).rows[0].result;
++    assert.equal(edited.version,2); checked++;
++    await assert.rejects(publish(first.snapshotId,'stale-import',fixture.reimport),/verziója megváltozott/); checked++;
++    const imported = await publish(edited.snapshotId,'import-3',fixture.reimport);
++    assert.equal(imported.version,3);
++    assert.equal((await db.query('select session_id from settlement.courier_finance_snapshot where id=$1',[imported.snapshotId])).rows[0].session_id,header.session_id);
++    const rows = (await db.query(`select item_key,amount_value from settlement.courier_finance_snapshot_item where snapshot_id=$1 and section='finance'`, [imported.snapshotId])).rows;
++    const money = Object.fromEntries(rows.map(r=>[r.item_key,Number(r.amount_value)]));
++    assert.equal(money.base,110000); assert.equal(money.manual_bonus,3500); assert.equal(money.monthly_malus,0);
++    assert.equal(money.payable,148500); checked++;
++    assert.equal((await publish(edited.snapshotId,'import-3',fixture.reimport)).unchanged,true); checked++;
++    await assert.rejects(publish(imported.snapshotId,'drop-pwa',fixture.raw),/nem törölheti|hiányzik/); checked++;
++    const broken = structuredClone(fixture.reimport);
++    broken.sources.find(s=>s.source_key==='pwa_worksheet_overrides').payload.note = 'lost audit';
++    await assert.rejects(publish(imported.snapshotId,'changed-pwa',broken),/nem törölheti/); checked++;
++    const badTotal = structuredClone(fixture.reimport);
++    badTotal.metadata.income_total += 1;
++    await assert.rejects(publish(imported.snapshotId,'bad-total',badTotal),/végösszeg/); checked++;
++    const badItem = structuredClone(fixture.reimport);
++    badItem.items[0].amount_kind = 'invalid';
++    await assert.rejects(publish(imported.snapshotId,'bad-item',badItem),/check constraint/);
++    assert.equal(Number((await db.query('select count(*) as n from settlement.courier_finance_snapshot')).rows[0].n),3); checked++;
++    await db.exec(`insert into settlement.courier_monthly_closure values ('12345','2026-09-01','done')`);
++    await assert.rejects(publish(imported.snapshotId,'closed',fixture.reimport),/kifizetés lezárt/); checked++;
++    const privilege = (await db.query(`select has_function_privilege('authenticated','settlement.commit_imported_finance_snapshot(text,date,uuid,text,text,jsonb,jsonb)','execute') as allowed`)).rows[0];
++    assert.equal(privilege.allowed,false); checked++;
++    console.log(`${checked} PostgreSQL checks passed: shared PWA/import versions, preserved edits, stale-version protection, idempotency, atomic rollback and permissions.`);
++  } finally { await db.close(); }
++})().catch(error => {console.error(error); process.exitCode=1;});
+diff --git a/tests/test_worksheet_group_editor.cjs b/tests/test_worksheet_group_editor.cjs
+new file mode 100644
+--- /dev/null
++++ b/tests/test_worksheet_group_editor.cjs
+@@ -0,0 +1,29 @@
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const vm = require('node:vm');
++const source = fs.readFileSync('pwa/app.js', 'utf8');
++function get(name) {
++  const start = source.indexOf(`function ${name}(`);
++  const end = source.indexOf('\nfunction ', start + 1);
++  return source.slice(start, end);
++}
++const context = {escapeHtml: String, formatHuf: n => `${n} Ft`};
++vm.createContext(context);
++vm.runInContext(get('settlementDashboardPilotFinanceEditor') + '\n' + get('settlementLedgerRow'), context);
++test('editor exposes only three ledgers and locks saved entries', () => {
++  const html = context.settlementDashboardPilotFinanceEditor({snapshotId:'s', courierId:'1', month:'2026-10', version:1,
++    rows:[{key:'base', amountHuf:100000}], savedTotal:100000,
++    groups:['kiflis_bonus_malus','bonus_malus','corrections'].map(key => ({key,label:key,items:[{id:'old',label:'Saved',amountHuf:100,note:'reason'}]}))});
++  assert.equal((html.match(/data-ledger-group=/g)||[]).length, 3);
++  assert.equal((html.match(/data-ledger-add/g)||[]).length, 3);
++  assert.equal((html.match(/readonly/g)||[]).length, 9);
++  assert.doesNotMatch(html, /data-worksheet-key|data-manual-field/);
++});
++test('new entries allow amount and reason input and removal', () => {
++  const html = context.settlementLedgerRow();
++  assert.doesNotMatch(html, /readonly/);
++  assert.match(html, /data-ledger-field="amountHuf"/);
++  assert.match(html, /data-ledger-field="note"/);
++  assert.match(html, /data-dashboard-editor-delete/);
++});
