@@ -94,6 +94,8 @@ const state = {
   settlementDashboardMonth: previousLocalMonth(),
   settlementDashboardQuery: "",
   settlementDashboardStatusFilter: "",
+  settlementDashboardSelectedCouriers: new Set(),
+  settlementDashboardBulkBusy: false,
   settlementDashboardExpandedCourierId: "",
   settlementDashboardExpandedTab: "settlement",
   settlementDashboardEditCourierId: "",
@@ -119,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v278";
+const APP_VERSION = "v279";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -6538,6 +6540,82 @@ function settlementDashboardVisibleRows(rows, query, statusFilter) {
   return statusFilter ? rows.filter(row => String(row.status?.label || "") === statusFilter) : rows;
 }
 
+function openSettlementDashboardBulkStatusEditor(rows) {
+  const month = state.settlementDashboardMonth || previousLocalMonth();
+  const selectedIds = [...state.settlementDashboardSelectedCouriers];
+  const selectedRows = rows.filter(row => selectedIds.includes(String(row.courierId || "")));
+  if (!selectedRows.length || state.settlementDashboardBulkBusy) return;
+  const options = [
+    ["settlement_wait", "Elszámolás elfogadásra vár"], ["tig_wait", "Teljesítés-összesítőre vár"],
+    ["tig_accept", "Teljesítés-összesítő áttekintésre vár"], ["invoice_upload", "Számlafeltöltésre vár"],
+    ["invoice_check", "Számla ellenőrzésre vár"], ["payment_wait", "Kifizetésre vár"],
+  ];
+  document.querySelector("#settlement-bulk-status-editor")?.remove();
+  const dialog = document.createElement("dialog");
+  dialog.id = "settlement-bulk-status-editor";
+  dialog.className = "monthly-status-editor settlement-bulk-status-editor";
+  dialog.innerHTML = `<form>
+    <h3>Tömeges státuszváltoztatás</h3>
+    <p>${escapeHtml(formatMonthLabel(month))} · ${selectedRows.length} futár kijelölve</p>
+    <div class="settlement-bulk-selected-list">${selectedRows.map(row => `<span>${escapeHtml(row.courierName || "Futár")} · #${escapeHtml(row.courierId || "-")}</span>`).join("")}</div>
+    <label>Új státusz<select name="target" required>${options.map(([key, label]) => `<option value="${key}">${escapeHtml(label)}</option>`).join("")}</select></label>
+    <label>Módosítás megjegyzése<textarea name="note" required placeholder="Miért kerülnek ezek a futárok ebbe a státuszba?"></textarea></label>
+    <div class="notice">A státuszváltásokat egyesével mentjük. Az EFO-folyamatban lévő futároknál a rendszer visszautasíthatja a módosítást. Hiba esetén a már sikeres változások megmaradnak, a többi kijelölve marad.</div>
+    <div data-bulk-status-progress role="status" aria-live="polite"></div>
+    <div data-bulk-status-error class="notice error" role="alert"></div>
+    <div class="settlement-bulk-dialog-actions"><button type="submit" class="primary">Státusz mentése mindenkinek</button><button type="button" class="secondary" data-bulk-status-cancel>Mégse</button></div>
+  </form>`;
+  document.body.appendChild(dialog);
+  const form = dialog.querySelector("form");
+  const submit = form.querySelector('[type="submit"]');
+  const cancel = form.querySelector("[data-bulk-status-cancel]");
+  cancel.onclick = () => dialog.close();
+  dialog.addEventListener("close", () => dialog.remove());
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const note = form.elements.note.value.trim();
+    if (!note || state.settlementDashboardBulkBusy) return;
+    state.settlementDashboardBulkBusy = true;
+    submit.disabled = true;
+    cancel.disabled = true;
+    const progress = dialog.querySelector("[data-bulk-status-progress]");
+    const errorBox = dialog.querySelector("[data-bulk-status-error]");
+    errorBox.textContent = "";
+    const target = form.elements.target.value;
+    const pendingRows = selectedRows.filter(row => state.settlementDashboardSelectedCouriers.has(String(row.courierId || "")));
+    const succeeded = [];
+    for (const [index, row] of pendingRows.entries()) {
+      const courierId = String(row.courierId || "");
+      progress.textContent = `${index + 1}/${pendingRows.length}: ${row.courierName || courierId} mentése...`;
+      try {
+        await api("/api/admin/settlement-dashboard/status", {method:"POST",
+          body:JSON.stringify({month, courierId, target, note}), silentLoading:true});
+        succeeded.push(courierId);
+        state.settlementDashboardSelectedCouriers.delete(courierId);
+        delete state.settlementDashboardDetailCache[`${month}:${courierId}`];
+        if (state.settlementDashboardPayment?.courierId === courierId) state.settlementDashboardPayment = null;
+      } catch (error) {
+        errorBox.textContent = `${row.courierName || courierId} (#${courierId}): ${error.message} A tömeges mentés itt megállt.`;
+        break;
+      }
+    }
+    state.settlementDashboardBulkBusy = false;
+    state.settlementDashboard = null;
+    await loadSettlementDashboard();
+    if (state.settlementDashboardExpandedCourierId && succeeded.includes(state.settlementDashboardExpandedCourierId)) {
+      await loadSettlementDashboardCourierDetail(state.settlementDashboardExpandedCourierId);
+    }
+    renderSettlementDashboard();
+    if (succeeded.length === pendingRows.length) dialog.close();
+    else {
+      progress.textContent = `${succeeded.length}/${pendingRows.length} futár státusza módosult. A sikertelen és a még nem kezelt futárok kijelölve maradtak.`;
+      submit.disabled = false;
+      cancel.disabled = false;
+    }
+  });
+  dialog.showModal();
+}
+
 function renderSettlementDashboard() {
   const target = $("#settlement-dashboard-panel");
   if (!target) return;
@@ -6547,6 +6625,8 @@ function renderSettlementDashboard() {
     return;
   }
   const rows = payload.rows || [];
+  const currentIds = new Set(rows.map(row => String(row.courierId || "")).filter(Boolean));
+  state.settlementDashboardSelectedCouriers = new Set([...state.settlementDashboardSelectedCouriers].filter(id => currentIds.has(id)));
   const summary = payload.summary || {};
   const statusCounts = {};
   rows.forEach((row) => {
@@ -6555,6 +6635,10 @@ function renderSettlementDashboard() {
   });
   const activeStatusFilter = String(state.settlementDashboardStatusFilter || "");
   const displayRows = settlementDashboardVisibleRows(rows, state.settlementDashboardQuery, activeStatusFilter);
+  const visibleIds = displayRows.map(row => String(row.courierId || "")).filter(Boolean);
+  const visibleSelected = visibleIds.filter(id => state.settlementDashboardSelectedCouriers.has(id)).length;
+  const allVisibleSelected = visibleIds.length > 0 && visibleSelected === visibleIds.length;
+  const selectionCount = state.settlementDashboardSelectedCouriers.size;
   const hasSearch = Boolean(String(state.settlementDashboardQuery || "").trim());
   target.innerHTML = `
     <section class="settlement-dashboard-hero">
@@ -6579,9 +6663,16 @@ function renderSettlementDashboard() {
       <strong>${hasSearch ? "Keresési találatok" : "Futár elszámolások"}</strong>
       <span>${escapeHtml(formatCount(displayRows.length))} sor</span>
     </div>
+    <div class="settlement-bulk-toolbar">
+      <label><input type="checkbox" data-settlement-select-visible ${allVisibleSelected ? "checked" : ""} ${!visibleIds.length || state.settlementDashboardBulkBusy ? "disabled" : ""} /> ${allVisibleSelected ? "Láthatók kijelölésének megszüntetése" : "Összes látható kijelölése"}</label>
+      <span>${selectionCount} futár kijelölve</span>
+      <button type="button" class="secondary" data-settlement-bulk-status ${!selectionCount || state.settlementDashboardBulkBusy ? "disabled" : ""}>Státusz módosítása</button>
+      <button type="button" class="secondary" data-settlement-clear-selection ${!selectionCount || state.settlementDashboardBulkBusy ? "disabled" : ""}>Kijelölés törlése</button>
+    </div>
     <div class="settlement-dashboard-list">
       ${displayRows.length ? displayRows.map((row) => `
         <div class="settlement-dashboard-row ${state.settlementDashboardExpandedCourierId === String(row.courierId || "") ? "active" : ""} ${(row.flags || []).some((flag) => settlementImportRuleText(flag.label || "") === "kiemelt figyeles") ? "highlighted" : ""}">
+          <label class="settlement-bulk-row-select" title="${escapeHtml(row.courierName || "Futár")} kijelölése"><input type="checkbox" aria-label="${escapeHtml(row.courierName || "Futár")} kijelölése" data-settlement-select-courier="${escapeHtml(row.courierId || "")}" ${state.settlementDashboardSelectedCouriers.has(String(row.courierId || "")) ? "checked" : ""} ${state.settlementDashboardBulkBusy ? "disabled" : ""} /></label>
           <button class="settlement-dashboard-row-main" type="button" data-courier-id="${escapeHtml(row.courierId || "")}">
           <div>
             <strong>${escapeHtml(row.courierName || "Futár")}</strong>
@@ -12284,6 +12375,7 @@ $("#settlement-dashboard-month")?.addEventListener("change", (event) => {
   state.settlementDashboard = null;
   state.settlementDashboardDetailCache = {};
   state.settlementDashboardStatusFilter = "";
+  state.settlementDashboardSelectedCouriers.clear();
   loadSettlementDashboard();
 });
 $("#settlement-dashboard-panel")?.addEventListener("input", (event) => {
@@ -12298,6 +12390,17 @@ $("#settlement-dashboard-panel")?.addEventListener("input", (event) => {
   replacement?.setSelectionRange(start, end);
 });
 $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-settlement-bulk-status]")) {
+    const payload = state.settlementDashboard;
+    const rows = payload?.rows || [];
+    openSettlementDashboardBulkStatusEditor(rows);
+    return;
+  }
+  if (event.target.closest("[data-settlement-clear-selection]")) {
+    state.settlementDashboardSelectedCouriers.clear();
+    renderSettlementDashboard();
+    return;
+  }
   if (!event.target.closest("[data-settlement-clear-search]")) return;
   state.settlementDashboardQuery = "";
   renderSettlementDashboard();
@@ -12457,6 +12560,24 @@ $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
   const worksheetAction = event.target.closest("[data-worksheet-preview], [data-worksheet-commit]");
   if (worksheetAction) {
     submitPilotWorksheet(worksheetAction.closest("[data-pilot-worksheet]"), worksheetAction.hasAttribute("data-worksheet-commit"));
+    return;
+  }
+  if (event.target.closest("[data-settlement-select-visible]")) {
+    const payload = state.settlementDashboard;
+    const rows = settlementDashboardVisibleRows(payload?.rows || [], state.settlementDashboardQuery, state.settlementDashboardStatusFilter);
+    const ids = rows.map(row => String(row.courierId || "")).filter(Boolean);
+    const shouldSelect = ids.some(id => !state.settlementDashboardSelectedCouriers.has(id));
+    ids.forEach(id => shouldSelect ? state.settlementDashboardSelectedCouriers.add(id) : state.settlementDashboardSelectedCouriers.delete(id));
+    renderSettlementDashboard();
+    return;
+  }
+  const selectedCourier = event.target.closest("[data-settlement-select-courier]");
+  if (selectedCourier) {
+    event.stopPropagation();
+    const id = selectedCourier.dataset.settlementSelectCourier || "";
+    if (state.settlementDashboardSelectedCouriers.has(id)) state.settlementDashboardSelectedCouriers.delete(id);
+    else state.settlementDashboardSelectedCouriers.add(id);
+    renderSettlementDashboard();
     return;
   }
   const changeStatus = event.target.closest("[data-dashboard-change-status]");
