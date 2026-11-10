@@ -61,3 +61,10 @@ test('route signal errors do not hide existing complaints', async () => {
   assert.equal(context.state.statistics.qualityComplaints.length,1);
   assert.equal(context.state.statistics.routeSignalsError,true);
 });
+
+test('admin signals identify courier, type, escaped note and photo preview owner', () => {
+  const { context } = setup();
+  const html=context.renderAdminRouteSignals({alerts:[{id:'a',courier_id:42,courier_name:'<name>',alert_type:'bag_missing',message:'<script>',photos:['photo']}],shifts:[{courier_id:43,courier_name:'Other',event_type:'coordinator_shift_late',work_date:'2026-10-10'}],hasMore:true});
+  for(const value of ['Táskahiány','Műszakkésés','&lt;name&gt;','&lt;script&gt;','?courier=42','Koordinátor által','data-route-signals-next'])assert.ok(html.includes(value),value);
+  assert.ok(!html.includes('<script>'));
+});

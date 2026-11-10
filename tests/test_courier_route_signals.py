@@ -14,13 +14,14 @@ class HttpError(Exception):
 
 def load_functions(rest):
     tree=ast.parse((Path(__file__).resolve().parents[1]/'pwa_api.py').read_text(encoding='utf8'))
-    nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in {'own_route_signals','own_route_signal_photo'}]
+    nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in {'own_route_signals','own_route_signal_photo','admin_route_signals'}]
     for n in nodes:n.decorator_list=[]
     ns=dict(Query=lambda *a,**k:None,Cookie=lambda *a,**k:None,date=date,datetime=datetime,timedelta=timedelta,
             LOCAL_TIMEZONE=ZoneInfo('Europe/Budapest'),UUID=UUID,re=re,base64=base64,
             require_user=lambda _: {'courierId':'42'},workflow_view_user=lambda u,c:(u,False),
             courier_identity=lambda u:('42','Futár'),parse_month=lambda s:date.fromisoformat(s+'-01'),
             supabase_rest=rest,HTTPException=HttpError,Response=lambda **k:k,
+            quality_complaint_manager=lambda u:False,
             download_pwa_attachment=lambda b,p:b'image')
     future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
     exec(compile(ast.fix_missing_locations(ast.Module(body=[future,*nodes],type_ignores=[])),'pwa_api.py','exec'),ns)
@@ -28,6 +29,26 @@ def load_functions(rest):
 
 
 class RouteSignalTests(unittest.TestCase):
+    def test_admin_list_requires_management_permission(self):
+        ns=load_functions(lambda *a,**k:self.fail('Must reject before reading data'))
+        with self.assertRaises(HttpError) as caught:ns['admin_route_signals'](0,None)
+        self.assertEqual(caught.exception.status_code,403)
+
+    def test_admin_list_includes_all_couriers_and_attaches_owned_photos(self):
+        calls=[]
+        def rest(method,table,params):
+            calls.append((table,params))
+            if table=='courier_route_alerts':return [{'id':'a','courier_id':42},{'id':'b','courier_id':43}]
+            if table=='courier_route_alert_photos':return [{'id':'photo','alert_id':'b'}]
+            return []
+        ns=load_functions(rest);ns['quality_complaint_manager']=lambda u:True
+        result=ns['admin_route_signals'](50,None)
+        self.assertEqual(result['alerts'][0]['photos'],[])
+        self.assertEqual(result['alerts'][1]['photos'],['photo'])
+        self.assertNotIn('courier_id',calls[0][1])
+        self.assertEqual(calls[0][1]['offset'],'50')
+        self.assertEqual(calls[1][1]['event_type'],'in.(shift_late,coordinator_shift_late)')
+
     def test_queries_are_scoped_to_courier_month_and_relevant_types(self):
         calls=[]
         def rest(method,table,params):

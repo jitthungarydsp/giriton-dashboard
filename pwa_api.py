@@ -22722,6 +22722,32 @@ def list_quality_complaints(
     return {"items": rows[:50], "hasMore": len(rows) > 50, "canManage": manager, "forwardingEnabled": forwarding_enabled}
 
 
+@app.get("/api/quality/route-signals")
+def admin_route_signals(
+    offset: int = Query(default=0, ge=0),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not quality_complaint_manager(user):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    alerts = supabase_rest("GET", "courier_route_alerts", params={
+        "select": "id,courier_id,courier_name,route_id,alert_type,message,status,created_at,dispatcher_notified",
+        "alert_type": "in.(delay,bag_missing)", "order": "created_at.desc,id.desc",
+        "offset": str(offset), "limit": "51"})
+    shifts = supabase_rest("GET", "courier_shift_checkins", params={
+        "select": "id,courier_id,courier_name,work_date,start_time,end_time,warehouse,event_type,shift_name,created_at",
+        "event_type": "in.(shift_late,coordinator_shift_late)", "order": "created_at.desc,id.desc",
+        "offset": str(offset), "limit": "51"})
+    photos = []
+    if alerts:
+        photos = supabase_rest("GET", "courier_route_alert_photos", params={
+            "select": "id,alert_id", "alert_id": "in.(" + ",".join(str(r["id"]) for r in alerts[:50]) + ")",
+            "order": "id.asc", "limit": "1000"})
+    for alert in alerts[:50]:
+        alert["photos"] = [r["id"] for r in photos if str(r["alert_id"]) == str(alert["id"])]
+    return {"alerts": alerts[:50], "shifts": shifts[:50], "hasMore": len(alerts) > 50 or len(shifts) > 50}
+
+
 @app.get("/api/quality/complaints/{complaint_id}/evidence")
 def quality_complaint_evidence(complaint_id: UUID, giriton_pwa_session: str | None = Cookie(default=None)):
     user = require_user(giriton_pwa_session)
