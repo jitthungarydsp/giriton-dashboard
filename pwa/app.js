@@ -342,7 +342,8 @@ function currentSectionRefresh() {
   if (state.section === "coordinator-live") return loadCoordinatorLiveMap();
   if (state.section === "departure-helper") return loadDepartureHelper();
   if (state.section === "webshop") return loadWebshop();
-  if (state.section === "quality-complaints") return loadQualityComplaints();
+  // Keep interactive complaint drafts stable during background refresh.
+  if (state.section === "quality-complaints") return Promise.resolve();
   if (state.section === "today-workers") return loadTodayWorkers();
   if (state.section === "settlement-dashboard") return loadSettlementDashboard();
   if (state.section === "settlement-import-config") {
@@ -1722,6 +1723,7 @@ async function loadAdminRouteSignals(offset = 0) {
         const response = await api(`/api/quality/route-signals/${encodeURIComponent(button.dataset.signalKind)}/${encodeURIComponent(button.dataset.routeSignalComplaint)}/complaint`, {method:'POST',body:JSON.stringify({})});
         if (!response.ok || !response.item?.id) throw Error('A mentés nem igazolható.');
         state.qualityComplaintFocus = String(response.item.id);
+        state.adminRouteSignalsRequest = (state.adminRouteSignalsRequest || 0) + 1;
         state.qualityComplaintOffset = 0;
         $('#quality-complaints-filter').value = 'all';
         await loadQualityComplaints();
@@ -1740,7 +1742,8 @@ async function loadAdminRouteSignals(offset = 0) {
 
 async function loadQualityComplaints() {
   if (!["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
-  loadAdminRouteSignals();
+  // Keep the signals list above the focused complaint at a stable height.
+  if (!state.qualityComplaintFocus) loadAdminRouteSignals();
   const target = $("#quality-complaints-list");
   const status = $("#quality-complaints-status");
   const request = (state.qualityComplaintRequest || 0) + 1;
@@ -1784,6 +1787,12 @@ async function loadQualityComplaints() {
     $("#quality-complaints-prev").disabled = !(state.qualityComplaintOffset > 0);
     $("#quality-complaints-next").disabled = !payload.hasMore;
     status.textContent = `${payload.items.length} reklamáció ezen az oldalon`;
+    if (state.qualityComplaintFocus) {
+      const back = document.createElement('button');
+      back.type = 'button'; back.className = 'secondary'; back.textContent = 'Vissza az összes reklamációhoz';
+      back.addEventListener('click', () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = 0; loadQualityComplaints(); });
+      status.append(' · ', back);
+    }
     target.querySelectorAll("[data-complaint-evidence]").forEach(panel => {
       const content = panel.querySelector("[data-evidence-content]");
       const refresh = panel.querySelector("[data-evidence-refresh]");
@@ -1865,10 +1874,9 @@ async function loadQualityComplaints() {
     if (state.qualityComplaintFocus) {
       const selected = [...target.querySelectorAll('[data-complaint-id]')].find(card => card.dataset.complaintId === state.qualityComplaintFocus);
       if (selected) {
-        selected.scrollIntoView({behavior:'smooth',block:'start'});
         const approval = selected.querySelector('[data-complaint-approval]');
         if (approval) approval.open = true;
-        state.qualityComplaintFocus = '';
+        selected.scrollIntoView({behavior:'smooth',block:'start'});
       }
     }
   } catch (error) {
@@ -12194,9 +12202,9 @@ $("#nav-webshop").addEventListener("click", () => showSection("webshop"));
 $("#nav-quality-complaints").addEventListener("click", () => showSection("quality-complaints"));
 $("#quality-complaints-refresh").addEventListener("click", () => loadQualityComplaints());
 $("#quality-form-test")?.addEventListener("click", () => openQualityFormTest());
-$("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintOffset = 0; loadQualityComplaints(); });
-$("#quality-complaints-prev").addEventListener("click", () => { state.qualityComplaintOffset = Math.max(0, (state.qualityComplaintOffset || 0) - 50); loadQualityComplaints(); });
-$("#quality-complaints-next").addEventListener("click", () => { state.qualityComplaintOffset = (state.qualityComplaintOffset || 0) + 50; loadQualityComplaints(); });
+$("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = 0; loadQualityComplaints(); });
+$("#quality-complaints-prev").addEventListener("click", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = Math.max(0, (state.qualityComplaintOffset || 0) - 50); loadQualityComplaints(); });
+$("#quality-complaints-next").addEventListener("click", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = (state.qualityComplaintOffset || 0) + 50; loadQualityComplaints(); });
 $("#refresh").addEventListener("click", loadShifts);
 $("#open-muszakpro-refresh").addEventListener("click", toggleOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
