@@ -1554,7 +1554,27 @@ function renderQualitySummaryChart(payload = {}) {
   `;
 }
 
+function renderCourierRouteSignals(payload = {}) {
+  const heading = '<h4>Késés- és táskahiány-jelzéseim</h4><p class="muted">A jelzések rögzítése önmagában nem jelent elfogadott reklamációt vagy mentesítést.</p>';
+  if (payload.routeSignalsError) return `${heading}<p class="notice error">A jelzéseket nem sikerült betölteni. Próbáld újra az állapotfrissítést.</p>`;
+  if (!payload.routeSignals) return `${heading}<p class="muted">Jelzések betöltése…</p>`;
+  const { alerts = [], shifts = [], hasMore } = payload.routeSignals;
+  const preview = state.user?.canPreviewCouriers && state.workflowPreviewCourierId
+    ? `?courier=${encodeURIComponent(state.workflowPreviewCourierId)}` : '';
+  return `${heading}${!alerts.length && !shifts.length ? '<p class="muted">Ebben a hónapban nincs késés- vagy táskahiány-jelzésed.</p>' : ''}
+    ${alerts.map(row => `<article class="courier-complaint-card"><h4>${row.alert_type === 'bag_missing' ? 'Táskahiány' : 'Túra közbeni késés'}</h4>
+      <p>${escapeHtml(shortDateTime(row.created_at))} · Túra: ${escapeHtml(row.route_id)}</p>
+      <p class="complaint-text">${escapeHtml(row.message)}</p><p class="muted">${row.status === 'auto' ? 'Automatikusan rögzített jelzés' : 'Rögzített jelzés'}${row.dispatcher_notified ? ' · Diszpécser értesítve' : ''}</p>
+      ${(row.photos || []).map((id, i) => `<a href="/api/quality/route-signals/${encodeURIComponent(row.id)}/photos/${encodeURIComponent(id)}${preview}" target="_blank" rel="noopener">Csatolt kép ${i + 1}</a>`).join(' · ')}</article>`).join('')}
+    ${shifts.map(row => `<article class="courier-complaint-card"><h4>Műszakkésés</h4><p>${escapeHtml(row.work_date)} · ${escapeHtml(row.start_time)}–${escapeHtml(row.end_time)} · ${escapeHtml(row.warehouse)}</p><p class="complaint-text">${escapeHtml(row.shift_name)}</p><p class="muted">${row.event_type === 'coordinator_shift_late' ? 'Koordinátor által rögzítve' : 'Futár által jelzett késés'}</p></article>`).join('')}
+    ${hasMore ? '<p class="muted">Jelzéstípusonként a legutóbbi 200 bejegyzést mutatjuk.</p>' : ''}`;
+}
+
 function renderCourierQualityComplaints(payload = {}) {
+  return renderCourierQualityComplaintCards(payload) + `<section class="courier-complaints">${renderCourierRouteSignals(payload)}</section>`;
+}
+
+function renderCourierQualityComplaintCards(payload = {}) {
   const header = '<div class="courier-complaint-heading"><div><h4>Reklamációim</h4><p>A kiválasztott hónapban érintett ügyek állapota</p></div><button class="text-button" type="button" data-courier-complaints-refresh>Állapot frissítése</button></div>';
   if (payload.qualityComplaintsError) return `<section class="courier-complaints">${header}<p class="notice error">A reklamációk állapotát most nem sikerült lekérni. Próbáld újra az állapotfrissítést.</p></section>`;
   if (!payload.qualityComplaints) return `<section class="courier-complaints">${header}<p class="muted">Reklamációk állapotának betöltése…</p></section>`;
@@ -1584,6 +1604,8 @@ async function refreshCourierQualityComplaints() {
   state.courierComplaintRequest = sequence;
   const params = new URLSearchParams({ month: payload.month || state.statisticsMonth });
   if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) params.set("courier", state.workflowPreviewCourierId);
+  const signals = api(`/api/quality/route-signals/mine?${params}`, { silentLoading: true })
+    .then(result => ({ result }), () => ({ error: true }));
   try {
     const result = await api(`/api/quality/complaints/mine?${params}`, { silentLoading: true });
     if (state.statistics !== payload || state.courierComplaintRequest !== sequence) return;
@@ -1594,6 +1616,10 @@ async function refreshCourierQualityComplaints() {
     if (state.statistics !== payload || state.courierComplaintRequest !== sequence) return;
     payload.qualityComplaintsError = true;
   }
+  const signalResult = await signals;
+  if (state.statistics !== payload || state.courierComplaintRequest !== sequence) return;
+  payload.routeSignals = signalResult.result;
+  payload.routeSignalsError = !!signalResult.error;
   const target = $("#courier-quality-complaints");
   if (target) target.innerHTML = renderCourierQualityComplaints(payload);
 }

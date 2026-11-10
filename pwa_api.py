@@ -22633,6 +22633,64 @@ def own_quality_complaints(
     return {"items": rows[:200], "hasMore": len(rows) > 200}
 
 
+@app.get("/api/quality/route-signals/mine")
+def own_route_signals(
+    month: str = Query(...), courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    view_user, _preview = workflow_view_user(user, courier)
+    courier_id, _name = courier_identity(view_user)
+    start = parse_month(month)
+    end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    # Filter the reporting month in local time, including midnight boundaries.
+    lower = datetime.combine(start, datetime.min.time(), tzinfo=LOCAL_TIMEZONE)
+    upper = datetime.combine(end, datetime.min.time(), tzinfo=LOCAL_TIMEZONE)
+    alerts = supabase_rest("GET", "courier_route_alerts", params={
+        "select": "id,route_id,alert_type,message,status,created_at,dispatcher_notified",
+        "courier_id": f"eq.{courier_id}", "alert_type": "in.(delay,bag_missing)",
+        "created_at": f"gte.{lower.isoformat()}", "and": f"(created_at.lt.{upper.isoformat()})",
+        "order": "created_at.desc,id.desc", "limit": "201"})
+    shifts = supabase_rest("GET", "courier_shift_checkins", params={
+        "select": "id,work_date,start_time,end_time,warehouse,event_type,shift_name,created_at",
+        "courier_id": f"eq.{courier_id}", "event_type": "in.(shift_late,coordinator_shift_late)",
+        "work_date": f"gte.{start.isoformat()}", "and": f"(work_date.lt.{end.isoformat()})",
+        "order": "created_at.desc,id.desc", "limit": "201"})
+    photos = []
+    if alerts:
+        photos = supabase_rest("GET", "courier_route_alert_photos", params={
+            "select": "id,alert_id", "alert_id": "in.(" + ",".join(str(r["id"]) for r in alerts[:200]) + ")",
+            "order": "id.asc", "limit": "1000"})
+    for alert in alerts[:200]:
+        alert["photos"] = [r["id"] for r in photos if str(r["alert_id"]) == str(alert["id"])]
+    return {"alerts": alerts[:200], "shifts": shifts[:200], "hasMore": len(alerts) > 200 or len(shifts) > 200}
+
+
+@app.get("/api/quality/route-signals/{alert_id}/photos/{photo_id}")
+def own_route_signal_photo(
+    alert_id: str, photo_id: UUID, courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not re.fullmatch(r"(?:[0-9]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})", alert_id):
+        raise HTTPException(status_code=422, detail="Érvénytelen jelzésazonosító.")
+    view_user, _preview = workflow_view_user(user, courier)
+    courier_id, _name = courier_identity(view_user)
+    rows = supabase_rest("GET", "courier_route_alerts", params={
+        "select": "id", "id": f"eq.{alert_id}", "courier_id": f"eq.{courier_id}", "limit": "1"})
+    if not rows:
+        raise HTTPException(status_code=404, detail="A jelzés nem található.")
+    photos = supabase_rest("GET", "courier_route_alert_photos", params={
+        "select": "*", "id": f"eq.{photo_id}", "alert_id": f"eq.{alert_id}", "limit": "1"})
+    if not photos:
+        raise HTTPException(status_code=404, detail="A kép nem található.")
+    photo = photos[0]
+    content = download_pwa_attachment(photo["storage_bucket"], photo["storage_path"]) if photo.get("storage_path") else base64.b64decode(photo.get("file_content_base64") or "")
+    return Response(content=content, media_type=photo.get("mime_type") or "application/octet-stream", headers={
+        "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox"})
+
+
 @app.get("/api/quality/complaints")
 def list_quality_complaints(
     status: str = Query(default="all"),
