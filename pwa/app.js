@@ -1690,13 +1690,16 @@ function renderAdminRouteSignals(payload, offset = 0) {
   const entries = [...(payload.alerts || []), ...(payload.shifts || [])]
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
   return `${entries.length ? entries.map(row => `<article class="shift-card">
-    <div class="shift-top"><h3>${escapeHtml(row.courier_name || 'Futár')} · #${escapeHtml(row.courier_id)}</h3><span class="source">Rögzített jelzés</span></div>
+    <div class="shift-top"><h3>${escapeHtml(row.courier_name || 'Futár')} · #${escapeHtml(row.courier_id)}</h3><span class="source">${escapeHtml(row.complaint ? qualityComplaintStatus(row.complaint.status) : 'Rögzített jelzés')}</span></div>
     <h4>${row.alert_type === 'bag_missing' ? 'Táskahiány' : row.alert_type === 'delay' ? 'Túra közbeni késés' : 'Műszakkésés'}</h4>
     <p>${escapeHtml(shortDateTime(row.created_at))}${row.route_id ? ` · Túra: ${escapeHtml(row.route_id)}` : ''}</p>
     ${row.work_date ? `<p>${escapeHtml(row.work_date)} · ${escapeHtml(row.start_time)}–${escapeHtml(row.end_time)} · ${escapeHtml(row.warehouse)}</p>` : ''}
     <p class="complaint-text">${escapeHtml(row.message || row.shift_name || '')}</p>
     <p class="muted">${row.status === 'auto' ? 'Automatikus késésjelzés' : row.event_type === 'coordinator_shift_late' ? 'Koordinátor által rögzítve' : 'Futár által rögzítve'}${row.dispatcher_notified ? ' · Diszpécser értesítve' : ''}</p>
     ${(row.photos || []).map((id, i) => `<a class="secondary" href="/api/quality/route-signals/${encodeURIComponent(row.id)}/photos/${encodeURIComponent(id)}?courier=${encodeURIComponent(row.courier_id)}" target="_blank" rel="noopener">Csatolt kép ${i + 1}</a>`).join(' ')}
+    ${row.complaint?.admin_response ? `<p class="complaint-text">Válasz: ${escapeHtml(row.complaint.admin_response)}</p>` : ''}
+    <button type="button" class="primary" data-route-signal-complaint="${escapeHtml(row.id)}" data-signal-kind="${row.alert_type ? 'route' : 'shift'}">Reklamáció kezelése / Google-űrlap</button>
+    <p data-signal-result role="status"></p>
   </article>`).join('') : '<p>Nincs rögzített késés- vagy táskahiány-jelzés.</p>'}
   <div class="source-row"><button type="button" data-route-signals-prev ${offset <= 0 ? 'disabled' : ''}>Előző jelzések</button><button type="button" data-route-signals-next ${!payload.hasMore ? 'disabled' : ''}>Következő jelzések</button></div>`;
 }
@@ -1711,6 +1714,22 @@ async function loadAdminRouteSignals(offset = 0) {
     const result = await api(`/api/quality/route-signals?offset=${offset}`, { silentLoading: true });
     if (state.adminRouteSignalsRequest !== request) return;
     target.innerHTML = renderAdminRouteSignals(result, offset);
+    target.querySelectorAll('[data-route-signal-complaint]').forEach(button => button.addEventListener('click', async () => {
+      const output = button.parentElement.querySelector('[data-signal-result]');
+      button.disabled = true;
+      output.textContent = 'A jelzés hozzákapcsolása a reklamációs folyamathoz…';
+      try {
+        const response = await api(`/api/quality/route-signals/${encodeURIComponent(button.dataset.signalKind)}/${encodeURIComponent(button.dataset.routeSignalComplaint)}/complaint`, {method:'POST',body:JSON.stringify({})});
+        if (!response.ok || !response.item?.id) throw Error('A mentés nem igazolható.');
+        state.qualityComplaintFocus = String(response.item.id);
+        state.qualityComplaintOffset = 0;
+        $('#quality-complaints-filter').value = 'all';
+        await loadQualityComplaints();
+      } catch (error) {
+        output.textContent = error.message;
+        button.disabled = false;
+      }
+    }));
     target.querySelector('[data-route-signals-prev]')?.addEventListener('click', () => loadAdminRouteSignals(Math.max(0, offset - 50)));
     target.querySelector('[data-route-signals-next]')?.addEventListener('click', () => loadAdminRouteSignals(offset + 50));
   } catch (error) {
@@ -1728,7 +1747,7 @@ async function loadQualityComplaints() {
   state.qualityComplaintRequest = request;
   status.textContent = "Betöltés…";
   try {
-    const payload = await api(`/api/quality/complaints?status=${encodeURIComponent($("#quality-complaints-filter").value)}&offset=${state.qualityComplaintOffset || 0}`);
+    const payload = await api(`/api/quality/complaints?status=${encodeURIComponent($("#quality-complaints-filter").value)}&offset=${state.qualityComplaintOffset || 0}${state.qualityComplaintFocus ? `&complaint=${encodeURIComponent(state.qualityComplaintFocus)}` : ''}`);
     if (state.qualityComplaintRequest !== request) return;
     target.innerHTML = payload.items.length ? payload.items.map((item) => {
       const topics = { lateShift: "Műszakkésés", noShow: "No-show", uncleanedTimeWindowLate: "Nem mentesített címkésés", cleanedTimeWindowLate: "Mentesített címkésés" };
@@ -1843,6 +1862,15 @@ async function loadQualityComplaints() {
         buttons.forEach(b => b.disabled = false);
       }
     }));
+    if (state.qualityComplaintFocus) {
+      const selected = [...target.querySelectorAll('[data-complaint-id]')].find(card => card.dataset.complaintId === state.qualityComplaintFocus);
+      if (selected) {
+        selected.scrollIntoView({behavior:'smooth',block:'start'});
+        const approval = selected.querySelector('[data-complaint-approval]');
+        if (approval) approval.open = true;
+        state.qualityComplaintFocus = '';
+      }
+    }
   } catch (error) {
     if (state.qualityComplaintRequest === request) status.textContent = error.message;
   }

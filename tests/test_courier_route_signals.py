@@ -1,5 +1,6 @@
 import ast
 import base64
+import hashlib
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
@@ -14,10 +15,10 @@ class HttpError(Exception):
 
 def load_functions(rest):
     tree=ast.parse((Path(__file__).resolve().parents[1]/'pwa_api.py').read_text(encoding='utf8'))
-    nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in {'own_route_signals','own_route_signal_photo','admin_route_signals'}]
+    nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in {'own_route_signals','own_route_signal_photo','admin_route_signals','route_signal_to_complaint'}]
     for n in nodes:n.decorator_list=[]
     ns=dict(Query=lambda *a,**k:None,Cookie=lambda *a,**k:None,date=date,datetime=datetime,timedelta=timedelta,
-            LOCAL_TIMEZONE=ZoneInfo('Europe/Budapest'),UUID=UUID,re=re,base64=base64,
+            LOCAL_TIMEZONE=ZoneInfo('Europe/Budapest'),UUID=UUID,re=re,base64=base64,hashlib=hashlib,
             require_user=lambda _: {'courierId':'42'},workflow_view_user=lambda u,c:(u,False),
             courier_identity=lambda u:('42','Futár'),parse_month=lambda s:date.fromisoformat(s+'-01'),
             supabase_rest=rest,HTTPException=HttpError,Response=lambda **k:k,
@@ -29,6 +30,31 @@ def load_functions(rest):
 
 
 class RouteSignalTests(unittest.TestCase):
+    def test_signal_conversion_is_idempotent_and_uses_existing_complaint_flow(self):
+        stored=[];calls=[]
+        def rest(method,table,params=None,payload=None,prefer=None):
+            calls.append((method,table))
+            if table=='pwa_quality_complaints':
+                if method=='GET':return stored
+                stored.append({'id':'complaint-id',**payload});return stored
+            if table=='courier_route_alerts':return [{'id':'123','courier_id':42,'courier_name':'Futár','alert_type':'delay','route_id':'1600493','message':'Baleset miatt késtem','created_at':'2026-10-31T23:30:00Z'}]
+            return []
+        ns=load_functions(rest);ns['quality_complaint_manager']=lambda u:True
+        one=ns['route_signal_to_complaint']('route','123',None)
+        two=ns['route_signal_to_complaint']('route','123',None)
+        self.assertEqual(one['item']['id'],two['item']['id'])
+        self.assertEqual(len(stored),1)
+        self.assertEqual(stored[0]['status'],'open')
+        self.assertEqual(stored[0]['work_month'],'2026-11-01')
+        self.assertEqual(stored[0]['affected_items'][0]['routeId'],'1600493')
+        self.assertEqual(stored[0]['affected_items'][0]['signalId'],'123')
+        self.assertFalse(any('delivery' in table for _,table in calls))
+
+    def test_non_manager_cannot_convert_signal(self):
+        ns=load_functions(lambda *a,**k:self.fail('DB must not be queried'))
+        with self.assertRaises(HttpError) as caught:ns['route_signal_to_complaint']('route','123',None)
+        self.assertEqual(caught.exception.status_code,403)
+
     def test_admin_list_requires_management_permission(self):
         ns=load_functions(lambda *a,**k:self.fail('Must reject before reading data'))
         with self.assertRaises(HttpError) as caught:ns['admin_route_signals'](0,None)
