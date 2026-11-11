@@ -62,6 +62,15 @@ def adjustment_types_for_row(raw_type: Any, malus: int, bonus: int) -> list[tupl
     """Map the sheet type to settlement adjustment rows without mixing corrections into bonus/malus."""
     text = normalize_text(raw_type)
     result: list[tuple[str, int]] = []
+    reversals: list[tuple[str, int]] = []
+    # Adjustment amounts are non-negative in the database. A negative source
+    # amount reverses the deduction/income through the correction columns.
+    if malus < 0:
+        reversals.append(("correction_income", abs(malus)))
+        malus = 0
+    if bonus < 0:
+        reversals.append(("correction_deduction", abs(bonus)))
+        bonus = 0
     is_correction = any(token in text for token in ["korrekcio", "correction", "korr"])
     is_bonus = any(token in text for token in ["bonus", "bonusz", "jovairas", "plusz"])
     is_malus = any(token in text for token in ["malus", "malusz", "levonas", "minusz"])
@@ -71,7 +80,7 @@ def adjustment_types_for_row(raw_type: Any, malus: int, bonus: int) -> list[tupl
             result.append(("correction_income", bonus))
         if malus > 0:
             result.append(("correction_deduction", malus))
-        return result
+        return reversals + result
 
     if is_bonus and bonus > 0:
         result.append(("bonus", bonus))
@@ -79,20 +88,30 @@ def adjustment_types_for_row(raw_type: Any, malus: int, bonus: int) -> list[tupl
         result.append(("malus", malus))
 
     if result:
-        return result
+        return reversals + result
 
     if bonus > 0:
         result.append(("bonus", bonus))
     if malus > 0:
         result.append(("malus", malus))
-    return result
+    return reversals + result
 
 
 def parse_sheet_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
     text = str(value or "").strip()
     if not text:
         return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        pass
     patterns = [
+        "%Y.%m.%d. %H:%M:%S.%f",
+        "%Y.%m.%d %H:%M:%S.%f",
         "%Y.%m.%d. %H:%M:%S",
         "%Y.%m.%d %H:%M:%S",
         "%Y.%m.%d.",
@@ -175,14 +194,20 @@ def worksheet_by_gid(sheet_id: str, gid: int):
     raise RuntimeError(f"Nincs worksheet ezzel a gid-del: {gid}")
 
 
-def rows_from_sheet(sheet_id: str, gid: int) -> list[dict[str, Any]]:
+def rows_from_sheet(sheet_id: str, gid: int, *, courier_name: str | None = None) -> list[dict[str, Any]]:
     worksheet = worksheet_by_gid(sheet_id, gid)
     values = worksheet.get_all_values()
+    if not values or len(values[0]) < 8:
+        raise ValueError("Hiányos Google Sheet fejléc; a korábbi tételek változatlanok maradnak.")
     result: list[dict[str, Any]] = []
     for row_number, row in enumerate(values[1:], start=2):
         padded = row + [""] * (8 - len(row))
-        occurred_at = parse_sheet_datetime(padded[0])
         name = str(padded[1] or "").strip()
+        if courier_name is not None and normalize_text(name) != normalize_text(courier_name):
+            continue
+        occurred_at = parse_sheet_datetime(padded[0])
+        if courier_name is not None and not occurred_at:
+            raise ValueError(f"Hibás dátum a kiválasztott futár {row_number}. Sheet-sorában; frissítés megszakítva.")
         raw_type = str(padded[2] or "").strip()
         reason = str(padded[3] or "").strip()
         malus = money_int(padded[4])
@@ -223,23 +248,29 @@ def source_key(sheet_id: str, gid: int, row: dict[str, Any]) -> str:
     ])
 
 
-def existing_adjustments() -> dict[str, dict[str, Any]]:
-    response = requests.get(
-        f"{supabase_url()}/rest/v1/courier_settlement_adjustment",
-        headers=supabase_headers(),
-        params={
+def existing_adjustments(*, courier_id: str | None = None) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    offset = 0
+    while True:
+        params = {
             "select": "id,courier_id,source_key,valid_from,valid_to,is_active,deleted_at,deleted_by,updated_at",
             "source_key": f"like.{SOURCE_PREFIX}:%",
-            "limit": "10000",
-        },
-        timeout=60,
-    )
-    raise_for_response(response, "courier_settlement_adjustment existing")
-    return {
-        str(row.get("source_key") or ""): row
-        for row in response.json() or []
-        if str(row.get("source_key") or "")
-    }
+            "order": "id",
+            "limit": "1000",
+            "offset": str(offset),
+        }
+        if courier_id is not None:
+            params["courier_id"] = f"eq.{courier_id}"
+        response = requests.get(
+            f"{supabase_url()}/rest/v1/courier_settlement_adjustment",
+            headers=supabase_headers(), params=params, timeout=60,
+        )
+        raise_for_response(response, "courier_settlement_adjustment existing")
+        page = response.json() or []
+        result.update({str(row["source_key"]): row for row in page if row.get("source_key")})
+        if len(page) < 1000:
+            return result
+        offset += len(page)
 
 
 def deactivate_adjustment(row_id: str) -> None:
@@ -341,6 +372,18 @@ def update_adjustment(row_id: str, payload: dict[str, Any]) -> None:
     raise_for_response(response, "courier_settlement_adjustment update")
 
 
+def reactivate_sheet_adjustment(row_id: str, payload: dict[str, Any]) -> None:
+    """Restore a source row previously removed by this importer, not by a user."""
+    response = requests.patch(
+        f"{supabase_url()}/rest/v1/courier_settlement_adjustment",
+        headers=supabase_headers("return=minimal"),
+        params={"id": f"eq.{row_id}", "deleted_by": "eq.google-sheet-refresh"},
+        json={key: value for key, value in payload.items() if key != "created_by"},
+        timeout=60,
+    )
+    raise_for_response(response, "courier_settlement_adjustment reactivate")
+
+
 def sync_courier_from_sheet(
     courier_id: str,
     courier_name: str,
@@ -355,22 +398,26 @@ def sync_courier_from_sheet(
     target_name = normalize_text(courier_name)
     if not target_id or not target_name:
         raise ValueError("A futár azonosítója és neve kötelező a Google Sheet frissítéséhez.")
+    if period_start is None or period_end is None or period_start > period_end:
+        raise ValueError("A kiválasztott futár frissítéséhez érvényes időszak szükséges.")
+
+    closed = closed_months()
+    if any(cid == target_id and period_start <= date.fromisoformat(month) <= period_end
+           for cid, month in closed):
+        raise ValueError("A kiválasztott futár hónapja le van zárva; a Sheet-frissítés nem módosította.")
 
     source_rows = [
         row
-        for row in rows_from_sheet(sheet_id, gid)
+        for row in rows_from_sheet(sheet_id, gid, courier_name=courier_name)
         if normalize_text(row.get("courier_name")) == target_name
         and (period_start is None or row["effective_date"] >= period_start)
         and (period_end is None or row["effective_date"] <= period_end)
     ]
-    couriers = read_courier_master()
-    courier = next(
-        (value for value in couriers.values() if str(value.get("courier_id") or "").strip() == target_id),
-        None,
-    ) or {"courier_id": target_id, "courier_name": courier_name}
+    # The UI already supplied the selected courier's identity; do not load or
+    # resolve the entire courier master during a single-courier refresh.
+    courier = {"courier_id": target_id, "courier_name": courier_name}
 
-    existing = existing_adjustments()
-    closed = closed_months()
+    existing = existing_adjustments(courier_id=target_id)
     inserted = 0
     updated = 0
     deactivated = 0
@@ -386,7 +433,13 @@ def sync_courier_from_sheet(
             continue
         current = existing.get(key)
         if current and current.get("id"):
+            if str(current.get("courier_id") or "").strip() != target_id:
+                raise ValueError("A Sheet-tétel másik futárhoz tartozik; frissítés megszakítva.")
             if current.get("deleted_at") or current.get("is_active") is False:
+                if current.get("deleted_by") != "google-sheet-refresh":
+                    continue
+                reactivate_sheet_adjustment(str(current["id"]), payload)
+                updated += 1
                 continue
             update_adjustment(str(current["id"]), payload)
             updated += 1

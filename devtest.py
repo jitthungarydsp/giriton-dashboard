@@ -17625,9 +17625,10 @@ def render_courier_detail_page() -> None:
             saved_filtered_data = st.session_state.get("current_filtered_data")
             saved_filtered_context = st.session_state.get("current_filtered_context")
             refresh_settlement_profile_data()
-            if not google_refresh_requested and isinstance(saved_filtered_data, pd.DataFrame) and not saved_filtered_data.empty:
+            # Refreshing one courier must not discard/rebuild the entire list.
+            if isinstance(saved_filtered_data, pd.DataFrame) and not saved_filtered_data.empty:
                 st.session_state["current_filtered_data"] = saved_filtered_data
-            if not google_refresh_requested and saved_filtered_context is not None:
+            if saved_filtered_context is not None:
                 st.session_state["current_filtered_context"] = saved_filtered_context
             if google_refresh_requested:
                 st.session_state[f"force_fresh_google_adjustments_{courier_id}_{period_start:%Y%m}"] = True
