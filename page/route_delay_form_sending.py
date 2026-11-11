@@ -127,6 +127,18 @@ def render_route_delay_form_sending(get_db, user):
     ready=sum(r['state']=='prepared'for r in records)
     blocked=any(r['state']in{'queued','processing','uncertain'}for r in records)
     st.subheader('Összes reklamáció beküldése')
+    st.caption('A tömeges jóváhagyás a jelenlegi adatokat és a rövid levélszöveget fogadja el. '
+               'Nem jelöl futárral történt egyeztetést; a jóváhagyó neve és az időpont külön mentődik. '
+               'Későbbi tartalmi módosítás új jóváhagyást igényel.')
+    if st.button('Összes jelenlegi tervezet és szöveg jóváhagyása',disabled=blocked,key='route_approve_all'):
+        try:
+            changes=service.approve_all_records(records,actor)
+            for previous,replacement in changes:
+                save(previous,replacement)
+            st.session_state[KEY+'_notice']=f'{len(changes)} reklamáció és levélszöveg adminisztrátori jóváhagyása mentve.'
+            st.rerun()
+        except Exception as exc:
+            st.error(f'A jóváhagyás megszakadt: {exc}. A már mentett állapotok megmaradtak; töltsd újra a listát.')
     st.write(f'{ready} ellenőrzött reklamáció küldhető be. '
              f"{sum(r['state']=='draft'for r in records)} tervezet még ellenőrzésre vár. "
              f"{sum(r['state']=='sent'for r in records)} tétel már beküldve.")
@@ -241,7 +253,11 @@ def render_route_delay_form_sending(get_db, user):
 
     draft = service.preparation.prepare_row(record['data'],record['source_row'])
     for warning in draft['warnings']:
-        st.warning(warning)
+        if not service.admin_approved(record):
+            st.warning(warning)
+    if service.admin_approved(record):
+        approval=record['data']['_admin_approval']
+        st.info(f"Adminisztrátori jóváhagyás: {approval['actor']} · {approval['approved_at']}")
     st.text_area('Google-űrlapra kerülő szöveg',value=draft['payload']['description'],height=260,disabled=True,
                  key='route_form_preview_'+record['id']+'_'+revision)
     st.link_button('Google-űrlap előkitöltése',draft['prefill_url'],use_container_width=True)
@@ -256,7 +272,7 @@ def render_route_delay_form_sending(get_db, user):
     if not persistent:
         st.info('Az egygombos beküldéshez tartós adatbázis-mentés szükséges.')
     if st.button('Beküldés és következő futár',type='primary',use_container_width=True,
-                 disabled=not persistent or record['state']!='prepared' or bool(draft['warnings']),
+                 disabled=not persistent or record['state']!='prepared' or (bool(draft['warnings']) and not service.admin_approved(record)),
                  key='route_submit_next_'+record['id']):
         try:
             save(record,service.queue_record(record,actor))

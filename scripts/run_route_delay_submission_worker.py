@@ -32,7 +32,7 @@ def process_record(record, save, make_page):
     current=claimed
     try:
         draft=service.preparation.prepare_row(record['data'],record['source_row'])
-        if draft['warnings']:
+        if draft['warnings'] and not service.admin_approved(record):
             raise ValueError('A reklamáció ellenőrzése hiányos.')
         page=make_page()
         button=page.fill(draft['payload'])

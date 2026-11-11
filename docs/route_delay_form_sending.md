@@ -24,6 +24,8 @@ Ellenőrzés: `python -m unittest tests.test_route_delay_draft_management tests.
 
 ## Egygombos és tömeges beküldés
 
+Az **Összes jelenlegi tervezet és szöveg jóváhagyása** gomb az összes nyitott tervezetet ellenőrzöttre állítja, a jelenlegi tartalomhoz kötött adminisztrátori jóváhagyással. Külön rögzíti a jóváhagyó nevét és időpontját, és nem írja át a futárral egyeztetve mezőt. Az adminisztrátor ezzel a hiányzó egyedi indoklás és forrásellenőrzés mellett is elfogadja a meglévő levélszöveget. Bármilyen tartalmi módosítás törli ezt a jóváhagyást. A beküldött és folyamatban lévő tételeket a gomb nem módosítja.
+
 A frissítéshez a `sql/route_delay_form_auto_submission.sql` migrációt is futtasd a tervezetek alaptáblájának létrehozása után.
 
 A Google-bejelentkezést tartó robot egy futó, Chrome-mal rendelkező gépen dolgozik. A devtest a közös adatbázison keresztül adja át a feladatokat, így a webes felület és a robot külön gépen is lehet. A devtestet kiszolgáló Streamlit Cloud nem irányítja a felhasználó böngészőjét.

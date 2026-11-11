@@ -107,5 +107,27 @@ class SubmissionTest(unittest.TestCase):
         with self.assertRaises(ValueError):service.resolve_not_sent(record,'','admin',True)
         self.assertEqual(service.resolve_not_sent(record,'Checked response sheet','admin',True)['state'],'prepared')
 
+    def test_bulk_admin_approval_allows_missing_review_fields_without_inventing_agreement(self):
+        record=self.record()
+        record=service.edit_record({**record,'state':'draft'},
+            {**record['data'],'Kategória futárral egyeztetve':'Nem','Reklamáció indoklása':''},'admin')
+        changes=service.approve_all_records([record,{**record,'id':'sent','state':'sent'}],'admin')
+        self.assertEqual(len(changes),1)
+        approved=changes[0][1]
+        self.assertTrue(service.admin_approved(approved))
+        self.assertEqual(approved['data']['Kategória futárral egyeztetve'],'Nem')
+        queued=service.queue_record(approved,'admin')
+        page=self.page()
+        result=sender.process_record(queued,Mock(),lambda:page)
+        self.assertEqual(result['state'],'sent')
+
+    def test_edit_invalidates_bulk_approval_and_requires_review_again(self):
+        record={**self.record(),'state':'draft'}
+        approved=service.approve_all_records([record],'admin')[0][1]
+        changed=service.edit_record(approved,{**approved['data'],'Túra ID':'99999'},'editor')
+        self.assertEqual(changed['state'],'draft')
+        self.assertFalse(service.admin_approved(changed))
+        with self.assertRaises(ValueError):service.queue_record(changed,'editor')
+
 
 if __name__=='__main__':unittest.main()

@@ -30,7 +30,30 @@ def normalize_data(row):
 
 
 def content_hash(data):
-    return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()
+    content={key:value for key,value in data.items() if key!='_admin_approval'}
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def admin_approved(record):
+    approval=record['data'].get('_admin_approval') or {}
+    return bool(approval.get('actor') and approval.get('approved_at')
+                and approval.get('content_hash')==content_hash(record['data']))
+
+
+def approve_all_records(records, actor):
+    if not actor.strip():
+        raise ValueError('A jóváhagyó neve kötelező.')
+    result=[]
+    for previous in records:
+        if previous['state'] not in {'draft','prepared'}:
+            continue
+        preparation.prepare_row(previous['data'],previous['source_row'])
+        now=datetime.now(timezone.utc).isoformat()
+        data={**previous['data'],'_admin_approval':{
+            'actor':actor,'approved_at':now,'content_hash':content_hash(previous['data']),
+            'scope':'A jelenlegi reklamáció és a Google-űrlap levélszövege adminisztrátor által jóváhagyva.'}}
+        result.append((previous,{**previous,'data':data,'state':'prepared','updated_by':actor,'updated_at':now}))
+    return result
 
 
 def make_record(data, source_row, source_filename='', actor=''):
@@ -127,6 +150,7 @@ def edit_record(record, data, actor):
     replacement['id'] = record['id']
     if replacement['content_hash']==record['content_hash']:
         return dict(record)
+    replacement['data'].pop('_admin_approval',None)
     return replacement
 
 
@@ -134,7 +158,7 @@ def prepare_record(record, actor):
     if record['state'] in LOCKED_STATES:
         raise ValueError('Ez a reklamáció már beküldésre lett átadva.')
     draft = preparation.prepare_row(record['data'], record['source_row'])
-    if draft['warnings']:
+    if draft['warnings'] and not admin_approved(record):
         raise ValueError('; '.join(draft['warnings']))
     return {**record,'state':'prepared','updated_by':actor,'updated_at':datetime.now(timezone.utc).isoformat()}
 
