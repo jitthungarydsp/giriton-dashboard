@@ -1,5 +1,6 @@
 __pycache__/
 venv/
+.robot-venv/
 node_modules/
 .streamlit/secrets.toml
 .pwa_session_secret

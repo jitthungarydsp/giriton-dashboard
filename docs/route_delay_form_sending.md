@@ -47,3 +47,14 @@ A nyitott feladat tartósan zárolja a sort, így újratöltés, dupla kattintá
 Az új beküldő külön program. A meglévő PWA `run_quality_form_worker.py --once/--watch` folyamata továbbra is csak kitölt, automatikusan nem küld be.
 
 Teszt: `python -m unittest tests.test_route_delay_submission tests.test_route_delay_draft_management tests.test_route_delay_excel_forms tests.test_quality_form_forwarding`.
+
+### Windows: a `python` parancs helyett
+
+Ha a `python` a Microsoft Store-ra irányít, a projekt `GoogleRobot.bat` indítóját használd. Ez a `.robot-venv\Scripts\python.exe` külön környezetet futtatja, nem a Windows alkalmazás-végrehajtási aliast.
+
+- ` .\GoogleRobot.bat check`: függőségek és beállítások ellenőrzése, beküldés nélkül.
+- ` .\GoogleRobot.bat login`: első Google-bejelentkezés a robot külön profiljában.
+- ` .\GoogleRobot.bat check-login`: bejelentkezés ellenőrzése, beküldés nélkül.
+- ` .\GoogleRobot.bat`: a beküldési sor tényleges feldolgozása.
+
+A `.robot-venv` helyi telepítés, nem kerül Gitbe. Másik gépen működő Pythonból hozd létre (`python -m venv --system-site-packages .robot-venv`), és ebbe telepítsd a `selenium`, `supabase`, `openpyxl` csomagokat. Ha a Python alaptelepítése később megszűnik, a virtuális környezetet újra kell létrehozni.

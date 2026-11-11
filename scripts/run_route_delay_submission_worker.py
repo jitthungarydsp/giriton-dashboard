@@ -80,8 +80,20 @@ def main():
     mode=parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--once',action='store_true')
     mode.add_argument('--watch',action='store_true')
+    mode.add_argument('--check',action='store_true',help='Check dependencies and settings without opening or submitting a form.')
     args=parser.parse_args()
     get=worker.settings()
+    if args.check:
+        import selenium
+        import supabase
+        missing=[key for key in ('SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY') if not get(key)]
+        if missing:
+            raise ValueError('Hiányzó beállítás: '+', '.join(missing)+'. Add meg a .streamlit/secrets.toml fájlban.')
+        if not worker.chrome_binary():
+            raise ValueError('Google Chrome nem található.')
+        print('Python, Selenium, Supabase, Chrome és adatbázis-beállítások elérhetők. Nem történt beküldés.',flush=True)
+        print('A Google-bejelentkezés külön ellenőrzendő a GoogleRobot.bat check-login paranccsal.',flush=True)
+        return
     from supabase import create_client
     db=create_client(str(get('SUPABASE_URL')),str(get('SUPABASE_SERVICE_ROLE_KEY')))
     profile=worker.profile_path(get('QUALITY_FORM_PROFILE_DIR'))
