@@ -3,12 +3,16 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('excel_form_drafts', ROOT/'scripts/prepare_route_delay_forms.py')
 drafts = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(drafts)
+server_spec=importlib.util.spec_from_file_location('excel_form_server',ROOT/'scripts/serve_route_delay_excel_forms.py')
+server=importlib.util.module_from_spec(server_spec)
+server_spec.loader.exec_module(server)
 
 
 class RouteDelayDraftTest(unittest.TestCase):
@@ -59,6 +63,26 @@ class RouteDelayDraftTest(unittest.TestCase):
             self.assertNotIn('formResponse',page)
             saved=json.loads((Path(tmp)/'urlaptervezetek.json').read_text(encoding='utf-8'))
             self.assertEqual(saved[0]['state'],'draft')
+
+    def test_running_helper_reads_current_template_each_time(self):
+        book=MagicMock()
+        book.__getitem__.return_value.iter_rows.side_effect=lambda **kwargs:iter([
+            ['Dátum','Futár ID','Forrássor'],['2026-10-01','6498',2]])
+        versions=iter(['old','new'])
+        def load_template(module):
+            version=next(versions)
+            module.prepare_row=lambda row,key:{'version':version}
+        with patch('openpyxl.load_workbook',return_value=book),patch.object(server.spec.loader,'exec_module',side_effect=load_template):
+            self.assertEqual(server.load_draft('unused.xlsx','2')['version'],'old')
+            self.assertEqual(server.load_draft('unused.xlsx','2')['version'],'new')
+
+    def test_second_helper_cannot_listen_on_same_port(self):
+        first=server.LocalFormServer(('127.0.0.1',0),server.handler_for('unused.xlsx','token'))
+        try:
+            with self.assertRaises(OSError):
+                server.LocalFormServer(first.server_address,server.handler_for('unused.xlsx','token'))
+        finally:
+            first.server_close()
 
 
 if __name__=='__main__':unittest.main()

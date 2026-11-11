@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 from pathlib import Path
+import socket
 from urllib.parse import parse_qs, urlparse
 
 spec = importlib.util.spec_from_file_location('route_drafts', Path(__file__).with_name('prepare_route_delay_forms.py'))
@@ -38,7 +39,11 @@ def load_draft(workbook, key):
             raise ValueError('Hiányzik a dátum ennél a sornál. Add meg az Excel Dátum oszlopában, majd mentsd el (Ctrl+S).')
         row['Javasolt kategória száma'] = row.get('Kategória száma')
         row['Reklamáció indoklása'] = row.get('Végleges indoklás')
-        return drafts.prepare_row(row, int(key))
+        # Re-read the template on each opening; a running local helper must not
+        # keep serving a previous letter after its files have been updated.
+        current = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(current)
+        return current.prepare_row(row, int(key))
     finally:
         book.close()
 
@@ -76,6 +81,15 @@ def handler_for(workbook, token):
     return Handler
 
 
+class LocalFormServer(ThreadingHTTPServer):
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workbook', type=Path, required=True)
@@ -93,7 +107,7 @@ def main():
         finally:
             book.close()
         return
-    server = ThreadingHTTPServer(('127.0.0.1', int(config['port'])), handler_for(args.workbook, config['token']))
+    server = LocalFormServer(('127.0.0.1', int(config['port'])), handler_for(args.workbook, config['token']))
     print('Az Excel-urlapkitolto fut. Hagyd nyitva ezt az ablakot.', flush=True)
     print('Excel modositasa > Ctrl+S > Urlap kitoltese. Leallitas: Ctrl+C.', flush=True)
     try:

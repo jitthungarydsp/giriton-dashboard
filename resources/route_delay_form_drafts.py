@@ -2,14 +2,12 @@
 from datetime import date, datetime, timezone
 from io import BytesIO
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-spec = importlib.util.spec_from_file_location('route_delay_excel_preparation', Path(__file__).resolve().parents[1]/'scripts/prepare_route_delay_forms.py')
-preparation = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(preparation)
+# A regular import lets Streamlit track template changes and reload the module.
+from scripts import prepare_route_delay_forms as preparation
 
 TABLE = 'route_delay_form_draft'
 STATES = {'draft':'Tervezet', 'prepared':'Ellenőrzött', 'sent':'Beküldve'}
