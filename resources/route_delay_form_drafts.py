@@ -10,7 +10,9 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from scripts import prepare_route_delay_forms as preparation
 
 TABLE = 'route_delay_form_draft'
-STATES = {'draft':'Tervezet', 'prepared':'Ellenőrzött', 'sent':'Beküldve'}
+STATES = {'draft':'Tervezet', 'prepared':'Ellenőrzött', 'queued':'Beküldésre vár',
+          'processing':'Beküldés folyamatban', 'uncertain':'Eredmény ellenőrizendő', 'sent':'Beküldve'}
+LOCKED_STATES = {'queued','processing','uncertain','sent'}
 CATEGORY_LABELS = {1:'Vásárló feltartotta',2:'Tételes átadás történt',3:'Fizetési probléma (eszköz, térerő)',
                    4:'Optimalizálatlan túra: 3 külön cím / 15 perc',5:'Sok csomag: 4+ vízcsomag / rendelés',
                    6:'Elromlott lift',7:'Magas táskaszám: 15+ / egész túra',8:'Ügyfélszolgálati kérés, ügyintézés'}
@@ -80,7 +82,7 @@ def merge_import(current, incoming, overwrite=False):
     counts = dict(added=0, updated=0, skipped=0)
     for row in incoming:
         old = result.get(row['id'])
-        if old and (old['state']=='sent' or not overwrite or old['content_hash']==row['content_hash']):
+        if old and (old['state'] in LOCKED_STATES or not overwrite or old['content_hash']==row['content_hash']):
             counts['skipped'] += 1
             continue
         result[row['id']] = row
@@ -101,6 +103,9 @@ def read_backup(content, actor=''):
             raise ValueError('A munkapéldány adatai vagy állapota módosult; nem tölthető vissza ellenőrzöttként.')
         if state in {'prepared','sent'}:
             row = prepare_record(row,actor)
+        if state in {'queued','processing','uncertain'}:
+            # A backup must not resume a potentially completed external action.
+            row['state'] = 'uncertain'
         if state=='sent':
             row = confirm_record(row,original.get('confirmation',''),actor,True)
             submitted = original.get('submitted_at')
@@ -116,8 +121,8 @@ def read_backup(content, actor=''):
 
 
 def edit_record(record, data, actor):
-    if record['state']=='sent':
-        raise ValueError('Igazoltan beküldött tétel nem írható felül.')
+    if record['state'] in LOCKED_STATES:
+        raise ValueError('Beküldésre átadott vagy beküldött tétel nem írható felül.')
     replacement = make_record(data, record['source_row'], record.get('source_filename',''), actor)
     replacement['id'] = record['id']
     if replacement['content_hash']==record['content_hash']:
@@ -126,8 +131,8 @@ def edit_record(record, data, actor):
 
 
 def prepare_record(record, actor):
-    if record['state']=='sent':
-        raise ValueError('Ez a reklamáció már beküldöttként szerepel.')
+    if record['state'] in LOCKED_STATES:
+        raise ValueError('Ez a reklamáció már beküldésre lett átadva.')
     draft = preparation.prepare_row(record['data'], record['source_row'])
     if draft['warnings']:
         raise ValueError('; '.join(draft['warnings']))
@@ -135,7 +140,7 @@ def prepare_record(record, actor):
 
 
 def confirm_record(record, confirmation, actor, acknowledged):
-    if record['state']!='prepared':
+    if record['state'] not in {'prepared','uncertain'}:
         raise ValueError('Előbb mentsd és ellenőrizd az űrlap adatait.')
     if not acknowledged or len(confirmation.strip())<5:
         raise ValueError('Google-visszaigazolás és bizonyítékhivatkozás vagy azonosítható visszaigazolási megjegyzés szükséges.')
@@ -174,3 +179,43 @@ def assert_unique(records):
     identities = [(r['work_date'], r['courier_id'], r['route_id']) for r in records]
     if len(identities)!=len(set(identities)):
         raise ValueError('A módosítás másik meglévő futár/nap/túra tétellel ütközik.')
+
+
+def queue_record(record, actor):
+    if record['state'] != 'prepared':
+        raise ValueError('Csak ellenőrzött reklamáció küldhető be.')
+    checked = prepare_record(record, actor)
+    return {**checked, 'state':'queued', 'confirmation':''}
+
+
+def resolve_not_sent(record, note, actor, acknowledged):
+    if record['state']!='uncertain' or not acknowledged or len(note.strip())<5:
+        raise ValueError('Csak ellenőrizendő tétel oldható fel, igazolt ellenőrzési megjegyzéssel.')
+    return {**record,'state':'prepared','confirmation':'Nem lett beküldve, ellenőrizte: '+actor+' | '+note.strip(),
+            'updated_by':actor,'updated_at':datetime.now(timezone.utc).isoformat()}
+
+
+def next_open_id(records, selected_id):
+    """Next draft in the current ordering; never submits the next one itself."""
+    eligible = {'draft','prepared'}
+    ids = [r['id'] for r in records]
+    start = ids.index(selected_id)+1 if selected_id in ids else 0
+    ordered = records[start:]+records[:start]
+    return next((r['id'] for r in ordered if r['state'] in eligible), None)
+
+
+def queue_batch(db, records, actor):
+    targets=[r for r in records if r['state']=='prepared']
+    if not targets:
+        raise ValueError('Nincs ellenőrzött, beküldhető reklamáció.')
+    if any(r['state'] in {'queued','processing','uncertain'} for r in records):
+        raise ValueError('Már van futó vagy ellenőrizendő beküldés. Előbb rendezd annak eredményét.')
+    for row in targets:
+        queue_record(row,actor)  # Validate all rows before a single atomic write.
+    result=db.schema('settlement').rpc('queue_route_delay_form_batch',{
+        'p_records':[{'id':r['id'],'content_hash':r['content_hash'],'updated_at':r['updated_at']}for r in targets],
+        'p_actor':actor,
+    }).execute().data
+    if result != len(targets):
+        raise ValueError('A teljes sorba állítás nem igazolható. Töltsd újra a mentett listát.')
+    return result

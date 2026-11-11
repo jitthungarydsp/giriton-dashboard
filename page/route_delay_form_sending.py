@@ -1,7 +1,7 @@
 """Admin review page: saved data generates fresh, direct Google Form links."""
 import hashlib
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pandas as pd
 import streamlit as st
@@ -29,6 +29,44 @@ def render_route_delay_form_sending(get_db, user):
             st.session_state[KEY] = []
             st.session_state[KEY+'_persistent'] = False
     persistent = st.session_state[KEY+'_persistent']
+    if persistent and st.session_state.get(KEY+'_batch_waiting'):
+        try:
+            st.session_state[KEY]=service.load_records(get_db())
+            progress=st.session_state[KEY]
+            active=sum(r['state']in{'queued','processing'}for r in progress)
+            uncertain=sum(r['state']=='uncertain'for r in progress)
+            st.info(f'Beküldési sor: {active} várakozó vagy folyamatban; {uncertain} ellenőrizendő eredmény.')
+            if active or uncertain:
+                from streamlit_autorefresh import st_autorefresh
+                st_autorefresh(interval=3000,key='route_batch_submission_poll')
+            else:
+                st.session_state.pop(KEY+'_batch_waiting',None)
+                st.session_state[KEY+'_notice']='A beküldési sor feldolgozása befejeződött. Az eredmények a státuszoszlopban láthatók.'
+        except Exception:
+            st.warning('A beküldési sor állapota most nem olvasható. Új beküldés helyett töltsd újra a mentett listát.')
+    if persistent and st.session_state.get(KEY+'_waiting'):
+        try:
+            refreshed=service.load_records(get_db())
+            st.session_state[KEY]=refreshed
+            waiting=st.session_state[KEY+'_waiting']
+            result=next((r for r in refreshed if r['id']==waiting),None)
+            if result and result['state']=='sent':
+                st.session_state.pop(KEY+'_waiting',None)
+                candidates=st.session_state.pop(KEY+'_next_candidates',[])
+                ordered=[next(r for r in refreshed if r['id']==key) for key in candidates
+                         if any(r['id']==key for r in refreshed)]
+                next_id=service.next_open_id(ordered,waiting)
+                if next_id:
+                    st.session_state['route_form_selected']=next_id
+                st.session_state[KEY+'_notice']='A Google visszaigazolta a beküldést. A következő nyitott reklamáció kiválasztva.' if next_id else 'A Google visszaigazolta a beküldést. Nincs több nyitott tétel a listában.'
+            elif result and result['state'] not in {'queued','processing'}:
+                st.session_state.pop(KEY+'_waiting',None)
+                st.session_state.pop(KEY+'_next_candidates',None)
+        except Exception:
+            st.warning('A beküldés állapota most nem olvasható. Ne indíts új beküldést; töltsd újra a mentett listát.')
+        if st.session_state.get(KEY+'_waiting'):
+            from streamlit_autorefresh import st_autorefresh
+            st_autorefresh(interval=3000,key='route_submission_poll')
     if not persistent:
         st.info('A tartós mentés most nem érhető el. A feltöltött tételek ebben a munkamenetben szerkeszthetők; kilépés előtt töltsd le a munkapéldányt.')
 
@@ -84,8 +122,26 @@ def render_route_delay_form_sending(get_db, user):
         st.info('Töltsd be az októberi kategóriajavaslatokat tartalmazó Excelt.')
         return
     cols = st.columns(3)
-    for col,state in zip(cols,service.STATES):
+    for col,state in zip(cols,['draft','prepared','sent']):
         col.metric(service.STATES[state],sum(r['state']==state for r in records))
+    ready=sum(r['state']=='prepared'for r in records)
+    blocked=any(r['state']in{'queued','processing','uncertain'}for r in records)
+    st.subheader('Összes reklamáció beküldése')
+    st.write(f'{ready} ellenőrzött reklamáció küldhető be. '
+             f"{sum(r['state']=='draft'for r in records)} tervezet még ellenőrzésre vár. "
+             f"{sum(r['state']=='sent'for r in records)} tétel már beküldve.")
+    st.caption('A gomb a teljes betöltött lista ellenőrzött tételeit küldi be, a keresési szűrőtől függetlenül. '
+               'A Google-robot egyenként kitölti az űrlapokat és megnyomja a Küldést. Az első hibánál megáll.')
+    if st.button(f'Összes ellenőrzött reklamáció beküldése ({ready})',type='primary',
+                 use_container_width=True,disabled=not persistent or not ready or blocked,key='route_submit_all'):
+        try:
+            count=service.queue_batch(get_db(),records,actor)
+            st.session_state[KEY]=service.load_records(get_db())
+            st.session_state[KEY+'_batch_waiting']=True
+            st.session_state[KEY+'_notice']=f'{count} reklamáció beküldésre sorba állítva.'
+            st.rerun()
+        except Exception as exc:
+            st.error(f'A beküldési sor nem indult el: {exc}')
     st.download_button('Munkapéldány letöltése',json.dumps(records,ensure_ascii=False,indent=2,default=str).encode('utf-8'),
                        file_name='reklamacio_munkapeldany.json',mime='application/json',key='route_form_backup')
     c1,c2,c3 = st.columns([2,1,1])
@@ -113,6 +169,44 @@ def render_route_delay_form_sending(get_db, user):
         st.success(f"Beküldöttként rögzítve: {record.get('submitted_at','')}")
         st.write(record.get('confirmation',''))
         st.info('A tétel zárolt, így nem készül belőle véletlenül újabb beküldés.')
+        return
+    if record['state'] in {'queued','processing'}:
+        st.info('A reklamáció beküldésre vár.' if record['state']=='queued' else 'A robot kitölti és beküldi az űrlapot. A Google visszaigazolására várunk.')
+        st.caption('A külön Google-robotnak futnia kell. A következő reklamáció nem kerül automatikusan beküldésre.')
+        if record['state']=='processing' and (datetime.now(timezone.utc)-datetime.fromisoformat(record['updated_at'].replace('Z','+00:00'))).total_seconds()>300:
+            if st.button('Elakadt beküldés megjelölése ellenőrizendőként',key='route_stuck_'+record['id']):
+                try:
+                    save(record,{**record,'state':'uncertain','confirmation':'A feldolgozás megszakadhatott; kézi ellenőrzés szükséges.',
+                                 'updated_at':datetime.now(timezone.utc).isoformat(),'updated_by':actor})
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+        if not st.session_state.get(KEY+'_waiting'):
+            st.session_state[KEY+'_waiting']=record['id']
+            st.session_state[KEY+'_next_candidates']=[r['id'] for r in filtered]
+            st.rerun()
+        return
+    if record['state']=='uncertain':
+        st.error('A beküldés eredménye bizonytalan. Ne küldd újra: ellenőrizd a Google-űrlapot vagy a visszaigazoló levelet.')
+        st.write(record.get('confirmation',''))
+        with st.form('route_uncertain_confirmation_'+record['id']):
+            proof=st.text_input('Sikeres beküldés visszaigazolása')
+            ack=st.checkbox('Ellenőriztem: a Google rögzítette ezt a reklamációt')
+            if st.form_submit_button('Igazolt beküldés rögzítése'):
+                try:
+                    save(record,service.confirm_record(record,proof,actor,ack))
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+        with st.expander('Ellenőriztem: nem történt beküldés'):
+            note=st.text_input('Hol ellenőrizted a beküldés hiányát?',key='route_not_sent_note_'+record['id'])
+            verified=st.checkbox('A Google-válaszok vagy visszaigazolások alapján nem került beküldésre',key='route_not_sent_ack_'+record['id'])
+            if st.button('Feloldás új beküldéshez',key='route_not_sent_'+record['id']):
+                try:
+                    save(record,service.resolve_not_sent(record,note,actor,verified))
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
         return
     revision = record['updated_at']
     with st.form('route_form_edit_'+record['id']+'_'+revision):
@@ -158,6 +252,19 @@ def render_route_delay_form_sending(get_db, user):
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
+    st.caption('A Beküldés gomb a mentett adatokat átadja a Google-robotnak. A robot a Küldés gombot is megnyomja; csak sikeres visszaigazolás után lépünk tovább.')
+    if not persistent:
+        st.info('Az egygombos beküldéshez tartós adatbázis-mentés szükséges.')
+    if st.button('Beküldés és következő futár',type='primary',use_container_width=True,
+                 disabled=not persistent or record['state']!='prepared' or bool(draft['warnings']),
+                 key='route_submit_next_'+record['id']):
+        try:
+            save(record,service.queue_record(record,actor))
+            st.session_state[KEY+'_waiting']=record['id']
+            st.session_state[KEY+'_next_candidates']=[r['id']for r in filtered]
+            st.rerun()
+        except Exception as exc:
+            st.error(f'A beküldés nem indult el: {exc}')
     with st.expander('Igazolt beküldés rögzítése'):
         confirmation = st.text_input('Visszaigazolás hivatkozása vagy azonosítható megjegyzése',key='route_form_confirmation_'+record['id'])
         acknowledged = st.checkbox('Láttam a Google sikeres beküldési visszaigazolását',key='route_form_ack_'+record['id'])
