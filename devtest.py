@@ -662,6 +662,7 @@ logout_button()
 devtest_page_options = ["Elszamolas"]
 if can_view_accounting_invoice_archive(user):
     devtest_page_options.append("Számla archívum")
+    devtest_page_options.append("Reklamációk elküldése")
 if can_approve_pwa_registrations(user):
     devtest_page_options.append("PWA kérelmek")
     devtest_page_options.append("Futárok jóváhagyása")
@@ -26232,6 +26233,12 @@ if __name__ == "__main__":
         show_pwa_requests_page()
     elif devtest_page == "Futárok jóváhagyása":
         show_pwa_registration_approval_page()
+    elif devtest_page == "Reklamációk elküldése":
+        if can_view_accounting_invoice_archive(user):
+            from page.route_delay_form_sending import render_route_delay_form_sending
+            render_route_delay_form_sending(get_db, user)
+        else:
+            st.error("Ehhez a menühöz nincs jogosultságod.")
     else:
         show_new_settlement_page()
 
