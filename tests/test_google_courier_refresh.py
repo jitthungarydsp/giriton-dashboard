@@ -3,7 +3,7 @@ import re
 import unittest
 import unicodedata
 from calendar import monthrange
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -13,7 +13,7 @@ class GoogleCourierRefreshTest(unittest.TestCase):
     def setUp(self):
         path = Path(__file__).resolve().parents[1] / 'scripts/import_google_bonus_malus_adjustments.py'
         tree = ast.parse(path.read_text(encoding='utf-8'))
-        self.ns = dict(re=re, requests=Mock(), unicodedata=unicodedata, date=date, datetime=datetime,
+        self.ns = dict(re=re, requests=Mock(), unicodedata=unicodedata, date=date, datetime=datetime, timedelta=timedelta,
                        monthrange=monthrange, Any=Any, SOURCE_PREFIX='google_bonus_malus',
                        DEFAULT_SHEET_ID='sheet', DEFAULT_GID=1)
         # Isolate transformation/reconciliation from credentials and network.
@@ -110,6 +110,24 @@ class GoogleCourierRefreshTest(unittest.TestCase):
         self.assertEqual(self.ns['parse_sheet_datetime']('2026.10.10. 11:16:09.585').month, 10)
         self.assertEqual(self.ns['adjustment_types_for_row']('', -25000, 10000),
                          [('correction_income', 25000), ('bonus', 10000)])
+
+    def test_old_minute_only_sheet_date_does_not_block_october_refresh(self):
+        self.sheet([self.row(when='2026.03.25. 20:48'), self.row()])
+        result = self.refresh()
+        self.assertEqual(result['inserted'], 1)
+        self.ns['worksheet_by_gid'].return_value.get_all_values.assert_called_with(
+            value_render_option='UNFORMATTED_VALUE', date_time_render_option='SERIAL_NUMBER')
+
+    def test_sheet_serial_dates_keep_month_and_time_without_locale_guessing(self):
+        values = [datetime(2026, 3, 25, 20, 48), datetime(2026, 10, 10, 11, 16, 9),
+                  datetime(2026, 10, 31, 18, 56)]
+        serials = [(d-datetime(1899, 12, 30)).total_seconds()/86400 for d in values]
+        for value, serial in zip(values, serials):
+            parsed = self.ns['parse_sheet_datetime'](serial)
+            self.assertEqual(parsed.date(), value.date())
+            self.assertLess(abs((parsed-value).total_seconds()), .001)
+        self.sheet([self.row(when=serials[0]), self.row(when=serials[1])])
+        self.assertEqual(self.refresh()['inserted'], 1)
 
 
 if __name__ == '__main__':

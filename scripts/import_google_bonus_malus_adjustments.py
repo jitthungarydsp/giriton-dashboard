@@ -13,7 +13,7 @@ import re
 import sys
 import unicodedata
 from calendar import monthrange
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +102,11 @@ def parse_sheet_datetime(value: Any) -> datetime | None:
         return value
     if isinstance(value, date):
         return datetime.combine(value, datetime.min.time())
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        # Google Sheets unformatted dates use days since 1899-12-30.
+        if 0 < value < 100000:
+            return datetime(1899, 12, 30) + timedelta(days=float(value))
+        return None
     text = str(value or "").strip()
     if not text:
         return None
@@ -114,7 +119,10 @@ def parse_sheet_datetime(value: Any) -> datetime | None:
         "%Y.%m.%d %H:%M:%S.%f",
         "%Y.%m.%d. %H:%M:%S",
         "%Y.%m.%d %H:%M:%S",
+        "%Y.%m.%d. %H:%M",
+        "%Y.%m.%d %H:%M",
         "%Y.%m.%d.",
+        "%Y.%m.%d",
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d",
     ]
@@ -196,7 +204,12 @@ def worksheet_by_gid(sheet_id: str, gid: int):
 
 def rows_from_sheet(sheet_id: str, gid: int, *, courier_name: str | None = None) -> list[dict[str, Any]]:
     worksheet = worksheet_by_gid(sheet_id, gid)
-    values = worksheet.get_all_values()
+    # Read underlying dates/numbers, not locale-dependent display text. Older
+    # source rows display only hours/minutes, while new rows include seconds.
+    values = worksheet.get_all_values(
+        value_render_option="UNFORMATTED_VALUE",
+        date_time_render_option="SERIAL_NUMBER",
+    )
     if not values or len(values[0]) < 8:
         raise ValueError("Hiányos Google Sheet fejléc; a korábbi tételek változatlanok maradnak.")
     result: list[dict[str, Any]] = []
