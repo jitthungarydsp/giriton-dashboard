@@ -27,8 +27,21 @@ class RouteDelayDraftTest(unittest.TestCase):
         self.assertEqual(fields['entry.584723978'], ['1557743'])
         self.assertEqual(draft['state'],'draft')
         self.assertEqual(len(draft['warnings']),3)
-        self.assertIn('Okság nem bizonyított',fields['entry.1757898114'][0])
+        description=fields['entry.1757898114'][0]
+        self.assertEqual(description, 'Tisztelt Megbízó!\n\nÁrvíz & Teszt kolléga jelezte, hogy a '
+                         '1557743 azonosítójú túrán az alábbi ok miatt késett: Optimalizálatlan túra.\n\n'
+                         'Kérem szépen a reklamáció feldolgozását.')
+        for internal in ['JITT reklamáció:', 'ELLENŐRZENDŐ', 'Okság nem bizonyított', 'Végleges reklamációindoklás hiányzik']:
+            self.assertNotIn(internal,description)
+        self.assertIn('Végleges reklamációindoklás hiányzik',draft['warnings'])
         self.assertNotIn('\n · ',draft['payload']['description'])
+
+    def test_saved_final_reason_is_kept_in_the_letter(self):
+        row=self.row();row['Reklamáció indoklása']='A diszpécserrel egyeztetett részletes indoklás.'
+        draft=drafts.prepare_row(row,2)
+        description=draft['payload']['description']
+        self.assertIn('\n\nA diszpécserrel egyeztetett részletes indoklás.\n\n',description)
+        self.assertEqual(draft['evidence'],'4 cím 15 perc alatt')
 
     def test_missing_identity_and_invalid_category_block_draft(self):
         for key,value in [('Futár ID',''),('Túra ID',''),('Javasolt kategória száma',9)]:

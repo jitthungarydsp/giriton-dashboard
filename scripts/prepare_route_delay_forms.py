@@ -40,6 +40,8 @@ def prepare_row(row, source_row):
     if category not in range(1, 9):
         raise ValueError(f'Érvénytelen kategória a {source_row}. sorban.')
     proposal = text(row.get('Kategóriajavaslat'))
+    if not proposal:
+        raise ValueError(f'Hiányzik a késés kategóriája a {source_row}. sorban.')
     final_reason = text(row.get('Reklamáció indoklása'))
     agreed = text(row.get('Kategória futárral egyeztetve'))
     agreement_confirmed = agreed.casefold() in {'igen', 'i', 'yes', 'true', '1'}
@@ -52,22 +54,20 @@ def prepare_row(row, source_row):
         warnings.append('Végleges reklamációindoklás hiányzik')
     if match == 'Eltérés' and not checked:
         warnings.append('Forráseltérés ellenőrizendő')
-    lines = ['ELLENŐRZENDŐ ŰRLAPTERVEZET – beküldés előtt ellenőrizendő.',
-             f"Raktár: {text(row.get('Raktár'))}", f'Túra: {route_id}',
-             f'Kategóriajavaslat: {category}. {proposal}',
-             f"A besorolás alapja: {text(row.get('Besorolás megbízhatósága'))}",
-             '', f"Forrásadat / megfontolás: {text(row.get('Adat / megfontolás'))}"]
+    lines = ['Tisztelt Megbízó!', '',
+             f'{name} kolléga jelezte, hogy a {route_id} azonosítójú túrán '
+             f'az alábbi ok miatt késett: {proposal.rstrip(".!?")}.']
     if final_reason:
-        lines.extend(['', 'Rögzített reklamációindoklás:', final_reason])
-    if match:
-        lines.append(f'Összesítő és részletforrás egyezése: {match}')
-    if warnings:
-        lines.extend(['', 'Beküldés előtti ellenőrzések:', *warnings])
+        lines.extend(['', final_reason])
+    lines.extend(['', 'Kérem szépen a reklamáció feldolgozását.'])
+    message = '\n'.join(lines)
     identity = f'route-delay-{day.isoformat()}-{courier_id}-{route_id}'
     complaint = dict(id=identity, courier_id=courier_id, courier_name=name,
-                     message='\n'.join(lines), affected_items=[dict(date=day.isoformat(), routeId=route_id)])
+                     message=message, affected_items=[dict(date=day.isoformat(), routeId=route_id)])
     payload = form.build_payload(complaint, category='Túra alatti késés', route_id=route_id)
-    payload['description'] = payload['description'].removesuffix('\n · ')
+    # Keep internal identifiers, evidence and review warnings in the manager,
+    # not in the letter sent to the partner. The form has separate identity fields.
+    payload['description'] = message
     fields = {'usp': 'pp_url', 'entry.493012323': 'Just in Time Kft.',
               'entry.608543996': 'Túra alatti késés / Route delay',
               'entry.1629541155': courier_id, 'entry.139333198': name,
@@ -75,6 +75,8 @@ def prepare_row(row, source_row):
     return dict(source_row=source_row, date=day.isoformat(), courier_id=courier_id,
                 courier_name=name, route_id=route_id, warehouse=text(row.get('Raktár')),
                 suggested_category=category, category_label=proposal, warnings=warnings,
+                evidence=text(row.get('Adat / megfontolás')), source_match=match,
+                classification_basis=text(row.get('Besorolás megbízhatósága')),
                 state='draft', payload=payload, prefill_url=form.FORM_URL + '?' + urlencode(fields))
 
 

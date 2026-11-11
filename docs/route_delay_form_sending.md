@@ -6,6 +6,7 @@ Az admin és pénzügyi szerepkörök oldalsó menüjében külön oldal kezeli 
 2. Importálás előtt választható, hogy a korábbi, még be nem küldött tervezetek felülírhatók-e. Alapesetben megmaradnak a korábbi szerkesztések.
 3. Szűrj hónapra, futárra, túrára vagy státuszra; válaszd ki a kezelendő tételt.
 4. Szerkeszd és mentsd az adatokat. A Google-űrlap linkje mindig az elmentett sorból készül, helyi indítóprogram nélkül.
+   A partnernek szánt leírás rövid, „Tisztelt Megbízó!” megszólítású levél, a futár nevével, túraszámával, kategóriájával és az opcionális végleges indoklással. A belső forrásadatok és ellenőrzési figyelmeztetések a kezelőfelületen maradnak.
 5. Az előnézet nem jelent ellenőrzést vagy beküldést. Az „Adatok ellenőrizve” csak végleges indoklás és szükséges egyeztetések után válik elérhetővé.
 6. A Google-űrlapon kézzel történik a beküldés. Kizárólag annak visszaigazolása után rögzítsd a beküldést, bizonyítékhivatkozással vagy azonosítható megjegyzéssel.
 
