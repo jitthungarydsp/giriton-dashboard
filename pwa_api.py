@@ -14858,10 +14858,12 @@ def build_route_detail_item_from_hub_stat(row: dict[str, Any]) -> dict[str, Any]
         "plannedReturnAt": row.get("planned_return_at"),
         "plannedLoadingMinutes": None,
         "waitingMinutes": row.get("waiting_minutes"),
-        "loadingMinutes": row.get("loading_minutes"),
+        "loadingMinutes": route_detail_minutes_between(row.get("route_assigned_at"), row.get("departed_at")),
         "plannedRouteMinutes": row.get("planned_route_minutes"),
-        "routeMinutes": row.get("actual_route_minutes"),
-        "totalMinutes": row.get("total_minutes"),
+        # Older saved statistics included loading in both duration columns.
+        # Derive from recorded events to correct existing months as well.
+        "routeMinutes": route_detail_minutes_between(row.get("departed_at"), row.get("returned_at")),
+        "totalMinutes": route_detail_minutes_between(row.get("route_assigned_at"), row.get("returned_at")),
         "vehiclePlate": str(row.get("vehicle_plate") or "").strip(),
         "vehicleModel": "",
         "vehicleLabel": str(row.get("vehicle_plate") or "").strip(),
@@ -14887,7 +14889,7 @@ def build_route_detail_item_from_hub_stat(row: dict[str, Any]) -> dict[str, Any]
         "sourceStoryText": str(row.get("story_text") or "").strip(),
         "dataSource": "Courier Hub statisztika",
     }
-    item["narrative"] = item["sourceStoryText"] or route_detail_narrative(item)
+    item["narrative"] = route_detail_narrative(item)
     return item
 
 
@@ -16707,11 +16709,11 @@ def hub_stat_daily_history_row(row: dict[str, Any], route_notes: dict[tuple[str,
         "plannedReturn": planned_return,
         "realReturn": returned,
         "queueWaitMinutes": row.get("waiting_minutes"),
-        "realLoadingMinutes": row.get("loading_minutes"),
+        "realLoadingMinutes": route_detail_minutes_between(route_assigned, departed),
         "plannedRouteMinutes": row.get("planned_route_minutes"),
-        "realRouteMinutes": row.get("actual_route_minutes"),
-        "totalRouteMinutes": row.get("total_minutes"),
-        "assignedToReturnMinutes": row.get("total_minutes"),
+        "realRouteMinutes": route_detail_minutes_between(departed, returned),
+        "totalRouteMinutes": route_detail_minutes_between(route_assigned, returned),
+        "assignedToReturnMinutes": route_detail_minutes_between(route_assigned, returned),
         "gpsDistanceKm": mileage,
         "addressCount": safe_int(row.get("orders") or row.get("stops")),
         "timeWindowLateCount": safe_int(row.get("late_stop_count")),

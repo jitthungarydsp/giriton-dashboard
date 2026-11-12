@@ -904,7 +904,7 @@ def build_route_stat(
         "late_stop_count": late_count,
         "late_stop_minutes": late_minutes,
         "planned_route_minutes": minutes_between(planned_departure, planned_return),
-        "actual_route_minutes": minutes_between(route_assigned, returned),
+        "actual_route_minutes": minutes_between(departed, returned),
         "waiting_minutes": minutes_between(queue_started, route_assigned),
         "loading_minutes": minutes_between(route_assigned, departed),
         "total_minutes": minutes_between(route_assigned, returned),
