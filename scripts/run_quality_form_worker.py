@@ -113,6 +113,36 @@ class GoogleForm:
                                 'zárd be az ablakát, majd GoogleRobot.bat check-login. A beküldés nem indult el.')
         if not self.driver.find_elements(By.CSS_SELECTOR,'form[action*="/formResponse"]'):
             raise ValueError('Az űrlap nem elérhető.')
+        self.dismiss_draft_dialog()
+
+    def dismiss_draft_dialog(self):
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        for dialog in self.driver.find_elements(By.CSS_SELECTOR,'[role="dialog"], [role="alertdialog"]'):
+            if not dialog.is_displayed():
+                continue
+            text=dialog.text
+            if not isinstance(text,str):
+                continue
+            normalized=' '.join(text.casefold().split())
+            if not any(title in normalized for title in (
+                    'a jelenlegi piszkozatot folytatja', 'continue with your current draft')):
+                continue
+            buttons=[node for node in dialog.find_elements(By.CSS_SELECTOR,'[role="button"],button')
+                     if node.is_displayed() and node.text.strip().casefold() in {'folytatás','continue'}]
+            if len(buttons)!=1:
+                # Forms can put the action footer outside the element carrying
+                # role=dialog, or nest multiple button wrappers. Click the one
+                # visible, innermost exact label after recognizing this prompt.
+                label='normalize-space(.)="Folytatás" or normalize-space(.)="Continue"'
+                buttons=[node for node in self.driver.find_elements(By.XPATH,
+                         f'//*[{label}][not(.//*[{label}])]') if node.is_displayed()]
+            if len(buttons)!=1:
+                raise FormInteractionError('Piszkozatablak: nem azonosítható egyértelmű Folytatás gomb.')
+            # Keep the current prefilled complaint; never restore another route's draft.
+            self.click_control(buttons[0],'Jelenlegi piszkozat folytatása',dismiss_draft=False)
+            WebDriverWait(self.driver,10).until(EC.invisibility_of_element(dialog))
 
     def question(self, item):
         from selenium.webdriver.common.by import By
@@ -120,13 +150,18 @@ class GoogleForm:
         if len(nodes)!=1:raise ValueError('A Google-űrlap mezői megváltoztak; új ellenőrzés szükséges.')
         return nodes[0].find_element(By.XPATH,'./ancestor::*[@role="listitem"][1]')
 
-    def wait_for_control(self, element, step, timeout=15):
+    def wait_for_control(self, element, step, timeout=15, dismiss_draft=True):
         from selenium.webdriver.support.ui import WebDriverWait
         print('Űrlap lépés: '+step,flush=True)
+        if dismiss_draft:
+            self.dismiss_draft_dialog()
         # Scroll only; never bypass Google handlers with a JavaScript click.
         self.driver.execute_script(
             'arguments[0].scrollIntoView({block:"center",inline:"nearest"});',element)
         def uncovered(_):
+            # Google may display the saved-draft prompt after the form loads.
+            if dismiss_draft:
+                self.dismiss_draft_dialog()
             return element.is_displayed() and element.is_enabled() and self.driver.execute_script('''
                 const el=arguments[0], r=el.getBoundingClientRect();
                 const x=(Math.max(0,r.left)+Math.min(innerWidth,r.right))/2;
@@ -139,12 +174,12 @@ class GoogleForm:
         except Exception as exc:
             raise FormInteractionError(step+': a vezérlő nem vált kattinthatóvá.') from exc
 
-    def click_control(self, element, step, timeout=15):
+    def click_control(self, element, step, timeout=15, dismiss_draft=True):
         from selenium.common.exceptions import ElementClickInterceptedException
         # Only reversible selection/navigation controls use this helper.
         # Submit is always a separate, single click in the submission worker.
         for attempt in range(2):
-            self.wait_for_control(element,step,timeout)
+            self.wait_for_control(element,step,timeout,dismiss_draft=dismiss_draft)
             try:
                 element.click()
                 return
@@ -155,6 +190,7 @@ class GoogleForm:
     def ensure_email_consent(self):
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import WebDriverWait
+        self.dismiss_draft_dialog()
         # Google can render either an ARIA checkbox or a native checkbox.
         boxes=[el for el in self.driver.find_elements(By.CSS_SELECTOR,
                '[role="checkbox"],input[type="checkbox"]') if el.is_displayed()]

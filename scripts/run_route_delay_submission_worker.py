@@ -82,6 +82,14 @@ class SubmissionPage(worker.GoogleForm):
         return f'Google Forms: {receipt} | {datetime.now(timezone.utc).isoformat()}'
 
 
+def pause_for_inspection(message):
+    print(message,flush=True)
+    try:
+        input('A Chrome nyitva marad. Ellenőrizd az oldalt és a hibát. Enter: a robotablak bezárása. ')
+    except EOFError:
+        pass
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     mode=parser.add_mutually_exclusive_group(required=True)
@@ -120,6 +128,9 @@ def main():
             page.fill(draft['payload'])
             print('ELŐNÉZET: minden mező kitöltve. Nem kattintottunk a Küldésre; a DB állapota változatlan.',flush=True)
             input('Ellenőrizd a típust, futárt, túraszámot és szöveget. Enter: ablak bezárása beküldés nélkül.')
+        except Exception as exc:
+            detail=str(exc) if isinstance(exc,(worker.FormInteractionError,worker.LoginRequired)) else type(exc).__name__
+            pause_for_inspection('Előnézet közben megállt: '+detail+'. Nem történt beküldés.')
         finally:
             driver.quit()
         return
@@ -142,13 +153,13 @@ def main():
                 result=process_record(rows[0],lambda previous,replacement:service.store_edit(db,previous,replacement),lambda:page)
                 print('Reklamáció:',result['id'],result['state'],flush=True)
                 if result['state']!='sent':
-                    print('A robot megállt. Ellenőrizd az űrlapot és a Google-visszaigazolást.',flush=True)
+                    pause_for_inspection('A robot megállt. Ellenőrizd az űrlapot és a Google-visszaigazolást. Ne küldd be kézzel ellenőrzés közben.')
                     return
             except worker.LoginRequired as exc:
-                print(str(exc),flush=True)
+                pause_for_inspection(str(exc))
                 return
-            except Exception:
-                print('A robot megállt. A mentett állapotot ellenőrizni kell; nincs automatikus újrabeküldés.',flush=True)
+            except Exception as exc:
+                pause_for_inspection('A robot megállt: '+type(exc).__name__+'. A mentett állapotot ellenőrizni kell; nincs automatikus újrabeküldés.')
                 return
             finally:
                 if driver:

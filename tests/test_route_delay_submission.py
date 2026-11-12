@@ -1,6 +1,6 @@
 import importlib.util
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -10,8 +10,56 @@ service=sender.service
 
 
 class SubmissionTest(unittest.TestCase):
+    def test_current_draft_is_kept_before_email_checkbox_is_checked(self):
+        from selenium.webdriver.remote.webelement import WebElement
+        driver=Mock();dialog=Mock(spec=WebElement);keep=Mock();restore=Mock();box=Mock()
+        dialog.text='A jelenlegi piszkozatot folytatja?'
+        keep.text='Folytatás';restore.text='A korábbi piszkozat használata'
+        dialog.find_elements.return_value=[restore,keep]
+        events=[];checked=[False]
+        def continue_current():
+            events.append('continue');dialog.is_displayed.return_value=False
+        keep.click.side_effect=continue_current
+        def check():
+            events.append('checkbox');checked[0]=True
+        box.click.side_effect=check
+        box.get_attribute.side_effect=lambda key:'true' if key=='aria-checked' and checked[0] else ''
+        box.is_selected.side_effect=lambda:checked[0]
+        box.find_element.return_value.text='robot@example.com'
+        driver.find_elements.side_effect=lambda by,selector:[dialog] if 'dialog' in selector else [box]
+        sender.worker.GoogleForm(driver,'robot@example.com').ensure_email_consent()
+        self.assertEqual(events,['continue','checkbox'])
+        restore.click.assert_not_called()
+
+    def test_unknown_or_ambiguous_dialog_never_clicks_arbitrary_button(self):
+        driver=Mock();dialog=Mock();button=Mock();button.text='Folytatás'
+        dialog.text='Másik művelet';dialog.find_elements.return_value=[button]
+        driver.find_elements.side_effect=lambda by,selector:[] if by=='xpath' else [dialog]
+        page=sender.worker.GoogleForm(driver,'robot@example.com')
+        page.dismiss_draft_dialog();button.click.assert_not_called()
+        dialog.text='A jelenlegi piszkozatot folytatja?'
+        dialog.find_elements.return_value=[button,button]
+        with self.assertRaises(sender.worker.FormInteractionError):page.dismiss_draft_dialog()
+        button.click.assert_not_called()
+
+    def test_draft_action_outside_dialog_uses_unique_visible_exact_label(self):
+        from selenium.webdriver.remote.webelement import WebElement
+        driver=Mock();dialog=Mock(spec=WebElement);label=Mock();hidden=Mock()
+        dialog.text='A jelenlegi piszkozatot folytatja?';dialog.find_elements.return_value=[]
+        hidden.is_displayed.return_value=False
+        driver.find_elements.side_effect=lambda by,selector:[hidden,label] if by=='xpath' else [dialog]
+        label.click.side_effect=lambda:setattr(dialog.is_displayed,'return_value',False)
+        sender.worker.GoogleForm(driver,'robot@example.com').dismiss_draft_dialog()
+        label.click.assert_called_once();hidden.click.assert_not_called()
+
+    def test_inspection_waits_for_user_before_browser_cleanup(self):
+        with patch('builtins.input',return_value='') as prompt:
+            sender.pause_for_inspection('Megállt')
+        prompt.assert_called_once()
+
     def test_covered_control_is_never_clicked(self):
         driver=Mock();element=Mock();driver.execute_script.return_value=False
+        driver.find_elements.return_value=[]
         page=sender.worker.GoogleForm(driver,'robot@example.com')
         with self.assertRaisesRegex(sender.worker.FormInteractionError,'Partnerlista'):
             page.click_control(element,'Partnerlista',timeout=0)
