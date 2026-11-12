@@ -55,6 +55,8 @@ def selected_columns(value):
         raise ValueError('Érvénytelen vagy ismétlődő riportoszlop.')
     if 'routeId' not in keys:
         keys.insert(0, 'routeId')
+    if 'date' not in keys:
+        keys.insert(0, 'date')
     return keys
 
 

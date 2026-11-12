@@ -14,15 +14,18 @@ test('Route ID is mandatory for old and empty report selections',()=>{
     const ctx=reportContext(selection);
     const keys=Array.from(ctx.routeReportSelectedFields(),field=>field.key);
     assert.equal(keys.filter(key=>key==='routeId').length,1);
+    assert.equal(keys.filter(key=>key==='date').length,1);
     ctx.routeReportMoveField('routeId','available');
     assert.ok(ctx.routeReportSelectedFields().some(field=>field.key==='routeId'));
+    ctx.routeReportMoveField('date','available');
+    assert.ok(ctx.routeReportSelectedFields().some(field=>field.key==='date'));
   }
 });
 test('URL includes required Route ID with an older selection',()=>{
   const ctx=reportContext(['tip','courierName']);
   Object.assign(ctx,{URLSearchParams,$:()=>null});ctx.state.statisticsMonth='2026-10';
   vm.runInNewContext(source.slice(source.indexOf('function routeDetailsExcelUrl('),source.indexOf('function monthlyShiftRouteReportExcelUrl(')),ctx);
-  assert.equal(new URL(ctx.routeDetailsExcelUrl(),'https://example.test').searchParams.get('columns'),'routeId,tip,courierName');
+  assert.equal(new URL(ctx.routeDetailsExcelUrl(),'https://example.test').searchParams.get('columns'),'date,routeId,tip,courierName');
 });
 test('Excel URL carries selected columns in order along with row filters',()=>{
   const ctx={URLSearchParams,state:{statisticsMonth:'2026-10',routeDetailsQuery:'Teszt',routeDetailsType:'normal'},

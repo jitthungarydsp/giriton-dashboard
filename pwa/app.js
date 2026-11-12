@@ -3488,13 +3488,14 @@ function routeReportSelectedFields() {
   let keys = [...new Set((state.routeDetailsReportFields || []).filter((key) => fieldsByKey[key]))];
   if (!keys.length) keys = [...DEFAULT_ROUTE_REPORT_FIELDS];
   if (!keys.includes("routeId")) keys.unshift("routeId");
+  if (!keys.includes("date")) keys.unshift("date");
   return keys.map((key) => fieldsByKey[key]).filter(Boolean);
 }
 
 function routeReportMoveField(key, target) {
   const fieldsByKey = routeReportFieldsByKey();
   if (!fieldsByKey[key]) return;
-  if (key === "routeId" && target !== "selected") return;
+  if (["date", "routeId"].includes(key) && target !== "selected") return;
   const current = routeReportSelectedFields().map((field) => field.key);
   if (target === "selected") {
     if (!current.includes(key)) state.routeDetailsReportFields = [...current, key];
@@ -3511,9 +3512,9 @@ function renderRouteReportBuilder() {
   if (!availableTarget || !selectedTarget) return;
   const selectedKeys = new Set(routeReportSelectedFields().map((field) => field.key));
   const renderChip = (field, zone) => `
-    <button class="route-report-field-chip" type="button" draggable="${field.key !== "routeId"}" data-route-report-field="${escapeHtml(field.key)}" data-route-report-zone-source="${zone}">
+    <button class="route-report-field-chip" type="button" draggable="${!["date", "routeId"].includes(field.key)}" data-route-report-field="${escapeHtml(field.key)}" data-route-report-zone-source="${zone}">
       <strong>${escapeHtml(field.label)}</strong>
-      <small>${field.key === "routeId" ? "kötelező" : zone === "selected" ? "látható" : "hozzáadás"}</small>
+      <small>${["date", "routeId"].includes(field.key) ? "kötelező" : zone === "selected" ? "látható" : "hozzáadás"}</small>
     </button>
   `;
   availableTarget.innerHTML = ROUTE_REPORT_FIELDS
@@ -4102,14 +4103,12 @@ function renderRouteDetails() {
           <table class="route-details-table">
         <thead>
           <tr>
-            <th>Route ID</th>
             ${selectedFields.map((field) => `<th>${escapeHtml(field.column)}</th>`).join("")}
           </tr>
         </thead>
         <tbody>
           ${rows.map((row, index) => `
             <tr class="${index === selectedIndex ? "active" : ""}" data-route-detail-index="${index}">
-              <td><strong>${escapeHtml(routeDetailValue(row.routeId))}</strong></td>
               ${selectedFields.map((field) => `<td>${escapeHtml(field.get(row))}</td>`).join("")}
             </tr>
           `).join("")}
@@ -4124,6 +4123,7 @@ function renderRouteDetails() {
       </div>
       <p>${escapeHtml(selected.narrative || "Ehhez a route-hoz nincs szöveges részletező.")}</p>
       <div class="route-timeline-grid">
+        <div class="stat-row"><span>Munkanap</span><strong>${escapeHtml(routeDetailValue(selected.date))}</strong></div>
         <div class="stat-row"><span>Futár</span><strong>${escapeHtml(selected.courierName || "-")} (#${escapeHtml(selected.courierId || "-")})</strong></div>
         <div class="stat-row"><span>Raktár</span><strong>${escapeHtml(selected.warehouse || "-")}</strong></div>
         <div class="stat-row"><span>Raktár cím</span><strong>${escapeHtml(selected.warehouseAddress || "-")}</strong></div>
