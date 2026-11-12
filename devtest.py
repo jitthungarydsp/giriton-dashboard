@@ -6691,6 +6691,26 @@ def reserve_row_amount(reserve_row: dict[str, object], column: str) -> float:
     return parse_huf_value(value)
 
 
+def save_insurance_end_date(courier_id: str, reserve_row: dict[str, object], end_date: date | None) -> None:
+    """Update only the identified reserve member; never create or clear balances."""
+    from resources.insurance_cancellation import insurance_end_date
+    end_date = insurance_end_date(end_date)
+    identity_column = next((column for column, value in reserve_row.items()
+                            if normalized_target_reserve_column(column) in {"courierid", "couriernumber", "usernumber", "userid", "driverid"}
+                            and target_reserve_id_key(value) == target_reserve_id_key(courier_id)), None)
+    if not identity_column:
+        raise ValueError("A céltartalék sor futárazonosítója nem igazolható; a dátum nem menthető.")
+    result = (get_db().schema("public").table("courier_target_reserve")
+              .update({"insurance_end_date": end_date.isoformat() if end_date else None})
+              .eq(identity_column, reserve_row[identity_column]).execute().data or [])
+    if len(result) != 1:
+        raise ValueError("A végdátum mentése nem igazolható. Frissítsd az adatokat.")
+    load_target_reserve_status.clear()
+    load_target_reserve_rows_bulk.clear()
+    clear_settlement_overview_data_cache()
+    request_courier_finance_refresh(courier_id)
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_active_reserve_insurance_rule(period_start: date) -> dict[str, object]:
     try:
@@ -6723,7 +6743,10 @@ def calculate_target_reserve_month(
     manual_events: dict[str, float] | None = None,
 ) -> dict[str, object]:
     reserve_row = reserve_status.get("row") or {}
+    from resources.insurance_cancellation import insurance_active_for_period
     insurance_active_before = bool(reserve_status.get("insurance_active"))
+    insurance_deductions_active = insurance_active_for_period(
+        reserve_row, period_start, active=reserve_status.get("insurance_active"))
     rule = load_active_reserve_insurance_rule(period_start or date.today().replace(day=1))
     # The legacy reserve_target_huf field is the monthly cap, not the balance goal.
     reserve_monthly_limit = parse_huf_value(rule.get("reserve_target_huf", RESERVE_TARGET_HUF))
@@ -6733,7 +6756,7 @@ def calculate_target_reserve_month(
     reserve_before = resolve_target_reserve_opening_balance(courier_id, period_start, reserve_row, previous_month)
 
     remaining_to_target = max(reserve_balance_limit - reserve_before, 0)
-    should_top_up_reserve = insurance_active_before and reserve_monthly_limit > 0 and remaining_to_target > 0
+    should_top_up_reserve = insurance_deductions_active and reserve_monthly_limit > 0 and remaining_to_target > 0
     calculated_addition = round(max(float(payable_before_insurance), 0.0) * reserve_rate) if should_top_up_reserve else 0
     reserve_addition = min(calculated_addition, int(round(reserve_monthly_limit)), int(round(remaining_to_target))) if should_top_up_reserve else 0
     manual_events = manual_events if manual_events is not None else (
@@ -6742,9 +6765,11 @@ def calculate_target_reserve_month(
         else {"payment": 0.0, "deduction": 0.0}
     )
     reserve_addition -= parse_huf_value(manual_events.get("deduction")) + parse_huf_value(manual_events.get("payment"))
-    insurance_fee = insurance_fee_rule if insurance_active_before else 0
+    insurance_fee = insurance_fee_rule if insurance_deductions_active else 0
     reserve_after = reserve_before + reserve_addition
-    insurance_active_after = insurance_active_before
+    # Keep the membership flag intact: an end date must not invalidate history
+    # when a later month is closed and an earlier month is recalculated.
+    insurance_active_after = bool(reserve_status.get("insurance_active"))
     payable_after = float(payable_before_insurance) - reserve_addition - insurance_fee
     return {
         "payable_before_insurance_huf": float(payable_before_insurance),
@@ -9251,6 +9276,13 @@ def resolve_target_reserve_month(
     payable_before_insurance: float,
 ) -> dict[str, object]:
     saved = load_target_reserve_monthly(courier_id, period_start, period_end)
+    from resources.insurance_cancellation import insurance_cancelled_for_period
+    if insurance_cancelled_for_period(reserve_status.get("row"), period_start):
+        # Reuse neither a restored snapshot's nor a closed month's stale fees.
+        # Preserve the closed record; reopening is required to persist a revision.
+        calculation = calculate_target_reserve_month(reserve_status, payable_before_insurance, period_start, courier_id)
+        save_target_reserve_monthly(session_id, courier_id, period_start, period_end, calculation)
+        return {**calculation, "status": "in_progress"}
     # An explicit restoration is authoritative until a new manual reserve
     # event occurs. Opening a detail page must not overwrite it with a
     # calculation from the compact overview's different payable subtotal.
@@ -11601,7 +11633,8 @@ def apply_target_reserve_deductions(
             continue
         reserve_status = target_reserve_status_from_rows(courier_id, courier_name, reserve_rows)
         saved_month = monthly_by_id.get(_courier_id_key(courier_id), {})
-        if str(saved_month.get("status") or "").casefold() == "done":
+        from resources.insurance_cancellation import insurance_cancelled_for_period
+        if str(saved_month.get("status") or "").casefold() == "done" and not insurance_cancelled_for_period(reserve_status.get("row"), period_start):
             reserve_month = {
                 "payable_before_insurance_huf": parse_huf_value(saved_month.get("payable_before_insurance_huf")),
                 "reserve_before_huf": parse_huf_value(saved_month.get("reserve_before_huf")),
@@ -21424,8 +21457,10 @@ def render_courier_detail_page() -> None:
 
         reserve1, reserve2 = st.columns(2)
         with reserve1:
-            st.metric("Biztosítási státusz", "Van biztosítása" if reserve_status["insurance_active"] else "Nincs biztosítása")
-            st.caption("Forrás: courier_target_reserve.insurance_active")
+            from resources.insurance_cancellation import insurance_active_for_period
+            period_insured = insurance_active_for_period(reserve_row, period_start, reserve_status["insurance_active"])
+            st.metric("Biztosítási státusz", "Van biztosítása" if period_insured else "Nincs biztosítása")
+            st.caption("A kiválasztott elszámolási hónapra, a biztosítás végdátumával együtt.")
 
         with reserve2:
             st.metric("Aktuális céltartalék", format_huf(reserve_amount))
@@ -21435,6 +21470,28 @@ def render_courier_detail_page() -> None:
             elif not reserve_row:
                 st.warning(f"A {courier_id} Courier ID-hoz nem található courier_target_reserve sor.")
 
+        st.divider()
+        st.markdown("##### Biztosítás lemondása")
+        from resources.insurance_cancellation import insurance_end_date
+        current_end = insurance_end_date(reserve_row.get("insurance_end_date"))
+        cancellation_schema_ready = "insurance_end_date" in reserve_row
+        if reserve_row and not cancellation_schema_ready:
+            st.warning("A végdátum mentéséhez még szükséges az adatbázis-frissítés: insurance_cancellation_end_date.sql.")
+        with st.form(f"insurance_cancellation_{courier_id}"):
+            cancellation_date = st.date_input(
+                "Biztosítás utolsó érvényes napja", value=current_end,
+                key=f"insurance_end_date_{courier_id}_{current_end}", format="YYYY-MM-DD")
+            st.caption("A végdátumot követő hónaptól sem biztosítási díjat, sem automatikus céltartalékot nem vonunk. Üres dátum: nincs lemondás. A meglévő tartalék megmarad.")
+            cancellation_saved = st.form_submit_button("Biztosítás végdátumának mentése", disabled=not cancellation_schema_ready)
+        if cancellation_saved:
+            try:
+                save_insurance_end_date(courier_id, reserve_row, cancellation_date)
+                st.success("A biztosítás végdátuma mentve. A már mentett elszámolásokat szükség esetén újra kell számolni; a dátum mentése nem írja át a lezárt kifizetéseket.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A végdátum nem menthető: {exc}")
+        if current_end:
+            st.info(f"Biztosítás utolsó napja: {current_end:%Y-%m-%d}. Ezután induló hónapra mindkét automatikus levonás 0 Ft.")
         st.divider()
         st.markdown("##### Céltartalék műveletek")
         reserve_month_labels = month_options()

@@ -1745,6 +1745,7 @@ def build_driver_invoice_summary(
 
             reserve_info = {
                 "insurance_active": _as_bool(reserve_row.get("insurance_active")),
+                "insurance_end_date": reserve_row.get("insurance_end_date"),
                 "current_reserve_huf": max(current_reserve, 0),
             }
 
@@ -1767,7 +1768,8 @@ def build_driver_invoice_summary(
 
         # Nincs rekord vagy insurance_active != true:
         # sem biztosítás, sem 10%-os céltartalék nem vonható.
-        if not reserve_info or not reserve_info["insurance_active"]:
+        from resources.insurance_cancellation import insurance_active_for_period
+        if not reserve_info or not insurance_active_for_period(reserve_info, period_start):
             return pd.Series(
                 {
                     "target_reserve_member": bool(reserve_info),
