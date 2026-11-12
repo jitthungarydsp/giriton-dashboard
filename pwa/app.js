@@ -125,6 +125,7 @@ const APP_VERSION = "v279";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
+  { key: "routeId", label: "Route ID", column: "Route ID", get: (row) => routeDetailValue(row.routeId) },
   { key: "date", label: "Munkanap", column: "Munkanap", get: (row) => routeDetailValue(row.date) },
   { key: "courierId", label: "Futár ID", column: "Futár ID", get: (row) => routeDetailValue(row.courierId) },
   { key: "courierName", label: "Futár neve", column: "Futár neve", get: (row) => routeDetailValue(row.courierName) },
@@ -170,7 +171,7 @@ const ROUTE_REPORT_FIELDS = [
   { key: "narrative", label: "Szöveges összefoglaló", column: "Összefoglaló", get: (row) => routeDetailValue(row.narrative) },
 ];
 
-const DEFAULT_ROUTE_REPORT_FIELDS = ["courierId", "courierName", "warehouse", "routeType", "orders", "loading", "routeTime", "fullTime", "over5h", "tip"];
+const DEFAULT_ROUTE_REPORT_FIELDS = ["routeId", "courierId", "courierName", "warehouse", "routeType", "orders", "loading", "routeTime", "fullTime", "over5h", "tip"];
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
 const COORDINATOR_LIVE_REFRESH_MS = 60 * 1000;
@@ -3484,15 +3485,17 @@ function routeReportFieldsByKey() {
 
 function routeReportSelectedFields() {
   const fieldsByKey = routeReportFieldsByKey();
-  const keys = (state.routeDetailsReportFields || []).filter((key) => fieldsByKey[key]);
-  if (!keys.length) return DEFAULT_ROUTE_REPORT_FIELDS.map((key) => fieldsByKey[key]).filter(Boolean);
+  let keys = [...new Set((state.routeDetailsReportFields || []).filter((key) => fieldsByKey[key]))];
+  if (!keys.length) keys = [...DEFAULT_ROUTE_REPORT_FIELDS];
+  if (!keys.includes("routeId")) keys.unshift("routeId");
   return keys.map((key) => fieldsByKey[key]).filter(Boolean);
 }
 
 function routeReportMoveField(key, target) {
   const fieldsByKey = routeReportFieldsByKey();
   if (!fieldsByKey[key]) return;
-  const current = state.routeDetailsReportFields || [];
+  if (key === "routeId" && target !== "selected") return;
+  const current = routeReportSelectedFields().map((field) => field.key);
   if (target === "selected") {
     if (!current.includes(key)) state.routeDetailsReportFields = [...current, key];
   } else {
@@ -3506,11 +3509,11 @@ function renderRouteReportBuilder() {
   const availableTarget = $("#route-report-available-fields");
   const selectedTarget = $("#route-report-selected-fields");
   if (!availableTarget || !selectedTarget) return;
-  const selectedKeys = new Set(state.routeDetailsReportFields || []);
+  const selectedKeys = new Set(routeReportSelectedFields().map((field) => field.key));
   const renderChip = (field, zone) => `
-    <button class="route-report-field-chip" type="button" draggable="true" data-route-report-field="${escapeHtml(field.key)}" data-route-report-zone-source="${zone}">
+    <button class="route-report-field-chip" type="button" draggable="${field.key !== "routeId"}" data-route-report-field="${escapeHtml(field.key)}" data-route-report-zone-source="${zone}">
       <strong>${escapeHtml(field.label)}</strong>
-      <small>${zone === "selected" ? "látható" : "hozzáadás"}</small>
+      <small>${field.key === "routeId" ? "kötelező" : zone === "selected" ? "látható" : "hozzáadás"}</small>
     </button>
   `;
   availableTarget.innerHTML = ROUTE_REPORT_FIELDS

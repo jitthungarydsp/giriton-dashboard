@@ -1,9 +1,10 @@
-"""Export the exact ordered columns chosen in the route-detail report."""
+"""Export selected route-detail columns, always including the route identifier."""
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # Same keys and headers as ROUTE_REPORT_FIELDS in pwa/app.js.
-COLUMNS = {'date': ('Munkanap', 'date'),
+COLUMNS = {'routeId': ('Route ID', 'routeId'),
+ 'date': ('Munkanap', 'date'),
  'courierId': ('Futár ID', 'courierId'),
  'courierName': ('Futár neve', 'courierName'),
  'warehouse': ('Raktár', 'warehouse'),
@@ -52,6 +53,8 @@ def selected_columns(value):
     keys = value.split(',')
     if not keys or any(key not in COLUMNS for key in keys) or len(keys) != len(set(keys)):
         raise ValueError('Érvénytelen vagy ismétlődő riportoszlop.')
+    if 'routeId' not in keys:
+        keys.insert(0, 'routeId')
     return keys
 
 

@@ -11,12 +11,15 @@ export=importlib.util.module_from_spec(spec);spec.loader.exec_module(export)
 
 
 class RouteReportExportTests(unittest.TestCase):
-    def test_download_contains_only_selected_columns_in_selected_order(self):
+    def test_old_selection_export_still_contains_required_route_id(self):
         wb=Workbook();sheet=wb.active
-        export.populate_selected_sheet(sheet,[{'courierId':'42','courierName':'Teszt','tipHuf':1234,'orders':9,'warehouse':'BUD1'}],'tip,courierName,orders')
+        export.populate_selected_sheet(sheet,[{'routeId':'1557743','courierId':'42','courierName':'Teszt','tipHuf':1234,'orders':9,'warehouse':'BUD1'}],'tip,courierName,orders')
         output=BytesIO();wb.save(output);output.seek(0)
         rows=list(load_workbook(output,data_only=True).active.values)
-        self.assertEqual(rows,[('Borravaló','Futár neve','Címek'),(1234,'Teszt',9)])
+        self.assertEqual(rows,[('Route ID','Borravaló','Futár neve','Címek'),('1557743',1234,'Teszt',9)])
+
+    def test_explicit_route_id_keeps_position_without_duplicate(self):
+        self.assertEqual(export.selected_columns('courierName,routeId,orders'),['courierName','routeId','orders'])
 
     def test_available_columns_and_labels_match_the_report_ui(self):
         source=(ROOT/'pwa/app.js').read_text(encoding='utf8')
