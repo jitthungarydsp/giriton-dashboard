@@ -1745,15 +1745,16 @@ async function loadAdminRouteSignals(offset = 0) {
 
 async function loadQualityComplaints() {
   if (!["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
+  if (!await prepareQualityWorkspace()) return;
   // Keep the signals list above the focused complaint at a stable height.
-  if (!state.qualityComplaintFocus) loadAdminRouteSignals();
+  if (!state.qualityComplaintFocus && !state.qualityWorkspace) loadAdminRouteSignals();
   const target = $("#quality-complaints-list");
   const status = $("#quality-complaints-status");
   const request = (state.qualityComplaintRequest || 0) + 1;
   state.qualityComplaintRequest = request;
   status.textContent = "Betöltés…";
   try {
-    const payload = await api(`/api/quality/complaints?status=${encodeURIComponent($("#quality-complaints-filter").value)}&offset=${state.qualityComplaintOffset || 0}${state.qualityComplaintFocus ? `&complaint=${encodeURIComponent(state.qualityComplaintFocus)}` : ''}`);
+    const payload = await api(`/api/quality/complaints?status=${encodeURIComponent($("#quality-complaints-filter").value)}&offset=${state.qualityComplaintOffset || 0}${state.qualityComplaintFocus ? `&complaint=${encodeURIComponent(state.qualityComplaintFocus)}` : ''}${state.qualityWorkspaceCourier ? `&courier=${encodeURIComponent(state.qualityWorkspaceCourier)}` : ''}${state.qualityWorkspaceDay ? `&work_date=${encodeURIComponent(state.qualityWorkspaceDay)}` : ''}`);
     if (state.qualityComplaintRequest !== request) return;
     target.innerHTML = payload.items.length ? payload.items.map((item) => {
       const topics = { lateShift: "Műszakkésés", noShow: "No-show", uncleanedTimeWindowLate: "Nem mentesített címkésés", cleanedTimeWindowLate: "Mentesített címkésés" };

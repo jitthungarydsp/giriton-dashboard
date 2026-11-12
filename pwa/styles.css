@@ -1,3 +1,11 @@
+#quality-workspace .settlement-dashboard-row { grid-template-columns: minmax(0, 1fr); }
+#quality-workspace .financial-card { display: flex; width: 100%; gap: 12px; justify-content: space-between; align-items: center; padding: 20px; color: var(--ink); text-align: left; cursor: pointer; }
+#quality-workspace .financial-card strong { font-size: 20px; white-space: nowrap; }
+#quality-workspace .workflow-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+@media (max-width: 700px) {
+  #quality-workspace .settlement-dashboard-row-main { grid-template-columns: 1fr; }
+  #quality-workspace .financial-card { align-items: flex-start; flex-direction: column; }
+}
 :root {
   color-scheme: light;
   --ink: #17231c;

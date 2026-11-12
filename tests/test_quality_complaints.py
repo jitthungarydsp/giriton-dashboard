@@ -122,7 +122,7 @@ class ComplaintManagementTest(unittest.TestCase):
         nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
         for node in nodes:
             node.decorator_list = []
-        ns = dict(Any=Any, UUID=UUID, QualityComplaintActionRequest=Any,
+        ns = dict(Any=Any, UUID=UUID, date=date, QualityComplaintActionRequest=Any,
                   Cookie=lambda **k: None, Query=lambda *args, **k: k.get('default'),
                   require_user=lambda _: {'username': 'Operator', 'role': role},
                   courier_identity=lambda _: ('6498', 'Futár'),

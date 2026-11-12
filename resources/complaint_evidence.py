@@ -128,8 +128,9 @@ def complaint_evidence(complaint, read):
                 payload = raw.get('response_json') or {}
                 events = payload.get('log') or []
                 section('Nyers Hub-eseménynapló · #' + str(raw['route_id']), 'courier_route_performance_detail_raw', raw.get('fetched_at'), [
-                    {'label': labels[event['type']], 'value': display_time(event.get('occurredAt'))}
-                    for event in sorted(events, key=lambda e: str(e.get('occurredAt') or '')) if event.get('type') in labels])
+                    {'label': labels.get(event.get('type'), str(event.get('type') or 'Esemény')),
+                     'value': display_time(event.get('occurredAt')) + ((' · ' + str(event['message'])) if event.get('message') else '')}
+                    for event in sorted(events, key=lambda e: str(e.get('occurredAt') or ''))])
                 if not any(e.get('type') == 'SHIFT_AVAILABLE' for e in events):
                     warnings.append('#' + str(raw['route_id']) + ': a nyers naplóban nincs külön sorbaállási esemény. A tárolt sorbaállási idő önmagában nem bizonyítja a tényleges időpontot.')
         except Exception:

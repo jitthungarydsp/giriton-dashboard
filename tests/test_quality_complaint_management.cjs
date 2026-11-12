@@ -6,9 +6,9 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../pwa/app.
 function setup(role, items) {
   const nodes = new Map();
   const get = key => { if (!nodes.has(key)) nodes.set(key, { value: 'all', querySelectorAll: () => [] }); return nodes.get(key); };
-  const context = { state: { user: { role } }, $: get,
+  const context = { state: { user: { role } }, $: get, prepareQualityWorkspace: async () => true,
     escapeHtml: value => String(value || '').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
-    shortDateTime: String, api: async () => ({ items, canManage: true, hasMore: false }) };
+    shortDateTime: String, renderComplaintShiftDetails: () => '', api: async () => ({ items, canManage: true, hasMore: false }) };
   vm.runInNewContext(source.slice(source.indexOf('function qualityComplaintStatus('), source.indexOf('function ensureQualityReclamationDialog(')), context);
   return { context, get };
 }

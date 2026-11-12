@@ -21,7 +21,7 @@ test('opening a complaint retains focus and avoids layout changes above it',asyn
   const card={dataset:{complaintId:'selected'},querySelector:()=>({set open(v){opened=v;}}),scrollIntoView:()=>{scrolled=true;}};
   const list={innerHTML:'',querySelectorAll:selector=>selector==='[data-complaint-id]'?[card]:[]};
   const status={textContent:'',append:()=>{}};
-  const context={state:{user:{role:'admin'},qualityComplaintFocus:'selected'},
+  const context={state:{user:{role:'admin'},qualityComplaintFocus:'selected'}, prepareQualityWorkspace:async()=>true,
     loadAdminRouteSignals:()=>{signals++;},
     $:selector=>selector==='#quality-complaints-list'?list:selector==='#quality-complaints-status'?status:{value:'all'},
     api:async()=>({items:[],hasMore:false}),

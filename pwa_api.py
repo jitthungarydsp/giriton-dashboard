@@ -22698,6 +22698,8 @@ def list_quality_complaints(
     status: str = Query(default="all"),
     offset: int = Query(default=0, ge=0),
     complaint: UUID | None = Query(default=None),
+    courier: str = Query(default=""),
+    work_date: date | None = Query(default=None),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
@@ -22705,6 +22707,10 @@ def list_quality_complaints(
     if status not in {"all", "open", "forwarded", "closed"}:
         raise HTTPException(status_code=422, detail="Ismeretlen státusz.")
     params = {"select": "*", "order": "created_at.desc,id.desc", "limit": "51", "offset": str(offset)}
+    if manager and courier:
+        params["courier_id"] = f"eq.{courier}"
+    if work_date:
+        params["affected_items"] = "cs." + json.dumps([{"date": work_date.isoformat()}])
     if complaint:
         params["id"] = f"eq.{complaint}"
     if status != "all":
@@ -22725,6 +22731,40 @@ def list_quality_complaints(
         for row in rows[:50]:
             row["delivery"] = by_id.get(str(row["id"]))
     return {"items": rows[:50], "hasMore": len(rows) > 50, "canManage": manager, "forwardingEnabled": forwarding_enabled}
+
+
+@app.get("/api/quality/workspace")
+def quality_workspace(month: str = Query(default=""), giriton_pwa_session: str | None = Cookie(default=None)):
+    if not quality_complaint_manager(require_user(giriton_pwa_session)):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    from resources.complaint_workspace import monthly_workspace
+    def read(table, params):
+        schema, table = table.split('.', 1) if '.' in table else ('public', table)
+        return supabase_rest('GET', table, params=params, schema=schema, timeout=20)
+    return monthly_workspace(parse_month(month), read)
+
+
+@app.get("/api/quality/workspace/day")
+def quality_workspace_day(courier: str, work_date: date, giriton_pwa_session: str | None = Cookie(default=None)):
+    if not quality_complaint_manager(require_user(giriton_pwa_session)):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    if not courier.isdecimal():
+        raise HTTPException(status_code=422, detail="Hibás futárazonosító.")
+    names = supabase_rest('GET','courier_master',params={'select':'courier_name','courier_id':f'eq.{courier}','limit':'2'})
+    if len(names)!=1:
+        raise HTTPException(status_code=404, detail="A futár nem azonosítható.")
+    from resources.complaint_evidence import complaint_evidence
+    def read(table, params):
+        if table == 'giriton_attendance_raw':
+            # Giriton names can contain an ID or additional given names.
+            daily = supabase_rest('GET',table,params={'select':params['select'],'work_date':'eq.'+work_date.isoformat(),'limit':'1000'},timeout=12)
+            by_id=[r for r in daily if courier in re.findall(r'(?<!\d)\d{3,10}(?!\d)',str(r.get('courier_name')or''))]
+            if by_id:return by_id
+            target=normalize_person_match_text(names[0]['courier_name'])
+            return [r for r in daily if normalize_person_match_text(r.get('courier_name'))==target]
+        return supabase_rest('GET',table,params=params,timeout=12)
+    return complaint_evidence({'courier_id':courier,'courier_name':names[0]['courier_name'],
+                               'affected_items':[{'date':work_date.isoformat()}]},read)
 
 
 @app.get("/api/quality/route-signals")

@@ -1,0 +1,296 @@
+[
+  {
+    "row": 1200,
+    "values": [
+      46305.46955538195,
+      "Abonyi György",
+      "MALUSZ",
+      "Táska elvesztése 2026.10.09",
+      25000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1791623769585"
+    ],
+    "day": "2026-10-10"
+  },
+  {
+    "row": 1203,
+    "values": [
+      46308.46091819444,
+      "Bárándi Bendegúz",
+      "MALUSZ",
+      "Be nem jelentett hiányzás",
+      65000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1791882223331"
+    ],
+    "day": "2026-10-13"
+  },
+  {
+    "row": 1212,
+    "values": [
+      46312.057580810186,
+      "Varecza Roland",
+      "MALUSZ",
+      "Gyorshajtás",
+      75000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1792192974981"
+    ],
+    "day": "2026-10-17"
+  },
+  {
+    "row": 1213,
+    "values": [
+      46312.05786224537,
+      "Komjáti 8185 Ákos",
+      "MALUSZ",
+      "Gyorshajtás",
+      130000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1792192999298"
+    ],
+    "day": "2026-10-17"
+  },
+  {
+    "row": 1224,
+    "values": [
+      46314.952330115746,
+      "Hegedüs 8332 Dávid",
+      "MALUSZ",
+      "Gyorshajtás 10.08. 12:44 110km/h helyett 119 km/h M0/M3",
+      30000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1792443081322"
+    ],
+    "day": "2026-10-19"
+  },
+  {
+    "row": 1235,
+    "values": [
+      46315.75877980324,
+      "Varecza Roland",
+      "MALUSZ",
+      "Fizetési előleg áttolása 2026.IX.-hóról",
+      250000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1792512758575"
+    ],
+    "day": "2026-10-20"
+  },
+  {
+    "row": 1242,
+    "values": [
+      46316.62144886574,
+      "Nagy 7244 Attila",
+      "MALUSZ",
+      "Nem vette észre, hogy a futár nem jött be dolgozni, 09.29.-én Baranyi Szabolcs",
+      25000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1792587293182"
+    ],
+    "day": "2026-10-21"
+  },
+  {
+    "row": 1243,
+    "values": [
+      46317.5556928125,
+      "Fabó Marcell",
+      "MALUSZ",
+      "Baleset, SED-126, LÖKHÁRÍTÓ",
+      250000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1792668011859"
+    ],
+    "day": "2026-10-22"
+  },
+  {
+    "row": 1244,
+    "values": [
+      46317.55629324074,
+      "Fabó Marcell",
+      "MALUSZ",
+      "Károkozás, siw939, balra kanyarodás, oldala horpadt",
+      500000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1792668063736"
+    ],
+    "day": "2026-10-22"
+  },
+  {
+    "row": 1245,
+    "values": [
+      46317.55677688657,
+      "Fabó Marcell",
+      "MALUSZ",
+      "Parkoló autónak ment",
+      300000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1792668105523"
+    ],
+    "day": "2026-10-22"
+  },
+  {
+    "row": 1253,
+    "values": [
+      46318.08333333333,
+      "Bárándi Bendegúz",
+      "MALUSZ",
+      "Tartalékos kör (leadás)",
+      40000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "TR-1794036909602"
+    ],
+    "day": "2026-10-23"
+  },
+  {
+    "row": 1256,
+    "values": [
+      46326.78888888889,
+      "Abonyi György",
+      "MALUSZ",
+      "KORREKCIÓ: Táska elvesztése 2026.10.09",
+      -25000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1791623769585"
+    ],
+    "day": "2026-10-31"
+  },
+  {
+    "row": 1257,
+    "values": [
+      46308.46091819444,
+      "Bárándi Bendegúz",
+      "MALUSZ",
+      "KORREKCIÓ: Be nem jelentett hiányzás",
+      -65000,
+      0,
+      "zoltan.bagoly@jitt.hu",
+      "S-1791882223331"
+    ],
+    "day": "2026-10-13"
+  },
+  {
+    "row": 1259,
+    "values": [
+      46326.04166666667,
+      "Hervai Olivér",
+      "BONUSZ",
+      "Oktatói díj",
+      0,
+      45000,
+      "zoltan.bagoly@jitt.hu",
+      "S-1794492442247"
+    ],
+    "day": "2026-10-31"
+  },
+  {
+    "row": 1262,
+    "values": [
+      46326.04166666667,
+      "Pehl 8960 István",
+      "BONUSZ",
+      "Oktatói díj (6db körre), 4 körre jegyzőkönyvet nem töltött fel",
+      0,
+      25000,
+      "zoltan.bagoly@jitt.hu",
+      "S-1794493805131"
+    ],
+    "day": "2026-10-31"
+  },
+  {
+    "row": 1263,
+    "values": [
+      46326.04166666667,
+      "Nagy 7244 Attila",
+      "BONUSZ",
+      "Oktatói díj: 2 alkalom, 4 kör",
+      0,
+      10000,
+      "zoltan.bagoly@jitt.hu",
+      "S-1794496192238"
+    ],
+    "day": "2026-10-31"
+  },
+  {
+    "row": 1264,
+    "values": [
+      46326.04166666667,
+      "Varecza Roland",
+      "BONUSZ",
+      "Oktatói díj: 3 alkalom, 6 kör",
+      0,
+      15000,
+      "zoltan.bagoly@jitt.hu",
+      "S-1794496391122"
+    ],
+    "day": "2026-10-31"
+  },
+  {
+    "row": 1265,
+    "values": [
+      46326.04166666667,
+      "Vidák 8863 Krisztofer",
+      "BONUSZ",
+      "Oktatói díj: 1 alkalom, 2 kör",
+      0,
+      5000,
+      "zoltan.bagoly@jitt.hu",
+      "S-1794496455082"
+    ],
+    "day": "2026-10-31"
+  },
+  {
+    "row": 1266,
+    "values": [
+      46326.04166666667,
+      "Komjáti 8185 Ákos",
+      "BONUSZ",
+      "OKtatói díj: 4 alkalom, 8 kör",
+      0,
+      20000,
+      "zoltan.bagoly@jitt.hu",
+      "S-1794496674060"
+    ],
+    "day": "2026-10-31"
+  },
+  {
+    "row": 1267,
+    "values": [
+      46326.04166666667,
+      "Fabó Marcell",
+      "BONUSZ",
+      "Segítségnyújtás pl extra kör pénzért",
+      0,
+      15000,
+      "zoltan.bagoly@jitt.hu",
+      "S-1794496874635"
+    ],
+    "day": "2026-10-31"
+  },
+  {
+    "row": 1268,
+    "values": [
+      46325.04166666667,
+      "Hegedüs 8332 Dávid",
+      "BONUSZ",
+      "Segítségnyújtás pl extra kör pénzért",
+      0,
+      10000,
+      "zoltan.bagoly@jitt.hu",
+      "S-1794496917320"
+    ],
+    "day": "2026-10-30"
+  }
+]

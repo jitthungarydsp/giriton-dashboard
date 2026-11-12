@@ -1,0 +1,64 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {Workbook,SpreadsheetFile} from '@oai/artifact-tool';
+const base=path.dirname(fileURLToPath(import.meta.url));
+const data=JSON.parse(await fs.readFile(path.join(base,'analysis.json'),'utf8'));
+const wb=Workbook.create();
+// Numeric Excel dates represent Budapest wall-clock time; offsets change on 25 October.
+const serial=iso=>iso ? (Date.parse(iso.slice(0,19)+'Z')-Date.UTC(1899,11,30))/86400000 : null;
+const safe=value=>typeof value==='string' && /^[=+@-]/.test(value) ? "'"+value:value;
+const headers=['Dátum','Futár neve','Futár ID','Route ID','Raktár','Tényleges\nműszakkezdés','Giriton-belépés\n(napi első)','Tényleges\nsorbaállás','Eltérés\n(perc)','Megjegyzés'];
+for (const [name,rows,unknown] of [['Későbbi sorbaállás',data.late,false],['Hiányzó sorbaállás',data.unknown,true]]) {
+ const sh=wb.worksheets.add(name);sh.showGridLines=false;
+ const end=9+rows.length;
+ sh.getRange(`A1:J${end}`).format.font={name:'Arial',size:10,color:'#202B38'};
+ sh.getRange(`A1:J${end}`).format.verticalAlignment='center';
+ sh.getRange('A2').values=[[unknown?'Hiányzó sorbaállási események':'Sorbaállás a tényleges műszakkezdés után']];
+ sh.getRange('A2').format.font={name:'Arial',size:14,bold:true,color:'#1F3655'};
+ sh.getRange('A2:J2').format.rowHeight=29;
+ sh.getRange('A2:J2').format.borders={bottom:{style:'thin',color:'#9BACBE'}};
+ sh.getRange('A3').values=[['2026. október 1–31. · JITT · BUD1 és BUD2 · Idők: Europe/Budapest']];
+ sh.getRange('A4').values=[[unknown?'Ezeknél a túráknál nincs túrakiosztás előtti SHIFT_AVAILABLE esemény; a késés nem állapítható meg.':'Feltétel: a sorbaállás későbbi, mint a tényleges műszakkezdés. Minden pozitív, másodperces eltérés is szerepel.']];
+ sh.getRange('A5').values=[[unknown?'Hiányzó sorbaállású túrák:':'Érintett túrák:']];
+ sh.getRange('C5').formulas=[[`=COUNTA(D10:D${end})`]];
+ sh.getRange('D5').values=[[unknown?'':'Érintett futárok:']];
+ sh.getRange('F5').values=[[unknown?null:data.summary.late_couriers]];
+ sh.getRange('G5').values=[['Giriton-idő nélkül:']];
+ sh.getRange('I5').formulas=[[`=COUNTBLANK(G10:G${end})`]];
+ sh.getRange('C5').setNumberFormat('0');sh.getRange('F5').setNumberFormat('0');sh.getRange('I5').setNumberFormat('0');
+ sh.getRange('A6').values=[['Műszakkezdés: Courier Hub actualStart. Sorbaállás: a túrakiosztást megelőző utolsó SHIFT_AVAILABLE; ez újbóli sorbaállás is lehet.']];
+ sh.getRange('A7').values=[['Forrás: courier_shift_overview, courier_route_performance_detail_raw, giriton_attendance_raw. Lekérés: 2026-11-12.']];
+ sh.getRange('A8').values=[['2544 októberi túra vizsgálva. Október 23-ra nincs túra a forrásban. A Giriton-idő a napi első belépés, nem műszakonkénti belépés.']];
+ sh.getRange('A3:J8').format.rowHeight=21;
+ sh.getRange('A3').format.font={italic:true,color:'#57677B'};
+ sh.getRange('A7:J8').format.font={size:9,color:'#57677B'};
+ sh.getRange('A9:J9').values=[headers];
+ const values=rows.map(r=>[serial(r.date+'T00:00:00'),safe(r.name),r.courier_id,r.route_id,r.warehouse,serial(r.actual),serial(r.login),serial(r.queue),null,safe([r.notes,r.login_status].filter(Boolean).join('; '))]);
+ if(rows.length) sh.getRange(`A10:J${end}`).values=values;
+ sh.tables.add(`A9:J${end}`,true,unknown?'MissingQueue':'LateQueue');
+ sh.getRange('A9:J9').format={fill:'#263E5B',font:{name:'Arial',size:10,bold:true,color:'#FFFFFF'},wrapText:true,horizontalAlignment:'center',verticalAlignment:'center',rowHeight:40};
+ sh.getRange(`A10:A${end}`).setNumberFormat('yyyy-mm-dd');
+ sh.getRange(`F10:H${end}`).setNumberFormat('hh:mm:ss');
+ sh.getRange(`C10:E${end}`).setNumberFormat('@');
+ sh.getRange(`I10:I${end}`).formulas=rows.map((_,i)=>[`=IF(OR(F${10+i}="",H${10+i}=""),"",(H${10+i}-F${10+i})*1440)`]);
+ sh.getRange(`I10:I${end}`).setNumberFormat('0.00');
+ sh.getRange(`F10:I${end}`).format.horizontalAlignment='right';
+ sh.getRange(`A10:J${end}`).format.rowHeight=23;
+ const widths={A:12,B:28,C:10,D:12,E:9,F:19,G:20,H:19,I:12,J:105};
+ for(const [col,width] of Object.entries(widths))sh.getRange(`${col}1:${col}${end}`).format.columnWidth=width;
+ sh.freezePanes.freezeRows(9);sh.freezePanes.freezeColumns(4);
+ sh.tabColor=unknown?'#917A52':'#263E5B';
+ sh.getRange(`G10:G${end}`).conditionalFormats.add('containsBlanks',{format:{fill:'#FFF0CC'}});
+ sh.getRange(`I10:I${end}`).conditionalFormats.add('cellIs',{operator:'greaterThan',formula:0,format:{font:{color:'#A53924',bold:true}}});
+}
+wb.recalculate();
+console.log((await wb.inspect({kind:'table',range:"'Későbbi sorbaállás'!A9:J12",include:'values,formulas',tableMaxRows:4,tableMaxCols:10,maxChars:3000})).ndjson);
+console.log((await wb.inspect({kind:'match',searchTerm:'#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A|#NUM!|#NULL!',options:{useRegex:true,maxResults:20},summary:'Formula scan',maxChars:1000})).ndjson);
+const xlsx=await SpreadsheetFile.exportXlsx(wb);
+await xlsx.save(path.join(base,'oktober_sorbaallas_giriton_2026.xlsx'));
+for(const [sheetName,file] of [['Későbbi sorbaállás','late_preview.png'],['Hiányzó sorbaállás','missing_preview.png']]) {
+ const img=await wb.render({sheetName,range:'A1:J14',scale:1.4,format:'png'});
+ await fs.writeFile(path.join(base,file),new Uint8Array(await img.arrayBuffer()));
+}
+console.log('Saved workbook and two previews.');
