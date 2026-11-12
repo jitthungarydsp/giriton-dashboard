@@ -2,6 +2,7 @@
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
+if not defined QUALITY_FORM_PROFILE_DIR set "QUALITY_FORM_PROFILE_DIR=%LOCALAPPDATA%\Jitt\GoogleFormRobotVisible"
 set "ROBOT_PYTHON=%~dp0.robot-venv\Scripts\python.exe"
 if not exist "%ROBOT_PYTHON%" (
  echo Hianyzik a robot Python-kornyezete: .robot-venv
@@ -19,6 +20,10 @@ if /i "%~1"=="check-login" (
 )
 if /i "%~1"=="check" (
  "%ROBOT_PYTHON%" -u scripts\run_route_delay_submission_worker.py --check
+ goto done
+)
+if /i "%~1"=="preview" (
+ "%ROBOT_PYTHON%" -u scripts\run_route_delay_submission_worker.py --preview
  goto done
 )
 echo Google reklamacio-bekuldo robot indul.

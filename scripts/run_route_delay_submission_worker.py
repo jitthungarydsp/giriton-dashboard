@@ -36,6 +36,11 @@ def process_record(record, save, make_page):
             raise ValueError('A reklamáció ellenőrzése hiányos.')
         page=make_page()
         button=page.fill(draft['payload'])
+        # Verify again immediately before clicking; never submit a partially
+        # filled form merely because its Submit button is present.
+        if hasattr(page,'verify_fields'):
+            _,fields=worker.form.answers(draft['payload'])
+            page.verify_fields(fields)
         # Journal immediately before the one permitted click. Any interruption
         # after this point keeps the record locked; never click it twice.
         click_attempted=True
@@ -51,8 +56,10 @@ def process_record(record, save, make_page):
     except Exception as exc:
         # If the success write lost its acknowledgement, a second CAS cannot
         # overwrite an already-sent DB row. The UI reloads the authoritative row.
+        detail=str(exc) if isinstance(exc,worker.FormInteractionError) else type(exc).__name__
+        print(('Beküldés eredménye ellenőrizendő: ' if click_attempted else 'Beküldés előtt megállt: ')+detail,flush=True)
         failed={**claimed,'state':'uncertain',
-                'confirmation':('Beküldés eredménye ellenőrizendő: ' if click_attempted else 'Beküldés előtt megállt: ')+type(exc).__name__,
+                'confirmation':('Beküldés eredménye ellenőrizendő: ' if click_attempted else 'Beküldés előtt megállt: ')+detail,
                 'updated_at':datetime.now(timezone.utc).isoformat()}
         save(claimed,failed)
         return failed
@@ -81,6 +88,7 @@ def main():
     mode.add_argument('--once',action='store_true')
     mode.add_argument('--watch',action='store_true')
     mode.add_argument('--check',action='store_true',help='Check dependencies and settings without opening or submitting a form.')
+    mode.add_argument('--preview',action='store_true',help='Fill one queued form for inspection; never click Submit or update records.')
     args=parser.parse_args()
     get=worker.settings()
     if args.check:
@@ -98,6 +106,23 @@ def main():
     db=create_client(str(get('SUPABASE_URL')),str(get('SUPABASE_SERVICE_ROLE_KEY')))
     profile=worker.profile_path(get('QUALITY_FORM_PROFILE_DIR'))
     account=str(get('QUALITY_FORM_GOOGLE_ACCOUNT')or'system@jitt.hu')
+    if args.preview:
+        rows=(db.schema('settlement').table(service.TABLE).select('*').eq('state','queued')
+              .order('updated_at').limit(1).execute().data or [])
+        if not rows:
+            print('Nincs sorban váró reklamáció az előnézethez.',flush=True)
+            return
+        record=rows[0]
+        draft=service.preparation.prepare_row(record['data'],record['source_row'])
+        driver=worker.browser(profile,visible=True)
+        try:
+            page=SubmissionPage(driver,account)
+            page.fill(draft['payload'])
+            print('ELŐNÉZET: minden mező kitöltve. Nem kattintottunk a Küldésre; a DB állapota változatlan.',flush=True)
+            input('Ellenőrizd a típust, futárt, túraszámot és szöveget. Enter: ablak bezárása beküldés nélkül.')
+        finally:
+            driver.quit()
+        return
     while True:
         blocked=(db.schema('settlement').table(service.TABLE).select('id')
                  .in_('state',['processing','uncertain']).limit(1).execute().data or [])
@@ -108,16 +133,20 @@ def main():
               .order('updated_at').limit(1).execute().data or [])
         if rows:
             driver=None
-            def make_page():
-                nonlocal driver
-                driver=worker.browser(profile,visible=True)
-                return SubmissionPage(driver,account)
             try:
-                result=process_record(rows[0],lambda previous,replacement:service.store_edit(db,previous,replacement),make_page)
+                driver=worker.browser(profile,visible=True)
+                page=SubmissionPage(driver,account)
+                # Verify login before claiming a queued complaint. Failed login
+                # must leave all pending records untouched.
+                page.open()
+                result=process_record(rows[0],lambda previous,replacement:service.store_edit(db,previous,replacement),lambda:page)
                 print('Reklamáció:',result['id'],result['state'],flush=True)
                 if result['state']!='sent':
                     print('A robot megállt. Ellenőrizd az űrlapot és a Google-visszaigazolást.',flush=True)
                     return
+            except worker.LoginRequired as exc:
+                print(str(exc),flush=True)
+                return
             except Exception:
                 print('A robot megállt. A mentett állapotot ellenőrizni kell; nincs automatikus újrabeküldés.',flush=True)
                 return

@@ -10,6 +10,109 @@ service=sender.service
 
 
 class SubmissionTest(unittest.TestCase):
+    def test_covered_control_is_never_clicked(self):
+        driver=Mock();element=Mock();driver.execute_script.return_value=False
+        page=sender.worker.GoogleForm(driver,'robot@example.com')
+        with self.assertRaisesRegex(sender.worker.FormInteractionError,'Partnerlista'):
+            page.click_control(element,'Partnerlista',timeout=0)
+        element.click.assert_not_called()
+
+    def test_selection_rewaits_after_interception(self):
+        from selenium.common.exceptions import ElementClickInterceptedException
+        driver=Mock();element=Mock()
+        element.click.side_effect=[ElementClickInterceptedException(),None]
+        page=sender.worker.GoogleForm(driver,'robot@example.com')
+        page.wait_for_control=Mock()
+        page.click_control(element,'Partnerlista')
+        self.assertEqual(page.wait_for_control.call_count,2)
+        self.assertEqual(element.click.call_count,2)
+
+    def test_repeated_interception_reports_step_and_stops(self):
+        from selenium.common.exceptions import ElementClickInterceptedException
+        element=Mock();element.click.side_effect=ElementClickInterceptedException()
+        page=sender.worker.GoogleForm(Mock(),'robot@example.com');page.wait_for_control=Mock()
+        with self.assertRaisesRegex(sender.worker.FormInteractionError,'Reklamáció típusa'):
+            page.click_control(element,'Reklamáció típusa')
+        self.assertEqual(element.click.call_count,2)
+
+    def test_category_must_be_checked_not_merely_present(self):
+        driver=Mock();page=sender.worker.GoogleForm(driver,'robot@example.com');selected=[False]
+        radio=Mock();radio.is_displayed.return_value=True
+        label='Túra alatti késés / Route delay'
+        radio.get_attribute.side_effect=lambda key:label if key=='data-value'else ('true'if selected[0]else'false')if key=='aria-checked'else''
+        radio.click.side_effect=lambda:selected.__setitem__(0,True)
+        driver.find_elements.return_value=[radio]
+        page.select_category(label)
+        self.assertTrue(selected[0]);radio.click.assert_called_once()
+        page.select_category(label);radio.click.assert_called_once()
+
+    def test_wrong_or_empty_field_prevents_submission(self):
+        page=sender.worker.GoogleForm(Mock(),'robot@example.com');question=Mock();field=Mock()
+        page.question=Mock(return_value=question);question.find_elements.return_value=[field]
+        for value in ['', 'another courier']:
+            field.get_attribute.return_value=value
+            with self.assertRaises(ValueError):page.verify_fields({238065601:'6498'})
+        field.get_attribute.return_value='6498'
+        page.verify_fields({238065601:'6498'})
+
+    def test_pre_submit_verification_failure_never_clicks_submit(self):
+        page=self.page();page.verify_fields.side_effect=ValueError('field is empty')
+        result=sender.process_record(self.record(),Mock(),lambda:page)
+        self.assertEqual(result['state'],'uncertain')
+        page.fill.return_value.click.assert_not_called()
+
+    def test_intercepted_submit_is_never_retried(self):
+        from selenium.common.exceptions import ElementClickInterceptedException
+        page=self.page();page.fill.return_value.click.side_effect=ElementClickInterceptedException()
+        result=sender.process_record(self.record(),Mock(),lambda:page)
+        self.assertEqual(result['state'],'uncertain')
+        page.fill.return_value.click.assert_called_once()
+        page.wait_for_confirmation.assert_not_called()
+
+    def test_partner_selection_uses_visible_menu_option_not_hidden_duplicate(self):
+        driver=Mock();page=sender.worker.GoogleForm(driver,'robot@example.com')
+        question=Mock();control=Mock();control.text='Kiválasztás'
+        question.find_element.return_value=control;page.question=Mock(return_value=question)
+        hidden=Mock();hidden.is_displayed.return_value=False
+        visible=Mock();visible.is_displayed.return_value=True;visible.is_enabled.return_value=True
+        def select():
+            control.text='Just in Time Kft.'
+            visible.is_displayed.return_value=False
+        visible.click.side_effect=select
+        driver.find_elements.return_value=[hidden,visible]
+        page.select_partner()
+        hidden.click.assert_not_called();visible.click.assert_called_once()
+        control.click.assert_called_once()
+
+    def test_selected_partner_is_not_toggled_again(self):
+        driver=Mock();page=sender.worker.GoogleForm(driver,'robot@example.com')
+        control=Mock();control.text='Just in Time Kft.'
+        page.question=Mock();page.question.return_value.find_element.return_value=control
+        page.select_partner()
+        control.click.assert_not_called()
+    def test_email_checkbox_is_clicked_and_verified_for_native_and_aria_controls(self):
+        for native in [False,True]:
+            driver=Mock();box=Mock();selected=[False]
+            box.is_displayed.return_value=True
+            box.find_element.return_value.text='Record robot@example.com email'
+            box.is_selected.side_effect=lambda:selected[0] if native else False
+            box.get_attribute.side_effect=lambda key: ('true' if selected[0] else 'false') if key=='aria-checked' and not native else None
+            box.click.side_effect=lambda:selected.__setitem__(0,True)
+            driver.find_elements.return_value=[box]
+            sender.worker.GoogleForm(driver,'robot@example.com').ensure_email_consent()
+            box.click.assert_called_once()
+            sender.worker.GoogleForm(driver,'robot@example.com').ensure_email_consent()
+            box.click.assert_called_once()
+
+    def test_ambiguous_email_checkbox_never_checks_unrelated_boxes(self):
+        driver=Mock();boxes=[Mock(),Mock()]
+        for box in boxes:
+            box.is_displayed.return_value=True;box.get_attribute.return_value=''
+            box.find_element.return_value.text='Unrelated option'
+        driver.find_elements.return_value=boxes
+        with self.assertRaises(ValueError):sender.worker.GoogleForm(driver,'robot@example.com').ensure_email_consent()
+        for box in boxes:box.click.assert_not_called()
+
     def record(self):
         data={'Dátum':'2026-10-01','Futár ID':'6498','Futár':'Abonyi György','Túra ID':'1557743',
               'Javasolt kategória száma':4,'Kategóriajavaslat':'Optimalizálatlan túra',

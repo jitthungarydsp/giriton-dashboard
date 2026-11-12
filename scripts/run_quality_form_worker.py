@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('quality_form_forwarding', ROOT/'resources/quality_form_forwarding.py')
@@ -82,18 +83,34 @@ class LoginRequired(Exception):
     pass
 
 
+class FormInteractionError(Exception):
+    """A named UI step failed before Submit; safe to display without form data."""
+
+
 class GoogleForm:
     def __init__(self, driver, expected_email):
         self.driver=driver
         self.email=expected_email.lower().strip()
         if not self.email:raise ValueError('QUALITY_FORM_GOOGLE_ACCOUNT szükséges: az engedélyezett beküldő Google-fiók e-mail-címe.')
 
-    def open(self):
+    def open(self, url=None):
         from selenium.webdriver.common.by import By
-        self.driver.get(form.FORM_URL)
+        from selenium.webdriver.support.ui import WebDriverWait
+        self.driver.get(url or form.FORM_URL)
+        WebDriverWait(self.driver,20).until(lambda d: d.find_elements(By.TAG_NAME,'body'))
         accounts=self.driver.find_elements(By.CSS_SELECTOR,'[data-user-email-address]')
-        if not any((el.get_attribute('data-user-email-address') or '').lower()==self.email for el in accounts):
-            raise LoginRequired('A kijelölt Google-fiókkal újra be kell jelentkezni a --login módban.')
+        matching=any((el.get_attribute('data-user-email-address') or '').lower()==self.email for el in accounts)
+        # Google Forms also renders the selected account as visible header text.
+        # Some versions omit data-user-email-address entirely.
+        if not matching:
+            import re
+            body=self.driver.find_element(By.TAG_NAME,'body').text
+            visible_emails=re.findall(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}',body)
+            matching=self.email in {value.lower()for value in visible_emails}
+        if not matching:
+            raise LoginRequired('A robothoz szükséges Google-fiók: '+self.email+
+                                '. Futtasd: GoogleRobot.bat login, jelentkezz be ezzel a fiókkal, '
+                                'zárd be az ablakát, majd GoogleRobot.bat check-login. A beküldés nem indult el.')
         if not self.driver.find_elements(By.CSS_SELECTOR,'form[action*="/formResponse"]'):
             raise ValueError('Az űrlap nem elérhető.')
 
@@ -103,22 +120,132 @@ class GoogleForm:
         if len(nodes)!=1:raise ValueError('A Google-űrlap mezői megváltoztak; új ellenőrzés szükséges.')
         return nodes[0].find_element(By.XPATH,'./ancestor::*[@role="listitem"][1]')
 
+    def wait_for_control(self, element, step, timeout=15):
+        from selenium.webdriver.support.ui import WebDriverWait
+        print('Űrlap lépés: '+step,flush=True)
+        # Scroll only; never bypass Google handlers with a JavaScript click.
+        self.driver.execute_script(
+            'arguments[0].scrollIntoView({block:"center",inline:"nearest"});',element)
+        def uncovered(_):
+            return element.is_displayed() and element.is_enabled() and self.driver.execute_script('''
+                const el=arguments[0], r=el.getBoundingClientRect();
+                const x=(Math.max(0,r.left)+Math.min(innerWidth,r.right))/2;
+                const y=(Math.max(0,r.top)+Math.min(innerHeight,r.bottom))/2;
+                const top=document.elementFromPoint(x,y);
+                return r.width>0 && r.height>0 && !!top && (top===el || el.contains(top));
+            ''',element)
+        try:
+            WebDriverWait(self.driver,timeout).until(uncovered)
+        except Exception as exc:
+            raise FormInteractionError(step+': a vezérlő nem vált kattinthatóvá.') from exc
+
+    def click_control(self, element, step, timeout=15):
+        from selenium.common.exceptions import ElementClickInterceptedException
+        # Only reversible selection/navigation controls use this helper.
+        # Submit is always a separate, single click in the submission worker.
+        for attempt in range(2):
+            self.wait_for_control(element,step,timeout)
+            try:
+                element.click()
+                return
+            except ElementClickInterceptedException as exc:
+                if attempt:
+                    raise FormInteractionError(step+': egy másik elem takarja a vezérlőt.') from exc
+
+    def ensure_email_consent(self):
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        # Google can render either an ARIA checkbox or a native checkbox.
+        boxes=[el for el in self.driver.find_elements(By.CSS_SELECTOR,
+               '[role="checkbox"],input[type="checkbox"]') if el.is_displayed()]
+        candidates=[]
+        for box in boxes:
+            label=' '.join([box.get_attribute('aria-label') or '',box.get_attribute('data-label') or ''])
+            try:
+                label+=' '+box.find_element(By.XPATH,'./ancestor::*[@role="listitem"][1]').text
+            except Exception:
+                pass
+            if self.email in label.lower():
+                candidates.append(box)
+        if not candidates and len(boxes)==1:
+            candidates=boxes
+        if len(candidates)!=1:
+            raise ValueError('Nem azonosítható egyértelműen az e-mail rögzítésének jelölőnégyzete.')
+        box=candidates[0]
+        def checked():
+            return box.get_attribute('aria-checked')=='true' or box.is_selected()
+        if not checked():
+            self.click_control(box,'E-mail rögzítésének bejelölése')
+        WebDriverWait(self.driver,10).until(lambda _:checked())
+
+    def select_partner(self):
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        label='Just in Time Kft.'
+        partner=self.question(930951024)
+        control=partner.find_element(By.CSS_SELECTOR,'[role="listbox"]')
+        if control.text.strip()==label:
+            return
+        self.click_control(control,'Partnerlista megnyitása')
+        def visible_option(_):
+            # Google renders the expanded menu outside the question container;
+            # a hidden duplicate may remain inside it. Select only visible items.
+            options=[el for el in self.driver.find_elements(By.CSS_SELECTOR,
+                     '[role="option"][data-value="Just in Time Kft."]')
+                     if el.is_displayed() and el.is_enabled()]
+            return options[0] if len(options)==1 else False
+        choice=WebDriverWait(self.driver,15).until(visible_option)
+        self.click_control(choice,'Just in Time Kft. kiválasztása')
+        WebDriverWait(self.driver,10).until(lambda _:
+            label in self.question(930951024).find_element(By.CSS_SELECTOR,'[role="listbox"]').text
+            and not visible_option(None))
+
+    def select_category(self, label):
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        def option(_):
+            nodes=[el for el in self.driver.find_elements(By.CSS_SELECTOR,'[role="radio"]')
+                   if el.is_displayed() and (el.get_attribute('data-value')==label
+                       or el.get_attribute('aria-label')==label)]
+            return nodes[0] if len(nodes)==1 else False
+        radio=WebDriverWait(self.driver,15).until(option)
+        if radio.get_attribute('aria-checked')!='true':
+            self.click_control(radio,'Reklamáció típusa: '+label)
+        WebDriverWait(self.driver,10).until(lambda _:option(None)
+            and option(None).get_attribute('aria-checked')=='true')
+
+    def verify_fields(self, fields):
+        from selenium.webdriver.common.by import By
+        for item,value in fields.items():
+            inputs=self.question(item).find_elements(By.CSS_SELECTOR,'input[type="text"],textarea')
+            if len(inputs)!=1 or inputs[0].get_attribute('value')!=str(value):
+                raise ValueError(f'A kötelező űrlapmező nem a várt adatot tartalmazza (mező: {item}).')
+
     def fill(self, payload):
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import WebDriverWait
-        self.open()
-        partner=self.question(930951024)
-        partner.find_element(By.CSS_SELECTOR,'[role="listbox"]').click()
-        choice=partner.find_element(By.XPATH,'.//*[@role="option" and @data-value="Just in Time Kft."]')
-        WebDriverWait(self.driver,10).until(lambda _:choice.is_displayed());choice.click()
         category,fields=form.answers(payload)
-        self.question(702410668).find_element(By.XPATH,f'.//*[@role="radio" and @data-value={json.dumps(category,ensure_ascii=False)}]').click()
-        # Consent to record the selected account's email, if this form requests it.
-        for checkbox in self.driver.find_elements(By.CSS_SELECTOR,'[role="checkbox"]'):
-            if checkbox.is_displayed() and checkbox.get_attribute('aria-checked')=='false':checkbox.click()
+        # Prefill the verified public entry IDs for route complaints. UI checks
+        # still verify category and every input; prefill alone never authorizes Submit.
+        if payload['category']=='Túra alatti késés':
+            prefill={'usp':'pp_url','entry.493012323':'Just in Time Kft.',
+                     'entry.608543996':category,'entry.1629541155':payload['courier_id'],
+                     'entry.139333198':payload['courier_name'],'entry.584723978':payload['route_id'],
+                     'entry.1757898114':payload['description']}
+            self.open(form.FORM_URL+'?'+urlencode(prefill))
+        else:
+            self.open()
+        print('Űrlap: Google-fiók ellenőrizve.',flush=True)
+        self.ensure_email_consent()
+        print('Űrlap: e-mail rögzítése bejelölve.',flush=True)
+        self.select_partner()
+        print('Űrlap: Just in Time Kft. kiválasztva.',flush=True)
+        self.select_category(category)
+        print('Űrlap: reklamáció típusa ellenőrizve: '+category,flush=True)
+        self.ensure_email_consent()
         next_button=self.driver.find_elements(By.XPATH,'//*[@role="button"][.//*[normalize-space()="Következő" or normalize-space()="Next"]]')
         if len(next_button)!=1:raise ValueError('Nem található az űrlap Következő gombja.')
-        next_button[0].click()
+        self.click_control(next_button[0],'Következő oldal megnyitása')
         WebDriverWait(self.driver,20).until(lambda _:self.driver.find_elements(By.CSS_SELECTOR,f'[data-params^="%.@.[{next(iter(fields))},"]') or 'accounts.google.com' in self.driver.current_url)
         if 'accounts.google.com' in self.driver.current_url:raise LoginRequired()
         for item,value in fields.items():
@@ -126,8 +253,11 @@ class GoogleForm:
             inputs=question.find_elements(By.CSS_SELECTOR,'input[type="text"],textarea')
             if len(inputs)!=1:raise ValueError('Nem egyértelmű az űrlap szöveges mezője.')
             inputs[0].clear();inputs[0].send_keys(value)
+        self.verify_fields(fields)
+        print('Űrlap: minden kötelező mező kitöltve és visszaellenőrizve.',flush=True)
         buttons=self.driver.find_elements(By.XPATH,'//*[@role="button"][.//*[normalize-space()="Küldés" or normalize-space()="Submit"]]')
         if len(buttons)!=1:raise ValueError('Nem található egyértelmű beküldési gomb.')
+        self.wait_for_control(buttons[0],'Küldés gomb előkészítése')
         return buttons[0]
 
 
@@ -176,11 +306,13 @@ def main():
     if args.login:
         binary=chrome_binary()
         if not binary:raise ValueError('Chrome nem található.')
-        subprocess.Popen([binary,'--user-data-dir='+str(profile),'--new-window',form.FORM_URL])
+        process=subprocess.Popen([binary,'--user-data-dir='+str(profile),'--new-window',form.FORM_URL])
+        print('Chrome indítás kérve. Profil: '+str(profile)+' | folyamat: '+str(process.pid),flush=True)
         print('Jelentkezz be a kijelölt Google-fiókkal. Ezután zárd be a robot összes Chrome-ablakát, és futtasd a --check parancsot. Ne küldj be tesztpanaszt az éles űrlapon.')
         return
     if args.check or args.dry_run:
-        driver=browser(profile,visible=args.visible or bool(args.dry_run))
+        # Login checks must not create an invisible profile-holding browser.
+        driver=browser(profile,visible=args.check or args.visible or bool(args.dry_run))
         try:
             page=GoogleForm(driver,account)
             if args.dry_run:
@@ -212,4 +344,13 @@ if __name__=='__main__':
     try:main()
     except Exception as exc:
         print('A robot megállt. Hibatípus:',type(exc).__name__,file=sys.stderr)
+        if isinstance(exc,LoginRequired):
+            print(str(exc) or 'Google-bejelentkezés szükséges.',file=sys.stderr)
+        if type(exc).__name__=='SessionNotCreatedException':
+            print('A robot Chrome-profilja foglalt lehet, vagy a Chrome nem indult el. '
+                  'Zárd be a GoogleFormRobot külön Chrome-ablakait. '
+                  'Ha nem látszik ablak, a Feladatkezelőben csak a GoogleFormRobot '
+                  'parancssorú chrome.exe folyamatot állítsd le. '
+                  'Ezután: GoogleRobot.bat login, majd a robotablakok bezárása után '
+                  'GoogleRobot.bat check-login. A szokásos Chrome-profilodat nem kell bezárni.',file=sys.stderr)
         sys.exit(1)
