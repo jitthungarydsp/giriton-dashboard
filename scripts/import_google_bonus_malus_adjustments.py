@@ -39,6 +39,11 @@ def normalize_text(value: Any) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+def normalized_courier_sheet_name(value: Any) -> str:
+    """Normalize a sheet name after removing an embedded Courier ID."""
+    return normalize_text(re.sub(r"(?<!\d)\d{3,10}(?!\d)", " ", str(value or "")))
+
+
 def slug(value: Any) -> str:
     text = normalize_text(value)
     text = re.sub(r"[^a-z0-9]+", "-", text)
@@ -266,7 +271,7 @@ def existing_adjustments(*, courier_id: str | None = None) -> dict[str, dict[str
     offset = 0
     while True:
         params = {
-            "select": "id,courier_id,source_key,valid_from,valid_to,is_active,deleted_at,deleted_by,updated_at",
+            "select": "id,courier_id,source_key,adjustment_type,amount_huf,effective_date,valid_from,valid_to,note,created_by,is_active,deleted_at,deleted_by,updated_at",
             "source_key": f"like.{SOURCE_PREFIX}:%",
             "order": "id",
             "limit": "1000",
@@ -357,6 +362,17 @@ def adjustment_payload(row: dict[str, Any], courier: dict[str, str], key: str) -
         "created_by": str(row.get("recorded_by") or "google-sheet"),
         "updated_at": datetime.utcnow().isoformat(),
     }
+
+
+def adjustment_matches_payload(current: dict[str, Any], payload: dict[str, Any]) -> bool:
+    """Do not rewrite an unchanged source row on every scheduled import."""
+    if current.get("deleted_at") or current.get("is_active") is False:
+        return False
+    fields = (
+        "courier_id", "adjustment_type", "amount_huf", "effective_date",
+        "valid_from", "valid_to", "source_key", "note", "created_by",
+    )
+    return all(str(current.get(field) or "") == str(payload.get(field) or "") for field in fields)
 
 
 def insert_adjustment(payload: dict[str, Any]) -> None:
@@ -454,6 +470,8 @@ def sync_courier_from_sheet(
                 reactivate_sheet_adjustment(str(current["id"]), payload)
                 updated += 1
                 continue
+            if adjustment_matches_payload(current, payload):
+                continue
             update_adjustment(str(current["id"]), payload)
             updated += 1
         else:
@@ -502,6 +520,16 @@ def main() -> int:
     parser.add_argument("--from-date", help="Inclusive YYYY-MM-DD filter.")
     parser.add_argument("--to-date", help="Inclusive YYYY-MM-DD filter.")
     parser.add_argument("--name", help="Csak diagnosztika: futárnév részletre szűr a forrásban.")
+    parser.add_argument(
+        "--allow-unmatched",
+        action="store_true",
+        help="Az egyezés nélküli nevek figyelmeztetések; az egyező tételek miatt nem hibás a futás.",
+    )
+    parser.add_argument(
+        "--refresh-finance-snapshots",
+        action="store_true",
+        help="A változott Google tételek érintett pénzügyi snapshotjait is új verzióra frissíti.",
+    )
     args = parser.parse_args()
 
     from_date = date.fromisoformat(args.from_date) if args.from_date else None
@@ -541,7 +569,10 @@ def main() -> int:
     protected_existing = 0
     protected_closed = 0
     for row in sheet_rows:
-        courier = couriers.get(normalize_text(row["courier_name"]))
+        courier = (
+            couriers.get(normalize_text(row["courier_name"]))
+            or couriers.get(normalized_courier_sheet_name(row["courier_name"]))
+        )
         if not courier:
             unmatched.append(f"{row['row_number']}: {row['courier_name']}")
             continue
@@ -551,6 +582,8 @@ def main() -> int:
 
     inserted = 0
     updated = 0
+    deactivated = 0
+    changed_periods: set[tuple[str, date]] = set()
     if args.apply:
         for key, payload in prepared:
             if payload_month_key(payload) in closed:
@@ -559,13 +592,39 @@ def main() -> int:
             current = existing.get(key)
             if current and current.get("id"):
                 if current.get("deleted_at") or current.get("is_active") is False:
+                    if current.get("deleted_by") == "google-sheet-refresh":
+                        reactivate_sheet_adjustment(str(current["id"]), payload)
+                        updated += 1
+                        changed_periods.add((str(payload["courier_id"]), date.fromisoformat(str(payload["valid_from"])[:10]).replace(day=1)))
+                        continue
                     protected_existing += 1
+                    continue
+                if adjustment_matches_payload(current, payload):
                     continue
                 update_adjustment(str(current["id"]), payload)
                 updated += 1
+                changed_periods.add((str(payload["courier_id"]), date.fromisoformat(str(payload["valid_from"])[:10]).replace(day=1)))
             else:
                 insert_adjustment(payload)
                 inserted += 1
+                changed_periods.add((str(payload["courier_id"]), date.fromisoformat(str(payload["valid_from"])[:10]).replace(day=1)))
+        current_source_keys = {key for key, _payload in prepared}
+        source_prefix = f"{SOURCE_PREFIX}:{args.sheet_id}:{args.gid}:"
+        for current_key, current in existing.items():
+            if current_key in current_source_keys or not current_key.startswith(source_prefix):
+                continue
+            if current.get("deleted_at") or current.get("is_active") is False:
+                continue
+            try:
+                current_date = date.fromisoformat(str(current.get("valid_from") or "")[:10])
+            except ValueError:
+                continue
+            if (str(current.get("courier_id") or ""), current_date.replace(day=1).isoformat()) in closed:
+                protected_closed += 1
+                continue
+            deactivate_adjustment(str(current["id"]))
+            deactivated += 1
+            changed_periods.add((str(current["courier_id"]), current_date.replace(day=1)))
     else:
         inserted = sum(1 for key, _payload in prepared if key not in existing)
         protected_existing = sum(
@@ -588,7 +647,7 @@ def main() -> int:
     print("Mode:", "APPLY" if args.apply else "DRY-RUN")
     print(f"Sheet rows with amount: {len(sheet_rows)}")
     print(
-        f"Prepared: {len(prepared)} | insert: {inserted} | update: {updated} | "
+        f"Prepared: {len(prepared)} | insert: {inserted} | update: {updated} | deactivate: {deactivated} | "
         f"protected_deleted: {protected_existing} | protected_closed: {protected_closed} | "
         f"unmatched/skipped: {skipped}"
     )
@@ -608,7 +667,27 @@ def main() -> int:
             print(f"  - {item}")
         if len(unmatched) > 50:
             print(f"  ... +{len(unmatched) - 50} tovabbi")
-        return 2 if args.apply else 0
+        if args.allow_unmatched:
+            print(
+                f"::warning::{len(unmatched)} Google Sheet-sor futárneve nem egyeztethető a futártörzzsel. "
+                "Az egyező sorok feldolgozása sikeres."
+            )
+        else:
+            return 2 if args.apply else 0
+
+    if args.apply and args.refresh_finance_snapshots and changed_periods:
+        from scripts.refresh_google_adjustment_snapshots import refresh_finance_snapshots
+
+        snapshot_result = refresh_finance_snapshots(changed_periods)
+        print(
+            "Pénzügyi snapshot frissítés: "
+            f"{snapshot_result['saved']} új, {snapshot_result['unchanged']} változatlan, "
+            f"{snapshot_result['skipped']} kihagyva, {snapshot_result['failed']} hiba."
+        )
+        for error in snapshot_result["errors"]:
+            print(f"  - {error}")
+        if snapshot_result["failed"]:
+            return 1
     return 0
 
 

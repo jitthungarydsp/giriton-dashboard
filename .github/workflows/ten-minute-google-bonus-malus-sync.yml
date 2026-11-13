@@ -54,7 +54,7 @@ jobs:
 
           CMD=(python scripts/import_google_bonus_malus_adjustments.py)
           if [ "$DRY_RUN" != "true" ]; then
-            CMD+=(--apply)
+            CMD+=(--apply --allow-unmatched --refresh-finance-snapshots)
           fi
 
           echo "Running: ${CMD[*]}"

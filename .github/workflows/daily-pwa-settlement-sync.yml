@@ -97,7 +97,7 @@ jobs:
         run: |
           CMD=(python scripts/import_google_bonus_malus_adjustments.py)
           if [ "${{ steps.dates.outputs.dry_run }}" != "true" ]; then
-            CMD+=(--apply)
+            CMD+=(--apply --allow-unmatched --refresh-finance-snapshots)
           fi
           echo "Running: ${CMD[*]}"
           "${CMD[@]}"

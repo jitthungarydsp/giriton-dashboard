@@ -129,6 +129,21 @@ class GoogleCourierRefreshTest(unittest.TestCase):
         self.sheet([self.row(when=serials[0]), self.row(when=serials[1])])
         self.assertEqual(self.refresh()['inserted'], 1)
 
+    def test_embedded_courier_id_name_normalizes_to_master_name(self):
+        self.assertEqual(
+            self.ns['normalized_courier_sheet_name']('Piszker 9070 Klaudia'),
+            self.ns['normalize_text']('Piszker Klaudia'),
+        )
+
+    def test_matching_payload_is_not_rewritten(self):
+        row = {
+            'effective_date': date(2026, 10, 10), 'adjustment_type': 'malus',
+            'amount_huf': 25000, 'note': 'Táska', 'transaction_id': 'S-1',
+            'raw_type': 'MALUSZ', 'recorded_by': 'admin',
+        }
+        payload = self.ns['adjustment_payload'](row, {'courier_id': '100'}, 'source')
+        self.assertTrue(self.ns['adjustment_matches_payload'](dict(payload), payload))
+
 
 if __name__ == '__main__':
     unittest.main()
