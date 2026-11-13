@@ -9683,9 +9683,15 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         result["Szerződésen kívüli bónusz"] = (
             result["_courier_id_lookup"].map(by_id)
             .fillna(result["_courier_lookup"].map(by_name))
+            .fillna(_numeric_series(result, "_Excel egyéb route bónusz"))
             .fillna(0.0)
         )
         result = result.drop(columns=["_courier_id_lookup", "_courier_lookup"])
+    elif "_Excel egyéb route bónusz" in result.columns:
+        # The persisted settlement summary is authoritative. If the optional
+        # Out_of_contract_Bonus Routes detail source is temporarily empty,
+        # never replace its already calculated bonus with 0 Ft.
+        result["Szerződésen kívüli bónusz"] = _numeric_series(result, "_Excel egyéb route bónusz")
     return result[columns]
 
 
