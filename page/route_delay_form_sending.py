@@ -114,12 +114,71 @@ def render_route_delay_form_sending(get_db, user):
                     except Exception as exc:
                         st.error(f'A betöltés nem sikerült: {exc}. Újrapróbálás előtt töltsd újra a mentett listát.')
 
+    with st.expander('Októberi Elszámolás-sorlista beillesztése', expanded=False):
+        st.caption('Illeszd be a 9 oszlopos, tabulátoros listát. Minden sor külön, ellenőrizhető Google-űrlaptervezet lesz. A Route ID hiánya Elszámolásnál megengedett.')
+        invoice_paste = st.text_area(
+            'Dátum · futár · ID · Route ID · raktár · tervezett kezdés · Hub · Giriton · sorbaállás',
+            height=220, key='invoice_form_paste',
+        )
+        invoice_message = st.text_area(
+            'A Google-űrlapra kerülő közös Elszámolás-szöveg',
+            height=180, key='invoice_form_message',
+            value=(
+                'Az Október 7.-i változtatás miszerint csak és kizárólag a flotta által allokált autókat lehet használni megborította az októberi beosztást, hiszen nem tudtuk pontosan addig a napig, hogy mennyi autót fogunk kezelésbe kapni, folyamatos éreklődésünkre "még folyamatban vannak az igényfelmérések"-választ kaptuk. Mivel erről a helyzetről a futár nem tehetett azt az infomrációt kaptuk, hogy a hónapban az autóra/telefonra való várakozás esetén felmerült nem teljesítés esetén a no-show-tól eltekintenek.'
+            ),
+        )
+        if st.button('Elszámolás-tervezetek előkészítése és mentése', type='primary', key='invoice_form_import'):
+            try:
+                incoming = service.read_invoice_paste(invoice_paste, invoice_message, actor=actor)
+                current = st.session_state[KEY]
+                combined, counts = service.merge_import(current, incoming, overwrite=False)
+                service.assert_unique(combined)
+                if persistent:
+                    old = {row['id']: row for row in current}
+                    service.store_records(get_db(), [row for row in combined if row['id'] not in old])
+                    combined = service.load_records(get_db())
+                st.session_state[KEY] = combined
+                st.session_state[KEY+'_notice'] = (
+                    f"Elszámolás-tervezetek mentve: {counts['added']} új, "
+                    f"{counts['skipped']} már létező vagy védett tétel. Beküldés még nem történt."
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f'A sorlista feldolgozása nem sikerült: {exc}')
+
+    with st.expander('Első műszak késések Excel automatikus Elszámolás-import', expanded=False):
+        st.caption('Az „Első műszak késések” lapból csak a Hub `OK` sorok kerülnek be. A Giriton- és sorbaállási adatok az ellenőrizhető belső forrásadatok között maradnak.')
+        invoice_excel = st.file_uploader(
+            'oktober_elso_muszak_hub_giriton_2026.xlsx', type=['xlsx'], key='invoice_form_excel_upload'
+        )
+        if invoice_excel and st.button('OK sorok Elszámolás-tervezetként mentése', type='primary', key='invoice_excel_import'):
+            try:
+                incoming = service.read_invoice_excel(
+                    invoice_excel.getvalue(), invoice_excel.name, actor=actor,
+                    message=service.INVOICE_FLEET_MESSAGE,
+                )
+                current = st.session_state[KEY]
+                combined, counts = service.merge_import(current, incoming, overwrite=False)
+                service.assert_unique(combined)
+                if persistent:
+                    old = {row['id']: row for row in current}
+                    service.store_records(get_db(), [row for row in combined if row['id'] not in old])
+                    combined = service.load_records(get_db())
+                st.session_state[KEY] = combined
+                st.session_state[KEY+'_notice'] = (
+                    f"{len(incoming)} OK sor feldolgozva: {counts['added']} új tervezet, "
+                    f"{counts['skipped']} már létező vagy védett tétel. Beküldés még nem történt."
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f'Az Excel automatikus feldolgozása nem sikerült: {exc}')
+
     notice = st.session_state.pop(KEY+'_notice',None)
     if notice:
         st.success(notice)
     records = st.session_state[KEY]
     if not records:
-        st.info('Töltsd be az októberi kategóriajavaslatokat tartalmazó Excelt.')
+        st.info('Töltsd be az októberi kategóriajavaslatokat tartalmazó Excelt, vagy illeszd be az Elszámolás-sorlistát.')
         return
     cols = st.columns(3)
     for col,state in zip(cols,['draft','prepared','sent']):
@@ -163,9 +222,9 @@ def render_route_delay_form_sending(get_db, user):
     state = c3.selectbox('Státusz',['Összes',*service.STATES.values()],key='route_form_state')
     filtered = [r for r in records if (month=='Összes' or r['work_date'].startswith(month))
                 and (state=='Összes' or service.STATES[r['state']]==state)
-                and (not search or search in f"{r['courier_name']} {r['courier_id']} {r['route_id']}".casefold())]
+                and (not search or search in f"{r['courier_name']} {r['courier_id']} {service.display_route_id(r)}".casefold())]
     st.dataframe(pd.DataFrame([{'Dátum':r['work_date'],'Futár':r['courier_name'],'Futár ID':r['courier_id'],
-                               'Túra':r['route_id'],'Állapot':service.STATES[r['state']]}for r in filtered]),
+                               'Túra':service.display_route_id(r),'Állapot':service.STATES[r['state']]}for r in filtered]),
                  hide_index=True,use_container_width=True)
     if not filtered:
         st.info('Nincs a szűrésnek megfelelő tétel.')
@@ -174,7 +233,7 @@ def render_route_delay_form_sending(get_db, user):
     if st.session_state.get('route_form_selected') not in by_id:
         st.session_state['route_form_selected'] = filtered[0]['id']
     selected = st.selectbox('Kezelendő reklamáció',list(by_id),
-                           format_func=lambda key:f"{by_id[key]['work_date']} · {by_id[key]['courier_name']} · túra {by_id[key]['route_id']}",key='route_form_selected')
+                           format_func=lambda key:f"{by_id[key]['work_date']} · {by_id[key]['courier_name']} · túra {service.display_route_id(by_id[key]) or 'nincs Route ID'}",key='route_form_selected')
     record = by_id[selected]
     data = record['data']
     if record['state']=='sent':
@@ -227,23 +286,31 @@ def render_route_delay_form_sending(get_db, user):
         name = b.text_input('Futár neve',value=record['courier_name'])
         courier = c.text_input('Futár ID',value=record['courier_id'])
         a,b,c = st.columns(3)
-        route = a.text_input('Túraszám / Cargo ID',value=record['route_id'])
+        route = a.text_input('Túraszám / Cargo ID',value=service.display_route_id(record))
         warehouse = b.text_input('Raktár',value=str(data.get('Raktár')or''))
-        category = c.selectbox('Kategória',list(service.CATEGORY_LABELS),index=int(data['Javasolt kategória száma'])-1,
-                               format_func=lambda value:f'{value}. {service.CATEGORY_LABELS[value]}')
-        label = service.CATEGORY_LABELS[category]
-        reason = st.text_area('Végleges reklamációindoklás',value=str(data.get('Reklamáció indoklása')or''),height=120)
-        evidence = st.text_area('Forrásadat / megfontolás',value=str(data.get('Adat / megfontolás')or''),height=100)
-        agreed = st.checkbox('Kategória a futárral egyeztetve',value=str(data.get('Kategória futárral egyeztetve')or'').casefold()in{'igen','i','true','1'})
-        checked = st.checkbox('Forráseltérés ellenőrizve',value=str(data.get('Forráseltérés ellenőrizve')or'').casefold()in{'igen','i','true','1'})
+        is_invoice = str(data.get('Űrlap kategória') or '') == 'Elszámolás'
+        if is_invoice:
+            c.text_input('Google-űrlap kategória', value='Elszámolás / Invoice', disabled=True)
+            reason = st.text_area('Google-űrlapra kerülő szöveg',value=str(data.get('Reklamáció indoklása')or''),height=180)
+            evidence = st.text_area('Mentett forrásadat / megfontolás',value=str(data.get('Adat / megfontolás')or''),height=100)
+        else:
+            category = c.selectbox('Kategória',list(service.CATEGORY_LABELS),index=int(data['Javasolt kategória száma'])-1,
+                                   format_func=lambda value:f'{value}. {service.CATEGORY_LABELS[value]}')
+            label = service.CATEGORY_LABELS[category]
+            reason = st.text_area('Végleges reklamációindoklás',value=str(data.get('Reklamáció indoklása')or''),height=120)
+            evidence = st.text_area('Forrásadat / megfontolás',value=str(data.get('Adat / megfontolás')or''),height=100)
+            agreed = st.checkbox('Kategória a futárral egyeztetve',value=str(data.get('Kategória futárral egyeztetve')or'').casefold()in{'igen','i','true','1'})
+            checked = st.checkbox('Forráseltérés ellenőrizve',value=str(data.get('Forráseltérés ellenőrizve')or'').casefold()in{'igen','i','true','1'})
         if st.form_submit_button('Módosítások mentése',type='primary'):
             changed = {**data,'Dátum':day.isoformat(),'Futár':name,'Futár ID':courier,'Túra ID':route,'Raktár':warehouse,
-                       'Javasolt kategória száma':int(category),'Kategóriajavaslat':label,'Reklamáció indoklása':reason,
-                       'Adat / megfontolás':evidence,'Kategória futárral egyeztetve':'Igen'if agreed else'Nem',
-                       'Forráseltérés ellenőrizve':'Igen'if checked else'Nem'}
-            # Drop editable-workbook aliases so older values cannot overwrite edits.
-            changed.pop('Kategória száma',None)
-            changed.pop('Végleges indoklás',None)
+                       'Reklamáció indoklása':reason,'Adat / megfontolás':evidence}
+            if not is_invoice:
+                changed.update({'Javasolt kategória száma':int(category),'Kategóriajavaslat':label,
+                                'Kategória futárral egyeztetve':'Igen'if agreed else'Nem',
+                                'Forráseltérés ellenőrizve':'Igen'if checked else'Nem'})
+                # Drop editable-workbook aliases so older values cannot overwrite edits.
+                changed.pop('Kategória száma',None)
+                changed.pop('Végleges indoklás',None)
             try:
                 save(record,service.edit_record(record,changed,actor))
                 st.session_state[KEY+'_notice']='A tétel mentve. Az űrlaplink már az új adatokat használja.'

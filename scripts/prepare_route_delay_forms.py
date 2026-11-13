@@ -20,6 +20,56 @@ REQUIRED = ['Dátum', 'Futár ID', 'Futár', 'Raktár', 'Túra ID', 'Javasolt ka
             'Kategóriajavaslat', 'Besorolás megbízhatósága', 'Adat / megfontolás']
 
 
+def generic_form_row(row, source_row, day, courier_id, name, route_id):
+    """Prepare a non-route-delay complaint in the same audited queue.
+
+    The route-delay workbook predates the other Google-form categories.  Keep
+    its strict validation intact, but let the admin page create a durable
+    Invoice draft from an explicitly marked row.  The letter itself remains
+    exactly the text approved by the administrator; scheduling evidence stays
+    in the local draft only.
+    """
+    category = text(row.get('Űrlap kategória'))
+    if category not in form.CATEGORIES:
+        raise ValueError(f'Érvénytelen űrlapkategória a {source_row}. sorban.')
+    if not courier_id or not name:
+        raise ValueError(f'Hiányos futáradat a {source_row}. sorban.')
+    message = text(row.get('Reklamáció indoklása'))
+    if len(message) < 5:
+        raise ValueError(f'Hiányzó reklamációindoklás a {source_row}. sorban.')
+    complaint = dict(
+        id=f'admin-form-{category}-{day.isoformat()}-{courier_id}-{route_id or source_row}',
+        courier_id=courier_id,
+        courier_name=name,
+        message=message,
+        affected_items=[dict(date=day.isoformat(), routeId=route_id)],
+    )
+    payload = form.build_payload(complaint, category=category, route_id=route_id)
+    # Do not add internal IDs, dates or raw scheduling data to the agreed
+    # partner-facing wording.
+    payload['description'] = message
+    label, courier_entry, name_entry, description_entry = {
+        'Túra alatti késés': ('Túra alatti késés / Route delay', 1629541155, 139333198, 1757898114),
+        'Futárbüntetés': ('Futár büntetés / Courier penalty', 229683135, 2026925449, 727698089),
+        'Pénztárca/tankolás': ('Pénztárca, tankolás / Wallet, refuel', 1148502456, 1198182622, 688354749),
+        'Elszámolás': ('Elszámolás / Invoice', 1609979400, 275666129, 949548968),
+        'Jármű': ('Jármű / Vehicle', None, None, 179972591),
+        'Műszak': ('Műszak / Shift', 871178890, 1494998302, 2121626944),
+    }[category]
+    fields = {'usp': 'pp_url', 'entry.493012323': 'Just in Time Kft.',
+              'entry.608543996': label, f'entry.{description_entry}': message}
+    if courier_entry:
+        fields.update({f'entry.{courier_entry}': courier_id, f'entry.{name_entry}': name})
+    if category == 'Túra alatti késés':
+        fields['entry.584723978'] = route_id
+    return dict(source_row=source_row, date=day.isoformat(), courier_id=courier_id,
+                courier_name=name, route_id=route_id, warehouse=text(row.get('Raktár')),
+                suggested_category='', category_label=label, warnings=[],
+                evidence=text(row.get('Adat / megfontolás')), source_match='',
+                classification_basis='', state='draft', payload=payload,
+                prefill_url=form.FORM_URL + '?' + urlencode(fields))
+
+
 def text(value):
     if value is None:
         return ''
@@ -34,6 +84,8 @@ def prepare_row(row, source_row):
     if not isinstance(day, date):
         day = date.fromisoformat(text(day))
     courier_id, name, route_id = (text(row.get(key)) for key in ['Futár ID', 'Futár', 'Túra ID'])
+    if text(row.get('Űrlap kategória')):
+        return generic_form_row(row, source_row, day, courier_id, name, route_id)
     if not all([courier_id, name, route_id]):
         raise ValueError(f'Hiányos futár/túra adat a {source_row}. sorban.')
     category = int(row['Javasolt kategória száma'])

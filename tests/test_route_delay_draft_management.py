@@ -3,7 +3,7 @@ import importlib.util
 from pathlib import Path
 import json
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs,urlparse
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -73,6 +73,50 @@ class DraftManagementTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'közben más'):service.store_edit(db,row,row)
         fields=[call.args[0]for call in query.eq.call_args_list]
         self.assertEqual(fields,['id','content_hash','state','updated_at'])
+
+    def test_invoice_paste_keeps_blank_route_and_exact_partner_message(self):
+        message='Októberi flottás elszámolási reklamáció.'
+        pasted=(
+            '2026-10-04\tNagy Ákos\t9067\t\tBUD2\t15:00:00\t\t14:36:00\t\\\n'
+            '2026-10-05\tMásik Futár\t8001\t1561488\tBUD2\t08:00:00\t09:10:50\t07:39:00\t11:12:35\\\n'
+            'A táblázat alatti magyarázatot hagyja figyelmen kívül.\n'
+        )
+        rows=service.read_invoice_paste(pasted,message,actor='admin')
+        self.assertEqual(len(rows),2)
+        self.assertEqual(service.display_route_id(rows[0]),'')
+        self.assertEqual(rows[0]['data']['Űrlap kategória'],'Elszámolás')
+        draft=service.preparation.prepare_row(rows[0]['data'],rows[0]['source_row'])
+        self.assertEqual(draft['payload']['category'],'Elszámolás')
+        self.assertEqual(draft['payload']['description'],message)
+        fields=parse_qs(urlparse(draft['prefill_url']).query)
+        self.assertEqual(fields['entry.608543996'],['Elszámolás / Invoice'])
+        self.assertEqual(fields['entry.1609979400'],['9067'])
+        self.assertEqual(fields['entry.949548968'],[message])
+
+    def test_invoice_records_do_not_collide_with_a_route_delay_record(self):
+        route=self.record()
+        invoice=service.make_record({
+            'Dátum':'2026-10-01','Futár ID':'6498','Futár':'Abonyi György','Túra ID':'1557743',
+            'Raktár':'BUD1','Űrlap kategória':'Elszámolás',
+            'Reklamáció indoklása':'Októberi flottás elszámolási reklamáció.',
+        },2,'source.xlsx','admin')
+        self.assertNotEqual(route['id'],invoice['id'])
+        self.assertNotEqual(route['route_id'],invoice['route_id'])
+        self.assertEqual(service.display_route_id(invoice),'1557743')
+        service.assert_unique([route,invoice])
+
+    def test_first_shift_workbook_uses_invoice_importer_from_common_excel_entry(self):
+        original=service.read_invoice_excel
+        try:
+            service.read_invoice_excel=lambda content, filename, actor, message: [
+                {'id':'invoice','data':{'Űrlap kategória':'Elszámolás'},'route_id':'Elszámolás:1'}
+            ]
+            book=Mock();book.sheetnames=['Első műszak késések'];book.close=Mock()
+            with patch('openpyxl.load_workbook',return_value=book):
+                rows=service.read_excel(b'xlsx','first-shifts.xlsx','admin')
+            self.assertEqual(rows[0]['id'],'invoice')
+        finally:
+            service.read_invoice_excel=original
 
 
 if __name__=='__main__':unittest.main()
