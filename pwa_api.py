@@ -1665,9 +1665,14 @@ def normalize_email_address(value: str) -> str:
 
 
 def create_session(user: dict[str, Any]) -> str:
+    # Cookie values are restricted to Latin-1 by Starlette.  Courier names may
+    # contain Hungarian accented characters, so keep the signed token ASCII-only.
+    username = str(user.get("username") or "")
+    encoded_username = base64.urlsafe_b64encode(username.encode("utf-8")).decode("ascii").rstrip("=")
     payload = "|".join(
         [
-            str(user.get("username") or ""),
+            "v2",
+            encoded_username,
             str(user.get("courierId") or user.get("courier_id") or ""),
             str(time.time_ns()),
             secrets.token_urlsafe(10),
@@ -1686,7 +1691,14 @@ def read_session(token: str) -> dict[str, Any] | None:
         if not hmac.compare_digest(signature, expected):
             return None
 
-        username, courier_id, issued_at, _nonce = payload.split("|", 3)
+        parts = payload.split("|")
+        if len(parts) == 5 and parts[0] == "v2":
+            _version, encoded_username, courier_id, issued_at, _nonce = parts
+            padding = "=" * (-len(encoded_username) % 4)
+            username = base64.urlsafe_b64decode(f"{encoded_username}{padding}").decode("utf-8")
+        else:
+            # Existing sessions remain valid until their normal expiry.
+            username, courier_id, issued_at, _nonce = payload.split("|", 3)
         issued_seconds = int(issued_at) / 1_000_000_000 if len(issued_at) >= 18 else float(issued_at)
         if time.time() - issued_seconds > SESSION_TTL_SECONDS or issued_seconds > time.time() + 60:
             return None
