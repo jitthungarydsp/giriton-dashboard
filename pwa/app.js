@@ -5326,6 +5326,7 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
   const complaints = state.workflow?.complaints?.settlement || [];
   const hasOpenComplaintForAction = hasOpenComplaint(complaints);
   const readOnly = Boolean(state.workflow?.viewerReadOnly);
+  const settlementAcceptanceDisabled = state.workflow?.settlementAcceptanceEnabled === false;
   if (!breakdown.available) {
     return `<div class="notice">${escapeHtml(breakdown.message || "A havi pénzügyi bontás még nincs kész.")}</div>`;
   }
@@ -5377,6 +5378,8 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
         ? `<div class="accept-row done">✓ Az elszámolási összeget elfogadtad.</div>`
         : readOnly
           ? `<button class="primary" disabled>Előnézeti módban nem módosítható</button>`
+        : settlementAcceptanceDisabled
+          ? `<div class="notice">Az elszámolás ebben a módban csak áttekinthető. Az elfogadás az eredeti folyamat visszaállításakor válik elérhetővé.</div>`
         : !locked && !blocksAcceptance
           ? `<button class="primary" id="accept-settlement">✓ Elfogadom az összeget</button>`
           : !locked
@@ -5519,6 +5522,7 @@ function addFinancialEditorRow(cardKey) {
 }
 
 function renderLegacySettlementDocumentPanel(documents, complaints, accepted, locked, blocksAcceptance, readOnly) {
+  const settlementAcceptanceDisabled = state.workflow?.settlementAcceptanceEnabled === false;
   return `
     <div class="notice">Régi elszámolási dokumentum alapján kezelhető folyamat. Nyisd meg a PDF-et, majd fogadd el vagy küldj reklamációt.</div>
     ${documentList(documents)}
@@ -5526,6 +5530,8 @@ function renderLegacySettlementDocumentPanel(documents, complaints, accepted, lo
       ? `<div class="accept-row done">✓ Az elszámolást elfogadtad.</div>`
       : readOnly
         ? `<div class="accept-row"><button class="primary" disabled>Előnézeti módban nem módosítható</button></div>`
+      : settlementAcceptanceDisabled
+        ? `<div class="notice">Az elszámolás ebben a módban csak áttekinthető. Az elfogadás az eredeti folyamat visszaállításakor válik elérhetővé.</div>`
       : documents.length && !locked && !blocksAcceptance
         ? `<div class="accept-row"><button class="primary" id="accept-settlement">✓ Elfogadom az elszámolást</button></div>`
         : documents.length && !locked && blocksAcceptance

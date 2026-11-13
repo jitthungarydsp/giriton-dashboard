@@ -11251,6 +11251,18 @@ def admin_save_finance_snapshot(
     source_payloads = [{"snapshot_id": snapshot_id, **source} for source in sources]
     if source_payloads:
         client.table("courier_finance_snapshot_source").insert(source_payloads).execute()
+    try:
+        from resources.finance_snapshot_workflow import reset_workflow_for_finance_snapshot
+        reset_workflow_for_finance_snapshot(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            period_start=month,
+            snapshot_id=snapshot_id,
+            previous_snapshot_id=str(latest.get("id") or ""),
+            snapshot_source="pwa_admin_editor",
+        )
+    except Exception as notification_exc:
+        print("Finance snapshot workflow reset failed:", notification_exc)
     return {"saved": True, "snapshotId": snapshot_id, "version": version, "totals": totals}
 
 
@@ -18695,6 +18707,7 @@ def build_workflow(
     ]
     mobile_config = read_mobile_settlement_period_config(month) if not process_id else {}
     visibility_mode = normalize_mobile_visibility_mode(mobile_config.get("visibility_mode"))
+    settlement_acceptance_enabled = bool(process_id) or visibility_mode != "settlement_only"
     # Admin preview is intentionally a full read-only view of the selected
     # courier. Mobile visibility settings must not hide the settlement/Teljesítés-összesítő
     # details from the administrator who opened that preview.
@@ -18820,9 +18833,9 @@ def build_workflow(
         },
         {
             "key": "settlement",
-            "title": "Elszámolás elfogadása",
+            "title": "Elszámolás elfogadása" if settlement_acceptance_enabled else "Elszámolás áttekintése",
             "done": settlement_done,
-            "locked": not settlement_ready,
+            "locked": not settlement_ready or not settlement_acceptance_enabled,
         },
         {
             "key": "tig_document",
@@ -19000,6 +19013,7 @@ def build_workflow(
         "efoInvoiceSkip": efo_invoice_skip,
         "manualInvoiceSkip": manual_invoice_skip,
         "visibilityMode": visibility_mode,
+        "settlementAcceptanceEnabled": settlement_acceptance_enabled,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -25543,6 +25557,11 @@ def accept_workflow_document(
     visibility_mode = normalize_mobile_visibility_mode(
         read_mobile_settlement_period_config(month).get("visibility_mode")
     )
+    if not process_id and action == "settlement" and visibility_mode == "settlement_only":
+        raise HTTPException(
+            status_code=409,
+            detail="Az elszámolás ebben a megjelenítési módban csak áttekinthető, nem fogadható el.",
+        )
     if not process_id and action == "tig" and visibility_mode == "settlement_only":
         raise HTTPException(status_code=409, detail="A Teljesítés-összesítő admin beállítás szerint most nem látható.")
     if action == "tig":

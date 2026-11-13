@@ -239,6 +239,15 @@ def refresh_finance_snapshot(courier_id: str, period_start: date) -> str:
             continue
         response = requests.post(_url(table), headers=_headers("return=minimal"), json=payloads, timeout=60)
         raise_for_supabase_error(response)
+    from resources.finance_snapshot_workflow import reset_workflow_for_finance_snapshot
+    reset_workflow_for_finance_snapshot(
+        courier_id=str(courier_id),
+        courier_name=str(previous.get("courier_name") or courier_id),
+        period_start=month,
+        snapshot_id=snapshot_id,
+        previous_snapshot_id=previous_id,
+        snapshot_source="google_bonus_malus_sync",
+    )
     return "saved"
 
 

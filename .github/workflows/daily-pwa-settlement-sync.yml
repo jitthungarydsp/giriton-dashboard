@@ -34,6 +34,14 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: '587'
+      SMTP_USE_SSL: 'false'
+      SMTP_USE_STARTTLS: 'true'
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      SMTP_FROM_EMAIL: ${{ secrets.SMTP_USERNAME }}
+      SMTP_FROM_NAME: Jitt Pénzügyi Team
 
     steps:
       - name: Checkout
@@ -54,6 +62,8 @@ jobs:
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+          test -n "$SMTP_USERNAME" || (echo "Missing SMTP_USERNAME secret" && exit 1)
+          test -n "$SMTP_PASSWORD" || (echo "Missing SMTP_PASSWORD secret" && exit 1)
 
       - name: Resolve dates
         id: dates

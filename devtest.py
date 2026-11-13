@@ -3609,6 +3609,18 @@ def save_devtest_finance_snapshot_version(
         ]
         if source_rows:
             get_db().schema("settlement").table("courier_finance_snapshot_source").insert(source_rows).execute()
+        try:
+            from resources.finance_snapshot_workflow import reset_workflow_for_finance_snapshot
+            reset_workflow_for_finance_snapshot(
+                courier_id=clean_courier_id,
+                courier_name=courier_name,
+                period_start=period_start,
+                snapshot_id=snapshot_id,
+                previous_snapshot_id=str(latest.get("id") or ""),
+                snapshot_source="devtest_finance",
+            )
+        except Exception as notification_exc:
+            print("Finance snapshot workflow reset failed:", notification_exc)
         return {"saved": True, "version": version, "snapshot_id": snapshot_id}
     except BaseException as exc:
         return {"saved": False, "reason": str(exc)}
