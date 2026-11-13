@@ -3487,6 +3487,37 @@ def validate_loyalty_snapshot_consistency(finance_rows, source_payloads) -> None
                     raise ValueError("A lojalitás city körszáma és részletezése eltér. Az elszámolás újraszámítása szükséges.")
 
 
+def _finance_snapshot_financial_fingerprint(period: str, courier_id: str, items: list[dict[str, object]]) -> str:
+    """Fingerprint only the money-bearing settlement rows.
+
+    Source payloads also contain volatile UI data (for example a complaint
+    message or its status). They remain auditable, but must never create a new
+    financial version or restart a courier workflow.
+    """
+    financial_items = []
+    for item in items:
+        if str(item.get("amount_kind") or "huf").strip().casefold() != "huf":
+            continue
+        section = str(item.get("section") or "").strip()
+        item_key = str(item.get("item_key") or "").strip()
+        if not section or not item_key:
+            continue
+        financial_items.append({
+            "section": section,
+            "item_key": item_key,
+            "amount_huf": int(round(parse_huf_value(item.get("amount_value")))),
+        })
+    canonical = {
+        "format": "financial-items-v2",
+        "period_start": str(period),
+        "courier_id": _courier_id_key(courier_id),
+        "items": sorted(financial_items, key=lambda item: (item["section"], item["item_key"])),
+    }
+    return hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
 def save_devtest_finance_snapshot_version(
     *,
     courier_id: str,
@@ -3525,26 +3556,7 @@ def save_devtest_finance_snapshot_version(
             "payload": payload if payload is not None else {},
             "row_count": row_count,
         })
-    canonical = {
-        "period_start": period,
-        "courier_id": clean_courier_id,
-        "calculation_mode": str(calculation_mode or ""),
-        "warehouse_label": str(warehouse_label or ""),
-        "session_id": str(session_id or ""),
-        "metadata": safe_metadata,
-        "sources": sorted(normalized_sources, key=lambda item: str(item.get("source_key") or "")),
-        "items": sorted(
-            items,
-            key=lambda item: (
-                str(item.get("section") or ""),
-                str(item.get("item_key") or ""),
-                int(item.get("display_order") or 0),
-            ),
-        ),
-    }
-    fingerprint = hashlib.sha256(
-        json.dumps(canonical, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
-    ).hexdigest()
+    fingerprint = _finance_snapshot_financial_fingerprint(period, clean_courier_id, items)
     try:
         latest_rows = (
             get_db().schema("settlement").table("courier_finance_snapshot")
@@ -3556,7 +3568,16 @@ def save_devtest_finance_snapshot_version(
             .execute().data or []
         )
         latest = latest_rows[0] if latest_rows else {}
-        if str(latest.get("fingerprint") or "") == fingerprint:
+        latest_id = str(latest.get("id") or "")
+        latest_items = []
+        if latest_id:
+            latest_items = (
+                get_db().schema("settlement").table("courier_finance_snapshot_item")
+                .select("section,item_key,amount_value,amount_kind")
+                .eq("snapshot_id", latest_id)
+                .execute().data or []
+            )
+        if latest_id and _finance_snapshot_financial_fingerprint(period, clean_courier_id, latest_items) == fingerprint:
             return {
                 "saved": False,
                 "unchanged": True,

@@ -11187,6 +11187,37 @@ def admin_snapshot_dict_from_finance_rows(
     return preview, totals
 
 
+def finance_snapshot_financial_fingerprint(period: str, courier_id: str, items: list[dict[str, Any]]) -> str:
+    """Return a stable fingerprint for only money-bearing settlement rows.
+
+    Metadata and source payloads can contain a complaint text, preview state,
+    or a refreshed source timestamp. They are retained for audit, but are not
+    a financial change and must not reopen the courier's workflow.
+    """
+    financial_items = []
+    for item in items:
+        if str(item.get("amount_kind") or "huf").strip().casefold() != "huf":
+            continue
+        section = str(item.get("section") or "").strip()
+        item_key = str(item.get("item_key") or "").strip()
+        if not section or not item_key:
+            continue
+        financial_items.append({
+            "section": section,
+            "item_key": item_key,
+            "amount_huf": money_int(item.get("amount_value")),
+        })
+    canonical = {
+        "format": "financial-items-v2",
+        "period_start": str(period),
+        "courier_id": str(courier_id or "").strip(),
+        "items": sorted(financial_items, key=lambda item: (item["section"], item["item_key"])),
+    }
+    return hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
 def admin_save_finance_snapshot(
     *,
     snapshot: dict[str, Any],
@@ -11205,23 +11236,19 @@ def admin_save_finance_snapshot(
         source for source in snapshot.get("sources") or []
         if isinstance(source, dict) and str(source.get("source_key") or "")
     ]
-    canonical = {
-        "period_start": period,
-        "courier_id": courier_id,
-        "calculation_mode": str(snapshot.get("calculation_mode") or "admin_editor"),
-        "warehouse_label": str(snapshot.get("warehouse_label") or ""),
-        "session_id": str(snapshot.get("session_id") or ""),
-        "metadata": preview.get("metadata") or {},
-        "sources": sorted(sources, key=lambda row: str(row.get("source_key") or "")),
-        "items": sorted(items, key=lambda row: (str(row.get("section") or ""), str(row.get("item_key") or ""), money_int(row.get("display_order")))),
-    }
-    fingerprint = hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+    fingerprint = finance_snapshot_financial_fingerprint(period, courier_id, items)
     client = settlement_supabase_client().schema("settlement")
     latest_rows = client.table("courier_finance_snapshot").select("id,version,fingerprint").eq(
         "period_start", period
     ).eq("courier_id", courier_id).order("version", desc=True).limit(1).execute().data or []
     latest = latest_rows[0] if latest_rows else {}
-    if str(latest.get("fingerprint") or "") == fingerprint:
+    latest_id = str(latest.get("id") or "")
+    latest_items = []
+    if latest_id:
+        latest_items = client.table("courier_finance_snapshot_item").select(
+            "section,item_key,amount_value,amount_kind"
+        ).eq("snapshot_id", latest_id).execute().data or []
+    if latest_id and finance_snapshot_financial_fingerprint(period, courier_id, latest_items) == fingerprint:
         return {"saved": False, "unchanged": True, "snapshotId": str(latest.get("id") or ""), "version": money_int(latest.get("version")), "totals": totals}
     version = money_int(latest.get("version")) + 1
     updated_by = str(user.get("username") or user.get("courierId") or "admin")

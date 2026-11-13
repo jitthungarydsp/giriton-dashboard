@@ -142,15 +142,20 @@ def _rebuild_manual_items(items: list[dict[str, Any]], adjustments: list[dict[st
 
 
 def _snapshot_fingerprint(snapshot: dict[str, Any], items: list[dict[str, Any]], sources: list[dict[str, Any]]) -> str:
+    financial_items = [
+        {
+            "section": str(item.get("section") or ""),
+            "item_key": str(item.get("item_key") or ""),
+            "amount_huf": _number(item.get("amount_value")),
+        }
+        for item in items
+        if str(item.get("amount_kind") or "huf").strip().casefold() == "huf"
+    ]
     payload = {
+        "format": "financial-items-v2",
         "period_start": snapshot["period_start"],
         "courier_id": str(snapshot["courier_id"]),
-        "calculation_mode": snapshot.get("calculation_mode") or "",
-        "warehouse_label": snapshot.get("warehouse_label") or "",
-        "session_id": snapshot.get("session_id") or "",
-        "metadata": snapshot.get("metadata") or {},
-        "items": sorted(items, key=lambda item: (str(item.get("section")), _number(item.get("display_order")), str(item.get("item_key")))),
-        "sources": sorted(sources, key=lambda source: str(source.get("source_key") or "")),
+        "items": sorted(financial_items, key=lambda item: (item["section"], item["item_key"])),
     }
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
