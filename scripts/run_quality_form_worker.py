@@ -243,12 +243,30 @@ class GoogleForm:
             nodes=[el for el in self.driver.find_elements(By.CSS_SELECTOR,'[role="radio"]')
                    if el.is_displayed() and (el.get_attribute('data-value')==label
                        or el.get_attribute('aria-label')==label)]
-            return nodes[0] if len(nodes)==1 else False
-        radio=WebDriverWait(self.driver,15).until(option)
+            if not nodes:
+                # Google Forms changed this branch so the visible answer text
+                # can be a nested span instead of an aria-label/data-value on
+                # the radio itself.  Resolve only a visible radio that owns
+                # the exact displayed answer, never a fuzzy text match.
+                xpath=(f'//*[@role="radio" and '
+                       f'(normalize-space(.)="{label}" or .//*[normalize-space(.)="{label}"])]')
+                nodes=[el for el in self.driver.find_elements(By.XPATH,xpath) if el.is_displayed()]
+            unique=[]
+            for node in nodes:
+                if node.id not in {item.id for item in unique}:
+                    unique.append(node)
+            return unique[0] if len(unique)==1 else False
+        try:
+            radio=WebDriverWait(self.driver,15).until(option)
+        except Exception as exc:
+            raise FormInteractionError('Reklamáció típusa: nem található az űrlapon: '+label) from exc
         if radio.get_attribute('aria-checked')!='true':
             self.click_control(radio,'Reklamáció típusa: '+label)
-        WebDriverWait(self.driver,10).until(lambda _:option(None)
-            and option(None).get_attribute('aria-checked')=='true')
+        try:
+            WebDriverWait(self.driver,10).until(lambda _:option(None)
+                and option(None).get_attribute('aria-checked')=='true')
+        except Exception as exc:
+            raise FormInteractionError('Reklamáció típusa nem jelölődött ki: '+label) from exc
 
     def verify_fields(self, fields):
         from selenium.webdriver.common.by import By
@@ -261,16 +279,29 @@ class GoogleForm:
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import WebDriverWait
         category,fields=form.answers(payload)
-        # Prefill the verified public entry IDs for route complaints. UI checks
-        # still verify category and every input; prefill alone never authorizes Submit.
+        # Public prefill entry IDs differ from the internal question IDs used
+        # below. Prefill every category, then verify through the visible UI.
+        # This makes the category choice resilient to Google Forms' changing
+        # radio-button markup; prefill alone never authorizes Submit.
+        public_fields={
+            'Túra alatti késés': (1629541155,139333198,1757898114),
+            'Futárbüntetés': (229683135,2026925449,727698089),
+            'Pénztárca/tankolás': (1148502456,1198182622,688354749),
+            'Elszámolás': (1609979400,275666129,949548968),
+            'Jármű': (None,None,179972591),
+            'Műszak': (871178890,1494998302,2121626944),
+        }
+        courier_entry,name_entry,description_entry=public_fields[payload['category']]
+        prefill={'usp':'pp_url','entry.493012323':'Just in Time Kft.',
+                 'entry.608543996':category,f'entry.{description_entry}':payload['description']}
+        if courier_entry:
+            prefill.update({f'entry.{courier_entry}':payload['courier_id'],
+                            f'entry.{name_entry}':payload['courier_name']})
         if payload['category']=='Túra alatti késés':
-            prefill={'usp':'pp_url','entry.493012323':'Just in Time Kft.',
-                     'entry.608543996':category,'entry.1629541155':payload['courier_id'],
-                     'entry.139333198':payload['courier_name'],'entry.584723978':payload['route_id'],
-                     'entry.1757898114':payload['description']}
-            self.open(form.FORM_URL+'?'+urlencode(prefill))
-        else:
-            self.open()
+            prefill['entry.584723978']=payload['route_id']
+        if payload['category']=='Jármű':
+            prefill['entry.1445819589']=payload['license_plate']
+        self.open(form.FORM_URL+'?'+urlencode(prefill))
         print('Űrlap: Google-fiók ellenőrizve.',flush=True)
         self.ensure_email_consent()
         print('Űrlap: e-mail rögzítése bejelölve.',flush=True)
