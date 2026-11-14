@@ -6,12 +6,23 @@ def settlement_dashboard_status(
     invoice_submit_open=False, invoice_submit_done=False,
     invoice_check_open=False, invoice_check_done=False,
     invoice_payment_open=False, invoice_payment_done=False, open_complaints=0,
+    settlement_reset_pending=False,
 ):
     def status(label, detail, tone, sort):
         return {"label": label, "detail": detail, "tone": tone, "sort": sort}
 
     if open_complaints:
         return status("Reklamáció", f"{open_complaints} nyitott reklamáció", "attention", 20)
+    # A replacement financial snapshot reopens each later database row for
+    # audit. A previously uploaded invoice is evidence of the former amount,
+    # not a reason to skip the new settlement acceptance.
+    if settlement_ready and settlement_reset_pending:
+        return status(
+            "Elszámolás elfogadásra vár",
+            "Az elszámolás frissült; új elfogadás szükséges",
+            "waiting",
+            40,
+        )
     # Prepared/open actions alone do not prove acceptance. An actual submitted,
     # approved or paid invoice must remain visible after an earlier step reopens.
     invoice_progress_recorded = invoice_submit_done or invoice_check_done or invoice_payment_done

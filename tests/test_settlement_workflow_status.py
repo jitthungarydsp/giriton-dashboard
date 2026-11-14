@@ -64,7 +64,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
               "document_belongs_to_process": lambda row, p: not row.get("note"),
               "settlement_dashboard_status": settlement_dashboard_status}
         load_functions("pwa_api.py", {"attach_readonly_dashboard_statuses", "_dashboard_status_from_bulk",
-                                     "read_dashboard_month_workflow",
+                                     "read_dashboard_month_workflow", "workflow_reset_requires_settlement_acceptance",
                                      "workflow_done", "workflow_open", "workflow_status", "workflow_action_visible"}, ns)
         original = {"rows": [dict(courierId=str(i), snapshotVersion=7, totalPayableHuf=100*i,
                                  status={"label": "Devtest összesítés"}) for i in range(1, 6)],
@@ -92,6 +92,20 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
                 flags.update(later)
                 self.assertEqual(settlement_dashboard_status(**flags)["label"], "Elszámolás elfogadásra vár")
 
+    def test_replacement_snapshot_hides_a_previous_invoice_until_reacceptance(self):
+        status = settlement_dashboard_status(
+            settlement_ready=True,
+            settlement_done=False,
+            tig_ready=True,
+            tig_done=False,
+            invoice_submit_open=True,
+            invoice_submit_done=True,
+            invoice_check_open=True,
+            settlement_reset_pending=True,
+        )
+        self.assertEqual(status["label"], "Elszámolás elfogadásra vár")
+        self.assertIn("frissült", status["detail"])
+
     def test_tig_requires_acceptance_and_a_document(self):
         for ready, expected in ((False, "Teljesítés-összesítőre vár"), (True, "Teljesítés-összesítő áttekintésre vár")):
             self.assertEqual(settlement_dashboard_status(
@@ -112,6 +126,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
     def test_uploaded_invoice_is_evidence_but_prepared_tig_is_not(self):
         ns = load_functions("pwa_api.py", {
             "_dashboard_status_from_bulk", "workflow_status", "workflow_done", "workflow_open", "workflow_action_visible",
+            "workflow_reset_requires_settlement_acceptance",
         }, {"Any": Any, "settlement_dashboard_status": settlement_dashboard_status})
         flags = dict(has_summary=True, has_settlement_document=True, has_tig_document=True,
                      states={"settlement": {"status": "open"}}, open_complaints=0)
@@ -162,6 +177,7 @@ class SettlementWorkflowStatusTest(unittest.TestCase):
         ns = load_functions("pwa_api.py", {
             "workflow_status", "workflow_done", "workflow_open", "workflow_action_visible",
             "workflow_dashboard_open_complaints", "workflow_dashboard_status", "_dashboard_status_from_bulk",
+            "workflow_reset_requires_settlement_acceptance",
             "base_action_key",
         }, {"Any": Any, "re": __import__("re"), "settlement_dashboard_status": settlement_dashboard_status})
         states = {"settlement": {"status": "open"}, "tig": {"status": "open"},

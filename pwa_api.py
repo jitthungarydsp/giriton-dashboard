@@ -18194,6 +18194,20 @@ def workflow_open(states: dict[str, dict], action: str) -> bool:
     return workflow_status(states, action) == "open"
 
 
+def workflow_reset_requires_settlement_acceptance(states: dict[str, dict]) -> bool:
+    """Whether a replacement financial snapshot reset this monthly process."""
+    settlement = states.get("settlement") or {}
+    if workflow_done(states, "settlement"):
+        return False
+    note = str(settlement.get("status_note") or "").casefold()
+    updated_by = str(settlement.get("updated_by") or "").casefold()
+    return (
+        "új pénzügyi snapshot" in note
+        or "uj penzugyi snapshot" in note
+        or updated_by == "finance-snapshot-refresh"
+    )
+
+
 def workflow_action_visible(states: dict[str, dict], action: str) -> bool:
     return workflow_status(states, action) in {"open", "done"}
 
@@ -18843,7 +18857,15 @@ def build_workflow(
         )
     tig_ready = False if tig_hidden_by_admin else bool(document_groups["tig"]) or bool(tig_breakdown.get("available"))
     tig_done = workflow_done(states, "tig") or process_invoice_flow_ready or (manual_invoice_skip and settlement_done)
-    invoice_submit_open = workflow_open(states, "invoice_submit") and not invoice_skip
+    # A replacement finance snapshot technically reopens all later workflow
+    # rows. Until the courier accepts the replacement settlement, however,
+    # only that first step may be actionable; do not show invoice upload.
+    settlement_reset_pending = workflow_reset_requires_settlement_acceptance(states)
+    invoice_submit_open = (
+        workflow_open(states, "invoice_submit")
+        and not invoice_skip
+        and not settlement_reset_pending
+    )
     invoice_submit_done = False if invoice_submit_open else (workflow_done(states, "invoice_submit") or (invoice_skip and tig_done))
     invoice_check_done = False if invoice_submit_open else (workflow_done(states, "invoice_check") or (invoice_skip and tig_done))
 
@@ -19039,6 +19061,7 @@ def build_workflow(
         "invoiceValidationOverride": invoice_validation_override_enabled(states),
         "efoInvoiceSkip": efo_invoice_skip,
         "manualInvoiceSkip": manual_invoice_skip,
+        "settlementResetPending": settlement_reset_pending,
         "visibilityMode": visibility_mode,
         "settlementAcceptanceEnabled": settlement_acceptance_enabled,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
@@ -19261,6 +19284,7 @@ def workflow_dashboard_status(workflow: dict[str, Any]) -> dict[str, Any]:
         invoice_check_done=bool((steps.get("invoice_check") or {}).get("done")),
         invoice_payment_open=workflow_open(states, "invoice_payment"),
         invoice_payment_done=workflow_done(states, "invoice_payment") or bool((steps.get("invoice_payment") or {}).get("done")),
+        settlement_reset_pending=workflow_reset_requires_settlement_acceptance(states),
     )
 
 
@@ -19403,6 +19427,7 @@ def _dashboard_status_from_bulk(
         invoice_payment_open=workflow_open(states, "invoice_payment"),
         invoice_payment_done=workflow_done(states, "invoice_payment"),
         open_complaints=open_complaints,
+        settlement_reset_pending=workflow_reset_requires_settlement_acceptance(states),
     )
 
 
