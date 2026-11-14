@@ -1,7 +1,10 @@
 const SETTLEMENT_SCHEMA = "settlement";
 const PUBLIC_SCHEMA = "public";
 const PWA_SESSION_COOKIE = "giriton_pwa_session";
-const DEFAULT_PWA_API_URL = "https://futar.jitt.hu";
+// The public futar.jitt.hu hostname can present a Cloudflare challenge to a
+// Worker-to-Worker request. This is the same PWA service behind its Render
+// hostname, which keeps the Hub login on the existing PWA account database.
+const DEFAULT_PWA_API_URL = "https://jittfutar.onrender.com";
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
