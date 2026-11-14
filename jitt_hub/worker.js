@@ -21,7 +21,13 @@ function cleanEnv(value) {
 }
 
 function pwaApiUrl(env) {
-  const value = cleanEnv(env.PWA_API_URL || DEFAULT_PWA_API_URL);
+  const configured = cleanEnv(env.PWA_API_URL);
+  // Older Cloudflare dashboard deployments can retain the former public host
+  // because keep_vars preserves dashboard values. That host challenges Worker
+  // traffic before it reaches the PWA, so never route Hub authentication there.
+  const value = configured && !/^(https?:\/\/)?futar\.jitt\.hu\/?$/i.test(configured)
+    ? configured
+    : DEFAULT_PWA_API_URL;
   const url = new URL(value);
   if (url.protocol !== "https:") {
     throw new Error("PWA_API_URL must use HTTPS.");
@@ -44,6 +50,8 @@ async function pwaApiFetch(env, path, init = {}) {
     redirect: "manual",
     headers: {
       accept: "application/json",
+      "accept-language": "hu-HU,hu;q=0.9,en;q=0.8",
+      "user-agent": "JITT-Hub/1.0 (+https://jitthub.jitthub.workers.dev)",
       ...(init.headers || {}),
     },
   });
@@ -55,6 +63,9 @@ async function readJson(response) {
   try {
     return JSON.parse(text);
   } catch {
+    if (/<!doctype html|<html[ >]/i.test(text)) {
+      return { error: "A PWA külső védelmi oldalt adott vissza. A Hub belépési kérése nem jutott el a PWA-hoz." };
+    }
     return { error: text.slice(0, 300) };
   }
 }
