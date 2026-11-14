@@ -6,9 +6,6 @@ keep_vars = true
 workers_dev = true
 secrets = { required = ["SUPABASE_URL", "SUPABASE_READ_KEY"] }
 
-[vars]
-PWA_API_URL = "https://jittfutar.onrender.com"
-
 [assets]
 directory = "./jitt_hub"
 binding = "ASSETS"

@@ -1,10 +1,7 @@
 const SETTLEMENT_SCHEMA = "settlement";
 const PUBLIC_SCHEMA = "public";
-const PWA_SESSION_COOKIE = "giriton_pwa_session";
-// The public futar.jitt.hu hostname can present a Cloudflare challenge to a
-// Worker-to-Worker request. This is the same PWA service behind its Render
-// hostname, which keeps the Hub login on the existing PWA account database.
-const DEFAULT_PWA_API_URL = "https://jittfutar.onrender.com";
+const HUB_SESSION_COOKIE = "jitt_hub_session";
+const HUB_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -20,53 +17,116 @@ function cleanEnv(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
-function pwaApiUrl(env) {
-  const configured = cleanEnv(env.PWA_API_URL);
-  // Older Cloudflare dashboard deployments can retain the former public host
-  // because keep_vars preserves dashboard values. That host challenges Worker
-  // traffic before it reaches the PWA, so never route Hub authentication there.
-  const value = configured && !/^(https?:\/\/)?futar\.jitt\.hu\/?$/i.test(configured)
-    ? configured
-    : DEFAULT_PWA_API_URL;
-  const url = new URL(value);
-  if (url.protocol !== "https:") {
-    throw new Error("PWA_API_URL must use HTTPS.");
-  }
-  return url.origin;
-}
-
-function sessionCookie(request) {
+function cookieValue(request, name) {
   const cookieHeader = request.headers.get("cookie") || "";
   const cookie = cookieHeader
     .split(";")
     .map((value) => value.trim())
-    .find((value) => value.startsWith(`${PWA_SESSION_COOKIE}=`));
-  return cookie || "";
+    .find((value) => value.startsWith(`${name}=`));
+  return cookie ? cookie.slice(name.length + 1) : "";
 }
 
-async function pwaApiFetch(env, path, init = {}) {
-  return fetch(`${pwaApiUrl(env)}${path}`, {
-    ...init,
-    redirect: "manual",
-    headers: {
-      accept: "application/json",
-      "accept-language": "hu-HU,hu;q=0.9,en;q=0.8",
-      "user-agent": "JITT-Hub/1.0 (+https://jitthub.jitthub.workers.dev)",
-      ...(init.headers || {}),
-    },
-  });
+function base64UrlEncode(value) {
+  const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(String(value));
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-async function readJson(response) {
-  const text = await response.text();
-  if (!text) return {};
+function base64UrlDecode(value) {
+  const base64 = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function normalizedLogin(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function publicPwaUser(row) {
+  const username = key(row?.username);
+  const role = key(row?.role || "user");
+  const isDashboardAdmin = ["admin", "superadmin"].includes(role.toLowerCase()) || normalizedLogin(username) === "admin";
+  return {
+    username,
+    courierId: key(row?.courier_id || row?.courierId),
+    role,
+    canViewSettlementDashboard: isDashboardAdmin,
+  };
+}
+
+async function signingKey(env) {
+  const secret = cleanEnv(env.SUPABASE_READ_KEY || env.SUPABASE_SERVICE_ROLE_KEY);
+  if (!secret) throw new Error("Missing SUPABASE_READ_KEY.");
+  return crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(`jitthub-session-v1:${secret}`),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"],
+  );
+}
+
+function sameBytes(left, right) {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) difference |= left[index] ^ right[index];
+  return difference === 0;
+}
+
+async function verifyPwaPassword(password, storedHash) {
+  const [scheme, iterations, saltBase64, expectedBase64] = String(storedHash || "").split("$", 4);
+  if (scheme !== "pbkdf2_sha256" || !/^\d+$/.test(iterations) || !saltBase64 || !expectedBase64) return false;
   try {
-    return JSON.parse(text);
+    const expected = base64UrlDecode(expectedBase64.replace(/\+/g, "-").replace(/\//g, "_"));
+    const passwordKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+    const actual = new Uint8Array(await crypto.subtle.deriveBits({
+      name: "PBKDF2",
+      hash: "SHA-256",
+      salt: base64UrlDecode(saltBase64.replace(/\+/g, "-").replace(/\//g, "_")),
+      iterations: Number(iterations),
+    }, passwordKey, expected.length * 8));
+    return sameBytes(actual, expected);
   } catch {
-    if (/<!doctype html|<html[ >]/i.test(text)) {
-      return { error: "A PWA külső védelmi oldalt adott vissza. A Hub belépési kérése nem jutott el a PWA-hoz." };
-    }
-    return { error: text.slice(0, 300) };
+    return false;
+  }
+}
+
+async function findPwaUser(env, username) {
+  const select = "courier_id,username,role,active,password_hash";
+  const exactRows = await supabaseFetch(env, PUBLIC_SCHEMA, "pwa_users", {
+    select,
+    username: `eq.${username}`,
+    limit: 1,
+  });
+  if (exactRows[0]) return exactRows[0];
+  const wanted = normalizedLogin(username);
+  const rows = await supabaseFetch(env, PUBLIC_SCHEMA, "pwa_users", { select, limit: 10000 });
+  return rows.find((row) => normalizedLogin(row.username) === wanted) || null;
+}
+
+async function createHubSession(user, env) {
+  const payload = base64UrlEncode(JSON.stringify({ user, expiresAt: Date.now() + HUB_SESSION_MAX_AGE_SECONDS * 1000 }));
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", await signingKey(env), new TextEncoder().encode(payload)));
+  return `${payload}.${base64UrlEncode(signature)}`;
+}
+
+async function readHubSession(request, env) {
+  const token = cookieValue(request, HUB_SESSION_COOKIE);
+  const [payload, signature] = token.split(".", 2);
+  if (!payload || !signature) return null;
+  try {
+    const valid = await crypto.subtle.verify("HMAC", await signingKey(env), base64UrlDecode(signature), new TextEncoder().encode(payload));
+    if (!valid) return null;
+    const data = JSON.parse(new TextDecoder().decode(base64UrlDecode(payload)));
+    return Number(data?.expiresAt || 0) > Date.now() ? data.user || null : null;
+  } catch {
+    return null;
   }
 }
 
@@ -75,12 +135,7 @@ function hasSettlementDashboardAccess(user) {
 }
 
 async function currentPwaUser(request, env) {
-  const cookie = sessionCookie(request);
-  if (!cookie) return null;
-  const response = await pwaApiFetch(env, "/api/me", { headers: { cookie } });
-  if (!response.ok) return null;
-  const payload = await readJson(response);
-  return payload.user || null;
+  return readHubSession(request, env);
 }
 
 async function requireDashboardUser(request, env) {
@@ -92,13 +147,14 @@ async function requireDashboardUser(request, env) {
   return { user };
 }
 
-function authenticatedJson(payload, status, sourceResponse) {
+function authenticatedJson(payload, status, sessionToken = "") {
   const headers = new Headers({
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
   });
-  const session = sourceResponse?.headers?.get("set-cookie");
-  if (session) headers.set("set-cookie", session);
+  if (sessionToken) {
+    headers.set("set-cookie", `${HUB_SESSION_COOKIE}=${sessionToken}; Max-Age=${HUB_SESSION_MAX_AGE_SECONDS}; Path=/; HttpOnly; Secure; SameSite=Lax`);
+  }
   return new Response(JSON.stringify(payload), { status, headers });
 }
 
@@ -110,19 +166,15 @@ async function loginWithPwa(request, env) {
     return jsonResponse({ error: "Felhasználónév és jelszó szükséges." }, 400);
   }
 
-  const response = await pwaApiFetch(env, "/api/login", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const payload = await readJson(response);
-  if (!response.ok) {
-    return authenticatedJson({ error: payload.detail || payload.error || "Sikertelen bejelentkezés." }, response.status);
+  const account = await findPwaUser(env, username);
+  if (!account || account.active !== true || !(await verifyPwaPassword(password, account.password_hash))) {
+    return authenticatedJson({ error: "Hibás felhasználónév vagy jelszó." }, 401);
   }
-  if (!hasSettlementDashboardAccess(payload.user)) {
+  const user = publicPwaUser(account);
+  if (!hasSettlementDashboardAccess(user)) {
     return authenticatedJson({ error: "Ehhez az oldalhoz admin jogosultság szükséges." }, 403);
   }
-  return authenticatedJson({ user: payload.user }, 200, response);
+  return authenticatedJson({ user }, 200, await createHubSession(user, env));
 }
 
 async function dashboardSession(request, env) {
@@ -136,7 +188,7 @@ function logoutHub() {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
-      "set-cookie": `${PWA_SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
+      "set-cookie": `${HUB_SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
     },
   });
 }
