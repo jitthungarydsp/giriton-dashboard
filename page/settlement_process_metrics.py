@@ -132,6 +132,14 @@ def _hours_between(start: object, end: object) -> float | None:
     return hours if hours >= 0 else None
 
 
+def _duration_summary(values: list[float]) -> dict[str, float | int]:
+    return {
+        "count": len(values),
+        "average_hours": sum(values) / len(values) if values else 0.0,
+        "median_hours": float(median(values)) if values else 0.0,
+    }
+
+
 def calculate_monthly_process_metrics(period_start: date) -> dict[str, Any]:
     """Calculate a monthly summary from immutable workflow audit events."""
     month = _month_start(period_start)
@@ -194,6 +202,13 @@ def calculate_monthly_process_metrics(period_start: date) -> dict[str, Any]:
 
     completed_flows: list[dict[str, Any]] = []
     response_hours: list[float] = []
+    stage_hours: dict[str, list[float]] = {
+        "opening_to_settlement": [],
+        "settlement_to_tig": [],
+        "tig_to_invoice": [],
+        "invoice_to_paid": [],
+        "opening_to_paid": [],
+    }
     source_times: list[datetime] = []
     for opening in openings:
         courier_id = str(opening.get("courier_id") or "").strip()
@@ -208,16 +223,31 @@ def calculate_monthly_process_metrics(period_start: date) -> dict[str, Any]:
             opened_at,
         )
         settlement_at = _timestamp((settlement or {}).get("accepted_at"))
+        opening_to_settlement = _hours_between(opened_at, settlement_at)
+        if opening_to_settlement is not None:
+            stage_hours["opening_to_settlement"].append(opening_to_settlement)
         tig = _first_after(
             [row for row in acceptance_rows if str(row.get("action_key") or "").casefold() == "tig"],
             "accepted_at",
             settlement_at,
         ) if settlement_at else None
         tig_at = _timestamp((tig or {}).get("accepted_at"))
+        settlement_to_tig = _hours_between(settlement_at, tig_at)
+        if settlement_to_tig is not None:
+            stage_hours["settlement_to_tig"].append(settlement_to_tig)
         invoice = _first_after(invoices_by_courier.get(courier_id, []), "uploaded_at", tig_at) if tig_at else None
         invoice_at = _timestamp((invoice or {}).get("uploaded_at"))
+        tig_to_invoice = _hours_between(tig_at, invoice_at)
+        if tig_to_invoice is not None:
+            stage_hours["tig_to_invoice"].append(tig_to_invoice)
         closure = _first_after(closures_by_courier.get(courier_id, []), "closed_at", invoice_at) if invoice_at else None
         paid_at = _timestamp((closure or {}).get("closed_at"))
+        invoice_to_paid = _hours_between(invoice_at, paid_at)
+        if invoice_to_paid is not None:
+            stage_hours["invoice_to_paid"].append(invoice_to_paid)
+        opening_to_paid = _hours_between(opened_at, paid_at)
+        if opening_to_paid is not None:
+            stage_hours["opening_to_paid"].append(opening_to_paid)
         if not all((settlement_at, tig_at, invoice_at, paid_at)):
             continue
         source_times.extend((settlement_at, tig_at, invoice_at, paid_at))
@@ -247,6 +277,15 @@ def calculate_monthly_process_metrics(period_start: date) -> dict[str, Any]:
     completed_count = len(completed_flows)
     complaint_total = sum(int(row["complaint_count"]) for row in completed_flows)
     deductions_total = sum(float(row["deductions_huf"]) for row in completed_flows)
+    complaint_group = [row for row in completed_flows if int(row["complaint_count"]) > 0]
+    no_complaint_group = [row for row in completed_flows if int(row["complaint_count"]) == 0]
+
+    def group_totals(rows: list[dict[str, Any]]) -> tuple[int, float, float]:
+        total = sum(float(row["deductions_huf"]) for row in rows)
+        return len(rows), total, total / len(rows) if rows else 0.0
+
+    with_complaint_count, with_complaint_total, with_complaint_average = group_totals(complaint_group)
+    without_complaint_count, without_complaint_total, without_complaint_average = group_totals(no_complaint_group)
     return {
         "period_start": month_text,
         "completed_flow_count": completed_count,
@@ -260,6 +299,17 @@ def calculate_monthly_process_metrics(period_start: date) -> dict[str, Any]:
         "malus_total_huf": sum(float(row["malus_huf"]) for row in completed_flows),
         "other_deductions_total_huf": sum(float(row["other_deductions_huf"]) for row in completed_flows),
         "deductions_average_huf": deductions_total / completed_count if completed_count else 0.0,
+        "opening_to_settlement": _duration_summary(stage_hours["opening_to_settlement"]),
+        "settlement_to_tig": _duration_summary(stage_hours["settlement_to_tig"]),
+        "tig_to_invoice": _duration_summary(stage_hours["tig_to_invoice"]),
+        "invoice_to_paid": _duration_summary(stage_hours["invoice_to_paid"]),
+        "opening_to_paid": _duration_summary(stage_hours["opening_to_paid"]),
+        "with_complaint_flow_count": with_complaint_count,
+        "with_complaint_deductions_huf": with_complaint_total,
+        "with_complaint_deductions_average_huf": with_complaint_average,
+        "without_complaint_flow_count": without_complaint_count,
+        "without_complaint_deductions_huf": without_complaint_total,
+        "without_complaint_deductions_average_huf": without_complaint_average,
         "source_updated_at": max(source_times).isoformat() if source_times else None,
         "source_counts": {
             "openings": len(openings), "acceptances": len(acceptances),

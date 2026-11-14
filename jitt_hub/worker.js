@@ -214,7 +214,7 @@ function statusForRow(row, closure) {
   return "Teljesítés-összesítőre vár";
 }
 
-function buildCourierRow(row, profile, workload, closure) {
+function buildCourierRow(row, profile, workload, closure, { missingSummary = false } = {}) {
   const base = money(row.courier_base_rate_huf);
   const tip = money(row.tip_huf);
   const delay = money(row.delay_bonus_huf);
@@ -228,16 +228,20 @@ function buildCourierRow(row, profile, workload, closure) {
   const bonus = delay + compliance + otherBonus + importedBonus + manualBonus + customerRating + loyalty + correctionIncome;
   const payable = money(closure?.payable_huf || row.payable_huf);
   const income = base + tip + bonus;
-  const malus = Math.abs(money(row.malus_huf));
-  const importedMalus = Math.abs(money(row.imported_malus_huf));
+  // The import's total appears as monthly_malus_huf. Detailed imported/manual
+  // columns are optional, so calculate the same net amount as the PWA does.
+  const monthlyMalus = Math.abs(money(row.monthly_malus_huf || row.malus_huf));
   const manualMalus = Math.abs(money(row.manual_malus_huf));
+  const importedMalus = Math.abs(money(row.imported_malus_huf)) || Math.max(monthlyMalus - manualMalus, 0);
+  const malus = importedMalus + manualMalus;
   const atm = Math.abs(money(row.atm_deduction_huf || row.imported_atm_deduction_huf));
   const otherExpense = Math.abs(money(row.other_expense_huf));
   const salaryAdvance = Math.abs(money(row.salary_advance_huf));
-  const reserve = Math.abs(money(row.target_reserve_topup_huf));
+  const reserve = Math.abs(money(row.target_reserve_topup_huf || row.reserve_addition_huf || row.reserve_deduction_huf));
   const insurance = Math.abs(money(row.insurance_fee_huf));
   const correctionDeduction = Math.abs(money(row.correction_deduction_huf));
-  const deductions = malus + importedMalus + manualMalus + atm + otherExpense + salaryAdvance + reserve + insurance + correctionDeduction;
+  const otherDeduction = otherExpense + correctionDeduction;
+  const deductions = malus + atm + otherDeduction + salaryAdvance + reserve + insurance;
   const routeCount = Number(workload?.completed_route_count || row.route_count || 0);
   const orderCount = Number(workload?.order_count || row.order_count || 0);
 
@@ -246,7 +250,7 @@ function buildCourierRow(row, profile, workload, closure) {
     courierName: key(row.driver_name || profile?.courier_name || workload?.courier_name),
     email: key(profile?.email || profile?.billing_email),
     warehouse: key(profile?.warehouse_name || "BUD"),
-    status: statusForRow(row, closure),
+    status: missingSummary ? "Elszámolásra vár" : statusForRow(row, closure),
     routeCount,
     orderCount,
     base,
@@ -260,10 +264,13 @@ function buildCourierRow(row, profile, workload, closure) {
     customerRating,
     loyalty,
     malus,
+    importedMalus,
+    manualMalus,
     atm,
     salaryAdvance,
     reserve,
     insurance,
+    otherDeduction,
     income,
     deductions,
     payable,
@@ -292,7 +299,7 @@ async function settlementDashboard(request, env) {
   const idFilter = formatIdList(courierIds);
   const numericIdFilter = formatNumericIdList(courierIds);
 
-  const [profiles, workloads, closures, discrepancies, discrepancyCoverage] = await Promise.all([
+  const [profiles, workloads, closures, discrepancies, discrepancyCoverage, processMetricRows, activePwaUsers] = await Promise.all([
     numericIdFilter
       ? supabaseFetch(env, PUBLIC_SCHEMA, "courier_master", {
           select: "courier_id,courier_name,email,billing_email,warehouse_name",
@@ -326,9 +333,34 @@ async function settlementDashboard(request, env) {
       period_start: `eq.${periodStart}`,
       limit: 1,
     }).catch(() => []),
+    supabaseFetch(env, SETTLEMENT_SCHEMA, "monthly_process_metric_summary", {
+      select: "*",
+      period_start: `eq.${periodStart}`,
+      limit: 1,
+    }).catch(() => []),
+    supabaseFetch(env, PUBLIC_SCHEMA, "pwa_users", {
+      select: "courier_id,username,active",
+      active: "eq.true",
+      limit: 10000,
+    }).catch(() => []),
   ]);
 
-  const profileById = new Map(profiles.map((row) => [key(row.courier_id), row]));
+  const summaryCourierIds = new Set(courierIds);
+  const missingPwaUsers = activePwaUsers.filter((user) => {
+    const courierId = key(user.courier_id);
+    const username = key(user.username);
+    return /^\d+$/.test(courierId) && Boolean(username) && !summaryCourierIds.has(courierId);
+  });
+  const missingNumericIds = formatNumericIdList(missingPwaUsers.map((user) => user.courier_id));
+  const missingProfiles = missingNumericIds
+    ? await supabaseFetch(env, PUBLIC_SCHEMA, "courier_master", {
+        select: "courier_id,courier_name,email,billing_email,warehouse_name",
+        courier_id: `in.(${missingNumericIds})`,
+        limit: 10000,
+      }).catch(() => [])
+    : [];
+
+  const profileById = new Map([...profiles, ...missingProfiles].map((row) => [key(row.courier_id), row]));
   const workloadById = new Map(workloads.map((row) => [key(row.courier_id), row]));
   const closureById = new Map(closures.map((row) => [key(row.courier_id), row]));
   const discrepancyCountByCourier = new Map();
@@ -350,6 +382,15 @@ async function settlementDashboard(request, env) {
       workloadById.get(key(row.courier_id)),
       closureById.get(key(row.courier_id)),
     );
+  });
+  missingPwaUsers.forEach((user) => {
+    couriers.push(buildCourierRow(
+      { courier_id: user.courier_id, driver_name: user.username },
+      profileById.get(key(user.courier_id)),
+      undefined,
+      undefined,
+      { missingSummary: true },
+    ));
   });
 
   const totals = couriers.reduce(
@@ -378,6 +419,7 @@ async function settlementDashboard(request, env) {
     couriers,
     discrepancies,
     discrepancyCoverage: discrepancyCoverage[0] || null,
+    processMetrics: processMetricRows[0] || null,
     selectedCourier: couriers[0] || null,
   });
 }
