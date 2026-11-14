@@ -68,6 +68,10 @@ from resources.peopleforce_documents import (
     upsert_peopleforce_card_status,
 )
 from resources.pwa_invoice_validation import validate_invoice as validate_uploaded_invoice
+from page.settlement_process_metrics import (
+    can_view_settlement_process_metrics,
+    show_settlement_process_metrics_page,
+)
 
 EXPRESS_MAX_FEE = 6516
 NORMAL_CITY_MAX_FEE = 13000
@@ -1241,7 +1245,10 @@ def get_courier_top_menu_options(user=None):
     if (user or {}).get("role") == "user":
         return ["PeopleForce"]
 
-    return ["PeopleForce", "Kiflis utam", "Statisztika"]
+    options = ["PeopleForce", "Kiflis utam", "Statisztika"]
+    if can_view_settlement_process_metrics(user):
+        options.append("Elszámolási folyamat")
+    return options
 
 
 def render_courier_top_menu_legacy(user=None):
@@ -5563,6 +5570,10 @@ def show_courier_dashboard_page():
     user = st.session_state["user"]
     today = local_now().date()
     selected_view = render_courier_top_menu(user)
+
+    if selected_view == "Elszámolási folyamat":
+        show_settlement_process_metrics_page(user)
+        return
 
     snapshot_month_text = today.strftime("%Y-%m")
     user_courier_id = normalize_id(user.get("courierId"))
