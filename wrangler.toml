@@ -1,6 +1,10 @@
 name = "jitthub"
 main = "jitt_hub/worker.js"
 compatibility_date = "2026-08-13"
+# A Cloudflare dashboardon tárolt változók és titkok deploykor is megmaradnak.
+keep_vars = true
+workers_dev = true
+secrets = { required = ["SUPABASE_URL", "SUPABASE_READ_KEY"] }
 
 [assets]
 directory = "./jitt_hub"
