@@ -39,5 +39,68 @@
     async function loadTrend(month){const [year,num]=month.split('-').map(Number),jobs=[];for(let o=5;o>=0;o--){const d=new Date(year,num-1-o,1),code=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;jobs.push(fetchMonth(code).then(data=>({label:code.slice(5),ready:Number(data.totals?.payableReady||0)})).catch(()=>({label:code.slice(5),ready:0})))}return Promise.all(jobs)}
     async function loadDashboard(){setSync('loading','Adatok betöltése');document.querySelector('#error').hidden=true;try{current=await fetchMonth(monthInput.value);const rows=current.couriers||[],t=current.totals||{};document.querySelector('#k-ready').textContent=t.payableReady||0;document.querySelector('#k-payable').textContent=shortHuf(t.payable);document.querySelector('#k-deduction').textContent=shortHuf(t.deductions);document.querySelector('#k-deduction-detail').textContent=`${formatter.format(t.couriers||0)} futár elszámolásából`;document.querySelector('#k-issues').textContent=t.issues||0;document.querySelector('#k-issues-detail').textContent=`${current.discrepancies?.length||0} számlaeltérés`;document.querySelector('#side-month').textContent=new Date(`${monthInput.value}-01T00:00:00`).toLocaleDateString('hu-HU',{year:'numeric',month:'long'});document.querySelector('#side-summary').textContent=`${t.couriers||0} futár · DB összesítő`;renderStatuses(rows);renderBars(t);renderDonut(rows);renderRows(rows);renderTrend(await loadTrend(monthInput.value));setSync('',`Frissítve: ${new Date().toLocaleTimeString('hu-HU',{hour:'2-digit',minute:'2-digit'})}`)}catch(err){console.error(err);document.querySelector('#error').textContent=`Az élő adatok nem tölthetők be: ${err.message}`;document.querySelector('#error').hidden=false;setSync('error','Adathiba')}}
   </script>
+  <script>
+    const identityField = document.querySelector('#email');
+    const identityLabel = document.querySelector('label[for="email"]');
+    const passwordField = document.querySelector('#password');
+    const loginButton = form.querySelector('button[type="submit"]');
+    const loginError = document.createElement('p');
+    loginError.id = 'login-error';
+    loginError.hidden = true;
+    loginError.setAttribute('role', 'alert');
+    loginError.style.cssText = 'margin:12px 0 0;color:#a23d48;font-size:12px;font-weight:650;line-height:1.45';
+    loginButton.insertAdjacentElement('afterend', loginError);
+
+    if (identityField) {
+      identityField.type = 'text';
+      identityField.autocomplete = 'username';
+      identityField.placeholder = 'admin vagy nev@jitt.hu';
+    }
+    if (identityLabel) identityLabel.textContent = 'Felhasználónév vagy e-mail-cím';
+
+    function showHub() {
+      login.hidden = true;
+      app.hidden = false;
+      loadDashboard();
+    }
+
+    async function readResponse(response) {
+      try { return await response.json(); } catch { return {}; }
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      loginError.hidden = true;
+      loginButton.disabled = true;
+      loginButton.textContent = 'Belépés…';
+      try {
+        const response = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ username: identityField.value.trim(), password: passwordField.value }),
+        });
+        const payload = await readResponse(response);
+        if (!response.ok || !payload.user) throw new Error(payload.error || 'Sikertelen bejelentkezés.');
+        showHub();
+      } catch (error) {
+        loginError.textContent = error.message || 'A belépés sikertelen.';
+        loginError.hidden = false;
+      } finally {
+        loginButton.disabled = false;
+        loginButton.textContent = 'Belépés a JITT Hubba';
+      }
+    }, true);
+
+    (async () => {
+      try {
+        const response = await fetch('/api/me', { headers: { accept: 'application/json' } });
+        const payload = await readResponse(response);
+        if (response.ok && payload.user) showHub();
+      } catch (_) {
+        // Bejelentkezés nélkül a belépő képernyő marad látható.
+      }
+    })();
+  </script>
 </body>
 </html>

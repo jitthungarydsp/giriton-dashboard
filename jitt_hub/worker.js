@@ -1,5 +1,7 @@
 const SETTLEMENT_SCHEMA = "settlement";
 const PUBLIC_SCHEMA = "public";
+const PWA_SESSION_COOKIE = "giriton_pwa_session";
+const DEFAULT_PWA_API_URL = "https://futar.jitt.hu";
 
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -13,6 +15,116 @@ function jsonResponse(payload, status = 200) {
 
 function cleanEnv(value) {
   return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function pwaApiUrl(env) {
+  const value = cleanEnv(env.PWA_API_URL || DEFAULT_PWA_API_URL);
+  const url = new URL(value);
+  if (url.protocol !== "https:") {
+    throw new Error("PWA_API_URL must use HTTPS.");
+  }
+  return url.origin;
+}
+
+function sessionCookie(request) {
+  const cookieHeader = request.headers.get("cookie") || "";
+  const cookie = cookieHeader
+    .split(";")
+    .map((value) => value.trim())
+    .find((value) => value.startsWith(`${PWA_SESSION_COOKIE}=`));
+  return cookie || "";
+}
+
+async function pwaApiFetch(env, path, init = {}) {
+  return fetch(`${pwaApiUrl(env)}${path}`, {
+    ...init,
+    redirect: "manual",
+    headers: {
+      accept: "application/json",
+      ...(init.headers || {}),
+    },
+  });
+}
+
+async function readJson(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text.slice(0, 300) };
+  }
+}
+
+function hasSettlementDashboardAccess(user) {
+  return Boolean(user && user.canViewSettlementDashboard);
+}
+
+async function currentPwaUser(request, env) {
+  const cookie = sessionCookie(request);
+  if (!cookie) return null;
+  const response = await pwaApiFetch(env, "/api/me", { headers: { cookie } });
+  if (!response.ok) return null;
+  const payload = await readJson(response);
+  return payload.user || null;
+}
+
+async function requireDashboardUser(request, env) {
+  const user = await currentPwaUser(request, env);
+  if (!user) return { error: jsonResponse({ error: "Bejelentkezés szükséges." }, 401) };
+  if (!hasSettlementDashboardAccess(user)) {
+    return { error: jsonResponse({ error: "Ehhez az oldalhoz admin jogosultság szükséges." }, 403) };
+  }
+  return { user };
+}
+
+function authenticatedJson(payload, status, sourceResponse) {
+  const headers = new Headers({
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  const session = sourceResponse?.headers?.get("set-cookie");
+  if (session) headers.set("set-cookie", session);
+  return new Response(JSON.stringify(payload), { status, headers });
+}
+
+async function loginWithPwa(request, env) {
+  const body = await request.json().catch(() => null);
+  const username = String(body?.username || "").trim();
+  const password = String(body?.password || "");
+  if (!username || !password) {
+    return jsonResponse({ error: "Felhasználónév és jelszó szükséges." }, 400);
+  }
+
+  const response = await pwaApiFetch(env, "/api/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  const payload = await readJson(response);
+  if (!response.ok) {
+    return authenticatedJson({ error: payload.detail || payload.error || "Sikertelen bejelentkezés." }, response.status);
+  }
+  if (!hasSettlementDashboardAccess(payload.user)) {
+    return authenticatedJson({ error: "Ehhez az oldalhoz admin jogosultság szükséges." }, 403);
+  }
+  return authenticatedJson({ user: payload.user }, 200, response);
+}
+
+async function dashboardSession(request, env) {
+  const result = await requireDashboardUser(request, env);
+  if (result.error) return result.error;
+  return jsonResponse({ user: result.user });
+}
+
+function logoutHub() {
+  return new Response(JSON.stringify({ ok: true }), {
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "set-cookie": `${PWA_SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
+    },
+  });
 }
 
 function parseMonth(value) {
@@ -271,11 +383,36 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/api/login") {
+      if (request.method !== "POST") return jsonResponse({ error: "Use POST." }, 405);
+      try {
+        return await loginWithPwa(request, env);
+      } catch (error) {
+        return jsonResponse({ error: `A PWA-belépés nem érhető el: ${error instanceof Error ? error.message : String(error)}` }, 502);
+      }
+    }
+
+    if (url.pathname === "/api/me") {
+      if (request.method !== "GET") return jsonResponse({ error: "Use GET." }, 405);
+      try {
+        return await dashboardSession(request, env);
+      } catch (error) {
+        return jsonResponse({ error: `A PWA-munkamenet nem ellenőrizhető: ${error instanceof Error ? error.message : String(error)}` }, 502);
+      }
+    }
+
+    if (url.pathname === "/api/logout") {
+      if (request.method !== "POST") return jsonResponse({ error: "Use POST." }, 405);
+      return logoutHub();
+    }
+
     if (url.pathname === "/api/settlement-dashboard") {
       if (request.method !== "GET") {
         return jsonResponse({ error: "Read-only endpoint. Use GET." }, 405);
       }
       try {
+        const access = await requireDashboardUser(request, env);
+        if (access.error) return access.error;
         return await settlementDashboard(request, env);
       } catch (error) {
         return jsonResponse(
