@@ -132,49 +132,6 @@
       document.querySelector('#donut-badge').textContent = shortHuf(total);
     };
 
-    function showHub() {
-      login.hidden = true;
-      app.hidden = false;
-      loadDashboard();
-    }
-
-    async function readResponse(response) {
-      try { return await response.json(); } catch { return {}; }
-    }
-
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      loginError.hidden = true;
-      loginButton.disabled = true;
-      loginButton.textContent = 'Belépés…';
-      try {
-        const response = await fetch('/api/login', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', accept: 'application/json' },
-          body: JSON.stringify({ username: identityField.value.trim(), password: passwordField.value }),
-        });
-        const payload = await readResponse(response);
-        if (!response.ok || !payload.user) throw new Error(payload.error || 'Sikertelen bejelentkezés.');
-        showHub();
-      } catch (error) {
-        loginError.textContent = error.message || 'A belépés sikertelen.';
-        loginError.hidden = false;
-      } finally {
-        loginButton.disabled = false;
-        loginButton.textContent = 'Belépés a JITT Hubba';
-      }
-    }, true);
-
-    (async () => {
-      try {
-        const response = await fetch('/api/me', { headers: { accept: 'application/json' } });
-        const payload = await readResponse(response);
-        if (response.ok && payload.user) showHub();
-      } catch (_) {
-        // Bejelentkezés nélkül a belépő képernyő marad látható.
-      }
-    })();
   </script>
 </body>
 </html>
