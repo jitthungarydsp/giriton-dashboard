@@ -302,11 +302,12 @@ function statusForRow(row, closure) {
   return ({ "TIG-re vár": "Teljesítés-összesítőre vár", "TIG elfogadásra vár": "Teljesítés-összesítő áttekintésre vár" })[label] || label || "Állapot nem elérhető";
 }
 
-async function loadLatestFinanceSnapshots(env, periodStart) {
+async function loadLatestFinanceSnapshots(env, periodStart, courierId) {
   // Load the whole month's identities, including couriers without an import row.
   const parents = await supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_finance_snapshot", {
     select: "id,courier_id,courier_name,warehouse_label,version,metadata,created_at",
     period_start: `eq.${periodStart}`,
+    courier_id: courierId ? `eq.${courierId}` : undefined,
     order: "courier_id.asc,version.desc,created_at.desc,id.desc", limit: 100000,
   });
   const latest = new Map();
@@ -682,6 +683,201 @@ async function settlementTrends(request, env) {
   return jsonResponse({source:'supabase',generatedAt:new Date().toISOString(),months:rows});
 }
 
+function budapestDay(value = new Date()) {
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Budapest',year:'numeric',month:'2-digit',day:'2-digit'}).format(value);
+}
+
+function courier360Identity(request) {
+  const url=new URL(request.url), courierId=key(url.searchParams.get('courier'));
+  if(!/^\d{1,12}$/.test(courierId)) throw Object.assign(new Error('Érvényes futár ID szükséges.'),{status:400});
+  const date=url.searchParams.get('date')||budapestDay();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date) throw Object.assign(new Error('Érvényes operatív dátum szükséges.'),{status:400});
+  const month=key(url.searchParams.get('month')||date.slice(0,7));
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw Object.assign(new Error('Érvényes elszámolási hónap szükséges.'),{status:400});
+  return {courierId,date,periodStart:month+'-01'};
+}
+
+function courier360Fresh(at, now = new Date()) {
+  const ms=Date.parse(at),age=(now.getTime()-ms)/60000;
+  return Number.isFinite(ms)&&age>=-2&&age<=20;
+}
+
+function budapestMidnightUtc(date) {
+  // Derive the Budapest offset on the requested date, including summer time.
+  const noon=new Date(date+'T12:00:00Z');
+  const hour=Number(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Budapest',hour:'2-digit',hour12:false}).format(noon));
+  return new Date(Date.parse(date+'T00:00:00Z')-(hour-12)*3600000).toISOString();
+}
+
+function courier360Json(value) {
+  if(typeof value==='string'){try{return JSON.parse(value)}catch{return {}}}
+  return value&&typeof value==='object'?value:{};
+}
+
+function courier360Name(value) {
+  return normalizedLogin(value).replace(/\b\d+\b/g,'').replace(/\s+/g,' ').trim();
+}
+
+function courier360Stops(route, storedStops=[]) {
+  const raw=storedStops.length?storedStops:route.checkpoints||route.stopProgress||route.stops||[];
+  if(!Array.isArray(raw))return [];
+  return raw.filter(row=>row&&typeof row==='object').map((row,index)=>{
+    const data={...courier360Json(row.stop_json),...row};
+    const state=key(data.state||data.status).toUpperCase();
+    const completed=['COMPLETED','DELIVERED','FINISHED','DONE'].includes(state)||Boolean(data.deliveredAt||data.realDepartureTime);
+    const address=data.address||data.fullAddress||data.addressText||data.street;
+    return {position:Number(data.sequence||data.position||data.stopPosition||index+1),orderId:key(data.order_id||data.orderId||data.customerOrderId||data.id),
+      address:typeof address==='string'?address:null,state:completed?'COMPLETED':state||'UNKNOWN',
+      windowFrom:data.deliverSince||data.customerSlotFrom||data.windowFrom||data.timeWindowFrom||null,
+      windowTo:data.deliverTill||data.customerSlotTo||data.windowTo||data.timeWindowTo||null,
+      plannedArrival:data.planned_arrival_at||data.plannedArrivalAt||data.plannedArrivalTime||null,
+      estimatedArrival:data.estimatedArrivalAt||data.estimatedArrivalTime||data.eta||null,
+      actualArrival:data.actual_arrival_at||data.actualArrivalAt||data.realArrivalTime||null,
+      delayMinutes:metricNumber(data.delay_minutes??data.delayMinutes??data.deltaMinutes),
+      note:key(data.deliveryNote||data.deliveryInstructions||data.customerNote),
+      fetchedAt:row.fetched_at||null};
+  }).sort((a,b)=>a.position-b.position);
+}
+
+function courier360RouteObjects(value, depth=0) {
+  if(!value||typeof value!=='object'||depth>8)return [];
+  if(Array.isArray(value))return value.flatMap(row=>courier360RouteObjects(row,depth+1));
+  const isRoute=Boolean(value.cargoRouteId||value.routeExternalId||value.routeId||value.route_id)||
+    Boolean(value.id&&(value.checkpoints||value.stopProgress));
+  return [...(isRoute?[value]:[]),...Object.values(value).filter(v=>v&&typeof v==='object').flatMap(v=>courier360RouteObjects(v,depth+1))];
+}
+
+function courier360BuildOperational({date,now,monitor=[],detail=[],map=[],stops=[],statistics=[],checkins=[],attendance=[],bookings=[],giritonShifts=[]}) {
+  const sameDay=row=>row.fetched_at&&budapestDay(new Date(row.fetched_at))===date;
+  const newest=rows=>[...rows].sort((a,b)=>key(b.fetched_at||b.updated_at).localeCompare(key(a.fetched_at||a.updated_at)))[0];
+  const signals=[...monitor.map(r=>({...r,source:'Hub monitoring'})),...map.map(r=>({...r,source:'Hub térkép'}))].filter(sameDay);
+  const signal=newest(signals), rawDetail=newest(detail.filter(sameDay));
+  const payload=courier360Json(rawDetail?.response_json);
+  const signalJson=courier360Json(signal?.courier_json);
+  const routeIds=[signal?.route_id,...(Array.isArray(signal?.route_ids)?signal.route_ids:[]),signalJson.cargoRouteId,signalJson.routeExternalId].filter(Boolean).map(String);
+  const routes=courier360RouteObjects(payload);
+  // Never attach another route's stops to the route in the newest monitoring signal.
+  const route=routes.find(row=>routeIds.includes(key(row.cargoRouteId||row.routeExternalId||row.routeId||row.route_id||row.id)))||
+    (!routeIds.length?(routes.find(row=>Boolean(row.checkpoints||row.stopProgress||row.stops))||{...courier360Json(payload.shift),stops:payload.stops}):
+      routeIds.includes(key(rawDetail?.route_id))?{...courier360Json(payload.shift),stops:payload.stops}:null)||{};
+  const routeId=key(signal?.route_id||signalJson.cargoRouteId||signalJson.routeExternalId||route.cargoRouteId||route.routeExternalId||route.routeId||rawDetail?.route_id||routeIds[0]);
+  const matchingStops=routeId?stops.filter(row=>key(row.route_id)===routeId&&sameDay(row)):[];
+  const routeStops=routeId?courier360Stops(route,matchingStops):[];
+  const stopsUpdatedAt=newest(matchingStops)?.fetched_at||(routeStops.length?rawDetail?.fetched_at:null)||null;
+  const stopsFresh=Boolean(date===budapestDay(now)&&courier360Fresh(stopsUpdatedAt,now));
+  const dailyStats=statistics.filter(row=>row.work_date===date);
+  const routeStat=dailyStats.find(row=>key(row.route_id)===routeId)||{};
+  const lastSourceAt=signal?.fetched_at||rawDetail?.fetched_at||null;
+  const fresh=Boolean(lastSourceAt&&date===budapestDay(now)&&courier360Fresh(lastSourceAt,now));
+  const state=key(signal?.status||signalJson.status||route.status).toUpperCase();
+  const returned=route.realReturn||route.actualReturnAt||route.finishedAt||routeStat.returned_at||null;
+  const departed=route.realDeparture||route.departedAt||routeStat.departed_at||signal?.departed_at||null;
+  const activityAt=route.actualStartAt||route.plannedStartAt||route.departedAt||route.plannedDepartureAt||signalJson.plannedStartAt;
+  const activityMatches=!activityAt||!Number.isFinite(Date.parse(activityAt))||budapestDay(new Date(activityAt))===date;
+  const routeActive=Boolean(routeId&&activityMatches&&!returned&&['ON_ROUTE','ON_TOUR','DELIVERING','DRIVING','DEPARTED','IN_PROGRESS','ACTIVE','ON_THE_WAY','IN_ROUTE'].includes(state));
+  const attended=newest(attendance.map(row=>({...row,fetched_at:row.updated_at})))||null;
+  const attendanceFresh=Boolean(attended&&date===budapestDay(now)&&courier360Fresh(attended.updated_at,now));
+  let working=null,label='Nincs friss adat';
+  if(fresh&&routeActive){working=true;label='Túrán';}
+  else if(attendanceFresh&&attended.checkin_end){working=false;label='Giritonból kijelentkezett';}
+  else if(attendanceFresh&&attended.checkin_start&&!attended.checkin_end){working=true;label='Giritonba bejelentkezve';}
+  else if(fresh&&['NO_SHOW','OFFLINE','FINISHED','INACTIVE'].includes(state)){working=false;label=state==='NO_SHOW'?'Hub: nem érkezett meg':'Nincs aktív munkavégzés';}
+  else if(attendanceFresh&&/didn.t come|absent|nem érkezett/i.test(attended.activity_status||'')){working=false;label='Giriton: nem érkezett meg';}
+  else if(fresh){label='Friss Hub-jelzés · '+(state||'ismeretlen állapot');}
+  const nextStop=routeStops.find(stop=>!['COMPLETED','REJECTED','CANCELLED','CANCELED'].includes(stop.state))||null;
+  const activeBookings=bookings.filter(row=>row.active!==false&&!['CANCELLED','CANCELED','DELETED'].includes(key(row.status).toUpperCase()));
+  const shifts=activeBookings.map(row=>({date:row.work_date,start:row.slot_from,end:row.slot_to,warehouse:row.warehouse_code||key(row.warehouse_id),
+    label:row.shift_text,source:'Hub beosztott kezdési idősáv',updatedAt:row.last_seen_at||row.updated_at,isArrivalSlot:true}));
+  for(const row of giritonShifts.filter(row=>!['CANCELLED','CANCELED','DELETED'].includes(key(row.status).toUpperCase())))
+    shifts.push({date:row.work_date,start:row.start_time,end:row.end_time,warehouse:row.warehouse,label:row.status,source:'Giriton beosztás',updatedAt:row.fetched_at||row.updated_at,isArrivalSlot:false});
+  shifts.sort((a,b)=>(a.date+key(a.start)).localeCompare(b.date+key(b.start)));
+  const seen=new Set(),uniqueShifts=shifts.filter(row=>{const key=[row.date,row.start,row.warehouse,row.source].join('|');if(seen.has(key))return false;seen.add(key);return true;});
+  const nowParts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Budapest',hour:'2-digit',minute:'2-digit',hour12:false}).format(now);
+  const upcoming=uniqueShifts.find(row=>row.date>budapestDay(now)||(row.date===budapestDay(now)&&key(row.start).slice(0,5)>nowParts))||null;
+  const logs=[];
+  for(const container of [payload,payload.shift,route])for(const event of container?.log||container?.logs||container?.events||[]){
+    if(typeof event!=='object')continue;
+    const eventAt=event.occurredAt||event.createdAt||event.created_at||event.timestamp||event.time||null;
+    if(eventAt&&Number.isFinite(Date.parse(eventAt))&&budapestDay(new Date(eventAt))!==date)continue;
+    logs.push({at:eventAt,
+      label:key(event.label||event.text||event.type||event.eventType||event.name),detail:key(event.message||event.description),source:'Hub napló'});
+  }
+  for(const row of checkins)logs.push({at:row.created_at,label:key(row.event_type),detail:key(row.shift_name||row.warehouse),source:'Futár műszakjelzés'});
+  const stamp=(field,label)=>{for(const row of dailyStats)if(row[field])logs.push({at:row[field],label,detail:'Túra #'+row.route_id,source:'Hub túrastatisztika'})};
+  stamp('queue_started_at','Sorbaállás');stamp('actual_shift_start_at','Tényleges műszakkezdés');stamp('departed_at','Raktári indulás');stamp('returned_at','Raktári visszaérkezés');
+  logs.sort((a,b)=>key(a.at).localeCompare(key(b.at)));
+  return {date,currentWorking:working,label,fresh,lastSourceAt,hubStatus:state||null,attendance:attended,attendanceFresh,
+    route:routeId?{id:routeId,status:state,warehouse:signal?.warehouse_code||rawDetail?.warehouse_code||null,stops:routeStops,
+      totalStops:signal?.stops_total??(routeStops.length||null),completedStops:signal?.deliveries_completed??routeStops.filter(row=>row.state==='COMPLETED').length,
+      nextStop:routeActive&&fresh&&stopsFresh?nextStop:null,lastKnownNextStop:nextStop,active:routeActive&&fresh,stopsFresh,stopsUpdatedAt,
+      departedAt:departed,returnedAt:returned,plannedReturn:route.plannedReturn||route.plannedReturnAt||routeStat.planned_return_at||null,
+      vehiclePlate:signal?.vehicle_plate||route.vehiclePlate||routeStat.vehicle_plate||null,updatedAt:lastSourceAt}:null,
+    shifts:uniqueShifts,nextShift:upcoming,dayStatistics:dailyStats,logs};
+}
+
+async function courier360Data(request, env, now = new Date()) {
+  const {courierId,date,periodStart}=courier360Identity(request);
+  const sources=[];
+  const safe=async(table,schema,params)=>{
+    try{const rows=await supabaseFetch(env,schema,table,params);sources.push({table,available:true,count:rows.length});return rows;}
+    catch{sources.push({table,available:false,count:null});return [];}
+  };
+  const sameId={courier_id:`eq.${courierId}`};
+  const endDate=new Date(Date.parse(date)+31*86400000).toISOString().slice(0,10);
+  const [profiles,masters,monitor,detail,map,storedStops,statistics,checkins,allAttendance,bookings,giritonShifts,complaints,documents,states,acceptances,metrics,closures,snapshots,advanceAdditions,dashboardRows] = await Promise.all([
+    safe('courier_master',PUBLIC_SCHEMA,{...sameId,select:'courier_id,courier_name,warehouse_name',order:'courier_id.asc',limit:1}),
+    safe('courier_hub_master',PUBLIC_SCHEMA,{...sameId,select:'courier_id,courier_name,user_number,giriton_person_id,warehouse_code,vehicle_registration_number,fetched_at',order:'fetched_at.desc',limit:4}),
+    safe('courier_hub_live_monitoring_courier_snapshot_latest',PUBLIC_SCHEMA,{...sameId,select:'courier_id,route_id,status,shift_status,warehouse_code,deliveries_completed,stops_total,vehicle_plate,departed_at,courier_json,fetched_at',order:'fetched_at.desc',limit:4}),
+    safe('courier_hub_live_monitoring_courier_latest',PUBLIC_SCHEMA,{...sameId,select:'courier_id,route_id,warehouse_code,response_json,fetched_at',status_code:'eq.200',order:'fetched_at.desc',limit:4}),
+    safe('courier_hub_live_map_courier_latest',PUBLIC_SCHEMA,{...sameId,select:'courier_id,status,shift_status,warehouse_code,deliveries_completed,stops_total,vehicle_plate,route_ids,courier_json,fetched_at',order:'fetched_at.desc',limit:4}),
+    safe('courier_hub_live_map_stop_latest',PUBLIC_SCHEMA,{...sameId,select:'route_id,order_id,sequence,address,planned_arrival_at,actual_arrival_at,state,delay_minutes,stop_json,fetched_at',and:`(fetched_at.gte.${budapestMidnightUtc(date)},fetched_at.lt.${budapestMidnightUtc(new Date(Date.parse(date)+86400000).toISOString().slice(0,10))})`,order:'fetched_at.desc,route_id.asc,sequence.asc',limit:2000}),
+    safe('courier_hub_route_statistics',PUBLIC_SCHEMA,{...sameId,select:'work_date,route_id,warehouse_code,queue_started_at,actual_shift_start_at,departed_at,returned_at,planned_return_at,vehicle_plate,orders,stops,source_updated_at',work_date:`eq.${date}`,order:'route_id.asc',limit:100}),
+    safe('courier_shift_checkins',PUBLIC_SCHEMA,{...sameId,select:'work_date,event_type,created_at,warehouse,shift_name',work_date:`eq.${date}`,order:'created_at.asc',limit:200}),
+    safe('giriton_attendance_raw',PUBLIC_SCHEMA,{select:'courier_name,activity_status,checkin_start,checkin_end,updated_at',work_date:`eq.${date}`,order:'courier_name.asc',limit:2000}),
+    safe('courier_hub_shift_bookings_raw',PUBLIC_SCHEMA,{...sameId,select:'work_date,warehouse_code,warehouse_id,shift_text,slot_from,slot_to,status,active,last_seen_at,updated_at',and:`(work_date.gte.${date},work_date.lte.${endDate})`,order:'work_date.asc,slot_from.asc',limit:1000}),
+    safe('giriton_shifts_raw',PUBLIC_SCHEMA,{...sameId,select:'work_date,start_time,end_time,warehouse,status,fetched_at',and:`(work_date.gte.${date},work_date.lte.${endDate})`,order:'work_date.asc,start_time.asc',limit:1000}),
+    safe('peopleforce_complaints',PUBLIC_SCHEMA,{...sameId,select:'id,document_type,document_month,message,status,created_at,admin_response,responded_at,responded_by',document_month:`eq.${periodStart}`,order:'created_at.desc',limit:1000}),
+    safe('peopleforce_documents',PUBLIC_SCHEMA,{...sameId,select:'id,document_type,title,file_name,mime_type,file_size,note,uploaded_by,uploaded_at',document_month:`eq.${periodStart}`,order:'uploaded_at.desc',limit:300}),
+    safe('peopleforce_card_statuses',PUBLIC_SCHEMA,{...sameId,select:'action_key,status,status_note,updated_by,created_at,updated_at',document_month:`eq.${periodStart}`,order:'updated_at.desc',limit:100}),
+    safe('pwa_workflow_acceptance_snapshots',SETTLEMENT_SCHEMA,{...sameId,select:'id,action_key,process_id,payable_huf,tig_final_total_huf,accepted_at,accepted_by',period_start:`eq.${periodStart}`,order:'accepted_at.asc',limit:300}),
+    safe('courier_monthly_process_metric',SETTLEMENT_SCHEMA,{...sameId,select:'*',period_start:`eq.${periodStart}`,limit:1}),
+    safe('courier_monthly_closure',SETTLEMENT_SCHEMA,{...sameId,select:'status,payable_huf,closed_at,closed_by',period_start:`eq.${periodStart}`,limit:1}),
+    loadLatestFinanceSnapshots(env,periodStart,courierId).then(rows=>{sources.push({table:'courier_finance_snapshot',available:true,count:rows.length});return rows}).catch(()=>{sources.push({table:'courier_finance_snapshot',available:false,count:null});return []}),
+    loadSalaryAdvanceAdditions(env,periodStart).then(rows=>{sources.push({table:'Fizetési előlegek',available:true,count:rows.length});return rows}).catch(()=>{sources.push({table:'Fizetési előlegek',available:false,count:null});return []}),
+    safe('vw_admin_settlement_dashboard_fast',SETTLEMENT_SCHEMA,{select:'courier_id,dashboard_status_label',period_start:`eq.${periodStart}`,order:'courier_id.asc',limit:10000}),
+  ]);
+  if(!profiles.length&&!masters.length&&!snapshots.length&&!metrics.length&&!monitor.length) return jsonResponse({error:'A futárhoz nem található adat.'},404);
+  const names=new Set([...profiles,...masters,...snapshots].map(row=>courier360Name(row.courier_name)).filter(Boolean));
+  const matchedAttendance=allAttendance.filter(row=>names.has(courier360Name(row.courier_name)));
+  const attendanceNames=new Set(matchedAttendance.map(row=>key(row.courier_name)));
+  const attendance=attendanceNames.size>1?[]:matchedAttendance;
+  if(attendanceNames.size>1)sources.push({table:'Giriton névazonosítás',available:false,count:null});
+  const operational=courier360BuildOperational({date,now,monitor,detail,map,stops:storedStops,statistics,checkins,attendance,bookings,giritonShifts});
+  const financeSnapshot=snapshots[0]||null;
+  const workflowStates=Object.fromEntries(states.filter(row=>!key(row.action_key).startsWith('process:')).map(row=>[row.action_key,row]));
+  const closure=closures[0]||null;
+  const finance=financeSnapshot?buildCourierRow({courier_id:courierId,workflowStates,dashboardStatus:dashboardRows.find(row=>key(row.courier_id)===courierId)?.dashboard_status_label,salaryAdvanceAdded:advanceAdditions.filter(row=>key(row.courier_id)===courierId).reduce((s,r)=>s+money(r.requested_amount_huf),0)},profiles[0],null,closure,financeSnapshot,metrics[0]):null;
+  const eventLog=[...operational.logs,...states.map(row=>({at:row.updated_at,label:row.action_key+' · '+row.status,detail:row.status_note,actor:row.updated_by,source:'Elszámolási folyamat'})),
+    ...acceptances.map(row=>({at:row.accepted_at,label:row.action_key+' elfogadása',detail:`Elfogadott összeg: ${row.payable_huf ?? row.tig_final_total_huf ?? '—'} Ft`,actor:row.accepted_by,source:'Elfogadási mentés'}))]
+    .sort((a,b)=>key(b.at).localeCompare(key(a.at)));
+  return jsonResponse({courier:{id:courierId,name:key(profiles[0]?.courier_name||masters[0]?.courier_name||financeSnapshot?.courier_name||courierId),warehouse:key(profiles[0]?.warehouse_name||masters[0]?.warehouse_code)},
+    date,periodStart,generatedAt:now.toISOString(),operational,finance,financeSnapshot:financeSnapshot?{id:financeSnapshot.id,version:financeSnapshot.version,createdAt:financeSnapshot.created_at,items:financeSnapshot.items}:null,
+    complaints:complaints.filter(row=>key(row.status).toLowerCase()!=='deleted'),documents,workflowStates,acceptances,closure,processMetric:metrics[0]||null,eventLog,sources});
+}
+
+async function courier360Document(request,env) {
+  const url=new URL(request.url),id=key(url.searchParams.get('id')),courier=key(url.searchParams.get('courier'));
+  if(!/^[0-9a-f-]{36}$/i.test(id)||!/^\d{1,12}$/.test(courier))return jsonResponse({error:'Érvénytelen dokumentumazonosító.'},400);
+  const rows=await supabaseFetch(env,PUBLIC_SCHEMA,'peopleforce_documents',{select:'file_name,mime_type,file_size,file_content_base64',id:`eq.${id}`,courier_id:`eq.${courier}`,limit:1});
+  const row=rows[0];if(!row?.file_content_base64)return jsonResponse({error:'A dokumentum tartalma nem elérhető.'},404);
+  if(Number(row.file_size)>20000000||row.file_content_base64.length>28000000)return jsonResponse({error:'A dokumentum túl nagy a megnyitáshoz.'},413);
+  const bytes=Uint8Array.from(atob(row.file_content_base64),c=>c.charCodeAt(0));
+  const mime=['application/pdf','image/png','image/jpeg','text/plain'].includes(row.mime_type)?row.mime_type:'application/octet-stream';
+  const disposition=mime==='application/octet-stream'?'attachment':'inline';
+  return new Response(bytes,{headers:{'content-type':mime,'cache-control':'no-store','x-content-type-options':'nosniff',
+    'content-disposition':`${disposition}; filename*=UTF-8''${encodeURIComponent(key(row.file_name)||'dokumentum')}`}});
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -707,6 +903,13 @@ export default {
     if (url.pathname === "/api/logout") {
       if (request.method !== "POST") return jsonResponse({ error: "Use POST." }, 405);
       return logoutHub();
+    }
+
+    if (["/api/courier360","/api/courier360-document"].includes(url.pathname)) {
+      if(request.method!=="GET")return jsonResponse({error:'Read-only endpoint. Use GET.'},405);
+      const access=await requireDashboardUser(request,env);if(access.error)return access.error;
+      try{return url.pathname.endsWith('-document')?await courier360Document(request,env):await courier360Data(request,env)}
+      catch(error){return jsonResponse({error:error instanceof Error?error.message:String(error)},error.status===400?400:500)}
     }
 
     if (url.pathname === "/api/settlement-trends") {

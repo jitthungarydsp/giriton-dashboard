@@ -3,7 +3,7 @@ const root=path.resolve(__dirname,'..');
 const elements=new Map();
 function element(selector){
   if(!elements.has(selector))elements.set(selector,{value:selector==='#month'?'2026-10':'',hidden:false,innerHTML:'',textContent:'',dataset:{},
-    classList:{toggle(){}},setAttribute(){},closest(){return element('th '+selector)},querySelector(s){return element(selector+' '+s)}});
+    classList:{toggle(){},contains(){return false}},setAttribute(){},closest(){return element('th '+selector)},querySelector(s){return element(selector+' '+s)}});
   return elements.get(selector);
 }
 const sortButtons=['deductionImpact','payable'].map(key=>Object.assign(element(key),{dataset:{courierSort:key,sortLabel:key}}));
