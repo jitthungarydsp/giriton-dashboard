@@ -305,7 +305,7 @@ function snapshotAmountMap(snapshot) {
   return amounts;
 }
 
-function buildCourierRow(row, profile, workload, closure, snapshot, { missingSummary = false } = {}) {
+function buildCourierRow(row, profile, workload, closure, snapshot, processMetric, { missingSummary = false } = {}) {
   // A PWA finance snapshot is the published, immutable financial source.  The
   // old profile view misses later manual corrections, which made the Hub show
   // a different total from the courier's actual settlement card.
@@ -352,6 +352,7 @@ function buildCourierRow(row, profile, workload, closure, snapshot, { missingSum
     : money(metadata.payable_total ?? closure?.payable_huf ?? row.payable_huf);
   const routeCount = Number(workload?.completed_route_count || row.route_count || 0);
   const orderCount = Number(workload?.order_count || row.order_count || 0);
+  const metric = processMetric || {};
 
   return {
     courierId: key(row.courier_id),
@@ -393,6 +394,21 @@ function buildCourierRow(row, profile, workload, closure, snapshot, { missingSum
     advanceBookedShiftCount: Number(workload?.advance_booked_shift_count || 0),
     giritonShiftCount: Number(workload?.giriton_shift_count || 0),
     invoiceIssueCount: Number(row.invoiceIssueCount || 0),
+    processMetric: {
+      hasData: Boolean(metric.courier_metric_id),
+      financialComplaintCount: Number(metric.financial_complaint_count || 0),
+      respondedComplaintCount: Number(metric.responded_complaint_count || 0),
+      responseAverageHours: money(metric.response_average_hours),
+      openingToSettlementHours: money(metric.opening_to_settlement_hours),
+      hasOpeningToSettlement: metric.opening_to_settlement_hours !== null && metric.opening_to_settlement_hours !== undefined,
+      settlementToTigHours: money(metric.settlement_to_tig_hours),
+      hasSettlementToTig: metric.settlement_to_tig_hours !== null && metric.settlement_to_tig_hours !== undefined,
+      tigToInvoiceHours: money(metric.tig_to_invoice_hours),
+      hasTigToInvoice: metric.tig_to_invoice_hours !== null && metric.tig_to_invoice_hours !== undefined,
+      invoiceToPaidHours: money(metric.invoice_to_paid_hours),
+      hasInvoiceToPaid: metric.invoice_to_paid_hours !== null && metric.invoice_to_paid_hours !== undefined,
+      openingToPaidHours: money(metric.opening_to_paid_hours),
+    },
   };
 }
 
@@ -413,7 +429,7 @@ async function settlementDashboard(request, env) {
   const idFilter = formatIdList(courierIds);
   const numericIdFilter = formatNumericIdList(courierIds);
 
-  const [profiles, workloads, closures, discrepancies, discrepancyCoverage, processMetricRows, activePwaUsers, financeSnapshots] = await Promise.all([
+  const [profiles, workloads, closures, discrepancies, discrepancyCoverage, processMetricRows, courierProcessMetricRows, activePwaUsers, financeSnapshots] = await Promise.all([
     numericIdFilter
       ? supabaseFetch(env, PUBLIC_SCHEMA, "courier_master", {
           select: "courier_id,courier_name,email,billing_email,warehouse_name",
@@ -452,6 +468,14 @@ async function settlementDashboard(request, env) {
       period_start: `eq.${periodStart}`,
       limit: 1,
     }).catch(() => []),
+    idFilter
+      ? supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_monthly_process_metric", {
+          select: "courier_metric_id,courier_id,financial_complaint_count,responded_complaint_count,response_average_hours,opening_to_settlement_hours,settlement_to_tig_hours,tig_to_invoice_hours,invoice_to_paid_hours,opening_to_paid_hours",
+          period_start: `eq.${periodStart}`,
+          courier_id: `in.(${idFilter})`,
+          limit: 10000,
+        }).catch(() => [])
+      : [],
     supabaseFetch(env, PUBLIC_SCHEMA, "pwa_users", {
       select: "courier_id,username,active",
       active: "eq.true",
@@ -486,6 +510,7 @@ async function settlementDashboard(request, env) {
   const profileById = new Map([...profiles, ...missingProfiles].map((row) => [key(row.courier_id), row]));
   const workloadById = new Map(workloads.map((row) => [key(row.courier_id), row]));
   const closureById = new Map(closures.map((row) => [key(row.courier_id), row]));
+  const courierProcessMetricById = new Map(courierProcessMetricRows.map((row) => [key(row.courier_id), row]));
   const financeSnapshotByCourier = new Map();
   financeSnapshots.forEach((snapshot) => {
     const courierId = key(snapshot.courier_id);
@@ -512,6 +537,7 @@ async function settlementDashboard(request, env) {
       workloadById.get(key(row.courier_id)),
       closureById.get(key(row.courier_id)),
       financeSnapshotByCourier.get(key(row.courier_id)),
+      courierProcessMetricById.get(key(row.courier_id)),
     );
   });
   missingPwaUsers.forEach((user) => {
@@ -521,6 +547,7 @@ async function settlementDashboard(request, env) {
       undefined,
       undefined,
       undefined,
+      courierProcessMetricById.get(key(user.courier_id)),
       { missingSummary: true },
     ));
   });
