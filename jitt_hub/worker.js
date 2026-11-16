@@ -231,6 +231,10 @@ function money(value) {
   return Number.isFinite(number) ? Math.round(number) : 0;
 }
 
+function metricNumber(value) {
+  return value === null || value === undefined ? null : Number(value);
+}
+
 function key(value) {
   return String(value || "").trim();
 }
@@ -264,35 +268,76 @@ async function supabaseFetch(env, schema, table, params) {
     }
   });
 
-  const response = await fetch(url, {
-    headers: {
-      apikey: supabaseKey,
-      authorization: `Bearer ${supabaseKey}`,
-      "accept-profile": schema,
-    },
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`${schema}.${table}: HTTP ${response.status} ${text.slice(0, 500)}`);
+  const requested = Number(params?.limit || 1000);
+  const rows = [];
+  while (rows.length < requested) {
+    const size = Math.min(500, requested - rows.length);
+    url.searchParams.set("limit", String(size));
+    url.searchParams.set("offset", String(rows.length));
+    const response = await fetch(url, { headers: {
+      apikey: supabaseKey, authorization: `Bearer ${supabaseKey}`, "accept-profile": schema,
+    }});
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${schema}.${table}: HTTP ${response.status} ${text.slice(0,500)}`);
+    const batch = text ? JSON.parse(text) : [];
+    rows.push(...batch);
+    if (batch.length < size) break;
   }
-  return text ? JSON.parse(text) : [];
+  return rows;
 }
 
 function statusForRow(row, closure) {
-  if (row.invoiceIssueCount > 0) {
-    return "Számlaellenőrzés";
+  const label = key(row.dashboardStatus);
+  const states = row.workflowStates;
+  if (states) {
+    const settlement = states.settlement || {};
+    const reset = key(settlement.status).toLowerCase() !== "done" && (
+      /új pénzügyi snapshot|uj penzugyi snapshot/i.test(settlement.status_note || "") ||
+      key(settlement.updated_by).toLowerCase() === "finance-snapshot-refresh"
+    );
+    if (label === "Reklamáció") return label;
+    if (reset) return "Elszámolás elfogadásra vár";
+    if (key(states.invoice_payment?.status).toLowerCase() === "done" || closure?.status === "done") return "Kifizetve";
   }
-  if (closure?.status === "done") {
-    return "Kifizethető";
+  return ({ "TIG-re vár": "Teljesítés-összesítőre vár", "TIG elfogadásra vár": "Teljesítés-összesítő áttekintésre vár" })[label] || label || "Állapot nem elérhető";
+}
+
+async function loadLatestFinanceSnapshots(env, periodStart) {
+  // Load the whole month's identities, including couriers without an import row.
+  const parents = await supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_finance_snapshot", {
+    select: "id,courier_id,courier_name,warehouse_label,version,metadata,created_at",
+    period_start: `eq.${periodStart}`,
+    order: "courier_id.asc,version.desc,created_at.desc,id.desc", limit: 100000,
+  });
+  const latest = new Map();
+  for (const row of parents) if (!latest.has(key(row.courier_id))) latest.set(key(row.courier_id), row);
+  const snapshots = [...latest.values()];
+  // Only fetch item rows for the latest versions, not every historical version.
+  for (let offset = 0; offset < snapshots.length; offset += 40) {
+    const batch = snapshots.slice(offset, offset + 40);
+    const items = await supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_finance_snapshot_item", {
+      select: "snapshot_id,section,item_key,item_label,amount_value,amount_kind,note,display_order",
+      snapshot_id: `in.(${batch.map(row => row.id).join(",")})`, order: "id.asc", limit: 100000,
+    });
+    for (const row of batch) row.items = items.filter(item => item.snapshot_id === row.id);
   }
-  const payable = money(row.payable_huf);
-  if (payable <= 0) {
-    return "Eltérés";
-  }
-  if (payable > 600000) {
-    return "Számlaellenőrzés";
-  }
-  return "Teljesítés-összesítőre vár";
+  return snapshots;
+}
+
+async function loadSalaryAdvanceAdditions(env, periodStart) {
+  const [plans, requests] = await Promise.all([
+    supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_salary_advance_plan", {
+      select: "id,courier_id,courier_name,requested_amount_huf,start_date,status", order: "id.asc", limit: 10000,
+    }),
+    supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_salary_advance_request", {
+      select: "id,courier_id,courier_name,requested_amount_huf,start_date,status,plan_id", order: "id.asc", limit: 10000,
+    }),
+  ]);
+  const month = periodStart.slice(0,7);
+  // A linked request and its repayment plan represent the same advance.
+  return [...plans.filter(row => ["open","done"].includes(key(row.status).toLowerCase())),
+    ...requests.filter(row => !row.plan_id && ["approved","paid","closed"].includes(key(row.status).toLowerCase()))]
+    .filter(row => key(row.start_date).slice(0,7) === month);
 }
 
 function snapshotAmountMap(snapshot) {
@@ -312,28 +357,28 @@ function buildCourierRow(row, profile, workload, closure, snapshot, processMetri
   const values = snapshotAmountMap(snapshot);
   const metadata = snapshot?.metadata && typeof snapshot.metadata === "object" ? snapshot.metadata : {};
   const snapshotHasFinance = values.size > 0;
-  const amount = (snapshotKey, fallback) => snapshotHasFinance && values.has(snapshotKey)
-    ? money(values.get(snapshotKey)) : money(fallback);
+  const amount = (snapshotKey, fallback) => snapshotHasFinance
+    ? money(values.get(snapshotKey) ?? 0) : money(fallback);
   const base = amount("base", row.courier_base_rate_huf);
   const tip = amount("tip", row.tip_huf);
   const delay = amount("delay_bonus", row.delay_bonus_huf);
   const compliance = amount("compliance_bonus", row.compliance_bonus_huf);
   const otherBonus = amount("address_bonus_kifli", row.other_route_bonus_huf);
   const kifliNet = amount("kiflis_bonus_malus", row.imported_bonus_huf - Math.abs(money(row.imported_malus_huf)));
-  const importedBonus = values.has("monthly_bonus") ? amount("monthly_bonus", 0) : Math.max(kifliNet, 0);
+  const importedBonus = values.has("kiflis_bonus_malus") ? Math.max(kifliNet, 0) : amount("monthly_bonus", row.imported_bonus_huf);
   const manualNet = amount("bonus_malus", row.manual_bonus_huf - Math.abs(money(row.manual_malus_huf)));
-  const jittBonus = values.has("manual_bonus") ? amount("manual_bonus", 0) : Math.max(manualNet, 0);
+  const jittBonus = values.has("bonus_malus") ? Math.max(manualNet, 0) : amount("manual_bonus", row.manual_bonus_huf);
   const customerRating = amount("customer_rating", row.customer_rating_bonus_huf);
   const loyalty = amount("loyalty_bonus", row.loyalty_bonus_huf);
   const correctionNet = amount("correction", (row.correction_bonus_huf || row.correction_income_huf) - Math.abs(money(row.correction_deduction_huf)));
   const correctionIncome = values.has("correction_income") ? amount("correction_income", 0) : Math.max(correctionNet, 0);
   const bonus = delay + compliance + otherBonus + importedBonus + jittBonus + customerRating + loyalty;
-  const monthlyMalus = values.has("monthly_malus")
+  const monthlyMalus = values.has("kiflis_bonus_malus") ? Math.abs(Math.min(kifliNet, 0)) : values.has("monthly_malus")
     ? Math.abs(amount("monthly_malus", 0)) : Math.abs(Math.min(kifliNet, 0)) || Math.abs(money(row.imported_malus_huf || row.malus_huf));
-  const jittMalus = values.has("manual_malus")
+  const jittMalus = values.has("bonus_malus") ? Math.abs(Math.min(manualNet, 0)) : values.has("manual_malus")
     ? Math.abs(amount("manual_malus", 0)) : Math.abs(Math.min(manualNet, 0)) || Math.abs(money(row.manual_malus_huf));
   const malus = monthlyMalus + jittMalus;
-  const atm = Math.abs(amount("atm_effect", row.atm_deduction_huf || row.imported_atm_deduction_huf));
+  const atm = Math.abs(Math.min(amount("atm_effect", -Math.abs(money(row.atm_deduction_huf || row.imported_atm_deduction_huf))), 0));
   const otherExpense = Math.abs(amount("other_expense", row.other_expense_huf));
   const salaryAdvance = Math.abs(amount("salary_advance", row.salary_advance_huf));
   const reserve = Math.abs(amount("reserve", row.target_reserve_topup_huf || row.reserve_addition_huf || row.reserve_deduction_huf));
@@ -344,10 +389,10 @@ function buildCourierRow(row, profile, workload, closure, snapshot, processMetri
   const income = values.has("income") ? amount("income", 0)
     : money(metadata.income_total ?? (base + tip + bonus));
   const deductions = Math.abs(values.has("deductions") ? amount("deductions", 0)
-    : money(metadata.deduction_total ?? -(malus + atm + otherDeduction + salaryAdvance + reserve + insurance)));
+    : money(metadata.deduction_total ?? -(malus + atm + otherExpense + salaryAdvance + reserve + insurance)));
   // Corrections are stored separately in the PWA worksheet.  They must still
   // be part of the total negative financial effect shown in the Hub.
-  const deductionImpact = deductions + correctionDeduction;
+  const deductionImpact = processMetric?.closure_snapshot?.finance_available ? money(processMetric.deductions_huf) : deductions + correctionDeduction;
   const payable = values.has("payable") ? amount("payable", 0)
     : money(metadata.payable_total ?? closure?.payable_huf ?? row.payable_huf);
   const routeCount = Number(workload?.completed_route_count || row.route_count || 0);
@@ -359,7 +404,7 @@ function buildCourierRow(row, profile, workload, closure, snapshot, processMetri
     courierName: key(snapshot?.courier_name || row.driver_name || profile?.courier_name || workload?.courier_name),
     email: key(profile?.email || profile?.billing_email),
     warehouse: key(snapshot?.warehouse_label || profile?.warehouse_name || "BUD"),
-    status: missingSummary ? "Elszámolásra vár" : statusForRow(row, closure),
+    status: statusForRow(row, closure),
     routeCount,
     orderCount,
     base,
@@ -368,6 +413,8 @@ function buildCourierRow(row, profile, workload, closure, snapshot, processMetri
     delay,
     compliance,
     otherBonus,
+    performanceBonus: delay + compliance + otherBonus + customerRating + loyalty,
+    salaryAdvanceAdded: money(row.salaryAdvanceAdded),
     importedBonus,
     manualBonus: jittBonus,
     customerRating,
@@ -398,16 +445,17 @@ function buildCourierRow(row, profile, workload, closure, snapshot, processMetri
       hasData: Boolean(metric.courier_metric_id),
       financialComplaintCount: Number(metric.financial_complaint_count || 0),
       respondedComplaintCount: Number(metric.responded_complaint_count || 0),
-      responseAverageHours: money(metric.response_average_hours),
-      openingToSettlementHours: money(metric.opening_to_settlement_hours),
+      responseAverageHours: metricNumber(metric.response_average_hours),
+      responseTimedCount: metric.closure_snapshot?.response_timed_count ?? null,
+      openingToSettlementHours: metricNumber(metric.opening_to_settlement_hours),
       hasOpeningToSettlement: metric.opening_to_settlement_hours !== null && metric.opening_to_settlement_hours !== undefined,
-      settlementToTigHours: money(metric.settlement_to_tig_hours),
+      settlementToTigHours: metricNumber(metric.settlement_to_tig_hours),
       hasSettlementToTig: metric.settlement_to_tig_hours !== null && metric.settlement_to_tig_hours !== undefined,
-      tigToInvoiceHours: money(metric.tig_to_invoice_hours),
+      tigToInvoiceHours: metricNumber(metric.tig_to_invoice_hours),
       hasTigToInvoice: metric.tig_to_invoice_hours !== null && metric.tig_to_invoice_hours !== undefined,
-      invoiceToPaidHours: money(metric.invoice_to_paid_hours),
+      invoiceToPaidHours: metricNumber(metric.invoice_to_paid_hours),
       hasInvoiceToPaid: metric.invoice_to_paid_hours !== null && metric.invoice_to_paid_hours !== undefined,
-      openingToPaidHours: money(metric.opening_to_paid_hours),
+      openingToPaidHours: metricNumber(metric.opening_to_paid_hours),
     },
   };
 }
@@ -429,7 +477,7 @@ async function settlementDashboard(request, env) {
   const idFilter = formatIdList(courierIds);
   const numericIdFilter = formatNumericIdList(courierIds);
 
-  const [profiles, workloads, closures, discrepancies, discrepancyCoverage, processMetricRows, courierProcessMetricRows, activePwaUsers, financeSnapshots] = await Promise.all([
+  const [profiles, workloads, closures, discrepancies, discrepancyCoverage, processMetricRows, courierProcessMetricRows, activePwaUsers, financeSnapshots, workflowDashboardRows, metricMonths, workflowStates, advanceAdditions] = await Promise.all([
     numericIdFilter
       ? supabaseFetch(env, PUBLIC_SCHEMA, "courier_master", {
           select: "courier_id,courier_name,email,billing_email,warehouse_name",
@@ -437,22 +485,16 @@ async function settlementDashboard(request, env) {
           limit,
         }).catch(() => [])
       : [],
-    idFilter
-      ? supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_monthly_workload_summary", {
+    supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_monthly_workload_summary", {
           select: "courier_id,courier_name,period_start,booked_shift_count,giriton_shift_count,completed_route_count,order_count",
           period_start: `eq.${periodStart}`,
-          courier_id: `in.(${idFilter})`,
           limit,
-        }).catch(() => [])
-      : [],
-    idFilter
-      ? supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_monthly_closure", {
+        }).catch(() => []),
+    supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_monthly_closure", {
           select: "courier_id,courier_name,period_start,payable_huf,status,invoice_number,closed_at",
           period_start: `eq.${periodStart}`,
-          courier_id: `in.(${idFilter})`,
           limit,
-        }).catch(() => [])
-      : [],
+        }).catch(() => []),
     supabaseFetch(env, SETTLEMENT_SCHEMA, "vw_invoice_discrepancy_list", {
       select: "courier_id,courier_name,period_start,invoice_kind_label,issue_type,expected_amount_huf,uploaded_invoice_amount_huf,difference_huf,invoice_number",
       period_start: `eq.${periodStart}`,
@@ -468,32 +510,37 @@ async function settlementDashboard(request, env) {
       period_start: `eq.${periodStart}`,
       limit: 1,
     }).catch(() => []),
-    idFilter
-      ? supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_monthly_process_metric", {
-          select: "courier_metric_id,courier_id,financial_complaint_count,responded_complaint_count,response_average_hours,opening_to_settlement_hours,settlement_to_tig_hours,tig_to_invoice_hours,invoice_to_paid_hours,opening_to_paid_hours",
+    supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_monthly_process_metric", {
+          select: "courier_metric_id,courier_id,courier_name,deductions_huf,malus_huf,other_deductions_huf,closure_snapshot,financial_complaint_count,responded_complaint_count,response_average_hours,opening_to_settlement_hours,settlement_to_tig_hours,tig_to_invoice_hours,invoice_to_paid_hours,opening_to_paid_hours",
           period_start: `eq.${periodStart}`,
-          courier_id: `in.(${idFilter})`,
           limit: 10000,
-        }).catch(() => [])
-      : [],
+        }).catch(() => []),
     supabaseFetch(env, PUBLIC_SCHEMA, "pwa_users", {
       select: "courier_id,username,active",
       active: "eq.true",
       limit: 10000,
     }).catch(() => []),
-    idFilter
-      ? supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_finance_snapshot", {
-          select: "id,courier_id,courier_name,warehouse_label,version,metadata,created_at,items:courier_finance_snapshot_item(section,item_key,item_label,amount_value,amount_kind,note,display_order)",
-          period_start: `eq.${periodStart}`,
-          courier_id: `in.(${idFilter})`,
-          order: "courier_id.asc,version.desc",
-          limit: 10000,
-        }).catch(() => [])
-      : [],
+    loadLatestFinanceSnapshots(env, periodStart),
+    supabaseFetch(env, SETTLEMENT_SCHEMA, "vw_admin_settlement_dashboard_fast", {
+      select: "courier_id,dashboard_status_label",
+      period_start: `eq.${periodStart}`, limit: 10000,
+    }).catch(() => []),
+    supabaseFetch(env, SETTLEMENT_SCHEMA, "monthly_process_metric_summary", {
+      select: "period_start", order: "period_start.desc", limit: 1000,
+    }),
+    supabaseFetch(env, PUBLIC_SCHEMA, "peopleforce_card_statuses", {
+      select: "courier_id,action_key,status,status_note,updated_by",
+      document_month: `eq.${periodStart}`, order: "id.asc", limit: 10000,
+    }).catch(() => null),
+    loadSalaryAdvanceAdditions(env, periodStart),
   ]);
 
   const summaryCourierIds = new Set(courierIds);
-  const missingPwaUsers = activePwaUsers.filter((user) => {
+  const candidates = new Map(activePwaUsers.map(user => [key(user.courier_id), user]));
+  for (const advance of advanceAdditions) if (!candidates.has(key(advance.courier_id))) candidates.set(key(advance.courier_id), {courier_id:advance.courier_id,username:advance.courier_name || advance.courier_id});
+  for (const snapshot of financeSnapshots) if (!candidates.has(key(snapshot.courier_id))) candidates.set(key(snapshot.courier_id), {courier_id:snapshot.courier_id,username:snapshot.courier_name || snapshot.courier_id});
+  for (const metric of courierProcessMetricRows) if (!candidates.has(key(metric.courier_id))) candidates.set(key(metric.courier_id), {courier_id:metric.courier_id,username:metric.courier_name});
+  const missingPwaUsers = [...candidates.values()].filter((user) => {
     const courierId = key(user.courier_id);
     const username = key(user.username);
     return /^\d+$/.test(courierId) && Boolean(username) && !summaryCourierIds.has(courierId);
@@ -510,6 +557,19 @@ async function settlementDashboard(request, env) {
   const profileById = new Map([...profiles, ...missingProfiles].map((row) => [key(row.courier_id), row]));
   const workloadById = new Map(workloads.map((row) => [key(row.courier_id), row]));
   const closureById = new Map(closures.map((row) => [key(row.courier_id), row]));
+  const advanceAddedById = new Map();
+  for (const row of advanceAdditions) {
+    const cid = key(row.courier_id);
+    advanceAddedById.set(cid, (advanceAddedById.get(cid)||0) + Math.max(money(row.requested_amount_huf),0));
+  }
+  const statesById = new Map();
+  for (const state of workflowStates || []) {
+    if (key(state.action_key).startsWith("process:")) continue;
+    const cid = key(state.courier_id);
+    if (!statesById.has(cid)) statesById.set(cid, {});
+    statesById.get(cid)[state.action_key] = state;
+  }
+  const workflowById = new Map(workflowDashboardRows.map(row => [key(row.courier_id),row.dashboard_status_label]));
   const courierProcessMetricById = new Map(courierProcessMetricRows.map((row) => [key(row.courier_id), row]));
   const financeSnapshotByCourier = new Map();
   financeSnapshots.forEach((snapshot) => {
@@ -530,6 +590,9 @@ async function settlementDashboard(request, env) {
       route_count: sourceRow.completed_route_count || sourceRow.route_count,
       order_count: sourceRow.workload_order_count || sourceRow.order_count,
       invoiceIssueCount: discrepancyCountByCourier.get(key(sourceRow.courier_id)) || 0,
+      dashboardStatus: workflowById.get(key(sourceRow.courier_id)),
+      salaryAdvanceAdded: advanceAddedById.get(key(sourceRow.courier_id)) || 0,
+      workflowStates: workflowStates ? statesById.get(key(sourceRow.courier_id)) || {} : null,
     };
     return buildCourierRow(
       row,
@@ -542,11 +605,11 @@ async function settlementDashboard(request, env) {
   });
   missingPwaUsers.forEach((user) => {
     couriers.push(buildCourierRow(
-      { courier_id: user.courier_id, driver_name: user.username },
+      { courier_id: user.courier_id, driver_name: user.username, dashboardStatus: workflowById.get(key(user.courier_id)), workflowStates: workflowStates ? statesById.get(key(user.courier_id)) || {} : null, salaryAdvanceAdded: advanceAddedById.get(key(user.courier_id)) || 0 },
       profileById.get(key(user.courier_id)),
-      undefined,
-      undefined,
-      undefined,
+      workloadById.get(key(user.courier_id)),
+      closureById.get(key(user.courier_id)),
+      financeSnapshotByCourier.get(key(user.courier_id)),
       courierProcessMetricById.get(key(user.courier_id)),
       { missingSummary: true },
     ));
@@ -579,8 +642,44 @@ async function settlementDashboard(request, env) {
     discrepancies,
     discrepancyCoverage: discrepancyCoverage[0] || null,
     processMetrics: processMetricRows[0] || null,
+    availableMonths: metricMonths.map(row => key(row.period_start).slice(0,7)),
     selectedCourier: couriers[0] || null,
   });
+}
+
+function trendMonths(periodStart) {
+  const [year, month] = periodStart.split('-').map(Number);
+  return [-2,-1,0].map(offset => new Date(Date.UTC(year,month-1+offset,1)).toISOString().slice(0,10));
+}
+
+async function settlementTrends(request, env) {
+  const periodStart = parseMonth(new URL(request.url).searchParams.get('month'));
+  const months = trendMonths(periodStart);
+  const summaries = await supabaseFetch(env, SETTLEMENT_SCHEMA, 'monthly_process_metric_summary', {
+    select: 'period_start,complaint_total,response_average_hours,source_counts,calculated_at',
+    period_start: `in.(${months.join(',')})`, order: 'period_start.asc', limit: 3,
+  });
+  const rows = await Promise.all(months.map(async month => {
+    const [snapshots, advances] = await Promise.all([loadLatestFinanceSnapshots(env,month),loadSalaryAdvanceAdditions(env,month)]);
+    const summary = summaries.find(row => row.period_start === month);
+    const financial = snapshots.map(snapshot => buildCourierRow({courier_id:snapshot.courier_id},null,null,null,snapshot,null));
+    const sum = field => financial.reduce((total,row)=>total+Number(row[field]||0),0);
+    const timed = Number(summary?.source_counts?.response_timed_count || 0);
+    return {
+      month: month.slice(0,7), complaintCount: summary ? Number(summary.complaint_total) : null,
+      responseAverageHours: summary && timed > 0 ? Number(summary.response_average_hours) : null,
+      responseTimedCount: timed, bonusHuf: snapshots.length ? sum('bonus') : null,
+      jittBonusHuf: snapshots.length ? sum('jittBonus') : null,
+      kifliBonusHuf: snapshots.length ? sum('importedBonus') : null,
+      malusHuf: snapshots.length ? sum('malus') : null,
+      advanceCount: advances.filter(row=>money(row.requested_amount_huf)>0).length,
+      advanceAmountHuf: advances.reduce((total,row)=>total+Math.max(money(row.requested_amount_huf),0),0),
+      financeCoveredCouriers: snapshots.length,
+      courierCount: summary?.source_counts?.courier_month_count ?? null,
+      metricsCalculatedAt: summary?.calculated_at || null,
+    };
+  }));
+  return jsonResponse({source:'supabase',generatedAt:new Date().toISOString(),months:rows});
 }
 
 export default {
@@ -608,6 +707,17 @@ export default {
     if (url.pathname === "/api/logout") {
       if (request.method !== "POST") return jsonResponse({ error: "Use POST." }, 405);
       return logoutHub();
+    }
+
+    if (url.pathname === "/api/settlement-trends") {
+      if (request.method !== "GET") return jsonResponse({error:"Read-only endpoint. Use GET."},405);
+      try {
+        const access = await requireDashboardUser(request, env);
+        if (access.error) return access.error;
+        return await settlementTrends(request,env);
+      } catch (error) {
+        return jsonResponse({error:error instanceof Error ? error.message : String(error)},500);
+      }
     }
 
     if (url.pathname === "/api/settlement-dashboard") {

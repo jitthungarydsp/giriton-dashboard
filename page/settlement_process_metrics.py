@@ -16,6 +16,7 @@ from resources.peopleforce_documents import require_supabase, supabase_headers
 
 SUMMARY_SCHEMA = "settlement"
 SUMMARY_TABLE = "monthly_process_metric_summary"
+DETAIL_TABLE = "courier_monthly_process_metric"
 FINANCIAL_COMPLAINT_TYPES = {
     "settlement",
     "tig",
@@ -29,6 +30,7 @@ HUNGARIAN_MONTHS = (
     "július", "augusztus", "szeptember", "október", "november", "december",
 )
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
+ANSWERED_COMPLAINT_STATUSES = {"closed", "resolved"}
 
 
 def can_view_settlement_process_metrics(user: dict[str, Any] | None) -> bool:
@@ -81,15 +83,23 @@ def _api_headers(schema: str | None = None, *, write: bool = False) -> dict[str,
 
 
 def _read_rows(table: str, *, schema: str | None = None, params: dict[str, str] | None = None) -> list[dict[str, Any]]:
-    response = requests.get(
-        f"{require_supabase().rstrip('/')}/rest/v1/{table}",
-        headers=_api_headers(schema),
-        params=params or {},
-        timeout=30,
-    )
-    response.raise_for_status()
-    data = response.json() or []
-    return data if isinstance(data, list) else []
+    query = dict(params or {})
+    requested_limit = int(query.pop('limit', 100000))
+    rows = []
+    while len(rows) < requested_limit:
+        size = min(500, requested_limit - len(rows))
+        response = requests.get(
+            f"{require_supabase().rstrip('/')}/rest/v1/{table}",
+            headers=_api_headers(schema),
+            params={**query, 'order': query.get('order', {'monthly_process_metric_summary':'period_start.asc','courier_monthly_process_metric':'courier_metric_id.asc','vw_courier_month_profile_snapshot':'courier_id.asc','mobile_settlement_period_config':'period_start.asc'}.get(table, 'id.asc')), 'limit': size, 'offset': len(rows)},
+            timeout=60,
+        )
+        response.raise_for_status()
+        batch = response.json() or []
+        rows.extend(batch)
+        if len(batch) < size:
+            break
+    return rows
 
 
 def _read_one_summary(period_start: date) -> dict[str, Any] | None:
@@ -140,183 +150,32 @@ def _duration_summary(values: list[float]) -> dict[str, float | int]:
     }
 
 
+def _complaint_is_answered(row: dict[str, Any]) -> bool:
+    """Return the business outcome, not merely whether a response timestamp exists.
+
+    PeopleForce historically stored many completed answers as ``closed`` or
+    ``resolved`` without filling ``responded_at`` / ``admin_response``.  Those
+    records are answered complaints too.  The timestamp is still used only for
+    calculating a measurable response duration.
+    """
+    status = str(row.get("status") or "").strip().casefold()
+    return (
+        status in ANSWERED_COMPLAINT_STATUSES
+        or _timestamp(row.get("responded_at")) is not None
+        or bool(str(row.get("admin_response") or "").strip())
+    )
+
+
+def calculate_monthly_process_metric_bundle(period_start: date) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Rebuild all courier-month rows and their exact monthly roll-up."""
+    from resources.settlement_metric_repository import load_bundle
+    return load_bundle(_month_start(period_start).isoformat(), _read_rows)
+
+
 def calculate_monthly_process_metrics(period_start: date) -> dict[str, Any]:
-    """Calculate a monthly summary from immutable workflow audit events."""
-    month = _month_start(period_start)
-    month_text = month.isoformat()
-    openings = _read_rows(
-        "peopleforce_card_statuses",
-        params={
-            "select": "courier_id,courier_name,updated_at",
-            "document_month": f"eq.{month_text}",
-            "action_key": "eq.individual_monthly_billing",
-            "status": "eq.done",
-            "limit": "10000",
-        },
-    )
-    acceptances = _read_rows(
-        "pwa_workflow_acceptance_snapshots",
-        schema=SUMMARY_SCHEMA,
-        params={
-            "select": "courier_id,courier_name,action_key,accepted_at",
-            "period_start": f"eq.{month_text}",
-            "limit": "10000",
-        },
-    )
-    invoices = _read_rows(
-        "peopleforce_documents",
-        params={
-            "select": "courier_id,courier_name,uploaded_at",
-            "document_month": f"eq.{month_text}",
-            "document_type": "eq.invoice",
-            "limit": "10000",
-        },
-    )
-    closures = _read_rows(
-        "courier_monthly_closure",
-        schema=SUMMARY_SCHEMA,
-        params={
-            "select": "courier_id,courier_name,closed_at,snapshot",
-            "period_start": f"eq.{month_text}",
-            "status": "eq.done",
-            "limit": "10000",
-        },
-    )
-    complaints = _read_rows(
-        "peopleforce_complaints",
-        params={
-            "select": "id,courier_id,document_type,created_at,responded_at",
-            "document_month": f"eq.{month_text}",
-            "status": "neq.deleted",
-            "limit": "10000",
-        },
-    )
-    financial_complaints = [
-        row for row in complaints
-        if str(row.get("document_type") or "").strip().casefold() in FINANCIAL_COMPLAINT_TYPES
-    ]
-    acceptance_by_courier = _group_by_courier(acceptances)
-    invoices_by_courier = _group_by_courier(invoices)
-    closures_by_courier = _group_by_courier(closures)
-    complaints_by_courier = _group_by_courier(financial_complaints)
-
-    completed_flows: list[dict[str, Any]] = []
-    response_hours: list[float] = []
-    stage_hours: dict[str, list[float]] = {
-        "opening_to_settlement": [],
-        "settlement_to_tig": [],
-        "tig_to_invoice": [],
-        "invoice_to_paid": [],
-        "opening_to_paid": [],
-    }
-    source_times: list[datetime] = []
-    for opening in openings:
-        courier_id = str(opening.get("courier_id") or "").strip()
-        opened_at = _timestamp(opening.get("updated_at"))
-        if not courier_id or opened_at is None:
-            continue
-        source_times.append(opened_at)
-        acceptance_rows = acceptance_by_courier.get(courier_id, [])
-        settlement = _first_after(
-            [row for row in acceptance_rows if str(row.get("action_key") or "").casefold() == "settlement"],
-            "accepted_at",
-            opened_at,
-        )
-        settlement_at = _timestamp((settlement or {}).get("accepted_at"))
-        opening_to_settlement = _hours_between(opened_at, settlement_at)
-        if opening_to_settlement is not None:
-            stage_hours["opening_to_settlement"].append(opening_to_settlement)
-        tig = _first_after(
-            [row for row in acceptance_rows if str(row.get("action_key") or "").casefold() == "tig"],
-            "accepted_at",
-            settlement_at,
-        ) if settlement_at else None
-        tig_at = _timestamp((tig or {}).get("accepted_at"))
-        settlement_to_tig = _hours_between(settlement_at, tig_at)
-        if settlement_to_tig is not None:
-            stage_hours["settlement_to_tig"].append(settlement_to_tig)
-        invoice = _first_after(invoices_by_courier.get(courier_id, []), "uploaded_at", tig_at) if tig_at else None
-        invoice_at = _timestamp((invoice or {}).get("uploaded_at"))
-        tig_to_invoice = _hours_between(tig_at, invoice_at)
-        if tig_to_invoice is not None:
-            stage_hours["tig_to_invoice"].append(tig_to_invoice)
-        closure = _first_after(closures_by_courier.get(courier_id, []), "closed_at", invoice_at) if invoice_at else None
-        paid_at = _timestamp((closure or {}).get("closed_at"))
-        invoice_to_paid = _hours_between(invoice_at, paid_at)
-        if invoice_to_paid is not None:
-            stage_hours["invoice_to_paid"].append(invoice_to_paid)
-        opening_to_paid = _hours_between(opened_at, paid_at)
-        if opening_to_paid is not None:
-            stage_hours["opening_to_paid"].append(opening_to_paid)
-        if not all((settlement_at, tig_at, invoice_at, paid_at)):
-            continue
-        source_times.extend((settlement_at, tig_at, invoice_at, paid_at))
-        flow_complaints = [
-            row for row in complaints_by_courier.get(courier_id, [])
-            if (created_at := _timestamp(row.get("created_at"))) is not None
-            and opened_at <= created_at <= paid_at
-        ]
-        for complaint in flow_complaints:
-            response_time = _hours_between(complaint.get("created_at"), complaint.get("responded_at"))
-            if response_time is not None:
-                response_hours.append(response_time)
-        snapshot = (closure or {}).get("snapshot")
-        snapshot = snapshot if isinstance(snapshot, dict) else {}
-        malus_huf = abs(_number(snapshot.get("malus_huf")))
-        other_deductions_huf = sum(abs(_number(snapshot.get(key))) for key in (
-            "atm_deduction_huf", "insurance_fee_huf", "other_expense_huf",
-            "salary_advance_huf", "reserve_addition_huf",
-        ))
-        completed_flows.append({
-            "complaint_count": len(flow_complaints),
-            "malus_huf": malus_huf,
-            "other_deductions_huf": other_deductions_huf,
-            "deductions_huf": malus_huf + other_deductions_huf,
-        })
-
-    completed_count = len(completed_flows)
-    complaint_total = sum(int(row["complaint_count"]) for row in completed_flows)
-    deductions_total = sum(float(row["deductions_huf"]) for row in completed_flows)
-    complaint_group = [row for row in completed_flows if int(row["complaint_count"]) > 0]
-    no_complaint_group = [row for row in completed_flows if int(row["complaint_count"]) == 0]
-
-    def group_totals(rows: list[dict[str, Any]]) -> tuple[int, float, float]:
-        total = sum(float(row["deductions_huf"]) for row in rows)
-        return len(rows), total, total / len(rows) if rows else 0.0
-
-    with_complaint_count, with_complaint_total, with_complaint_average = group_totals(complaint_group)
-    without_complaint_count, without_complaint_total, without_complaint_average = group_totals(no_complaint_group)
-    return {
-        "period_start": month_text,
-        "completed_flow_count": completed_count,
-        "complaint_flow_count": sum(1 for row in completed_flows if row["complaint_count"] > 0),
-        "complaint_total": complaint_total,
-        "complaints_average": complaint_total / completed_count if completed_count else 0.0,
-        "response_count": len(response_hours),
-        "response_average_hours": sum(response_hours) / len(response_hours) if response_hours else 0.0,
-        "response_median_hours": float(median(response_hours)) if response_hours else 0.0,
-        "deductions_total_huf": deductions_total,
-        "malus_total_huf": sum(float(row["malus_huf"]) for row in completed_flows),
-        "other_deductions_total_huf": sum(float(row["other_deductions_huf"]) for row in completed_flows),
-        "deductions_average_huf": deductions_total / completed_count if completed_count else 0.0,
-        "opening_to_settlement": _duration_summary(stage_hours["opening_to_settlement"]),
-        "settlement_to_tig": _duration_summary(stage_hours["settlement_to_tig"]),
-        "tig_to_invoice": _duration_summary(stage_hours["tig_to_invoice"]),
-        "invoice_to_paid": _duration_summary(stage_hours["invoice_to_paid"]),
-        "opening_to_paid": _duration_summary(stage_hours["opening_to_paid"]),
-        "with_complaint_flow_count": with_complaint_count,
-        "with_complaint_deductions_huf": with_complaint_total,
-        "with_complaint_deductions_average_huf": with_complaint_average,
-        "without_complaint_flow_count": without_complaint_count,
-        "without_complaint_deductions_huf": without_complaint_total,
-        "without_complaint_deductions_average_huf": without_complaint_average,
-        "source_updated_at": max(source_times).isoformat() if source_times else None,
-        "source_counts": {
-            "openings": len(openings), "acceptances": len(acceptances),
-            "invoices": len(invoices), "closures": len(closures),
-            "financial_complaints": len(financial_complaints),
-        },
-    }
+    """Backward-compatible monthly roll-up calculation."""
+    summary, _details = calculate_monthly_process_metric_bundle(period_start)
+    return summary
 
 
 def save_monthly_process_metrics(metrics: dict[str, Any], actor: str) -> dict[str, Any]:
@@ -324,7 +183,7 @@ def save_monthly_process_metrics(metrics: dict[str, Any], actor: str) -> dict[st
         **metrics,
         "calculated_at": datetime.now(timezone.utc).isoformat(),
         "calculated_by": str(actor or "PWA"),
-        "definition_version": "2026-11-14-v1",
+        "definition_version": "2026-11-16-v2-all-courier-months",
     }
     response = requests.post(
         f"{require_supabase().rstrip('/')}/rest/v1/{SUMMARY_TABLE}",
@@ -336,6 +195,70 @@ def save_monthly_process_metrics(metrics: dict[str, Any], actor: str) -> dict[st
     response.raise_for_status()
     saved = response.json() or []
     return saved[0] if isinstance(saved, list) and saved else payload
+
+
+def save_courier_monthly_process_metrics(
+    summary: dict[str, Any], courier_metrics: list[dict[str, Any]], actor: str,
+) -> None:
+    """Persist one deterministic completed workflow row for each courier/month."""
+    summary_id = str(summary.get("summary_id") or "").strip()
+    if not summary_id:
+        raise RuntimeError("A havi mutatóhoz nincs summary_id. Futtasd a futár-hónap mutató SQL-migrációját.")
+    period_start = str(summary.get("period_start") or "").strip()
+    if not period_start:
+        raise RuntimeError("A mentett havi mutatóhoz hiányzik a hónap azonosítója.")
+    existing_rows = _read_rows(
+        DETAIL_TABLE,
+        schema=SUMMARY_SCHEMA,
+        params={"select": "courier_id", "period_start": f"eq.{period_start}", "limit": "10000"},
+    )
+    if not courier_metrics:
+        for row in existing_rows:
+            courier_id = str(row.get("courier_id") or "").strip()
+            if courier_id:
+                requests.delete(
+                    f"{require_supabase().rstrip('/')}/rest/v1/{DETAIL_TABLE}",
+                    headers=_api_headers(SUMMARY_SCHEMA, write=True),
+                    params={"period_start": f"eq.{period_start}", "courier_id": f"eq.{courier_id}"},
+                    timeout=30,
+                ).raise_for_status()
+        return
+    calculated_at = datetime.now(timezone.utc).isoformat()
+    payload = [
+        {
+            **metric,
+            "summary_id": summary_id,
+            "calculated_at": calculated_at,
+            "calculated_by": str(actor or "PWA"),
+        }
+        for metric in courier_metrics
+    ]
+    response = requests.post(
+        f"{require_supabase().rstrip('/')}/rest/v1/{DETAIL_TABLE}",
+        headers={**_api_headers(SUMMARY_SCHEMA, write=True), "Prefer": "resolution=merge-duplicates,return=minimal"},
+        params={"on_conflict": "period_start,courier_id"},
+        json=payload,
+        timeout=30,
+    )
+    response.raise_for_status()
+    current_ids = {str(metric["courier_id"]) for metric in courier_metrics}
+    for row in existing_rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        if courier_id and courier_id not in current_ids:
+            requests.delete(
+                f"{require_supabase().rstrip('/')}/rest/v1/{DETAIL_TABLE}",
+                headers=_api_headers(SUMMARY_SCHEMA, write=True),
+                params={"period_start": f"eq.{period_start}", "courier_id": f"eq.{courier_id}"},
+                timeout=30,
+            ).raise_for_status()
+
+
+def recalculate_and_save_monthly_process_metrics(period_start: date, actor: str) -> dict[str, Any]:
+    """Save both linked metric tables from the same immutable source events."""
+    summary, courier_metrics = calculate_monthly_process_metric_bundle(period_start)
+    saved_summary = save_monthly_process_metrics(summary, actor)
+    save_courier_monthly_process_metrics(saved_summary, courier_metrics, actor)
+    return saved_summary
 
 
 def _metric_card(label: str, value: str, note: str, description: str, tone: str = "green") -> str:
@@ -369,9 +292,9 @@ def _render_cards(summary: dict[str, Any]) -> None:
     complaint_flows = int(summary.get("complaint_flow_count") or 0)
     cards = [
         _metric_card("Lezárt folyamat", f"{completed} db", "Teljes, időrendben követhető folyamat", "Csak azok a futár-hónap folyamatok szerepelnek, ahol a megnyitás, két elfogadás, számlafeltöltés és kifizetés időpontja is megvan."),
-        _metric_card("Elszámolási reklamáció", f"{_number(summary.get('complaints_average')):.2f} db", f"{int(summary.get('complaint_total') or 0)} reklamáció · {complaint_flows} folyamat", "A lezárt folyamatok alatt indított elszámolási, Teljesítés-összesítő- vagy számlaügyek átlaga. A túrával kapcsolatos reklamációk nem szerepelnek benne.", "amber"),
-        _metric_card("Reklamáció válaszideje", f"{_number(summary.get('response_average_hours')):.1f} óra", f"{_number(summary.get('response_median_hours')):.1f} óra medián · {int(summary.get('response_count') or 0)} válasz", "A reklamáció létrehozásától az admin rögzített válaszáig eltelt idő. Csak válaszolt reklamáció számít.", "amber"),
-        _metric_card("Levonás / folyamat", _format_huf(summary.get("deductions_average_huf")), f"Összesen {_format_huf(summary.get('deductions_total_huf'))}", "A kifizetéskor mentett pénzügyi snapshot malusz- és egyéb levonási sorainak átlaga. Későbbi újraszámítás nem írja át ezt a mutatót.", "red"),
+        _metric_card("Elszámolási reklamáció", f"{_number(summary.get('complaints_average')):.2f} db", f"{int(summary.get('complaint_total') or 0)} reklamáció · {complaint_flows} folyamat", "Az adott elszámolási hónap összes aktív pénzügyi reklamációja osztva a havi futársorok számával. A törölt és külön előlegfolyamatok nem szerepelnek benne.", "amber"),
+        _metric_card("Reklamáció válaszideje", f"{_number(summary.get('response_average_hours')):.1f} óra", f"{_number(summary.get('response_median_hours')):.1f} óra medián · {int(summary.get('response_count') or 0)} megválaszolt/lezárt", "A megválaszolt/lezárt reklamációk száma státuszból vagy rögzített válaszból jön. A válaszidő csak ott számolható, ahol a válasz időpontja is rögzített.", "amber"),
+        _metric_card("Levonás / folyamat", _format_huf(summary.get("deductions_average_huf")), f"Összesen {_format_huf(summary.get('deductions_total_huf'))}", "A legutóbbi mentett PWA pénzügyi snapshot negatív tételei és korrekciói osztva a havi futársorok számával. A forrás nélküli futárokat a lefedettség jelzi.", "red"),
     ]
     st.markdown('<div class="process-kpi-grid">' + ''.join(cards) + "</div>", unsafe_allow_html=True)
 
@@ -418,28 +341,27 @@ def show_settlement_process_metrics_page(user: dict[str, Any]) -> None:
 
     if not summary:
         try:
-            summary = save_monthly_process_metrics(
-                calculate_monthly_process_metrics(selected_month),
-                str(user.get("username") or "PWA"),
+            summary = recalculate_and_save_monthly_process_metrics(
+                selected_month, str(user.get("username") or "PWA"),
             )
-            st.toast("Az első havi főmutató-összesítő adatbázisba mentve.")
-        except requests.RequestException as exc:
+            st.toast("A havi és a futár–hónap bontású mutatók adatbázisba mentve.")
+        except (requests.RequestException, RuntimeError) as exc:
             st.error("Az első havi főmutató-összesítő mentése sikertelen.")
             st.caption(str(exc))
             return
 
     if st.button("Fő mutatók újraszámítása és mentése", type="primary", use_container_width=True):
         try:
-            summary = save_monthly_process_metrics(
-                calculate_monthly_process_metrics(selected_month),
-                str(user.get("username") or "PWA"),
+            summary = recalculate_and_save_monthly_process_metrics(
+                selected_month, str(user.get("username") or "PWA"),
             )
-            st.success("A havi főmutatók kiszámolva és adatbázisba mentve.")
-        except requests.RequestException as exc:
+            st.success("A havi és a futár–hónap bontású mutatók kiszámolva és adatbázisba mentve.")
+        except (requests.RequestException, RuntimeError) as exc:
             st.error("A főmutatók mentése sikertelen.")
             st.caption(str(exc))
             return
 
+    st.caption(f"Havi futársorok: {summary.get('source_counts', {}).get('courier_month_count', '—')} · Pénzügyi forrás: {summary.get('source_counts', {}).get('finance_covered_couriers', '—')} · Időbélyeges válaszok: {summary.get('source_counts', {}).get('response_timed_count', '—')}")
     _render_cards(summary)
     calculated_at = _timestamp(summary.get("calculated_at"))
     if calculated_at:
