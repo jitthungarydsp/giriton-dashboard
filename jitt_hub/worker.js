@@ -158,6 +158,25 @@ function authenticatedJson(payload, status, sessionToken = "") {
   return new Response(JSON.stringify(payload), { status, headers });
 }
 
+async function authenticateAgainstPwa(env, username, password) {
+  // The PWA backend is the source of truth for credentials.  In particular it
+  // still supports the legacy user store while the account migration is in
+  // progress; checking the Supabase table only would reject a valid PWA login.
+  const pwaUrl = cleanEnv(env.PWA_API_URL || "https://futar.jitt.hu");
+  const response = await fetch(`${pwaUrl}/api/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (response.status === 401) return null;
+  if (!response.ok) {
+    throw new Error(`PWA belépési szolgáltatás hibája (${response.status}).`);
+  }
+  const payload = await response.json().catch(() => null);
+  if (!payload?.user) throw new Error("A PWA belépési szolgáltatás érvénytelen választ adott.");
+  return publicPwaUser(payload.user);
+}
+
 async function loginWithPwa(request, env) {
   const body = await request.json().catch(() => null);
   const username = String(body?.username || "").trim();
@@ -166,11 +185,10 @@ async function loginWithPwa(request, env) {
     return jsonResponse({ error: "Felhasználónév és jelszó szükséges." }, 400);
   }
 
-  const account = await findPwaUser(env, username);
-  if (!account || account.active !== true || !(await verifyPwaPassword(password, account.password_hash))) {
+  const user = await authenticateAgainstPwa(env, username, password);
+  if (!user) {
     return authenticatedJson({ error: "Hibás felhasználónév vagy jelszó." }, 401);
   }
-  const user = publicPwaUser(account);
   if (!hasSettlementDashboardAccess(user)) {
     return authenticatedJson({ error: "Ehhez az oldalhoz admin jogosultság szükséges." }, 403);
   }
