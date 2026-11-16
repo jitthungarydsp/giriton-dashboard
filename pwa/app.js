@@ -6626,6 +6626,69 @@ function openSettlementDashboardBulkStatusEditor(rows) {
   dialog.showModal();
 }
 
+function openSettlementDashboardBulkTigVisibilityEditor(rows) {
+  const month = state.settlementDashboardMonth || previousLocalMonth();
+  const selectedIds = [...state.settlementDashboardSelectedCouriers];
+  const selectedRows = rows.filter(row => selectedIds.includes(String(row.courierId || "")));
+  if (!selectedRows.length || state.settlementDashboardBulkBusy) return;
+  document.querySelector("#settlement-bulk-tig-visibility-editor")?.remove();
+  const dialog = document.createElement("dialog");
+  dialog.id = "settlement-bulk-tig-visibility-editor";
+  dialog.className = "monthly-status-editor settlement-bulk-status-editor";
+  dialog.innerHTML = `<form>
+    <h3>Teljesítés-összesítő megnyitása</h3>
+    <p>${escapeHtml(formatMonthLabel(month))} · ${selectedRows.length} futár kijelölve</p>
+    <div class="settlement-bulk-selected-list">${selectedRows.map(row => `<span>${escapeHtml(row.courierName || "Futár")} · #${escapeHtml(row.courierId || "-")}</span>`).join("")}</div>
+    <div class="notice"><strong>Csak a kijelölt futároknál</strong> válik láthatóvá a Teljesítés-összesítő. A hónap globális „csak elszámolás” beállítása változatlan marad; az elszámolási összeg, a mentett snapshot és a korábbi elfogadások nem módosulnak.</div>
+    <div data-bulk-tig-visibility-progress role="status" aria-live="polite"></div>
+    <div data-bulk-tig-visibility-error class="notice error" role="alert"></div>
+    <div class="settlement-bulk-dialog-actions"><button type="submit" class="primary">Továbbengedés a Teljesítés-összesítőhöz</button><button type="button" class="secondary" data-bulk-tig-visibility-cancel>Mégse</button></div>
+  </form>`;
+  document.body.appendChild(dialog);
+  const form = dialog.querySelector("form");
+  const submit = form.querySelector('[type="submit"]');
+  const cancel = form.querySelector("[data-bulk-tig-visibility-cancel]");
+  cancel.onclick = () => dialog.close();
+  dialog.addEventListener("close", () => dialog.remove());
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (state.settlementDashboardBulkBusy) return;
+    state.settlementDashboardBulkBusy = true;
+    submit.disabled = true;
+    cancel.disabled = true;
+    const progress = dialog.querySelector("[data-bulk-tig-visibility-progress]");
+    const errorBox = dialog.querySelector("[data-bulk-tig-visibility-error]");
+    progress.textContent = `${selectedRows.length} futár továbbengedése folyamatban...`;
+    errorBox.textContent = "";
+    try {
+      const result = await api("/api/admin/settlement-dashboard/tig-visibility", {
+        method: "POST",
+        body: JSON.stringify({month, couriers: selectedRows.map(row => ({
+          courierId: String(row.courierId || ""), courierName: String(row.courierName || ""),
+        }))}),
+        silentLoading: true,
+      });
+      const succeeded = new Set((result.courierIds || []).map(String));
+      succeeded.forEach(courierId => {
+        state.settlementDashboardSelectedCouriers.delete(courierId);
+        delete state.settlementDashboardDetailCache[`${month}:${courierId}`];
+      });
+      state.settlementDashboard = null;
+      progress.textContent = `${Number(result.granted || succeeded.size)} futárnál engedélyezve a Teljesítés-összesítő.`;
+      await loadSettlementDashboard();
+      dialog.close();
+    } catch (error) {
+      errorBox.textContent = error.message;
+      submit.disabled = false;
+      cancel.disabled = false;
+    } finally {
+      state.settlementDashboardBulkBusy = false;
+      renderSettlementDashboard();
+    }
+  });
+  dialog.showModal();
+}
+
 function renderSettlementDashboard() {
   const target = $("#settlement-dashboard-panel");
   if (!target) return;
@@ -6676,6 +6739,7 @@ function renderSettlementDashboard() {
     <div class="settlement-bulk-toolbar">
       <label><input type="checkbox" data-settlement-select-visible ${allVisibleSelected ? "checked" : ""} ${!visibleIds.length || state.settlementDashboardBulkBusy ? "disabled" : ""} /> ${allVisibleSelected ? "Láthatók kijelölésének megszüntetése" : "Összes látható kijelölése"}</label>
       <span>${selectionCount} futár kijelölve</span>
+      <button type="button" class="primary" data-settlement-bulk-tig-visibility ${!selectionCount || state.settlementDashboardBulkBusy ? "disabled" : ""}>Teljesítés-összesítő megnyitása</button>
       <button type="button" class="secondary" data-settlement-bulk-status ${!selectionCount || state.settlementDashboardBulkBusy ? "disabled" : ""}>Státusz módosítása</button>
       <button type="button" class="secondary" data-settlement-clear-selection ${!selectionCount || state.settlementDashboardBulkBusy ? "disabled" : ""}>Kijelölés törlése</button>
     </div>
@@ -12400,6 +12464,11 @@ $("#settlement-dashboard-panel")?.addEventListener("input", (event) => {
   replacement?.setSelectionRange(start, end);
 });
 $("#settlement-dashboard-panel")?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-settlement-bulk-tig-visibility]")) {
+    const payload = state.settlementDashboard;
+    openSettlementDashboardBulkTigVisibilityEditor(payload?.rows || []);
+    return;
+  }
   if (event.target.closest("[data-settlement-bulk-status]")) {
     const payload = state.settlementDashboard;
     const rows = payload?.rows || [];

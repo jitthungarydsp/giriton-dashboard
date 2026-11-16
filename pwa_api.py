@@ -204,6 +204,16 @@ class DashboardStatusChangeRequest(BaseModel):
     closeInvoiceComplaints: bool = False  # Legacy clients; closure is now automatic.
 
 
+class DashboardTigVisibilityCourier(BaseModel):
+    courierId: str
+    courierName: str = ""
+
+
+class DashboardTigVisibilityRequest(BaseModel):
+    month: str
+    couriers: list[DashboardTigVisibilityCourier] = Field(default_factory=list)
+
+
 class DashboardInvoiceRecheckRequest(BaseModel):
     month: str
     courierId: str
@@ -18748,12 +18758,35 @@ def build_workflow(
     ]
     mobile_config = read_mobile_settlement_period_config(month) if not process_id else {}
     visibility_mode = normalize_mobile_visibility_mode(mobile_config.get("visibility_mode"))
-    settlement_acceptance_enabled = bool(process_id) or visibility_mode != "settlement_only"
+    # The monthly setting remains the default. Finance can explicitly grant
+    # selected couriers access to the TIG without opening it for everybody.
+    # This is a separate status key: it does not rewrite an acceptance or a
+    # financial snapshot.
+    individual_tig_visibility_enabled = (
+        not process_id
+        and workflow_done(states, "mobile_tig_visibility")
+    )
+    settlement_acceptance_enabled = (
+        bool(process_id)
+        or visibility_mode != "settlement_only"
+        or individual_tig_visibility_enabled
+    )
     # Admin preview is intentionally a full read-only view of the selected
     # courier. Mobile visibility settings must not hide the settlement/Teljesítés-összesítő
     # details from the administrator who opened that preview.
-    tig_hidden_by_admin = not preview_read_only and not process_id and visibility_mode == "settlement_only"
-    tig_open_by_admin = preview_read_only or (not process_id and visibility_mode == "settlement_and_tig")
+    tig_hidden_by_admin = (
+        not preview_read_only
+        and not process_id
+        and visibility_mode == "settlement_only"
+        and not individual_tig_visibility_enabled
+    )
+    tig_open_by_admin = (
+        preview_read_only
+        or (
+            not process_id
+            and (visibility_mode == "settlement_and_tig" or individual_tig_visibility_enabled)
+        )
+    )
     legacy_unrestricted_month = is_unrestricted_legacy_settlement_month(month)
     individual_monthly_billing_open = (
         not process_id
@@ -19062,7 +19095,8 @@ def build_workflow(
         "efoInvoiceSkip": efo_invoice_skip,
         "manualInvoiceSkip": manual_invoice_skip,
         "settlementResetPending": settlement_reset_pending,
-        "visibilityMode": visibility_mode,
+        "visibilityMode": "settlement_and_tig" if individual_tig_visibility_enabled else visibility_mode,
+        "individualTigVisibilityEnabled": individual_tig_visibility_enabled,
         "settlementAcceptanceEnabled": settlement_acceptance_enabled,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
@@ -19899,7 +19933,10 @@ def attach_readonly_dashboard_statuses(
         )
         check_state = states.get(courier_id, {}).get("invoice_check") or {}
         check_note = str(check_state.get("status_note") or "").strip()
-        result["rows"].append({**original, "status": status,
+        row_flags = list(original.get("flags") or [])
+        if workflow_done(states.get(courier_id, {}), "mobile_tig_visibility"):
+            row_flags = merge_dashboard_flags(row_flags, [{"label": "TIG engedélyezve", "tone": "info"}])
+        result["rows"].append({**original, "status": status, "flags": row_flags,
                                "invoiceCheck": {"status": check_state.get("status") or "",
                                                 "note": check_note,
                                                 "messages": invoice_complaints.get(courier_id, []),
@@ -24491,6 +24528,103 @@ def admin_change_dashboard_status(
     if not isinstance(result, dict) or not result.get("ok"):
         raise HTTPException(status_code=409, detail="A státuszváltás nem igazolható. Frissítsd a listát.")
     return result
+
+
+@app.post("/api/admin/settlement-dashboard/tig-visibility")
+def admin_grant_dashboard_tig_visibility(
+    payload: DashboardTigVisibilityRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    """Grant selected couriers access to the TIG while the month stays settlement-only.
+
+    This intentionally writes neither finance data nor acceptance states. A
+    missing TIG workflow row is opened so that a generated TIG can actually be
+    displayed; an existing open/done TIG state is left untouched.
+    """
+    admin = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    month = parse_month(payload.month)
+    selected: dict[str, str] = {}
+    for courier in payload.couriers:
+        courier_id = str(courier.courierId or "").strip()
+        if not courier_id:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", courier_id):
+            raise HTTPException(status_code=422, detail="Érvénytelen futárazonosító a kijelölésben.")
+        selected.setdefault(courier_id, str(courier.courierName or "").strip() or f"Futár {courier_id}")
+    if not selected:
+        raise HTTPException(status_code=422, detail="Válassz legalább egy futárt.")
+    if len(selected) > 250:
+        raise HTTPException(status_code=422, detail="Egyszerre legfeljebb 250 futár engedélyezhető.")
+
+    month_value = month.isoformat()
+    actor = str(admin.get("username") or "admin")
+    selected_ids = list(selected)
+    # Do not overwrite an accepted or already-open TIG workflow state. Only
+    # create the initial open state where the row is genuinely missing.
+    existing_tig_rows = optional_supabase_rows_paged(
+        "peopleforce_card_statuses",
+        params={
+            "select": "courier_id,action_key,status",
+            "document_month": f"eq.{month_value}",
+            "action_key": "eq.tig",
+            "courier_id": "in.(" + ",".join(selected_ids) + ")",
+            "limit": "1000",
+        },
+        timeout=30,
+        page_size=1000,
+        max_rows=1000,
+    )
+    existing_tig_ids = {str(row.get("courier_id") or "").strip() for row in existing_tig_rows}
+    now_value = datetime.now(timezone.utc).isoformat()
+    visibility_rows = [
+        {
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "action_key": "mobile_tig_visibility",
+            "document_month": month_value,
+            "status": "done",
+            "status_note": "Admin tömegesen engedélyezte a Teljesítés-összesítő megtekintését.",
+            "updated_by": actor,
+            "updated_at": now_value,
+        }
+        for courier_id, courier_name in selected.items()
+    ]
+    supabase_rest(
+        "POST",
+        "peopleforce_card_statuses",
+        params={"on_conflict": "courier_id,document_month,action_key"},
+        payload=visibility_rows,
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    missing_tig_rows = [
+        {
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "action_key": "tig",
+            "document_month": month_value,
+            "status": "open",
+            "status_note": "A Teljesítés-összesítő megtekintése admin által engedélyezve.",
+            "updated_by": actor,
+            "updated_at": now_value,
+        }
+        for courier_id, courier_name in selected.items()
+        if courier_id not in existing_tig_ids
+    ]
+    if missing_tig_rows:
+        supabase_rest(
+            "POST",
+            "peopleforce_card_statuses",
+            params={"on_conflict": "courier_id,document_month,action_key"},
+            payload=missing_tig_rows,
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+    return {
+        "ok": True,
+        "month": month.strftime("%Y-%m"),
+        "granted": len(visibility_rows),
+        "openedTigWorkflow": len(missing_tig_rows),
+        "courierIds": selected_ids,
+    }
 
 
 def latest_monthly_invoice_candidates(documents: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
