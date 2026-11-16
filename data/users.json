@@ -819,6 +819,15 @@
             "courierId": 8706,
             "active": true,
             "token": ""
+        },
+                {
+            "username": "Herr Zsanna",
+            "trainer": "trainer_name",
+            "password": "opLC9Jsa",
+            "role": "user",
+            "courierId": 7958,
+            "active": true,
+            "token": ""
         }
     ]
 }
