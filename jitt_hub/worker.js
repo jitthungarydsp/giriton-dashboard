@@ -295,42 +295,69 @@ function statusForRow(row, closure) {
   return "Teljesítés-összesítőre vár";
 }
 
-function buildCourierRow(row, profile, workload, closure, { missingSummary = false } = {}) {
-  const base = money(row.courier_base_rate_huf);
-  const tip = money(row.tip_huf);
-  const delay = money(row.delay_bonus_huf);
-  const compliance = money(row.compliance_bonus_huf);
-  const otherBonus = money(row.other_route_bonus_huf);
-  const importedBonus = money(row.imported_bonus_huf);
-  const manualBonus = money(row.manual_bonus_huf);
-  const customerRating = money(row.customer_rating_bonus_huf);
-  const loyalty = money(row.loyalty_bonus_huf);
-  const correctionIncome = money(row.correction_bonus_huf || row.correction_income_huf);
-  const bonus = delay + compliance + otherBonus + importedBonus + manualBonus + customerRating + loyalty + correctionIncome;
-  const payable = money(closure?.payable_huf || row.payable_huf);
-  const income = base + tip + bonus;
-  // The import's total appears as monthly_malus_huf. Detailed imported/manual
-  // columns are optional, so calculate the same net amount as the PWA does.
-  const monthlyMalus = Math.abs(money(row.monthly_malus_huf || row.malus_huf));
-  const manualMalus = Math.abs(money(row.manual_malus_huf));
-  const importedMalus = Math.abs(money(row.imported_malus_huf)) || Math.max(monthlyMalus - manualMalus, 0);
-  const malus = importedMalus + manualMalus;
-  const atm = Math.abs(money(row.atm_deduction_huf || row.imported_atm_deduction_huf));
-  const otherExpense = Math.abs(money(row.other_expense_huf));
-  const salaryAdvance = Math.abs(money(row.salary_advance_huf));
-  const reserve = Math.abs(money(row.target_reserve_topup_huf || row.reserve_addition_huf || row.reserve_deduction_huf));
-  const insurance = Math.abs(money(row.insurance_fee_huf));
-  const correctionDeduction = Math.abs(money(row.correction_deduction_huf));
+function snapshotAmountMap(snapshot) {
+  const amounts = new Map();
+  for (const item of snapshot?.items || []) {
+    if (item?.section === "finance" && item?.amount_kind === "huf") {
+      amounts.set(key(item.item_key), money(item.amount_value));
+    }
+  }
+  return amounts;
+}
+
+function buildCourierRow(row, profile, workload, closure, snapshot, { missingSummary = false } = {}) {
+  // A PWA finance snapshot is the published, immutable financial source.  The
+  // old profile view misses later manual corrections, which made the Hub show
+  // a different total from the courier's actual settlement card.
+  const values = snapshotAmountMap(snapshot);
+  const metadata = snapshot?.metadata && typeof snapshot.metadata === "object" ? snapshot.metadata : {};
+  const snapshotHasFinance = values.size > 0;
+  const amount = (snapshotKey, fallback) => snapshotHasFinance && values.has(snapshotKey)
+    ? money(values.get(snapshotKey)) : money(fallback);
+  const base = amount("base", row.courier_base_rate_huf);
+  const tip = amount("tip", row.tip_huf);
+  const delay = amount("delay_bonus", row.delay_bonus_huf);
+  const compliance = amount("compliance_bonus", row.compliance_bonus_huf);
+  const otherBonus = amount("address_bonus_kifli", row.other_route_bonus_huf);
+  const kifliNet = amount("kiflis_bonus_malus", row.imported_bonus_huf - Math.abs(money(row.imported_malus_huf)));
+  const importedBonus = values.has("monthly_bonus") ? amount("monthly_bonus", 0) : Math.max(kifliNet, 0);
+  const manualNet = amount("bonus_malus", row.manual_bonus_huf - Math.abs(money(row.manual_malus_huf)));
+  const jittBonus = values.has("manual_bonus") ? amount("manual_bonus", 0) : Math.max(manualNet, 0);
+  const customerRating = amount("customer_rating", row.customer_rating_bonus_huf);
+  const loyalty = amount("loyalty_bonus", row.loyalty_bonus_huf);
+  const correctionNet = amount("correction", (row.correction_bonus_huf || row.correction_income_huf) - Math.abs(money(row.correction_deduction_huf)));
+  const correctionIncome = values.has("correction_income") ? amount("correction_income", 0) : Math.max(correctionNet, 0);
+  const bonus = delay + compliance + otherBonus + importedBonus + jittBonus + customerRating + loyalty;
+  const monthlyMalus = values.has("monthly_malus")
+    ? Math.abs(amount("monthly_malus", 0)) : Math.abs(Math.min(kifliNet, 0)) || Math.abs(money(row.imported_malus_huf || row.malus_huf));
+  const jittMalus = values.has("manual_malus")
+    ? Math.abs(amount("manual_malus", 0)) : Math.abs(Math.min(manualNet, 0)) || Math.abs(money(row.manual_malus_huf));
+  const malus = monthlyMalus + jittMalus;
+  const atm = Math.abs(amount("atm_effect", row.atm_deduction_huf || row.imported_atm_deduction_huf));
+  const otherExpense = Math.abs(amount("other_expense", row.other_expense_huf));
+  const salaryAdvance = Math.abs(amount("salary_advance", row.salary_advance_huf));
+  const reserve = Math.abs(amount("reserve", row.target_reserve_topup_huf || row.reserve_addition_huf || row.reserve_deduction_huf));
+  const insurance = Math.abs(amount("insurance_fee", row.insurance_fee_huf));
+  const correctionDeduction = values.has("correction_deduction")
+    ? Math.abs(amount("correction_deduction", 0)) : Math.abs(Math.min(correctionNet, 0));
   const otherDeduction = otherExpense + correctionDeduction;
-  const deductions = malus + atm + otherDeduction + salaryAdvance + reserve + insurance;
+  const income = values.has("income") ? amount("income", 0)
+    : money(metadata.income_total ?? (base + tip + bonus));
+  const deductions = Math.abs(values.has("deductions") ? amount("deductions", 0)
+    : money(metadata.deduction_total ?? -(malus + atm + otherDeduction + salaryAdvance + reserve + insurance)));
+  // Corrections are stored separately in the PWA worksheet.  They must still
+  // be part of the total negative financial effect shown in the Hub.
+  const deductionImpact = deductions + correctionDeduction;
+  const payable = values.has("payable") ? amount("payable", 0)
+    : money(metadata.payable_total ?? closure?.payable_huf ?? row.payable_huf);
   const routeCount = Number(workload?.completed_route_count || row.route_count || 0);
   const orderCount = Number(workload?.order_count || row.order_count || 0);
 
   return {
     courierId: key(row.courier_id),
-    courierName: key(row.driver_name || profile?.courier_name || workload?.courier_name),
+    courierName: key(snapshot?.courier_name || row.driver_name || profile?.courier_name || workload?.courier_name),
     email: key(profile?.email || profile?.billing_email),
-    warehouse: key(profile?.warehouse_name || "BUD"),
+    warehouse: key(snapshot?.warehouse_label || profile?.warehouse_name || "BUD"),
     status: missingSummary ? "Elszámolásra vár" : statusForRow(row, closure),
     routeCount,
     orderCount,
@@ -341,12 +368,16 @@ function buildCourierRow(row, profile, workload, closure, { missingSummary = fal
     compliance,
     otherBonus,
     importedBonus,
-    manualBonus,
+    manualBonus: jittBonus,
     customerRating,
     loyalty,
     malus,
-    importedMalus,
-    manualMalus,
+    importedMalus: monthlyMalus,
+    manualMalus: jittMalus,
+    jittBonus,
+    jittMalus,
+    correctionIncome,
+    correctionDeduction,
     atm,
     salaryAdvance,
     reserve,
@@ -354,7 +385,9 @@ function buildCourierRow(row, profile, workload, closure, { missingSummary = fal
     otherDeduction,
     income,
     deductions,
+    deductionImpact,
     payable,
+    snapshotIsPublished: snapshotHasFinance,
     closureStatus: key(closure?.status),
     bookedShiftCount: Number(workload?.booked_shift_count || 0),
     advanceBookedShiftCount: Number(workload?.advance_booked_shift_count || 0),
@@ -380,7 +413,7 @@ async function settlementDashboard(request, env) {
   const idFilter = formatIdList(courierIds);
   const numericIdFilter = formatNumericIdList(courierIds);
 
-  const [profiles, workloads, closures, discrepancies, discrepancyCoverage, processMetricRows, activePwaUsers] = await Promise.all([
+  const [profiles, workloads, closures, discrepancies, discrepancyCoverage, processMetricRows, activePwaUsers, financeSnapshots] = await Promise.all([
     numericIdFilter
       ? supabaseFetch(env, PUBLIC_SCHEMA, "courier_master", {
           select: "courier_id,courier_name,email,billing_email,warehouse_name",
@@ -424,6 +457,15 @@ async function settlementDashboard(request, env) {
       active: "eq.true",
       limit: 10000,
     }).catch(() => []),
+    idFilter
+      ? supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_finance_snapshot", {
+          select: "id,courier_id,courier_name,warehouse_label,version,metadata,created_at,items:courier_finance_snapshot_item(section,item_key,item_label,amount_value,amount_kind,note,display_order)",
+          period_start: `eq.${periodStart}`,
+          courier_id: `in.(${idFilter})`,
+          order: "courier_id.asc,version.desc",
+          limit: 10000,
+        }).catch(() => [])
+      : [],
   ]);
 
   const summaryCourierIds = new Set(courierIds);
@@ -444,6 +486,13 @@ async function settlementDashboard(request, env) {
   const profileById = new Map([...profiles, ...missingProfiles].map((row) => [key(row.courier_id), row]));
   const workloadById = new Map(workloads.map((row) => [key(row.courier_id), row]));
   const closureById = new Map(closures.map((row) => [key(row.courier_id), row]));
+  const financeSnapshotByCourier = new Map();
+  financeSnapshots.forEach((snapshot) => {
+    const courierId = key(snapshot.courier_id);
+    if (courierId && !financeSnapshotByCourier.has(courierId)) {
+      financeSnapshotByCourier.set(courierId, snapshot);
+    }
+  });
   const discrepancyCountByCourier = new Map();
   discrepancies.forEach((row) => {
     const courierId = key(row.courier_id);
@@ -462,12 +511,14 @@ async function settlementDashboard(request, env) {
       profileById.get(key(row.courier_id)),
       workloadById.get(key(row.courier_id)),
       closureById.get(key(row.courier_id)),
+      financeSnapshotByCourier.get(key(row.courier_id)),
     );
   });
   missingPwaUsers.forEach((user) => {
     couriers.push(buildCourierRow(
       { courier_id: user.courier_id, driver_name: user.username },
       profileById.get(key(user.courier_id)),
+      undefined,
       undefined,
       undefined,
       { missingSummary: true },
@@ -480,7 +531,7 @@ async function settlementDashboard(request, env) {
       acc.routes += row.routeCount;
       acc.orders += row.orderCount;
       acc.income += row.income;
-      acc.deductions += row.deductions;
+      acc.deductions += row.deductionImpact;
       acc.payable += row.payable;
       acc.issues += row.status === "Eltérés" ? 1 : 0;
       acc.tigWait += row.status === "Teljesítés-összesítőre vár" ? 1 : 0;
