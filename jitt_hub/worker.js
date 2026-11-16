@@ -519,6 +519,8 @@ export default {
         return jsonResponse({ error: "Read-only endpoint. Use GET." }, 405);
       }
       try {
+        const access = await requireDashboardUser(request, env);
+        if (access.error) return access.error;
         return await settlementDashboard(request, env);
       } catch (error) {
         return jsonResponse(
