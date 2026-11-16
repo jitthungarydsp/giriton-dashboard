@@ -66,12 +66,25 @@ def parse_bool(value, default=False):
 
 
 def app_login_url():
-    fallback = "https://giriton-courier-pwa.onrender.com/"
-    for name in ("PWA_LOGIN_URL", "APP_LOGIN_URL", "PUBLIC_PWA_URL", "PUBLIC_APP_URL"):
-        value = get_setting(name).strip()
-        if value and "example.com" not in value.casefold():
-            return value
-    return fallback
+    """Return the single public courier portal URL used in every e-mail."""
+    return "https://futar.jitt.hu/"
+
+
+_LEGACY_PWA_URL = re.compile(
+    r"https?://(?:www\.)?giriton-courier-pwa\.onrender\.com(?P<suffix>[/#?][^\s<>]*)?",
+    flags=re.IGNORECASE,
+)
+
+
+def normalize_courier_portal_links(value):
+    """Replace legacy portal links in stored or free-text e-mail templates."""
+    canonical = app_login_url().rstrip("/")
+
+    def replace(match):
+        suffix = str(match.group("suffix") or "")
+        return canonical + suffix
+
+    return _LEGACY_PWA_URL.sub(replace, str(value or ""))
 
 
 def resend_api_key():
@@ -409,7 +422,9 @@ def build_custom_message(recipient, subject, body):
     message["Subject"] = str(subject or "").strip() or "JITT üzenet"
     message["From"] = formataddr((config["from_name"], config["from_email"]))
     message["To"] = recipient
-    message.set_content(str(body or "").strip())
+    # Database-stored templates and free text can still contain the retired
+    # OnRender address.  Normalise them immediately before delivery too.
+    message.set_content(normalize_courier_portal_links(body).strip())
     return message, config
 
 

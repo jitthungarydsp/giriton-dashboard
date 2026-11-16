@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 def main():
     from resources.account_automation import enabled, rpc, process_one
-    from resources.email_sender import get_setting, send_custom_email
+    from resources.email_sender import app_login_url, send_custom_email
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--once', action='store_true')
@@ -26,7 +26,7 @@ def main():
     while True:
         # Bound the work per tick; no whole-user or whole-master synchronization.
         for _ in range(10):
-            state = process_one(rpc, send_custom_email, get_setting('PWA_PUBLIC_URL', 'https://futar.jitt.hu'))
+            state = process_one(rpc, send_custom_email, app_login_url())
             if state == 'idle':
                 break
             print('Account job:', state, flush=True)
