@@ -3536,6 +3536,8 @@ def save_devtest_finance_snapshot_version(
     if not clean_courier_id:
         return {"saved": False, "reason": "missing_courier_id"}
     validate_loyalty_snapshot_consistency(finance_rows, source_payloads)
+    from resources.out_of_contract_bonus import validate_out_of_contract_snapshot_consistency
+    validate_out_of_contract_snapshot_consistency(finance_rows, source_payloads)
     period = period_start.replace(day=1).isoformat()
     safe_metadata = _snapshot_json_safe(metadata)
     items = [
@@ -11556,6 +11558,9 @@ def build_fast_settlement_overview_data(
             "Normál túrák": parse_huf_value(row.get("normal_routes")),
             "Nettó bevétel": parse_huf_value(row.get("courier_base_rate_huf")),
             "Bónusz": parse_huf_value(row.get("route_bonus_total_huf")),
+            "Késedelmi díj": parse_huf_value(summary_by_id.get(courier_key, {}).get("delay_bonus_huf", row.get("delay_bonus_huf"))),
+            "Túramegfelelés": parse_huf_value(summary_by_id.get(courier_key, {}).get("compliance_bonus_huf", row.get("compliance_bonus_huf"))),
+            "Szerződésen kívüli bónusz": parse_huf_value(summary_by_id.get(courier_key, {}).get("other_route_bonus_huf", row.get("other_route_bonus_huf"))),
             "Lojalitás": parse_huf_value(
                 row.get("loyalty_bonus_huf")
                 if row.get("loyalty_bonus_huf") is not None
@@ -17876,6 +17881,7 @@ def render_courier_detail_page() -> None:
             "tip_huf": snapshot_values["tip"],
             "delay_bonus_huf": snapshot_values["delay_bonus"],
             "compliance_bonus_huf": snapshot_values["compliance_bonus"],
+            "other_route_bonus_huf": snapshot_values["address_bonus_kifli"],
             "imported_bonus_huf": snapshot_values["monthly_bonus"],
             "imported_malus_huf": snapshot_values["monthly_malus"],
             "imported_atm_deduction_huf": snapshot_values["atm_effect"],
@@ -17884,6 +17890,11 @@ def render_courier_detail_page() -> None:
             "route_count": snapshot_values["routes"],
         }
         summary_available = True
+    # Fast-list rows and older Streamlit sessions can omit individual bonuses.
+    # Rehydrate from this month's authoritative summary before every calculation,
+    # including explicit Google refreshes. A real source zero must stay zero.
+    from resources.out_of_contract_bonus import enrich_out_of_contract_bonus
+    row = pd.Series(enrich_out_of_contract_bonus(row, summary_row))
     profile_adjustments = (
         load_courier_adjustments(courier_id, period_start, period_end)
         if needs_finance_adjustments
@@ -18791,7 +18802,7 @@ def render_courier_detail_page() -> None:
         tig_display_total = parse_huf_value(tig_breakdown.get("finalTotalHuf")) or payable_total
         final_total_income = (
             base_total + tip_total + delay_total + compliance_total
-            + imported_bonus_total + manual_bonus_total + loyalty_total
+            + route_other_bonus_total + imported_bonus_total + manual_bonus_total + loyalty_total
             + customer_rating_total + correction_income_total
         )
         final_total_deduction = (
