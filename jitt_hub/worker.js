@@ -302,10 +302,23 @@ function statusForRow(row, closure) {
   return ({ "TIG-re vár": "Teljesítés-összesítőre vár", "TIG elfogadásra vár": "Teljesítés-összesítő áttekintésre vár" })[label] || label || "Állapot nem elérhető";
 }
 
-async function loadLatestFinanceSnapshots(env, periodStart, courierId) {
+async function loadLatestFinanceSnapshots(env, periodStart, courierId, { trendOnly = false } = {}) {
   // Load the whole month's identities, including couriers without an import row.
-  const parents = await supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_finance_snapshot", {
-    select: "id,courier_id,courier_name,warehouse_label,version,metadata,created_at",
+  const select = trendOnly ? 'id,courier_id,version' : 'id,courier_id,courier_name,warehouse_label,version,metadata,created_at';
+  let parents;
+  if(trendOnly) {
+    try {
+      parents = await supabaseFetch(env, SETTLEMENT_SCHEMA, 'rpc/pwa_dashboard_latest_finance_snapshots', {
+        p_period_start:periodStart,select,courier_id:courierId?`eq.${courierId}`:undefined,order:'courier_id.asc',limit:100000,
+      });
+    } catch(error) {
+      // Older installations may not yet expose the read-only projection.
+      // Real database/network errors must not be disguised as missing data.
+      if(!/HTTP (400|403|404)\b/.test(String(error.message)))throw error;
+    }
+  }
+  parents ??= await supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_finance_snapshot", {
+    select,
     period_start: `eq.${periodStart}`,
     courier_id: courierId ? `eq.${courierId}` : undefined,
     order: "courier_id.asc,version.desc,created_at.desc,id.desc", limit: 100000,
@@ -314,10 +327,12 @@ async function loadLatestFinanceSnapshots(env, periodStart, courierId) {
   for (const row of parents) if (!latest.has(key(row.courier_id))) latest.set(key(row.courier_id), row);
   const snapshots = [...latest.values()];
   // Only fetch item rows for the latest versions, not every historical version.
-  for (let offset = 0; offset < snapshots.length; offset += 40) {
-    const batch = snapshots.slice(offset, offset + 40);
+  const batchSize=trendOnly?100:40;
+  for (let offset = 0; offset < snapshots.length; offset += batchSize) {
+    const batch = snapshots.slice(offset, offset + batchSize);
     const items = await supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_finance_snapshot_item", {
-      select: "snapshot_id,section,item_key,item_label,amount_value,amount_kind,note,display_order",
+      select: trendOnly?'snapshot_id,section,item_key,amount_value,amount_kind':"snapshot_id,section,item_key,item_label,amount_value,amount_kind,note,display_order",
+      ...(trendOnly?{section:'eq.finance',amount_kind:'eq.huf',item_key:'in.(delay_bonus,compliance_bonus,address_bonus_kifli,kiflis_bonus_malus,monthly_bonus,monthly_malus,bonus_malus,manual_bonus,manual_malus,customer_rating,loyalty_bonus)'}:{}),
       snapshot_id: `in.(${batch.map(row => row.id).join(",")})`, order: "id.asc", limit: 100000,
     });
     for (const row of batch) row.items = items.filter(item => item.snapshot_id === row.id);
@@ -326,19 +341,22 @@ async function loadLatestFinanceSnapshots(env, periodStart, courierId) {
 }
 
 async function loadSalaryAdvanceAdditions(env, periodStart) {
+  const months=(Array.isArray(periodStart)?periodStart:[periodStart]).map(value=>value.slice(0,7)).sort();
+  const [lastYear,lastMonth]=months[months.length-1].split('-').map(Number);
+  const end=new Date(Date.UTC(lastYear,lastMonth,1)).toISOString().slice(0,10);
+  const dateFilter={and:`(start_date.gte.${months[0]}-01,start_date.lt.${end})`};
   const [plans, requests] = await Promise.all([
     supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_salary_advance_plan", {
-      select: "id,courier_id,courier_name,requested_amount_huf,start_date,status", order: "id.asc", limit: 10000,
+      select: "id,courier_id,courier_name,requested_amount_huf,start_date,status", ...dateFilter,status:'in.(open,done)',order: "id.asc", limit: 10000,
     }),
     supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_salary_advance_request", {
-      select: "id,courier_id,courier_name,requested_amount_huf,start_date,status,plan_id", order: "id.asc", limit: 10000,
+      select: "id,courier_id,courier_name,requested_amount_huf,start_date,status,plan_id", ...dateFilter,plan_id:'is.null',status:'in.(approved,paid,closed)',order: "id.asc", limit: 10000,
     }),
   ]);
-  const month = periodStart.slice(0,7);
   // A linked request and its repayment plan represent the same advance.
   return [...plans.filter(row => ["open","done"].includes(key(row.status).toLowerCase())),
     ...requests.filter(row => !row.plan_id && ["approved","paid","closed"].includes(key(row.status).toLowerCase()))]
-    .filter(row => key(row.start_date).slice(0,7) === month);
+    .filter(row => months.includes(key(row.start_date).slice(0,7)));
 }
 
 function snapshotAmountMap(snapshot) {
@@ -653,15 +671,14 @@ function trendMonths(periodStart) {
   return [-2,-1,0].map(offset => new Date(Date.UTC(year,month-1+offset,1)).toISOString().slice(0,10));
 }
 
-async function settlementTrends(request, env) {
-  const periodStart = parseMonth(new URL(request.url).searchParams.get('month'));
+async function loadSettlementTrends(periodStart, env) {
   const months = trendMonths(periodStart);
-  const summaries = await supabaseFetch(env, SETTLEMENT_SCHEMA, 'monthly_process_metric_summary', {
+  const [summaries,advanceRows,...monthlySnapshots] = await Promise.all([supabaseFetch(env, SETTLEMENT_SCHEMA, 'monthly_process_metric_summary', {
     select: 'period_start,complaint_total,response_average_hours,source_counts,calculated_at',
     period_start: `in.(${months.join(',')})`, order: 'period_start.asc', limit: 3,
-  });
-  const rows = await Promise.all(months.map(async month => {
-    const [snapshots, advances] = await Promise.all([loadLatestFinanceSnapshots(env,month),loadSalaryAdvanceAdditions(env,month)]);
+  }),loadSalaryAdvanceAdditions(env,months),...months.map(month=>loadLatestFinanceSnapshots(env,month,undefined,{trendOnly:true}))]);
+  const rows = months.map((month,index) => {
+    const snapshots=monthlySnapshots[index],advances=advanceRows.filter(row=>key(row.start_date).slice(0,7)===month.slice(0,7));
     const summary = summaries.find(row => row.period_start === month);
     const financial = snapshots.map(snapshot => buildCourierRow({courier_id:snapshot.courier_id},null,null,null,snapshot,null));
     const sum = field => financial.reduce((total,row)=>total+Number(row[field]||0),0);
@@ -679,8 +696,27 @@ async function settlementTrends(request, env) {
       courierCount: summary?.source_counts?.courier_month_count ?? null,
       metricsCalculatedAt: summary?.calculated_at || null,
     };
-  }));
-  return jsonResponse({source:'supabase',generatedAt:new Date().toISOString(),months:rows});
+  });
+  return {source:'supabase',generatedAt:new Date().toISOString(),months:rows};
+}
+
+// Used only after the route's admin check. A bounded, one-minute cache also
+// shares concurrent reads; failed queries are never cached as valid results.
+const settlementTrendCache=new Map();
+const SETTLEMENT_TREND_TTL_MS=60000;
+async function settlementTrends(request, env) {
+  const periodStart=parseMonth(new URL(request.url).searchParams.get('month'));
+  const cacheKey=[cleanEnv(env.SUPABASE_URL),cleanEnv(env.SUPABASE_READ_KEY||env.SUPABASE_ANON_KEY||env.SUPABASE_SERVICE_ROLE_KEY),periodStart].join('|');
+  let entry=settlementTrendCache.get(cacheKey);
+  if(entry&&entry.expiresAt>Date.now())return jsonResponse(await entry.promise);
+  if(settlementTrendCache.size>=12)settlementTrendCache.delete(settlementTrendCache.keys().next().value);
+  entry={expiresAt:Infinity};
+  entry.promise=loadSettlementTrends(periodStart,env).then(payload=>{entry.expiresAt=Date.now()+SETTLEMENT_TREND_TTL_MS;return payload}).catch(error=>{
+    if(settlementTrendCache.get(cacheKey)===entry)settlementTrendCache.delete(cacheKey);
+    throw error;
+  });
+  settlementTrendCache.set(cacheKey,entry);
+  return jsonResponse(await entry.promise);
 }
 
 function budapestDay(value = new Date()) {

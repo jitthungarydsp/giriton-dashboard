@@ -1,6 +1,13 @@
 /* Monthly trend view. Unknown measurements remain gaps, not zero values. */
-let loadedTrendMonth = null;
 let trendLoadSequence = 0;
+let trendCacheGeneration = 0;
+const trendCache = new Map(), trendPending = new Map();
+const TREND_CACHE_TTL_MS = 60000;
+
+function clearTrendCache() {
+  trendLoadSequence++;trendCacheGeneration++;
+  trendCache.clear();trendPending.clear();
+}
 
 function trendValue(value, kind) {
   if (value === null || value === undefined) return '—';
@@ -66,14 +73,26 @@ function renderTrends(payload) {
 
 async function loadTrends() {
   const month=$('#month').value;
-  if(loadedTrendMonth===month)return;
   const sequence=++trendLoadSequence;
+  const generation=trendCacheGeneration,cached=trendCache.get(month);
+  if(cached&&Date.now()-cached.loadedAt<TREND_CACHE_TTL_MS){
+    renderTrends(cached.payload);$('#trend-error').hidden=true;$('#trend-status').textContent='3 hónap · adatbázisból';return;
+  }
   $('#trend-status').textContent='Betöltés…';$('#trend-error').hidden=true;
   $('#trend-body').innerHTML='<div class="empty">A három hónap adatainak betöltése…</div>';
   try {
-    const payload=await api(`/api/settlement-trends?month=${encodeURIComponent(month)}`);
+    let pending=trendPending.get(month);
+    if(!pending){
+      pending=api(`/api/settlement-trends?month=${encodeURIComponent(month)}`);
+      trendPending.set(month,pending);
+    }
+    let payload;
+    try{payload=await pending}finally{if(trendPending.get(month)===pending)trendPending.delete(month)}
+    if(generation!==trendCacheGeneration)return;
+    if(trendCache.size>=12)trendCache.delete(trendCache.keys().next().value);
+    trendCache.set(month,{payload,loadedAt:Math.min(Date.now(),Date.parse(payload.generatedAt)||Date.now())});
     if(sequence!==trendLoadSequence||$('#month').value!==month)return;
-    renderTrends(payload);loadedTrendMonth=month;$('#trend-status').textContent='3 hónap · adatbázisból';
+    renderTrends(payload);$('#trend-status').textContent='3 hónap · adatbázisból';
   }catch(error){
     if(sequence!==trendLoadSequence)return;
     $('#trend-error').textContent=`A tendenciák nem tölthetők be: ${error.message}`;$('#trend-error').hidden=false;

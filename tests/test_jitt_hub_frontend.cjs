@@ -18,6 +18,7 @@ vm.runInContext(fs.readFileSync(path.join(root,'jitt_hub/trends.js'),'utf8'),con
 const html=fs.readFileSync(path.join(root,'jitt_hub/index.html'),'utf8');
 vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
 (async()=>{
+  await new Promise(resolve=>setImmediate(resolve)); // Initial session check completes before navigation.
   assert.equal(typeof sortButtons[0].onclick,'function','Sort headers bind without a single-element forEach crash');
   navigation.find(b=>b.dataset.board==='trends').onclick();
   await new Promise(resolve=>setImmediate(resolve));
@@ -29,5 +30,20 @@ vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   assert.ok(rendered.includes('0,02'));
   assert.ok(rendered.includes('—'));
   assert.equal(element('#trend-status').textContent,'3 hónap · adatbázisból');
-  console.log('Full frontend initialization, trend navigation and four-chart rendering OK');
+  let requests=0;
+  context.fetch=async()=>{requests++;return {ok:true,json:async()=>({months:rows})}};
+  await context.loadTrends();assert.equal(requests,0,'Reopening a cached month renders without a request');
+  element('#month').value='2026-09';await context.loadTrends();assert.equal(requests,1);
+  element('#month').value='2026-10';await context.loadTrends();assert.equal(requests,1,'Cache retains the previous month too');
+  vm.runInContext('for(const entry of trendCache.values())entry.loadedAt=0',context);
+  await Promise.all([context.loadTrends(),context.loadTrends()]);assert.equal(requests,2,'Expired cache reloads once for concurrent calls');
+  context.clearTrendCache();
+  let finishDashboard;
+  context.fetch=async url=>url.includes('settlement-trends')?{ok:true,json:async()=>({months:rows})}:new Promise(resolve=>{finishDashboard=()=>resolve({ok:true,json:async()=>({couriers:[]})})});
+  element('.board[data-view="trends"]').hidden=false;
+  const loading=context.load();await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(element('#trend-body').innerHTML.includes('Reklamációk darabszáma'),'Trends render before the slower dashboard completes');
+  finishDashboard();await loading;
+  context.showLogin();assert.equal(vm.runInContext('trendCache.size',context),0,'Logout clears financial browser cache');
+  console.log('Trend charts, month cache, shared requests, expiry, independent loading and logout cleanup OK');
 })().catch(e=>{console.error(e);process.exitCode=1});
