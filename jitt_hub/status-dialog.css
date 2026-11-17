@@ -1,0 +1,15 @@
+.status-button{border:0;font:inherit;cursor:pointer;text-align:left}
+.status-button:hover{text-decoration:underline;text-underline-offset:3px}
+.status-button:focus-visible{outline:3px solid #3867ef;outline-offset:3px}
+.status-dialog{width:min(1100px,94vw);max-height:90vh;padding:0;border:1px solid #dce3ee;border-radius:16px;color:#17213a;background:#f4f6fb;box-shadow:0 24px 90px #111a3540}
+.status-dialog::backdrop{background:#111a3570}
+.status-dialog-header{position:sticky;top:0;z-index:1;display:flex;justify-content:space-between;align-items:start;gap:20px;padding:22px;background:#fff;border-bottom:1px solid #e0e5ee}
+.status-dialog-header h2{font-size:21px;margin:0}
+.status-dialog-header p{margin:8px 0 0;color:#6c7891;font-size:13px}
+.status-dialog-close{border:1px solid #dce3ee;border-radius:8px;background:#fff;padding:8px 12px;cursor:pointer;font-size:20px}
+.status-dialog-body{padding:22px;overflow-wrap:anywhere}
+.status-dialog-body>h3{margin:24px 0 12px}
+.status-dialog-body .c360-summary-grid{margin-top:16px}
+.status-dialog-total{display:grid;gap:8px;margin-bottom:20px;padding:20px;background:#fff;border-radius:12px}
+.status-dialog-total strong{font-size:28px}
+@media(max-width:600px){.status-dialog-header,.status-dialog-body{padding:15px}.status-dialog-header h2{font-size:18px}}
