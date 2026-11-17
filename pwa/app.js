@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v279";
+const APP_VERSION = "v289";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -5615,7 +5615,11 @@ function renderTigBreakdown(tig = state.workflow?.tigBreakdown || {}, options = 
   ` : "";
   const buyerBlock = renderPartyBlock(buyer, "Vevő");
   const sellerBlock = renderPartyBlock(seller, "Eladó");
-  const cashBuyerBlock = renderPartyBlock({ ...buyer, label: "Vevő - KP számla" }, "Vevő - KP számla");
+  const cashDates = tig.cashDocumentMeta || cashRows[0] || {};
+  const cashBuyerBlock = renderPartyBlock({ ...buyer,
+    performanceDate: cashDates.performanceDate || "",
+    paymentDueDate: cashDates.paymentDueDate || "",
+    label: "Vevő - KP számla" }, "Vevő - KP számla");
   const cashSellerBlock = renderPartyBlock({ ...seller, label: "Eladó - KP számla" }, "Eladó - KP számla");
   return `
     <div class="tig-toolbar">

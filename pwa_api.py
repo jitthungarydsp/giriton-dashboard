@@ -11773,6 +11773,13 @@ def build_tig_breakdown_from_snapshot(
     )
     fallback_meta = tig_document_meta(month, courier_id)
     document_meta = {**fallback_meta, **(tig.get("documentMeta") or {})}
+    # Worksheet snapshots may predate the separate cash date fields.
+    from resources.settlement_pdf import tig_cash_document_meta
+    cash_meta = tig_cash_document_meta(document_meta)
+    tig = {**tig, "cashDocumentMeta": cash_meta,
+           "rows": [{**r, "performanceDate": cash_meta["performanceDate"],
+                     "paymentDueDate": cash_meta["paymentDueDate"]}
+                    if r.get("key") == "cash_service" else r for r in tig.get("rows") or []]}
     seller_name = str(profile.get("company_name") or courier_name or "")
     seller_address = str(profile.get("company_address") or profile.get("address") or "")
     seller_tax = str(profile.get("tax_number") or profile.get("tax_id") or "")
@@ -11784,6 +11791,7 @@ def build_tig_breakdown_from_snapshot(
         "courierId": courier_id,
         "courierName": courier_name,
         "rows": tig.get("rows") or [],
+        "cashDocumentMeta": tig.get("cashDocumentMeta") or {},
         "finalTotalHuf": money_int(tig.get("finalTotalHuf")),
         "cashGrossHuf": money_int(tig.get("cashGrossHuf")),
         "taxMode": str(tig.get("taxMode") or ""),
@@ -13269,6 +13277,10 @@ def build_kp_invoice_tig_breakdown(
         row["vatHuf"] = money_int(row.get("vatHuf"))
         row["vatLabel"] = str(row.get("vatLabel") or "TAM")
         row["note"] = str(row.get("note") or "Külön KP számla: aznapi teljesítés, aznapi kifizetés.")
+    from resources.settlement_pdf import tig_cash_document_meta
+    cash_meta = tig_cash_document_meta(monthly_tig.get("documentMeta") or monthly_tig.get("buyer"))
+    for row in cash_rows:
+        row.update(performanceDate=cash_meta["performanceDate"], paymentDueDate=cash_meta["paymentDueDate"])
     courier_id, courier_name = courier_identity(user)
     result = {
         **monthly_tig,
@@ -13281,6 +13293,9 @@ def build_kp_invoice_tig_breakdown(
         "cashGrossHuf": cash_amount,
         "finalTotalHuf": cash_amount,
         "processType": "kp_invoice",
+        "documentMeta": cash_meta,
+        "cashDocumentMeta": cash_meta,
+        "buyer": {**(monthly_tig.get("buyer") or {}), **cash_meta},
         "message": "KP számla pótlási Teljesítés-összesítő, csak a készpénzes részre.",
     }
     return result

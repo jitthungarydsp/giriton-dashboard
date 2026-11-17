@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -151,6 +152,12 @@ def _tig_document_dates(courier: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def tig_cash_document_meta(document_meta: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Cash instructions use the issue day in Hungary, independently of transfer terms."""
+    today = datetime.now(ZoneInfo("Europe/Budapest")).date().isoformat()
+    return {**(document_meta or {}), "performanceDate": today, "paymentDueDate": today}
+
+
 def _tig_cash_net_deduction(cash_amount_huf: Any, courier: dict[str, Any]) -> int:
     cash = max(_int_money(cash_amount_huf), 0)
     if _tig_kind(courier) == "vat":
@@ -183,7 +190,7 @@ def _tig_cash_service_row(
     vat_payer: bool = False,
 ) -> dict[str, Any]:
     cash = max(_int_money(cash_amount_huf), 0)
-    meta = document_meta or {}
+    meta = document_meta or tig_cash_document_meta()
     if vat_payer:
         cash_net, cash_vat, cash_gross = _split_gross_vat_amount(cash)
         vat_label = "27%"
@@ -210,6 +217,7 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
     tip = max(_int_money(amounts.get("tip") or amounts.get("tip_amount")), 0)
     payable = max(_int_money(amounts.get("payable")), 0)
     document_meta = _tig_document_dates(courier)
+    cash_document_meta = tig_cash_document_meta(document_meta)
     vat_payer = _tig_kind(courier) == "vat"
     if vat_payer:
         service_net, service_vat, service_gross = _add_vat_to_net(service)
@@ -217,7 +225,7 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
     else:
         service_net, service_vat, service_gross = service, 0, service
         tax_label = "AAM"
-    cash_row = _tig_cash_service_row(cash, document_meta, vat_payer=vat_payer) if cash else None
+    cash_row = _tig_cash_service_row(cash, cash_document_meta, vat_payer=vat_payer) if cash else None
     cash_net = _int_money((cash_row or {}).get("netHuf"))
     cash_vat = _int_money((cash_row or {}).get("vatHuf"))
     cash_gross = _int_money((cash_row or {}).get("grossHuf"))
@@ -261,6 +269,7 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
         "taxMode": "vat" if vat_payer else "aam",
         "taxLabel": tax_label,
         "documentMeta": document_meta,
+        "cashDocumentMeta": cash_document_meta,
         "rows": rows,
     }
 
@@ -533,12 +542,15 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
     )
     period = _month_label(courier.get("document_month"))
     document_meta = _tig_document_dates(courier)
+    cash_document_meta = tig_cash_document_meta(document_meta)
+    if (tig_breakdown or {}).get("processType") == "kp_invoice":
+        document_meta = cash_document_meta
     service = _tig_service_amount_without_cash_and_tip(amounts, courier)
     cash = max(_int_money(amounts.get("cash") or amounts.get("cash_amount")), 0)
     tip = max(_int_money(amounts.get("tip") or amounts.get("tip_amount")), 0)
     payable = max(_int_money(amounts.get("payable")), 0)
     vat_payer = _tig_kind(courier) == "vat"
-    cash_service_row = _tig_cash_service_row(cash, document_meta, vat_payer=vat_payer) if cash else {}
+    cash_service_row = _tig_cash_service_row(cash, cash_document_meta, vat_payer=vat_payer) if cash else {}
     cash_net = _int_money(cash_service_row.get("netHuf"))
     cash_vat = _int_money(cash_service_row.get("vatHuf"))
     cash_gross = _int_money(cash_service_row.get("grossHuf"))
@@ -739,8 +751,8 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
                         "Atléta utca 44.<br/>"
                         "Adószám: 32649460-2-43<br/>"
                         f"<b>Teljesítési időszak:</b> {escape(str(document_meta['periodLabel']))}<br/>"
-                        f"<b>Teljesítés:</b> {escape(str(document_meta['performanceDate']))}<br/>"
-                        f"<b>Fizetési határidő:</b> {escape(str(document_meta['paymentDueDate']))}<br/>"
+                        f"<b>Teljesítés:</b> {escape(str(cash_document_meta['performanceDate']))}<br/>"
+                        f"<b>Fizetési határidő:</b> {escape(str(cash_document_meta['paymentDueDate']))}<br/>"
                         f"<b>Megjegyzés:</b> {escape(str(document_meta['note']))}",
                         "tig_body",
                     ),
@@ -768,6 +780,9 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
         story.append(Spacer(1, 5 * mm))
         cash_amount_rows: list[list[Any]] = [["TÉTEL", "NETTÓ", "ÁFA", "BRUTTÓ"]]
         for row in cash_breakdown_rows:
+            # Previously saved breakdowns can still carry the transfer due date.
+            row = {**row, "performanceDate": cash_document_meta["performanceDate"],
+                   "paymentDueDate": cash_document_meta["paymentDueDate"]}
             note_parts = [
                 str(row.get("note") or ""),
                 f"Teljesítés: {row.get('performanceDate')}" if row.get("performanceDate") else "",
