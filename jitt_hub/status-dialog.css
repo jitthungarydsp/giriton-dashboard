@@ -78,4 +78,36 @@
 .payment-timeline p{font-size:13px;color:#596781;white-space:pre-wrap}
 .payment-state-tag{font-size:11px;font-weight:400;background:#e9edf5;color:#596781;border-radius:5px;padding:2px 6px}
 .payment-view [hidden]{display:none!important}
+.status-workspace [hidden]{display:none!important}
+.status-workspace-tabs{flex-wrap:wrap;gap:6px 20px;margin-bottom:22px}
+.status-workspace-tabs button{padding:8px 0 12px;font-size:13px}
+.complaint-view,.complaint-finance{color:#1b2540;font-size:14px;line-height:1.5}
+.complaint-view h3,.complaint-finance h3{margin:0;font-size:15px}
+.complaint-view h4{font-size:13px;margin:18px 0 8px}
+.complaint-picker{display:block;font-size:12px;color:#68758d;margin-bottom:20px}
+.complaint-picker select,.complaint-response-form select{display:block;width:100%;box-sizing:border-box;border:1px solid #dce3ed;border-radius:8px;background:#fff;color:#1b2540;font:inherit;padding:10px;margin-top:6px}
+.complaint-context{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:14px 0 18px;font-size:12px;color:#68758d}
+.complaint-badge{background:#fff0f0;color:#b42332;border-radius:8px;padding:6px 11px;font-size:12px;font-weight:700}
+.complaint-badge.is-closed{background:#e5f5ed;color:#167344}
+.complaint-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.complaint-card{background:#fff;border:1px solid #e0e6ef;border-radius:13px;padding:20px;min-width:0}
+.complaint-card blockquote{white-space:pre-wrap;margin:18px 0;padding-left:14px;border-left:2px solid #dce3ed;color:#26324b;line-height:1.7}
+.complaint-facts{margin:18px 0}
+.complaint-facts>div{margin:13px 0;display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap}
+.complaint-facts dt{font-size:12px;color:#68758d}
+.complaint-facts dd{margin:0;text-align:right;font-size:13px}
+.complaint-link{border:0;background:none;color:#465fce;padding:0;text-align:left;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.complaint-answer{background:#edf1ff;border-radius:10px;padding:16px;margin:18px 0}
+.complaint-answer p{white-space:pre-wrap;margin-bottom:0}
+.complaint-controls{display:flex;gap:10px;flex-wrap:wrap;margin:20px 0}
+.complaint-response-form{background:#fff;border:1px solid #dce3ed;padding:20px;border-radius:12px;margin-top:18px}
+.complaint-response-form label,.complaint-note-form label{display:block;font-size:13px;margin:14px 0 6px}
+.complaint-response-form textarea,.complaint-note-form textarea{display:block;box-sizing:border-box;width:100%;font:inherit;color:#1b2540;padding:10px;border:1px solid #c9d3e3;border-radius:8px;resize:vertical}
+.complaint-review{display:flex!important;gap:10px;align-items:flex-start}
+.complaint-review input{margin-top:4px;flex-shrink:0}
+.complaint-internal{border-top:1px solid #e0e6ef;padding-top:18px;margin-top:22px}
+.complaint-internal summary{font-size:13px;font-weight:600;cursor:pointer;color:#596781}
+.complaint-note-form button{margin-top:12px}
+.complaint-feedback,.complaint-action-message{font-size:13px;color:#b42332;white-space:pre-wrap}
+@media(max-width:650px){.complaint-grid{grid-template-columns:1fr}.complaint-card,.complaint-response-form{padding:16px}.status-workspace-tabs{gap:4px 14px}.complaint-view textarea,.complaint-view select{font-size:16px}.complaint-facts dd{text-align:left}}
 @media(max-width:650px){.payment-invoices,.payment-bank-grid{grid-template-columns:1fr}.payment-invoice,.payment-bank,.payment-record-form{padding:16px}.payment-transfer-total strong{font-size:25px}.payment-tabs{gap:18px}.payment-tabs button{font-size:13px}.payment-values>div{flex-wrap:wrap}.payment-values dd{text-align:left}.payment-primary{min-height:44px}.payment-copy{padding:7px 3px}}

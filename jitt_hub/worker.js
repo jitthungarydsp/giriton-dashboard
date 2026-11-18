@@ -872,7 +872,7 @@ async function courier360Data(request, env, now = new Date()) {
     safe('giriton_attendance_raw',PUBLIC_SCHEMA,{select:'courier_name,activity_status,checkin_start,checkin_end,updated_at',work_date:`eq.${date}`,order:'courier_name.asc',limit:2000}),
     safe('courier_hub_shift_bookings_raw',PUBLIC_SCHEMA,{...sameId,select:'work_date,warehouse_code,warehouse_id,shift_text,slot_from,slot_to,status,active,last_seen_at,updated_at',and:`(work_date.gte.${date},work_date.lte.${endDate})`,order:'work_date.asc,slot_from.asc',limit:1000}),
     safe('giriton_shifts_raw',PUBLIC_SCHEMA,{...sameId,select:'work_date,start_time,end_time,warehouse,status,fetched_at',and:`(work_date.gte.${date},work_date.lte.${endDate})`,order:'work_date.asc,start_time.asc',limit:1000}),
-    safe('peopleforce_complaints',PUBLIC_SCHEMA,{...sameId,select:'id,document_type,document_month,message,status,created_at,admin_response,responded_at,responded_by',document_month:`eq.${periodStart}`,order:'created_at.desc',limit:1000}),
+    safe('peopleforce_complaints',PUBLIC_SCHEMA,{...sameId,select:'id,document_type,document_month,message,status,created_by,created_at,admin_response,responded_at,responded_by',document_month:`eq.${periodStart}`,order:'created_at.desc',limit:1000}),
     safe('peopleforce_documents',PUBLIC_SCHEMA,{...sameId,select:'id,document_type,title,file_name,mime_type,file_size,note,uploaded_by,uploaded_at',document_month:`eq.${periodStart}`,order:'uploaded_at.desc',limit:300}),
     safe('peopleforce_card_statuses',PUBLIC_SCHEMA,{...sameId,select:'action_key,status,status_note,updated_by,created_at,updated_at',document_month:`eq.${periodStart}`,order:'updated_at.desc',limit:100}),
     safe('pwa_workflow_acceptance_snapshots',SETTLEMENT_SCHEMA,{...sameId,select:'id,action_key,process_id,payable_huf,tig_final_total_huf,accepted_at,accepted_by',period_start:`eq.${periodStart}`,order:'accepted_at.asc',limit:300}),
@@ -893,6 +893,12 @@ async function courier360Data(request, env, now = new Date()) {
   const paymentSources=financeSnapshot?await safe('courier_finance_snapshot_source',SETTLEMENT_SCHEMA,{
     snapshot_id:`eq.${financeSnapshot.id}`,source_key:'in.(tig_breakdown,courier_profile)',select:'source_key,payload',limit:10,
   }):[];
+  const [complaintNotes,historyParents]=await Promise.all([
+    safe('peopleforce_complaint_notes',PUBLIC_SCHEMA,{...sameId,period_start:`eq.${periodStart}`,select:'note,updated_by,updated_at',limit:1}),
+    safe('courier_finance_snapshot',SETTLEMENT_SCHEMA,{...sameId,period_start:`eq.${periodStart}`,select:'id,version,previous_snapshot_id,created_at,created_by',order:'version.desc,created_at.desc,id.desc',limit:2}),
+  ]);
+  const previousParent=historyParents[0]?.id===financeSnapshot?.id?historyParents.find(row=>row.id===historyParents[0].previous_snapshot_id):null;
+  const previousItems=previousParent?await safe('courier_finance_snapshot_item',SETTLEMENT_SCHEMA,{snapshot_id:`eq.${previousParent.id}`,section:'eq.finance',amount_kind:'eq.huf',select:'item_key,item_label,amount_value,section,amount_kind',limit:500}):[];
   const workflowStates=Object.fromEntries(states.filter(row=>!key(row.action_key).startsWith('process:')).map(row=>[row.action_key,row]));
   const closure=closures[0]||null;
   const finance=financeSnapshot?buildCourierRow({courier_id:courierId,workflowStates,dashboardStatus:dashboardRows.find(row=>key(row.courier_id)===courierId)?.dashboard_status_label,salaryAdvanceAdded:advanceAdditions.filter(row=>key(row.courier_id)===courierId).reduce((s,r)=>s+money(r.requested_amount_huf),0)},profiles[0],null,closure,financeSnapshot,metrics[0]):null;
@@ -901,8 +907,67 @@ async function courier360Data(request, env, now = new Date()) {
     .sort((a,b)=>key(b.at).localeCompare(key(a.at)));
   return jsonResponse({courier:{id:courierId,name:key(profiles[0]?.courier_name||masters[0]?.courier_name||financeSnapshot?.courier_name||courierId),warehouse:key(profiles[0]?.warehouse_name||masters[0]?.warehouse_code)},
     date,periodStart,generatedAt:now.toISOString(),operational,finance,financeSnapshot:financeSnapshot?{id:financeSnapshot.id,version:financeSnapshot.version,createdAt:financeSnapshot.created_at,items:financeSnapshot.items}:null,
-    complaints:complaints.filter(row=>key(row.status).toLowerCase()!=='deleted'),documents,workflowStates,acceptances,closure,processMetric:metrics[0]||null,eventLog,sources,
+    complaints:complaints.filter(row=>key(row.status).toLowerCase()!=='deleted'),complaintNote:complaintNotes[0]||null,
+    financeComparison:courier360FinanceComparison(financeSnapshot,previousParent,previousItems),documents,workflowStates,acceptances,closure,processMetric:metrics[0]||null,eventLog,sources,
     payment:courier360Payment({courierId,periodStart,profile:profiles[0],snapshot:financeSnapshot,paymentSources,documents,workflowStates,processStates:states,closure,acceptances,complaints,sources})});
+}
+
+function courier360FinanceComparison(snapshot,previous,previousItems=[]) {
+  if(!snapshot||!previous||!previousItems.length)return {available:false,rows:[]};
+  const before=new Map(previousItems.map(row=>[row.item_key,row])),after=new Map((snapshot.items||[]).filter(row=>row.section==='finance'&&row.amount_kind==='huf').map(row=>[row.item_key,row]));
+  const rows=[...new Set([...before.keys(),...after.keys()])].map(name=>{
+    const old=before.get(name),current=after.get(name),oldAmount=paymentNumber(old?.amount_value),newAmount=paymentNumber(current?.amount_value);
+    return {key:name,label:current?.item_label||old?.item_label||name,beforeHuf:oldAmount,afterHuf:newAmount,differenceHuf:oldAmount!==null&&newAmount!==null?newAmount-oldAmount:null};
+  }).filter(row=>row.beforeHuf!==row.afterHuf);
+  return {available:true,before:{id:previous.id,version:previous.version,createdAt:previous.created_at,createdBy:previous.created_by},after:{id:snapshot.id,version:snapshot.version,createdAt:snapshot.created_at},rows};
+}
+
+async function courier360ComplaintAction(request,env,user) {
+  if(request.headers.get('origin')!==new URL(request.url).origin)return jsonResponse({error:'Érvénytelen kérésforrás.'},403);
+  if(!request.headers.get('content-type')?.includes('application/json'))return jsonResponse({error:'JSON kérés szükséges.'},415);
+  const body=await request.json().catch(()=>null),courierId=key(body?.courierId),month=key(body?.month),id=key(body?.complaintId),action=key(body?.action);
+  if(!/^\d{1,12}$/.test(courierId)||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)||! /^[0-9a-f-]{36}$/i.test(id)||!['start','respond','close','reopen','note'].includes(action))return jsonResponse({error:'Hiányzó vagy hibás reklamációs azonosítók.'},400);
+  const rows=await supabaseFetch(env,PUBLIC_SCHEMA,'peopleforce_complaints',{id:`eq.${id}`,courier_id:`eq.${courierId}`,document_month:`eq.${month}-01`,select:'id,status,admin_response,responded_at',limit:1});
+  const row=rows[0];if(!row||row.status==='deleted')return jsonResponse({error:'A reklamáció nem található.'},404);
+  const noteRows=await supabaseFetch(env,PUBLIC_SCHEMA,'peopleforce_complaint_notes',{courier_id:`eq.${courierId}`,period_start:`eq.${month}-01`,select:'note,updated_at',limit:1});
+  let oldNote=noteRows[0];const now=new Date().toISOString();
+  const supabaseUrl=cleanEnv(env.SUPABASE_URL),supabaseKey=cleanEnv(env.SUPABASE_READ_KEY||env.SUPABASE_SERVICE_ROLE_KEY);
+  const headers={apikey:supabaseKey,authorization:`Bearer ${supabaseKey}`,'content-profile':PUBLIC_SCHEMA,'accept-profile':PUBLIC_SCHEMA,'content-type':'application/json',prefer:'return=representation'};
+  const filter=value=>value==null?'is.null':`eq.${value}`;
+  async function writeNote(text){
+    const url=new URL(`${supabaseUrl}/rest/v1/peopleforce_complaint_notes`);let method='POST';
+    if(oldNote){method='PATCH';url.searchParams.set('courier_id',`eq.${courierId}`);url.searchParams.set('period_start',`eq.${month}-01`);url.searchParams.set('updated_at',filter(oldNote.updated_at));}
+    else url.searchParams.set('on_conflict','period_start,courier_id');
+    const response=await fetch(url,{method,headers:{...headers,...(!oldNote?{prefer:'resolution=ignore-duplicates,return=representation'}:{})},body:JSON.stringify({courier_id:courierId,period_start:month+'-01',note:text,updated_by:user.username,updated_at:now})});
+    const saved=await response.json().catch(()=>null);const ok=response.ok&&Array.isArray(saved)&&saved.length===1;if(ok)oldNote={note:text,updated_at:now};return ok;
+  }
+  if(action==='note'){
+    const note=String(body.note??'').trim();if(note.length>20000)return jsonResponse({error:'A belső megjegyzés túl hosszú.'},422);
+    if(String(body.expectedNote??'')!==String(oldNote?.note??''))return jsonResponse({error:'A havi belső megjegyzést időközben módosították. Frissítsd az ablakot.'},409);
+    return await writeNote(note)?jsonResponse({ok:true}):jsonResponse({error:'A megjegyzés nem menthető, vagy időközben megváltozott. Frissítsd az ablakot.'},409);
+  }
+  if(!body.expected||row.status!==body.expected.status||(row.admin_response??null)!==(body.expected.adminResponse??null)||(row.responded_at??null)!==(body.expected.respondedAt??null))return jsonResponse({error:'A reklamáció időközben megváltozott. Frissítsd az ablakot.'},409);
+  const closed=['closed','resolved'].includes(row.status);
+  if(closed&&action!=='reopen'||!closed&&action==='reopen')return jsonResponse({error:'Az ügy állapota nem engedi ezt a műveletet.'},409);
+  const responseText=key(body.response);
+  if(['respond','close','reopen'].includes(action)&&(!responseText||responseText.length>5000))return jsonResponse({error:'Adj meg legfeljebb 5000 karakteres választ vagy indoklást.'},422);
+  if(action==='close'){
+    if(!['accepted','partial','rejected'].includes(body.decision)||body.financeReviewed!==true)return jsonResponse({error:'Add meg az eredményt, és ellenőrizd a pénzügyi hatást.'},422);
+    const snapshots=await loadLatestFinanceSnapshots(env,month+'-01',courierId);
+    if((snapshots[0]?.id||'')!==(body.snapshotId||''))return jsonResponse({error:'A pénzügyi mentés megváltozott. Ellenőrizd újra a pénzügyi hatást.'},409);
+  }
+  const update={status:({start:'in_progress',respond:'open',close:'closed',reopen:'open'})[action]};
+  if(action==='reopen'){update.admin_response=null;update.responded_at=null;update.responded_by=null;}
+  if(action==='respond'||action==='close'){update.admin_response=(action==='close'?`Eredmény: ${{accepted:'Elfogadva',partial:'Részben elfogadva',rejected:'Elutasítva'}[body.decision]}.\n`:'')+responseText;update.responded_at=now;update.responded_by=user.username;}
+  const preparation=`${now} | Ügy ${id} | ${user.username} | Művelet előkészítve: ${action}${responseText?' | '+responseText:''}${row.admin_response?'\nKorábbi válasz megőrizve: '+row.admin_response:''}`;
+  if(!await writeNote([oldNote?.note,preparation].filter(Boolean).join('\n\n')))return jsonResponse({error:'Az ügyintézési bejegyzés nem őrizhető meg. Frissítsd az ablakot; az ügy állapota nem változott.'},409);
+  const url=new URL(`${supabaseUrl}/rest/v1/peopleforce_complaints`);
+  for(const [name,value] of Object.entries({id:`eq.${id}`,courier_id:`eq.${courierId}`,document_month:`eq.${month}-01`,status:filter(row.status),admin_response:filter(row.admin_response),responded_at:filter(row.responded_at)}))url.searchParams.set(name,value);
+  const result=await fetch(url,{method:'PATCH',headers,body:JSON.stringify(update)}),saved=await result.json().catch(()=>null);
+  if(!result.ok||!Array.isArray(saved)||saved.length!==1)return jsonResponse({error:'A módosítás nem igazolható. Frissítsd az ablakot.'},409);
+  const event=`${now} | Ügy ${id} | ${user.username} | Művelet megtörtént: ${row.status} → ${update.status}`;
+  let audit=false;try{audit=await writeNote([oldNote?.note,event].filter(Boolean).join('\n\n'));}catch{}
+  return jsonResponse({ok:true,...(!audit?{warning:'Az ügy mentve, de a havi belső napló bejegyzése nem sikerült.'}:{})});
 }
 
 // Read the saved TIG, never recalculate money from an incomplete courier list.
@@ -1084,11 +1149,11 @@ export default {
       return logoutHub();
     }
 
-    if (['/api/courier360-payment-close','/api/courier360-bank-account'].includes(url.pathname)) {
+    if (['/api/courier360-payment-close','/api/courier360-bank-account','/api/courier360-complaint'].includes(url.pathname)) {
       if(request.method!=='POST')return jsonResponse({error:'Use POST.'},405);
       const access=await requireDashboardUser(request,env);if(access.error)return access.error;
-      try{return url.pathname.endsWith('bank-account')?await courier360SaveBankAccount(request,env,access.user):await courier360ClosePayment(request,env,access.user)}
-      catch{return jsonResponse({error:'A kifizetés nem rögzíthető. Frissítsd az adatokat és ellenőrizd a kifizetési felületet.'},500)}
+      try{return url.pathname.endsWith('complaint')?await courier360ComplaintAction(request,env,access.user):url.pathname.endsWith('bank-account')?await courier360SaveBankAccount(request,env,access.user):await courier360ClosePayment(request,env,access.user)}
+      catch{return jsonResponse({error:'A művelet nem menthető. Frissítsd az adatokat és ellenőrizd a források elérhetőségét.'},500)}
     }
 
     if (["/api/courier360","/api/courier360-document"].includes(url.pathname)) {
