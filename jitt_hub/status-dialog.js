@@ -9,7 +9,7 @@ function complaintOperationId(){
 }
 const statusDialogTabs=[['workflow','Elszámolási folyamat'],['complaints','Reklamáció'],['finance','Pénzügyi hatás'],['payment','Ellenőrzés és utalás'],['history','Előzmények'],['documents','Dokumentumok']];
 function statusDialogKind(status){
-  if(status==='Reklamáció')return 'complaints';
+  if(String(status||'').startsWith('Reklamáció'))return 'complaints';
   if(/számla.*ellenőrz/i.test(status))return 'invoice';
   if(/kifizet/i.test(status))return 'payment';
   return 'workflow';

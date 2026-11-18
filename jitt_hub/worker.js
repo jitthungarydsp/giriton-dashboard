@@ -496,7 +496,7 @@ async function settlementDashboard(request, env) {
   const idFilter = formatIdList(courierIds);
   const numericIdFilter = formatNumericIdList(courierIds);
 
-  const [profiles, workloads, closures, discrepancies, discrepancyCoverage, processMetricRows, courierProcessMetricRows, activePwaUsers, financeSnapshots, workflowDashboardRows, metricMonths, workflowStates, advanceAdditions] = await Promise.all([
+  const [profiles, workloads, closures, discrepancies, discrepancyCoverage, processMetricRows, courierProcessMetricRows, activePwaUsers, financeSnapshots, workflowDashboardRows, metricMonths, workflowStates, advanceAdditions, complaintRows] = await Promise.all([
     numericIdFilter
       ? supabaseFetch(env, PUBLIC_SCHEMA, "courier_master", {
           select: "courier_id,courier_name,email,billing_email,warehouse_name",
@@ -552,6 +552,9 @@ async function settlementDashboard(request, env) {
       document_month: `eq.${periodStart}`, order: "id.asc", limit: 10000,
     }).catch(() => null),
     loadSalaryAdvanceAdditions(env, periodStart),
+    supabaseFetch(env,PUBLIC_SCHEMA,'peopleforce_complaints',{
+      select:'id,courier_id,status',document_month:`eq.${periodStart}`,status:'in.(new,open,in_progress)',order:'id.asc',limit:10000,
+    }).catch(()=>null),
   ]);
 
   const summaryCourierIds = new Set(courierIds);
@@ -634,6 +637,7 @@ async function settlementDashboard(request, env) {
     ));
   });
 
+  applyCourierComplaintState(couriers,complaintRows,workflowStates);
   const totals = couriers.reduce(
     (acc, row) => {
       acc.couriers += 1;
@@ -755,6 +759,19 @@ function courier360Name(value) {
 }
 
 const COMPLAINT_ASSIGNMENT_PREFIX='internal_complaint_assignment:';
+function applyCourierComplaintState(couriers,complaints,states){
+  const cases=new Map();
+  for(const row of complaints||[]){if(!['new','open','in_progress'].includes(row.status))continue;const cid=key(row.courier_id);if(!cases.has(cid))cases.set(cid,[]);cases.get(cid).push(row)}
+  const assignments=new Map();
+  for(const state of states||[]){const value=complaintAssignment(state);if(value&&key(state.courier_id)===key(value.courierId))assignments.set(value.complaintId,value)}
+  for(const courier of couriers){
+    const active=cases.get(key(courier.courierId))||[];
+    if(active.some(row=>row.status==='in_progress'))courier.status='Reklamáció / Folyamatban';
+    courier.complaintAssignees=[...new Set(active.map(row=>assignments.get(key(row.id))?.assignee?.name).filter(Boolean))];
+    courier.complaintAssignee=courier.complaintAssignees.join(', ');
+    courier.complaintStateAvailable=complaints!==null&&states!==null;
+  }
+}
 function complaintAssignment(row) {
   const value=courier360Json(row?.status_note);
   return row?.action_key?.startsWith(COMPLAINT_ASSIGNMENT_PREFIX)&&value.schemaVersion===1&&value.complaintId===row.action_key.slice(COMPLAINT_ASSIGNMENT_PREFIX.length)?value:null;
@@ -961,6 +978,7 @@ async function courier360AssignComplaint(body,env,user,executionContext) {
   link.searchParams.set('courier',courierId);link.searchParams.set('month',month);link.searchParams.set('complaint',id);
   const value={schemaVersion:1,complaintId:id,courierId,month,assignmentId:operationId,assignee,assignedAt:now,assignedBy:user.username,
     courierName:key(complaint.courier_name)||courierId,complaintMessage:key(complaint.message),hubUrl:link.href,
+    notes:previous?.notes||[],notesRevision:previous?.notesRevision||'',
     notification:{status:'pending',queuedAt:now,sentAt:null},
     history:[...(previous?.history||[]),...(previous?[{assignee:previous.assignee,assignedAt:previous.assignedAt,assignedBy:previous.assignedBy,notification:previous.notification}]:[])].slice(-30)};
   const url=new URL(`${cleanEnv(env.SUPABASE_URL)}/rest/v1/peopleforce_card_statuses`),method=old?'PATCH':'POST';

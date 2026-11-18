@@ -346,7 +346,7 @@ function currentSectionRefresh() {
   if (state.section === "departure-helper") return loadDepartureHelper();
   if (state.section === "webshop") return loadWebshop();
   // Keep interactive complaint drafts stable during background refresh.
-  if (state.section === "quality-complaints") return Promise.resolve();
+  if (["quality-complaints", "complaint-assignments"].includes(state.section)) return Promise.resolve();
   if (state.section === "today-workers") return loadTodayWorkers();
   if (state.section === "settlement-dashboard") return loadSettlementDashboard();
   if (state.section === "settlement-import-config") {
@@ -581,6 +581,7 @@ function startQueueTimer() {
 }
 
 function showLogin() {
+  window.JittComplaintAssignments?.reset();
   $("#login-view").classList.remove("hidden");
   $("#app-view").classList.add("hidden");
 }
@@ -637,6 +638,8 @@ function showApp() {
   const scheduleWarehouseWrap = $("#coordinator-schedule-warehouse-wrap");
   if (scheduleWarehouseWrap) scheduleWarehouseWrap.classList.toggle("hidden", !canCoordinate);
   loadCourierMasterOptions();
+  window.JittComplaintAssignments?.configure({api,getUser:()=>state.user,navigate:()=>showSection('complaint-assignments')});
+  window.JittComplaintAssignments?.openFromLocation();
 }
 
 function showSection(section) {
@@ -646,6 +649,8 @@ function showSection(section) {
   if (section === "gate") window.JittGate.mount($("#gate-content"), { api });
   if (section === "quality-complaints" && !["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
   state.section = section;
+  $("#complaint-assignments-content")?.classList.toggle("hidden", section !== "complaint-assignments");
+  $("#nav-complaint-assignments")?.classList.toggle("active", section === "complaint-assignments");
   $("#webshop-content").classList.toggle("hidden", section !== "webshop");
   $("#nav-webshop").classList.toggle("active", section === "webshop");
   $("#quality-complaints-content").classList.toggle("hidden", section !== "quality-complaints");
@@ -703,6 +708,7 @@ function showSection(section) {
   $("#nav-settlement-import-config").classList.toggle("active", section === "settlement-import-config");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
+  if (section === "complaint-assignments") window.JittComplaintAssignments?.mount($("#complaint-assignments-content"));
   if (section === "settlement-dashboard") loadSettlementDashboard();
   if (section === "settlement-import-config") renderSettlementImportConfig();
   if (section === "statistics" && !state.statistics) loadStatistics();
@@ -6396,6 +6402,7 @@ function settlementDashboardComplaintManager(complaints = []) {
         <label>Admin válasz
           <textarea data-complaint-field="response" placeholder="Mit válaszolunk a futárnak?">${escapeHtml(complaint.admin_response || "")}</textarea>
         </label>
+        <button class="secondary" type="button" data-pwa-complaint-assignment="${escapeHtml(complaint.id || "")}">Felelős PWA-profil és közös megjegyzések</button>
         <button class="primary" type="button" data-save-dashboard-complaint="${escapeHtml(complaint.id || "")}">Válasz mentése</button>
       </article>
     `).join("")}
@@ -12369,6 +12376,7 @@ function loadWebshop() {
 $("#nav-gate").addEventListener("click", () => showSection("gate"));
 $("#nav-webshop").addEventListener("click", () => showSection("webshop"));
 $("#nav-quality-complaints").addEventListener("click", () => showSection("quality-complaints"));
+$("#nav-complaint-assignments")?.addEventListener("click", () => showSection("complaint-assignments"));
 $("#quality-complaints-refresh").addEventListener("click", () => loadQualityComplaints());
 $("#quality-form-test")?.addEventListener("click", () => openQualityFormTest());
 $("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = 0; loadQualityComplaints(); });

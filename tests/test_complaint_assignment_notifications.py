@@ -103,12 +103,13 @@ class ComplaintNotificationsTest(unittest.TestCase):
         function = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == 'pwa_lifespan')
         stop, rest = Mock(), Mock()
         start = Mock(return_value=stop)
-        namespace = {'asynccontextmanager': asynccontextmanager, 'start_assignment_notifier': start, 'supabase_rest': rest}
+        users = Mock(return_value=[])
+        namespace = {'asynccontextmanager': asynccontextmanager, 'start_assignment_notifier': start, 'supabase_rest': rest, 'load_users': users}
         exec(compile(ast.Module(body=[function], type_ignores=[]), 'pwa_api.py', 'exec'), namespace)
 
         async def lifecycle():
             async with namespace['pwa_lifespan'](None):
-                start.assert_called_once_with(rest)
+                start.assert_called_once_with(rest, legacy_users_provider=users)
                 stop.set.assert_not_called()
             stop.set.assert_called_once()
 

@@ -40,14 +40,31 @@ def notification_message(value):
         f"Ügyazonosító: {value['complaintId']}\n"
         f"Kijelölte: {value['assignedBy']}\n\n"
         f"A reklamáció szövege:\n{value.get('complaintMessage', '')}\n\n"
-        f"Ügy megnyitása (admin bejelentkezés szükséges):\n{value['hubUrl']}\n\n"
+        + (f"Neked szóló megjegyzés:\n{value['assignmentNote']}\n\n" if value.get('assignmentNote') else '')
+        + f"Ügy megnyitása (bejelentkezés szükséges):\n{value['hubUrl']}\n\n"
         "Köszönettel:\nJITT Pénzügyi Team\n"
     )
     return subject, body
 
 
-def verified_recipient(rest, value):
+def verified_recipient(rest, value, legacy_users=None):
     person = value.get("assignee") or {}
+    username = person.get('username')
+    courier_id = str(person['courierId']) if person.get('courierId') is not None else ''
+    if not username and legacy_users is not None:
+        username, courier_id = {'bagoly_zoltan': ('Bagoly Zoltán', '12345'), 'gurzo_balazs': ('Gurzó Balázs', '7644')}.get(person.get('key'), (None, ''))
+    if username:
+        rows = rest('GET', 'pwa_users', params={'username': 'eq.' + username, 'select': 'username,courier_id,email,active', 'limit': '1'}) or []
+        profile = rows[0] if rows else next((row for row in legacy_users or [] if row.get('username') == username), None)
+        profile_id = (profile.get('courier_id') if profile.get('courier_id') is not None else profile.get('courierId')) if profile else None
+        if not profile or not profile.get('active', True) or str(profile_id if profile_id is not None else '') != courier_id:
+            raise ValueError('A kijelölt PWA-profil nem aktív vagy megváltozott.')
+        email = str(profile.get('email') or '').strip()
+        if username == 'Bagoly Zoltán' and courier_id == '12345':
+            email = email or 'zoltan.bagoly@jitt.hu'
+        if email and email.casefold() == str(person.get('email') or '').strip().casefold():
+            return email
+        raise ValueError('A kijelölt profil e-mail-címe megváltozott.')
     if person.get("key") == "bagoly_zoltan" and person.get("email") == "zoltan.bagoly@jitt.hu":
         return person["email"]
     if person.get("key") == "gurzo_balazs":
@@ -70,7 +87,7 @@ def save_delivery(rest, row, value, now, status):
     return rows[0] if len(rows or []) == 1 else None
 
 
-def process_pending_assignments(rest, send_email, *, validate_config=lambda: None, now=None):
+def process_pending_assignments(rest, send_email, *, validate_config=lambda: None, now=None, legacy_users=None):
     now = now or datetime.now(timezone.utc)
     rows = rest("GET", "peopleforce_card_statuses", params={
         "select": "id,courier_id,document_month,action_key,status,status_note,updated_at",
@@ -94,7 +111,7 @@ def process_pending_assignments(rest, send_email, *, validate_config=lambda: Non
         if notification.get("status") != "pending":
             continue
         try:
-            recipient = verified_recipient(rest, value)
+            recipient = verified_recipient(rest, value, legacy_users)
             validate_config()
             subject, body = notification_message(value)
         except Exception:
@@ -117,14 +134,14 @@ def process_pending_assignments(rest, send_email, *, validate_config=lambda: Non
     return sent
 
 
-def start_assignment_notifier(rest):
+def start_assignment_notifier(rest, *, legacy_users_provider=lambda: []):
     stop = Event()
 
     def run():
         from resources.email_sender import send_custom_email, smtp_config
         while not stop.is_set():
             try:
-                process_pending_assignments(rest, send_custom_email, validate_config=smtp_config)
+                process_pending_assignments(rest, send_custom_email, validate_config=smtp_config, legacy_users=legacy_users_provider())
             except Exception:
                 logger.warning("Complaint assignment notification pass unavailable")
             stop.wait(15)

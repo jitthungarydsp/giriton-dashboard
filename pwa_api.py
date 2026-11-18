@@ -17,6 +17,7 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from resources.complaint_assignment_notifications import start_assignment_notifier
+from resources.complaint_assignments import AssignmentError, load_profiles as load_complaint_profiles, list_cases as list_assigned_complaints, assign_case as assign_complaint_case, add_note as add_assigned_complaint_note, start_case as start_assigned_complaint
 from email.message import EmailMessage
 from email.utils import formataddr
 from datetime import date, datetime, timedelta, timezone
@@ -281,6 +282,20 @@ class SettlementSnapshotRestoreRequest(BaseModel):
 class AdminComplaintUpdateRequest(BaseModel):
     status: str = "resolved"
     response: str = ""
+
+
+class ComplaintProfileAssignmentRequest(BaseModel):
+    profileKey: str = Field(min_length=1, max_length=250)
+    operationId: UUID
+    expectedAssignmentId: str = ""
+    note: str = Field(default="", max_length=5000)
+
+
+class ComplaintSharedNoteRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
+    operationId: UUID
+    expectedAssignmentId: str
+    expectedNotesRevision: str = ""
 
 
 def admin_invoice_upload_months() -> set[date]:
@@ -21233,7 +21248,7 @@ def disable_push_subscription(
 
 @asynccontextmanager
 async def pwa_lifespan(_app):
-    assignment_stop = start_assignment_notifier(supabase_rest)
+    assignment_stop = start_assignment_notifier(supabase_rest, legacy_users_provider=load_users)
     try:
         yield
     finally:
@@ -25400,6 +25415,57 @@ def admin_save_settlement_card_overrides(
             can_view_amounts=True,
         ),
     }
+
+
+@app.get("/api/complaint-assignment-profiles")
+def complaint_assignment_profiles(giriton_pwa_session: str | None = Cookie(default=None)):
+    require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    return {"profiles": load_complaint_profiles(supabase_rest, load_users())}
+
+
+@app.get("/api/complaint-assignments")
+def complaint_assignment_list(scope: str = "mine", month: str = "", complaint: UUID | None = None,
+                              offset: int = Query(default=0, ge=0), giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_user(giriton_pwa_session)
+    try:
+        return list_assigned_complaints(supabase_rest, user, admin=can_view_settlement_dashboard(user), scope=scope,
+                                       month=month, complaint_id=str(complaint) if complaint else '', offset=offset)
+    except AssignmentError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/complaint-assignments/{complaint_id}/assign")
+def complaint_assignment_save(complaint_id: UUID, payload: ComplaintProfileAssignmentRequest,
+                             giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_settlement_dashboard_admin(require_user(giriton_pwa_session))
+    try:
+        value = assign_complaint_case(supabase_rest, user, str(complaint_id), payload.profileKey, legacy_users=load_users(),
+                                     operation_id=str(payload.operationId), expected_assignment_id=payload.expectedAssignmentId, note=payload.note)
+        return {"ok": True, "assignment": value}
+    except AssignmentError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/complaint-assignments/{complaint_id}/notes")
+def complaint_assignment_note(complaint_id: UUID, payload: ComplaintSharedNoteRequest,
+                             giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_user(giriton_pwa_session)
+    try:
+        value = add_assigned_complaint_note(supabase_rest, user, str(complaint_id), payload.text, admin=can_view_settlement_dashboard(user),
+                                           operation_id=str(payload.operationId), expected_assignment_id=payload.expectedAssignmentId,
+                                           expected_notes_revision=payload.expectedNotesRevision)
+        return {"ok": True, "assignment": value}
+    except AssignmentError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/complaint-assignments/{complaint_id}/start")
+def complaint_assignment_start(complaint_id: UUID, giriton_pwa_session: str | None = Cookie(default=None)):
+    user = require_user(giriton_pwa_session)
+    try:
+        return start_assigned_complaint(supabase_rest, user, str(complaint_id), admin=can_view_settlement_dashboard(user))
+    except AssignmentError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
 @app.patch("/api/admin/workflow/complaints/{complaint_id}")
