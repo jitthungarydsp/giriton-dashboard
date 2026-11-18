@@ -26,6 +26,7 @@ const base={date,now,monitor:[{route_id:'42',status:'ON_ROUTE',fetched_at:'2026-
     const env={SUPABASE_URL:setting('SUPABASE_URL'),SUPABASE_SERVICE_ROLE_KEY:setting('SUPABASE_SERVICE_ROLE_KEY')};
     const response=await c.courier360Data(new Request('https://test/api/courier360?courier=6959&date=2026-11-16&month=2026-10'),env);
     const p=await response.json();assert.equal(response.status,200);assert.equal(p.courier.id,'6959');assert.ok(p.financeSnapshot);assert.ok(!p.operational.route?.active||p.operational.fresh);
-    console.log(JSON.stringify({courier:p.courier,working:p.operational.currentWorking,label:p.operational.label,snapshotVersion:p.financeSnapshot.version,payable:p.finance.payable,complaints:p.complaints.length,documents:p.documents.length,shifts:p.operational.shifts.length,unavailable:p.sources.filter(s=>!s.available).map(s=>s.table)}));
+    assert.equal(p.payment.snapshotId,p.financeSnapshot.id);
+    console.log(JSON.stringify({courier:p.courier,working:p.operational.currentWorking,label:p.operational.label,snapshotVersion:p.financeSnapshot.version,payable:p.finance.payable,complaints:p.complaints.length,documents:p.documents.length,shifts:p.operational.shifts.length,unavailable:p.sources.filter(s=>!s.available).map(s=>s.table),payment:{transferResult:p.payment.transfer.result,cashResult:p.payment.cash.result,hasBankAccount:Boolean(p.payment.bankAccount),hasSavedTig:p.payment.transfer.expectedHuf!==null,canClose:p.payment.canClose,blockingReasons:p.payment.blockingReasons,eventCount:p.payment.events.length}}));
   }
 })().catch(e=>{console.error(e.stack);process.exitCode=1});

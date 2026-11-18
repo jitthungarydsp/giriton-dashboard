@@ -861,7 +861,7 @@ async function courier360Data(request, env, now = new Date()) {
   const sameId={courier_id:`eq.${courierId}`};
   const endDate=new Date(Date.parse(date)+31*86400000).toISOString().slice(0,10);
   const [profiles,masters,monitor,detail,map,storedStops,statistics,checkins,allAttendance,bookings,giritonShifts,complaints,documents,states,acceptances,metrics,closures,snapshots,advanceAdditions,dashboardRows] = await Promise.all([
-    safe('courier_master',PUBLIC_SCHEMA,{...sameId,select:'courier_id,courier_name,warehouse_name',order:'courier_id.asc',limit:1}),
+    safe('courier_master',PUBLIC_SCHEMA,{...sameId,select:'courier_id,courier_name,warehouse_name,company_name,bank_account_number',order:'courier_id.asc',limit:1}),
     safe('courier_hub_master',PUBLIC_SCHEMA,{...sameId,select:'courier_id,courier_name,user_number,giriton_person_id,warehouse_code,vehicle_registration_number,fetched_at',order:'fetched_at.desc',limit:4}),
     safe('courier_hub_live_monitoring_courier_snapshot_latest',PUBLIC_SCHEMA,{...sameId,select:'courier_id,route_id,status,shift_status,warehouse_code,deliveries_completed,stops_total,vehicle_plate,departed_at,courier_json,fetched_at',order:'fetched_at.desc',limit:4}),
     safe('courier_hub_live_monitoring_courier_latest',PUBLIC_SCHEMA,{...sameId,select:'courier_id,route_id,warehouse_code,response_json,fetched_at',status_code:'eq.200',order:'fetched_at.desc',limit:4}),
@@ -877,7 +877,7 @@ async function courier360Data(request, env, now = new Date()) {
     safe('peopleforce_card_statuses',PUBLIC_SCHEMA,{...sameId,select:'action_key,status,status_note,updated_by,created_at,updated_at',document_month:`eq.${periodStart}`,order:'updated_at.desc',limit:100}),
     safe('pwa_workflow_acceptance_snapshots',SETTLEMENT_SCHEMA,{...sameId,select:'id,action_key,process_id,payable_huf,tig_final_total_huf,accepted_at,accepted_by',period_start:`eq.${periodStart}`,order:'accepted_at.asc',limit:300}),
     safe('courier_monthly_process_metric',SETTLEMENT_SCHEMA,{...sameId,select:'*',period_start:`eq.${periodStart}`,limit:1}),
-    safe('courier_monthly_closure',SETTLEMENT_SCHEMA,{...sameId,select:'status,payable_huf,closed_at,closed_by',period_start:`eq.${periodStart}`,limit:1}),
+    safe('courier_monthly_closure',SETTLEMENT_SCHEMA,{...sameId,select:'status,payable_huf,closed_at,closed_by,reopened_at,reopened_by,recipient_name,bank_account_number,payment_note,invoice_number,snapshot',period_start:`eq.${periodStart}`,limit:1}),
     loadLatestFinanceSnapshots(env,periodStart,courierId).then(rows=>{sources.push({table:'courier_finance_snapshot',available:true,count:rows.length});return rows}).catch(()=>{sources.push({table:'courier_finance_snapshot',available:false,count:null});return []}),
     loadSalaryAdvanceAdditions(env,periodStart).then(rows=>{sources.push({table:'Fizetési előlegek',available:true,count:rows.length});return rows}).catch(()=>{sources.push({table:'Fizetési előlegek',available:false,count:null});return []}),
     safe('vw_admin_settlement_dashboard_fast',SETTLEMENT_SCHEMA,{select:'courier_id,dashboard_status_label',period_start:`eq.${periodStart}`,order:'courier_id.asc',limit:10000}),
@@ -890,6 +890,9 @@ async function courier360Data(request, env, now = new Date()) {
   if(attendanceNames.size>1)sources.push({table:'Giriton névazonosítás',available:false,count:null});
   const operational=courier360BuildOperational({date,now,monitor,detail,map,stops:storedStops,statistics,checkins,attendance,bookings,giritonShifts});
   const financeSnapshot=snapshots[0]||null;
+  const paymentSources=financeSnapshot?await safe('courier_finance_snapshot_source',SETTLEMENT_SCHEMA,{
+    snapshot_id:`eq.${financeSnapshot.id}`,source_key:'in.(tig_breakdown,courier_profile)',select:'source_key,payload',limit:10,
+  }):[];
   const workflowStates=Object.fromEntries(states.filter(row=>!key(row.action_key).startsWith('process:')).map(row=>[row.action_key,row]));
   const closure=closures[0]||null;
   const finance=financeSnapshot?buildCourierRow({courier_id:courierId,workflowStates,dashboardStatus:dashboardRows.find(row=>key(row.courier_id)===courierId)?.dashboard_status_label,salaryAdvanceAdded:advanceAdditions.filter(row=>key(row.courier_id)===courierId).reduce((s,r)=>s+money(r.requested_amount_huf),0)},profiles[0],null,closure,financeSnapshot,metrics[0]):null;
@@ -898,7 +901,147 @@ async function courier360Data(request, env, now = new Date()) {
     .sort((a,b)=>key(b.at).localeCompare(key(a.at)));
   return jsonResponse({courier:{id:courierId,name:key(profiles[0]?.courier_name||masters[0]?.courier_name||financeSnapshot?.courier_name||courierId),warehouse:key(profiles[0]?.warehouse_name||masters[0]?.warehouse_code)},
     date,periodStart,generatedAt:now.toISOString(),operational,finance,financeSnapshot:financeSnapshot?{id:financeSnapshot.id,version:financeSnapshot.version,createdAt:financeSnapshot.created_at,items:financeSnapshot.items}:null,
-    complaints:complaints.filter(row=>key(row.status).toLowerCase()!=='deleted'),documents,workflowStates,acceptances,closure,processMetric:metrics[0]||null,eventLog,sources});
+    complaints:complaints.filter(row=>key(row.status).toLowerCase()!=='deleted'),documents,workflowStates,acceptances,closure,processMetric:metrics[0]||null,eventLog,sources,
+    payment:courier360Payment({courierId,periodStart,profile:profiles[0],snapshot:financeSnapshot,paymentSources,documents,workflowStates,processStates:states,closure,acceptances,complaints,sources})});
+}
+
+// Read the saved TIG, never recalculate money from an incomplete courier list.
+function paymentNumber(value) {
+  if(value===null||value===undefined||String(value).trim()==='')return null;
+  const n=Number(value);return Number.isFinite(n)?Math.round(n):null;
+}
+function paymentDocumentProcess(document) {
+  return key(document?.document_type).match(/^process:([a-z0-9_-]+):/i)?.[1]||key(document?.note).match(/Folyamat azonosító:\s*([a-z0-9_-]+)/i)?.[1]||'';
+}
+function paymentDocumentMode(document,periodStart='') {
+  const type=key(document.document_type),note=key(document.note);
+  const process=paymentDocumentProcess(document);
+  if(process)return process===`kp_invoice_${periodStart.slice(0,7).replace('-','')}`&&(type==='invoice'||type===`process:${process}:invoice`)?'cash':null;
+  if(!['invoice','cash_invoice','kp_invoice'].includes(type))return null;
+  return ['cash_invoice','kp_invoice'].includes(type)||/^\s*kp\s/i.test(key(document.title))||
+    /kp[_ -]sz[aá]mla/i.test(key(document.file_name))||/fizet[eé]si m[oó]d\s*:\s*(kp\b|k[eé]szp[eé]nz)/i.test(note)?'cash':'transfer';
+}
+function paymentDocumentAmount(document) {
+  // Upload metadata is not a new PDF validation. Keep that distinction in the UI.
+  const match=key(document?.note).match(/(?:brutt[óo]\s+[öo]sszesen|[öo]sszeg)\s*:\s*([0-9\s\u00a0.,]+)\s*Ft/i);
+  if(!match)return null;
+  const value=match[1].replace(/[\s\u00a0]/g,'').replace(/\.(?=\d{3}(?:[.,]|$))/g,'').replace(',','.');
+  return paymentNumber(value);
+}
+function paymentInvoiceNumber(document) {
+  const title=key(document?.title).replace(/^(?:kp\s+)?sz[aá]mla\s*/i,'');
+  return title||'';
+}
+function courier360Payment({courierId,periodStart,profile={},snapshot,paymentSources=[],documents=[],workflowStates={},processStates=[],closure,acceptances=[],complaints=[],sources=[]}) {
+  const source=name=>courier360Json(paymentSources.find(row=>row.source_key===name)?.payload);
+  const tig=source('tig_breakdown'),savedProfile=source('courier_profile');
+  const latest={};
+  const monthlyDocuments=documents.filter(d=>!paymentDocumentProcess(d)||paymentDocumentMode(d,periodStart)==='cash');
+  for(const document of [...monthlyDocuments].sort((a,b)=>key(b.uploaded_at).localeCompare(key(a.uploaded_at))||key(b.id).localeCompare(key(a.id)))){
+    const mode=paymentDocumentMode(document,periodStart);if(mode&&!latest[mode])latest[mode]=document;
+  }
+  const check=workflowStates.invoice_check||{},closed=closure?.status==='done'||workflowStates.invoice_payment?.status==='done';
+  const compare=mode=>{
+    const expected=paymentNumber(tig[mode==='cash'?'cashGrossHuf':'finalTotalHuf']),document=latest[mode]||null,actual=paymentDocumentAmount(document);
+    const difference=expected!==null&&actual!==null?actual-expected:null;
+    const result=!document?(mode==='cash'&&expected===0?'not_required':'missing'):difference===null?'unknown':Math.abs(difference)<=1?'match':'mismatch';
+    // A newer upload must not inherit an older invoice's successful check.
+    const process=paymentDocumentProcess(document),documentCheck=process?processStates.find(row=>row.action_key===`process:${process}:invoice_check`)||{}:check;
+    const checkedAt=Date.parse(documentCheck.updated_at),uploadedAt=Date.parse(document?.uploaded_at);
+    const checked=Boolean(document&&Number.isFinite(checkedAt)&&Number.isFinite(uploadedAt)&&checkedAt>=uploadedAt);
+    return {expectedHuf:expected,actualHuf:actual,differenceHuf:difference,result,document,
+      amountSource:actual===null?null:'upload_note',check:checked?documentCheck:null};
+  };
+  const transfer=compare('transfer'),cash=compare('cash');
+  const payableItem=(snapshot?.items||[]).find(item=>item.section==='finance'&&item.item_key==='payable');
+  const amount=closure?.status==='done'?paymentNumber(closure.payable_huf):paymentNumber(payableItem?.amount_value);
+  const invoiceNumber=key(closure?.invoice_number)||paymentInvoiceNumber(latest.transfer);
+  const bankAccount=key(closure?.status==='done'?closure.bank_account_number:profile?.bank_account_number);
+  const recipientName=key(closure?.status==='done'?closure.recipient_name:profile?.company_name)||key(profile?.courier_name||savedProfile.courier_name);
+  const blocking=[];
+  const failed=sources.filter(row=>row.available===false&&['courier_master','courier_finance_snapshot','courier_finance_snapshot_source','peopleforce_documents','peopleforce_card_statuses','courier_monthly_closure'].includes(row.table));
+  if(failed.length)blocking.push('Egyes kifizetési források nem érhetők el.');
+  if(!snapshot||amount===null)blocking.push('Hiányzik a mentett havi kifizetendő összeg.');
+  if(!bankAccount)blocking.push('Hiányzik a kedvezményezett bankszámlaszáma.');
+  if(!recipientName)blocking.push('Hiányzik a kedvezményezett neve.');
+  if(check.status!=='done'&&workflowStates.manual_invoice_skip?.status!=='done')blocking.push('A számla még nincs jóváhagyva.');
+  if(check.status==='open')blocking.push('A számlaellenőrzés nyitott.');
+  if([transfer,cash].some(item=>item.document&&(!item.check||item.check.status!=='done'))&&workflowStates.manual_invoice_skip?.status!=='done')blocking.push('Az aktuális számlák jóváhagyása még nincs rögzítve.');
+  if(!invoiceNumber)blocking.push('Hiányzik az átutalásos számla sorszáma.');
+  if(cash.result==='missing'&&cash.expectedHuf>0&&workflowStates.manual_invoice_skip?.status!=='done')blocking.push('Hiányzik a szükséges KP-s számla.');
+  if(transfer.result==='mismatch'||cash.result==='mismatch')blocking.push('A rögzített számlaösszeg eltér a teljesítésigazolástól.');
+  const events=[];
+  const add=(at,label,detail,actor,kind='event')=>{if(at)events.push({at,label,detail:detail||'',actor:actor||'',kind})};
+  const labels={settlement:'Elszámolás',tig:'Teljesítésigazolás',invoice_submit:'Számlafeltöltés',invoice_check:'Számlaellenőrzés',invoice_payment:'Kifizetés'};
+  for(const row of acceptances.filter(row=>!key(row.process_id)))add(row.accepted_at,`${labels[row.action_key]||row.action_key} elfogadva`,'Elfogadási mentés',row.accepted_by);
+  for(const document of monthlyDocuments)add(document.uploaded_at,`${paymentDocumentMode(document,periodStart)==='cash'?'KP-s számla':paymentDocumentMode(document,periodStart)==='transfer'?'Átutalásos számla':'Dokumentum'} feltöltve`,key(document.title||document.file_name),document.uploaded_by);
+  for(const row of complaints.filter(row=>!key(row.document_type).startsWith('process:')&&key(row.status)!=='deleted')){
+    add(row.created_at,'Reklamáció érkezett',row.message,'','complaint');
+    add(row.responded_at,'Reklamáció megválaszolva',row.admin_response,row.responded_by,'complaint');
+  }
+  for(const [action,row] of Object.entries(workflowStates))if(labels[action])add(row.updated_at,`${labels[action]} · ${row.status==='done'?'Kész':row.status==='open'?'Nyitott':row.status}`,row.status_note,row.updated_by,'current_state');
+  for(const row of processStates)if(row.action_key===`process:kp_invoice_${periodStart.slice(0,7).replace('-','')}:invoice_check`)add(row.updated_at,`KP-s számla ellenőrzése · ${row.status==='done'?'Kész':'Nyitott'}`,row.status_note,row.updated_by,'current_state');
+  add(closure?.closed_at,'Kifizetés rögzítve',key(courier360Json(closure?.snapshot).close_note),closure?.closed_by);
+  add(closure?.reopened_at,'Havi kifizetés visszanyitva','',closure?.reopened_by);
+  events.sort((a,b)=>key(b.at).localeCompare(key(a.at)));
+  return {snapshotId:snapshot?.id||'',snapshotVersion:snapshot?.version??null,amountHuf:amount,
+    recipientName,bankAccount,invoiceNumber,paymentNote:key(closure?.status==='done'?closure.payment_note:'')||[courierId,invoiceNumber].filter(Boolean).join('-'),
+    closed,closedAt:closure?.status==='done'?closure.closed_at:workflowStates.invoice_payment?.status==='done'?workflowStates.invoice_payment.updated_at:null,
+    closedBy:closure?.status==='done'?closure.closed_by:workflowStates.invoice_payment?.status==='done'?workflowStates.invoice_payment.updated_by:null,
+    transfer,cash,tigBreakdown:tig,tigDocuments:monthlyDocuments.filter(d=>['tig','performance_certificate'].includes(key(d.document_type))),
+    canClose:!closed&&blocking.length===0,blockingReasons:blocking,events,periodStart};
+}
+
+async function courier360ClosePayment(request,env,user) {
+  if(request.headers.get('origin')!==new URL(request.url).origin)return jsonResponse({error:'Érvénytelen kérésforrás.'},403);
+  if(!request.headers.get('content-type')?.includes('application/json'))return jsonResponse({error:'JSON kérés szükséges.'},415);
+  const body=await request.json().catch(()=>null);
+  if(!/^\d{1,12}$/.test(key(body?.courierId))||!/^\d{4}-(0[1-9]|1[0-2])$/.test(key(body?.month))||! /^[0-9a-f-]{36}$/i.test(key(body?.snapshotId)))return jsonResponse({error:'Hiányzó vagy hibás kifizetési azonosítók.'},400);
+  const url=new URL('/api/courier360',request.url);url.searchParams.set('courier',body.courierId);url.searchParams.set('month',body.month);url.searchParams.set('date',budapestDay(new Date()));
+  const response=await courier360Data(new Request(url),env),data=await response.json();
+  if(!response.ok)return jsonResponse(data,response.status);
+  const payment=data.payment;
+  if(payment.closed)return jsonResponse({ok:true,alreadyClosed:true});
+  if(payment.snapshotId!==body.snapshotId)return jsonResponse({error:'A mentett elszámolás megváltozott. Nyisd meg újra a kifizetést.'},409);
+  if(!payment.canClose)return jsonResponse({error:payment.blockingReasons.join(' ')},409);
+  const note=key(body.note);
+  if(note.length>2000||!note||!note.replace(/\D/g,'').includes(String(Math.abs(payment.amountHuf))))return jsonResponse({error:'A megjegyzés kötelező, és tartalmaznia kell a kifizetendő összeget.'},422);
+  const supabaseUrl=cleanEnv(env.SUPABASE_URL),supabaseKey=cleanEnv(env.SUPABASE_READ_KEY||env.SUPABASE_SERVICE_ROLE_KEY);
+  // Reuse the existing transactional closure: no independent Hub financial writes.
+  const result=await fetch(`${supabaseUrl}/rest/v1/rpc/pwa_close_monthly_payment`,{method:'POST',headers:{
+    apikey:supabaseKey,authorization:`Bearer ${supabaseKey}`,'content-profile':SETTLEMENT_SCHEMA,'accept-profile':SETTLEMENT_SCHEMA,'content-type':'application/json',
+  },body:JSON.stringify({p_courier_id:body.courierId,p_period_start:body.month+'-01',p_snapshot_id:body.snapshotId,p_invoice_number:payment.invoiceNumber,p_note:note,p_actor:user.username})});
+  const payload=await result.json().catch(()=>null);
+  if(!result.ok||!payload?.ok)return jsonResponse({error:result.status===409?'Az elszámolás időközben megváltozott. Frissítsd az ablakot.':'A kifizetés lezárása nem sikerült. A meglévő adminisztrátori kifizetési felületen ellenőrizd a feltételeket.'},409);
+  return jsonResponse({ok:true,alreadyClosed:Boolean(payload.alreadyClosed)});
+}
+
+function normalizePaymentBankAccount(value) {
+  const text=String(value??'').trim(),digits=text.replace(/[\s-]/g,'');
+  if(!/^[0-9\s-]{8,40}$/.test(text)||![16,24,32].includes(digits.length))return null;
+  return digits.match(/.{8}/g).join('-');
+}
+async function courier360SaveBankAccount(request,env,user) {
+  if(request.headers.get('origin')!==new URL(request.url).origin)return jsonResponse({error:'Érvénytelen kérésforrás.'},403);
+  if(!request.headers.get('content-type')?.includes('application/json'))return jsonResponse({error:'JSON kérés szükséges.'},415);
+  const body=await request.json().catch(()=>null),courierId=key(body?.courierId),account=normalizePaymentBankAccount(body?.bankAccount);
+  if(!/^\d{1,12}$/.test(courierId))return jsonResponse({error:'Érvénytelen futárazonosító.'},400);
+  if(!account)return jsonResponse({error:'Adj meg 16, 24 vagy 32 számjegyet; szóköz és kötőjel használható.'},422);
+  const rows=await supabaseFetch(env,PUBLIC_SCHEMA,'courier_master',{select:'courier_id,bank_account_number',courier_id:`eq.${courierId}`,limit:1});
+  const profile=rows[0];if(!profile)return jsonResponse({error:'A futár törzsadata nem található.'},404);
+  if(key(profile.bank_account_number))return normalizePaymentBankAccount(profile.bank_account_number)===account?jsonResponse({ok:true,alreadySaved:true}):jsonResponse({error:'A futárnak már van bankszámlaszáma. Frissítsd az ablakot; a meglévő adat itt nem írható felül.'},409);
+  const supabaseUrl=cleanEnv(env.SUPABASE_URL),supabaseKey=cleanEnv(env.SUPABASE_READ_KEY||env.SUPABASE_SERVICE_ROLE_KEY),now=new Date().toISOString();
+  const url=new URL(`${supabaseUrl}/rest/v1/courier_master`);
+  url.searchParams.set('courier_id',`eq.${courierId}`);url.searchParams.set('bank_account_number',profile.bank_account_number==null?'is.null':`eq.${profile.bank_account_number}`);url.searchParams.set('select','courier_id');
+  const headers={apikey:supabaseKey,authorization:`Bearer ${supabaseKey}`,'content-profile':PUBLIC_SCHEMA,'accept-profile':PUBLIC_SCHEMA,'content-type':'application/json',prefer:'return=representation'};
+  // Compare-and-set fills only the missing value, including during concurrent edits.
+  const response=await fetch(url,{method:'PATCH',headers,body:JSON.stringify({bank_account_number:account,billing_data_source:'jitt_hub_admin',billing_data_updated_at:now,updated_at:now})});
+  if(!response.ok)return jsonResponse({error:'A bankszámlaszám nem menthető. Próbáld újra.'},502);
+  const saved=await response.json().catch(()=>null);
+  if(!Array.isArray(saved)||saved.length!==1)return jsonResponse({error:'A törzsadat időközben megváltozott. Frissítsd az ablakot.'},409);
+  let auditSaved=false;
+  try{const audit=await fetch(`${supabaseUrl}/rest/v1/courier_profile_change_log`,{method:'POST',headers:{...headers,'content-profile':SETTLEMENT_SCHEMA,'accept-profile':SETTLEMENT_SCHEMA,prefer:'return=minimal'},body:JSON.stringify({courier_id:courierId,changed_fields:{bank_account_number:{old:profile.bank_account_number||'',new:account}},changed_by:user.username,created_at:now})});auditSaved=audit.ok;}catch{}
+  return jsonResponse({ok:true,...(!auditSaved?{warning:'A bankszámlaszám mentve, de a külön változásnapló bejegyzése nem sikerült.'}:{})});
 }
 
 async function courier360Document(request,env) {
@@ -939,6 +1082,13 @@ export default {
     if (url.pathname === "/api/logout") {
       if (request.method !== "POST") return jsonResponse({ error: "Use POST." }, 405);
       return logoutHub();
+    }
+
+    if (['/api/courier360-payment-close','/api/courier360-bank-account'].includes(url.pathname)) {
+      if(request.method!=='POST')return jsonResponse({error:'Use POST.'},405);
+      const access=await requireDashboardUser(request,env);if(access.error)return access.error;
+      try{return url.pathname.endsWith('bank-account')?await courier360SaveBankAccount(request,env,access.user):await courier360ClosePayment(request,env,access.user)}
+      catch{return jsonResponse({error:'A kifizetés nem rögzíthető. Frissítsd az adatokat és ellenőrizd a kifizetési felületet.'},500)}
     }
 
     if (["/api/courier360","/api/courier360-document"].includes(url.pathname)) {
