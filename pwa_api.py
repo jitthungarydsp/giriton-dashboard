@@ -15,6 +15,8 @@ import sys
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from resources.complaint_assignment_notifications import start_assignment_notifier
 from email.message import EmailMessage
 from email.utils import formataddr
 from datetime import date, datetime, timedelta, timezone
@@ -18169,6 +18171,7 @@ def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], l
             "peopleforce_card_statuses",
             params={
                 "select": "action_key,status,status_note,updated_by,updated_at",
+                "action_key": "not.like.internal_complaint_assignment:*",
                 "courier_id": f"eq.{courier_id}",
                 "document_month": f"eq.{month_value}",
                 "order": "updated_at.desc",
@@ -18190,7 +18193,7 @@ def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], l
             params=complaint_params,
         )
         documents = documents_future.result()
-        statuses = statuses_future.result()
+        statuses = [row for row in statuses_future.result() if not str(row.get("action_key") or "").startswith("internal_complaint_assignment:")]
         complaints = complaints_future.result()
     return documents, statuses, complaints
 
@@ -18199,6 +18202,8 @@ def status_map(rows: list[dict], process_id: str | None = "") -> dict[str, dict]
     result: dict[str, dict] = {}
     for row in rows:
         key = str(row.get("action_key") or "")
+        if key.startswith("internal_complaint_assignment:"):
+            continue
         if process_id_from_action_key(key) != normalize_process_id(process_id):
             continue
         clean_key = base_action_key(key)
@@ -21226,7 +21231,16 @@ def disable_push_subscription(
     )
 
 
-app = FastAPI(title="Kifli Futár PWA", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def pwa_lifespan(_app):
+    assignment_stop = start_assignment_notifier(supabase_rest)
+    try:
+        yield
+    finally:
+        assignment_stop.set()
+
+
+app = FastAPI(title="Kifli Futár PWA", docs_url=None, redoc_url=None, lifespan=pwa_lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 
 

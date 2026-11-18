@@ -11,10 +11,18 @@ const first='00000000-0000-0000-0000-000000000001',second='00000000-0000-0000-00
    complaints:[{id:first,document_type:'settlement',status:'new',message:'Hiányzó bónusz <img src=x onerror=alert(1)>',created_by:'Teszt Futár',created_at:'2026-11-18T09:00:00Z'},
     {id:second,document_type:'invoice_check',status:'closed',message:'Második ügy',admin_response:'Korábbi ügy válasza',responded_at:'2026-11-18T08:00:00Z',responded_by:'Admin'}],
    financeComparison:{available:true,before:{version:10},after:{version:11},rows:[{label:'Bónusz',beforeHuf:0,afterHuf:31020,differenceHuf:31020}]}};
+  fixture.complaintAssignees=[{key:'bagoly_zoltan',name:'Bagoly Zoltán',email:'zoltan.bagoly@jitt.hu'},{key:'gurzo_balazs',name:'Gurzó Balázs',email:'gurzo@example.test'}];fixture.complaintAssignments={};
   const setup=`const $=s=>document.querySelector(s),nf=new Intl.NumberFormat('hu-HU'),huf=x=>nf.format(x)+' Ft',monthLabel=String;
    const esc=x=>String(x??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
    const data={couriers:[{courierId:'1234',courierName:'Teszt Futár'}]};window.fixture=${JSON.stringify(fixture)};window.writes=[];window.fail=false;
-   const api=async(url,options={})=>{if(options.method==='POST'){const body=JSON.parse(options.body);writes.push(body);await new Promise(resolve=>setTimeout(resolve,40));if(fail)throw Error('Mentési hiba');const row=fixture.complaints.find(r=>r.id===body.complaintId);if(body.action==='start')row.status='in_progress';if(body.action==='close'){row.status='closed';row.admin_response=body.response;row.responded_at='2026-11-18T11:00:00Z';row.responded_by='Admin';}if(body.action==='reopen'){row.status='open';row.admin_response=null;row.responded_at=null;}if(body.action==='note')fixture.complaintNote.note=body.note;return {ok:true};}return structuredClone(fixture);};`;
+   const api=async(url,options={})=>{if(options.method==='POST'){
+    const body=JSON.parse(options.body);writes.push(body);await new Promise(resolve=>setTimeout(resolve,40));if(fail)throw Error('Mentési hiba');
+    const row=fixture.complaints.find(r=>r.id===body.complaintId);
+    if(body.action==='assign')fixture.complaintAssignments[row.id]={assignmentId:body.operationId,assignee:fixture.complaintAssignees.find(p=>p.key===body.assigneeKey),assignedBy:'Admin',assignedAt:'2026-11-18T10:00:00Z',notification:{status:'pending'}};
+    if(body.action==='start')row.status='in_progress';
+    if(body.action==='close'){row.status='closed';row.admin_response=body.response;row.responded_at='2026-11-18T11:00:00Z';row.responded_by='Admin';}
+    if(body.action==='reopen'){row.status='open';row.admin_response=null;row.responded_at=null;}
+    if(body.action==='note')fixture.complaintNote.note=body.note;return {ok:true};}return structuredClone(fixture);};`;
   const c360=read('jitt_hub/courier360.js'),helpers=c360.slice(c360.indexOf('function c360Date'),c360.indexOf('function c360Go'));
   await page.setContent(`<style>${inlineStyle}${read('jitt_hub/courier360.css')}${read('jitt_hub/status-dialog.css')}</style><select id="month"><option>2026-10</option></select>${['Reklamáció','Számla ellenőrzésre vár','Kifizetésre vár','Elszámolás elfogadására vár'].map(status=>`<button data-status-courier="1234" data-status-label="${status}">${status}</button>`).join('')}${dialog}<script>${setup}${helpers}${read('jitt_hub/status-dialog.js')}</script>`);
   const modal=page.locator('dialog'),expectedTabs=['Elszámolási folyamat','Reklamáció','Pénzügyi hatás','Ellenőrzés és utalás','Előzmények','Dokumentumok'];
@@ -25,6 +33,15 @@ const first='00000000-0000-0000-0000-000000000001',second='00000000-0000-0000-00
   }
   assert.equal(await page.evaluate(()=>writes.length),0,'Opening statuses and switching menus must never write');
   await page.getByRole('button',{name:'Reklamáció',exact:true}).click();await modal.locator('.complaint-card blockquote').waitFor();
+  await modal.getByLabel('Felelős kiválasztása').selectOption('bagoly_zoltan');
+  await modal.locator('.complaint-assignment-form').evaluate(f=>{f.requestSubmit();f.requestSubmit()});
+  await modal.locator('.complaint-assignment strong').getByText('Bagoly Zoltán',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>writes.filter(row=>row.action==='assign').length),1,'Assignment submit is deduplicated');
+  assert.match((await page.evaluate(()=>writes[0])).operationId,/^[0-9a-f-]{36}$/i);
+  await modal.getByLabel('Felelős kiválasztása').selectOption('gurzo_balazs');await modal.getByRole('button',{name:'Felelős mentése és értesítése',exact:true}).click();
+  await modal.locator('.complaint-assignment strong').getByText('Gurzó Balázs',{exact:true}).waitFor();
+  assert.equal((await page.evaluate(()=>writes[1])).expectedAssignmentId,(await page.evaluate(()=>writes[0])).operationId);
+  await modal.locator('.complaint-assignment').getByText('Küldésre vár',{exact:true}).waitFor();
   assert.equal(await modal.locator('.complaint-card img').count(),0);await page.screenshot({path:path.join(root,'tmp/complaint-dialog-desktop.png')});
   await modal.getByRole('tab',{name:'Pénzügyi hatás',exact:true}).click();assert.match(await modal.locator('#status-panel-finance').textContent(),/31.?020 Ft/);
   await modal.getByRole('tab',{name:'Reklamáció',exact:true}).click();await modal.getByRole('button',{name:'Vizsgálat megkezdése',exact:true}).click();await modal.getByText('Vizsgálat alatt',{exact:true}).waitFor();

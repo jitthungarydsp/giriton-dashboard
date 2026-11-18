@@ -2,6 +2,11 @@
 let statusDialogSequence=0;
 let statusDialogPayload=null;
 let statusDialogComplaintId=null;
+function complaintOperationId(){
+  const bytes=crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+  const hex=[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('');
+  return [hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-');
+}
 const statusDialogTabs=[['workflow','Elszámolási folyamat'],['complaints','Reklamáció'],['finance','Pénzügyi hatás'],['payment','Ellenőrzés és utalás'],['history','Előzmények'],['documents','Dokumentumok']];
 function statusDialogKind(status){
   if(status==='Reklamáció')return 'complaints';
@@ -64,6 +69,12 @@ function statusDialogPayment(p){
 }
 function complaintStatusLabel(row){return ({new:'Új',open:row?.admin_response?'Megválaszolt · nyitott':'Nyitott',in_progress:'Vizsgálat alatt',resolved:'Megoldva',closed:'Lezárva'})[row?.status]||row?.status||'Ismeretlen';}
 function complaintActionLabel(type){return ({settlement:'Elszámolás',tig:'Teljesítésigazolás',invoice:'Számla',invoice_submit:'Számlafeltöltés',invoice_check:'Számlaellenőrzés',invoice_payment:'Kifizetés'})[String(type||'').split(':').at(-1)]||type||'Nincs rögzítve';}
+function statusDialogAssignment(p,row,closed){
+  const assignment=p.complaintAssignments?.[row.id],assignees=p.complaintAssignees||[];
+  const notification=assignment?.notification||{},labels={pending:'Küldésre vár',sending:'Küldés folyamatban',sent:'Elküldve',failed:'Sikertelen küldés',uncertain:'A küldés eredménye nem igazolt'};
+  return `<section class="complaint-assignment"><h4>Reklamáció felelőse</h4>${assignment?`<p><strong>${esc(assignment.assignee?.name)}</strong><br><span class="payment-meta">${esc(assignment.assignee?.email)}<br>Kijelölte: ${esc(assignment.assignedBy)} · ${c360Date(assignment.assignedAt)}</span></p><p class="payment-meta">E-mail-értesítés: <strong>${esc(labels[notification.status]||'Nem ismert')}</strong>${notification.sentAt?' · '+c360Date(notification.sentAt):''}</p>${notification.error?`<p class="payment-meta">${esc(notification.error)}</p>`:''}`:'<p class="payment-meta">Még nincs kijelölt felelős.</p>'}
+    ${!closed&&assignees.length&&/^[0-9a-f-]{36}$/i.test(row.id||'')?`<form class="complaint-assignment-form"><label for="complaint-assignee">Felelős kiválasztása</label><select id="complaint-assignee" name="assigneeKey" required ${notification.status==='sending'?'disabled':''}><option value="">Válassz felelőst</option>${assignees.map(person=>`<option value="${esc(person.key)}" ${assignment?.assignee?.key===person.key?'selected':''} ${!person.email?'disabled':''}>${esc(person.name)}${person.email?' · '+esc(person.email):' · nincs ellenőrzött e-mail-cím'}</option>`).join('')}</select><button class="c360-button" type="submit" ${notification.status==='sending'?'disabled':''}>${['failed','uncertain'].includes(notification.status)?'Értesítés újrapróbálása':'Felelős mentése és értesítése'}</button><p class="payment-meta">A kijelölt munkatárs e-mailt kap a reklamáció adataival és a megnyitási hivatkozással.</p><p class="complaint-feedback" role="alert"></p></form>`:''}</section>`;
+}
 function statusDialogComplaintCase(p){
   const rows=p.complaints||[],row=rows.find((r,i)=>String(r.id||i)===String(statusDialogComplaintId))||rows[0];
   if(!row)return '<div class="empty">Ehhez a futárhoz és hónaphoz nincs rögzített reklamáció.</div>';
@@ -72,7 +83,7 @@ function statusDialogComplaintCase(p){
   const related=(p.documents||[]).filter(d=>row.id&&(d.note||'').includes(row.id)||(row.id&&(d.title||'').includes(row.id)));
   return `<div class="complaint-case" data-complaint-id="${esc(row.id||'')}"><div class="complaint-context"><span class="complaint-badge ${closed?'is-closed':''}">${esc(complaintStatusLabel(row))}</span><span class="payment-meta">Ügy: ${esc(row.id||'Azonosító nem érhető el')} · ${c360Date(row.created_at)}</span></div>
     <div class="complaint-grid"><article class="complaint-card"><h3>Futár bejelentése</h3><p class="payment-meta">${esc(row.created_by||p.courier.name)} · ${c360Date(row.created_at)}</p><blockquote>${esc(row.message||'Nincs rögzített bejelentésszöveg.')}</blockquote><h4>Az ügyhöz kapcsolt dokumentumok</h4>${related.length?related.map(d=>paymentDocumentLink(p,d)).join('<br>'):'<p class="payment-meta">Nincs az ügyazonosítóhoz kapcsolt dokumentum. Az összes havi irat a Dokumentumok fülön elérhető.</p>'}</article>
-    <article class="complaint-card"><h3>Adminisztrátori vizsgálat</h3><dl class="complaint-facts"><div><dt>Érintett lépés</dt><dd>${esc(complaintActionLabel(row.document_type))}</dd></div><div><dt>Utolsó válaszadó</dt><dd>${esc(row.responded_by||'Még nincs rögzítve')}</dd></div><div><dt>Válasz időpontja</dt><dd>${c360Date(row.responded_at)}</dd></div><div><dt>Havi pénzügyi mentés</dt><dd>${p.financeSnapshot?`${esc(p.financeSnapshot.version)}. verzió`:'Nincs rögzítve'}</dd></div></dl><button type="button" class="complaint-link" data-status-open="finance">Mentett pénzügyi változások megtekintése →</button></article></div>
+    <article class="complaint-card"><h3>Adminisztrátori vizsgálat</h3><dl class="complaint-facts"><div><dt>Érintett lépés</dt><dd>${esc(complaintActionLabel(row.document_type))}</dd></div><div><dt>Utolsó válaszadó</dt><dd>${esc(row.responded_by||'Még nincs rögzítve')}</dd></div><div><dt>Válasz időpontja</dt><dd>${c360Date(row.responded_at)}</dd></div><div><dt>Havi pénzügyi mentés</dt><dd>${p.financeSnapshot?`${esc(p.financeSnapshot.version)}. verzió`:'Nincs rögzítve'}</dd></div></dl>${statusDialogAssignment(p,row,closed)}<button type="button" class="complaint-link" data-status-open="finance">Mentett pénzügyi változások megtekintése →</button></article></div>
     ${row.admin_response?`<article class="complaint-answer"><h3>Legutóbbi rögzített válasz</h3><p>${esc(row.admin_response)}</p></article>`:''}
     ${editable?`<div class="complaint-controls">${closed?'<button type="button" class="c360-button" data-complaint-action="reopen">Ügy visszanyitása</button>':`${row.status!=='in_progress'?'<button type="button" class="c360-button" data-complaint-action="start">Vizsgálat megkezdése</button>':''}<button type="button" class="c360-button" data-complaint-action="respond">Válasz megadása</button><button type="button" class="payment-primary" data-complaint-action="close">Válasz és lezárás</button>`}</div>
     <form class="complaint-response-form" hidden><h3 class="complaint-form-title">Válasz</h3><input type="hidden" name="action" value="respond"><div class="complaint-close-fields" hidden><label>Eredmény<select name="decision"><option value="accepted">Elfogadva</option><option value="partial">Részben elfogadva</option><option value="rejected">Elutasítva</option></select></label><label class="complaint-review"><input type="checkbox" name="financeReviewed">Ellenőriztem a pénzügyi hatást; a szükséges javítást külön elvégeztem, vagy javítás nem szükséges.</label></div><label for="complaint-response">Futárnak szóló válasz / indoklás</label><textarea id="complaint-response" name="response" rows="4" maxlength="5000" required></textarea><p class="payment-meta">A mentett választ a futár a saját folyamatában látja. A lezárás nem módosítja a pénzügyi mentést.</p><div class="payment-form-actions"><button type="button" class="c360-button" data-complaint-cancel>Mégse</button><button type="submit" class="payment-primary">Megerősítés és mentés</button></div><p class="complaint-feedback" role="alert"></p></form>`:'<p class="notice">'+(noteAvailable?'Az ügy mentéséhez nem érhető el érvényes azonosító.':'Az ügykezeléshez szükséges belső naplóforrás jelenleg nem érhető el.')+'</p>'}
@@ -94,6 +105,10 @@ function statusDialogHistory(p){
   const events=[...(p.payment?.events||p.eventLog||[])];
   const add=event=>{if(event.at&&!events.some(row=>row.at===event.at&&row.label===event.label&&row.detail===event.detail))events.push(event);};
   for(const row of p.complaints||[]){add({at:row.created_at,label:'Reklamáció érkezett',detail:row.message,actor:row.created_by,kind:'complaint'});add({at:row.responded_at,label:'Reklamáció megválaszolva',detail:row.admin_response,actor:row.responded_by,kind:'complaint'});}
+  for(const current of Object.values(p.complaintAssignments||{}))for(const assignment of [...(current.history||[]),current]){
+    add({at:assignment.assignedAt,label:'Reklamáció felelőse kijelölve',detail:assignment.assignee?.name,actor:assignment.assignedBy,kind:'complaint'});
+    if(assignment.notification?.sentAt)add({at:assignment.notification.sentAt,label:'Felelős e-mailes értesítése elküldve',detail:assignment.assignee?.name,kind:'complaint'});
+  }
   if(p.complaintNote?.note)add({at:p.complaintNote.updated_at,label:'Havi belső ügyintézési napló és megjegyzés',detail:p.complaintNote.note,actor:p.complaintNote.updated_by,kind:'internal_note'});
   for(const saved of [p.financeComparison?.before,p.financeComparison?.after])if(saved)add({at:saved.createdAt,label:`Pénzügyi mentés · ${saved.version}. verzió`,detail:'Mentett pénzügyi változat; a reklamációval való okozati kapcsolat nincs megállapítva.',actor:saved.createdBy});
   events.sort((a,b)=>String(b.at).localeCompare(String(a.at)));return paymentHistory({events});
@@ -165,11 +180,19 @@ async function saveStatusComplaintAction(action,fields,container){
   const message=container.matches('.complaint-case')?container.querySelector('.complaint-action-message'):container.querySelector('.complaint-feedback');container.dataset.saving='true';container.querySelectorAll('button').forEach(button=>button.disabled=true);message.textContent='Mentés folyamatban…';
   try{
     const result=await api('/api/courier360-complaint',{method:'POST',body:JSON.stringify({courierId:p.courier.id,month:p.periodStart.slice(0,7),complaintId:row.id,action,expected:{status:row.status,adminResponse:row.admin_response??null,respondedAt:row.responded_at??null},expectedNote:p.complaintNote?.note||'',snapshotId:p.financeSnapshot?.id||'',...fields})});
-    if(sequence===statusDialogSequence&&$('#courier-status-dialog').open){await openStatusDialog(p.courier.id,'Reklamáció',row.id);const output=$('.complaint-action-message');if(output)output.textContent=result.warning||'Az ügy módosítása mentve.';}
-    if(action!=='note'&&typeof load==='function')await load();
+    if(sequence===statusDialogSequence&&$('#courier-status-dialog').open){await openStatusDialog(p.courier.id,'Reklamáció',row.id);const output=$('.complaint-action-message');if(output)output.textContent=result.warning||result.message||'Az ügy módosítása mentve.';}
+    if(!['note','assign'].includes(action)&&typeof load==='function')await load();
   }catch(error){if(sequence===statusDialogSequence){message.textContent=error.message;delete container.dataset.saving;container.querySelectorAll('button').forEach(button=>button.disabled=false);}}
 }
 document.addEventListener('submit',async event=>{
+  if(event.target.matches('.complaint-assignment-form')){
+    event.preventDefault();const form=event.target,p=statusDialogPayload,row=(p?.complaints||[]).find(row=>String(row.id)===statusDialogComplaintId);
+    if(!row)return;
+    const operationKey=[row.id,form.elements.assigneeKey.value,p.complaintAssignments?.[row.id]?.assignmentId||''].join('|');
+    if(form.dataset.operationKey!==operationKey){form.dataset.operationKey=operationKey;form.dataset.operationId=complaintOperationId();}
+    const operationId=form.dataset.operationId;
+    await saveStatusComplaintAction('assign',{assigneeKey:form.elements.assigneeKey.value,expectedAssignmentId:p.complaintAssignments?.[row.id]?.assignmentId||'',operationId},form);return;
+  }
   if(event.target.matches('.complaint-response-form,.complaint-note-form')){
     event.preventDefault();const form=event.target;
     if(form.matches('.complaint-note-form'))await saveStatusComplaintAction('note',{note:form.elements.note.value},form);

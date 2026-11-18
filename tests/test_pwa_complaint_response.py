@@ -27,12 +27,16 @@ class ComplaintResponseTest(unittest.TestCase):
             if table == "peopleforce_complaints":
                 columns = kwargs["params"]["select"].split(",")
                 return [{key: value for key, value in row.items() if key in columns}]
+            if table == "peopleforce_card_statuses":
+                self.assertEqual(kwargs['params']['action_key'], 'not.like.internal_complaint_assignment:*')
+                return [{'action_key': 'internal_complaint_assignment:case', 'status_note': 'internal email'}, {'action_key': 'settlement'}]
             return []
         ns = {"Any": Any, "date": date, "ThreadPoolExecutor": ThreadPoolExecutor,
               "supabase_rest": read, "courier_identity": lambda user: ("6206", "Hervai Olivér")}
         fn = load_function("read_workflow_rows", ns)
-        complaints = fn({}, date(2026, 9, 1))[2]
+        _documents, statuses, complaints = fn({}, date(2026, 9, 1))
         self.assertEqual(complaints[0], row)
+        self.assertEqual(statuses, [{'action_key': 'settlement'}], 'Internal assignee and mail data must never reach the courier workflow')
 
     def test_admin_save_confirms_written_response_before_reporting_success(self):
         calls = []

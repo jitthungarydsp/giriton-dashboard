@@ -754,6 +754,19 @@ function courier360Name(value) {
   return normalizedLogin(value).replace(/\b\d+\b/g,'').replace(/\s+/g,' ').trim();
 }
 
+const COMPLAINT_ASSIGNMENT_PREFIX='internal_complaint_assignment:';
+function complaintAssignment(row) {
+  const value=courier360Json(row?.status_note);
+  return row?.action_key?.startsWith(COMPLAINT_ASSIGNMENT_PREFIX)&&value.schemaVersion===1&&value.complaintId===row.action_key.slice(COMPLAINT_ASSIGNMENT_PREFIX.length)?value:null;
+}
+async function complaintAssignees(env) {
+  const users=await supabaseFetch(env,PUBLIC_SCHEMA,'pwa_users',{courier_id:'eq.7644',active:'eq.true',select:'username,email,role',limit:1});
+  const gurzo=users.find(row=>['admin','superadmin'].includes(key(row.role).toLowerCase()));
+  const validEmail=value=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(key(value));
+  return [{key:'bagoly_zoltan',name:'Bagoly Zoltán',email:'zoltan.bagoly@jitt.hu'},
+    {key:'gurzo_balazs',name:'Gurzó Balázs',email:validEmail(gurzo?.email)?key(gurzo.email):null}];
+}
+
 function courier360Stops(route, storedStops=[]) {
   const raw=storedStops.length?storedStops:route.checkpoints||route.stopProgress||route.stops||[];
   if(!Array.isArray(raw))return [];
@@ -893,21 +906,25 @@ async function courier360Data(request, env, now = new Date()) {
   const paymentSources=financeSnapshot?await safe('courier_finance_snapshot_source',SETTLEMENT_SCHEMA,{
     snapshot_id:`eq.${financeSnapshot.id}`,source_key:'in.(tig_breakdown,courier_profile)',select:'source_key,payload',limit:10,
   }):[];
-  const [complaintNotes,historyParents]=await Promise.all([
+  const [complaintNotes,historyParents,assignees]=await Promise.all([
     safe('peopleforce_complaint_notes',PUBLIC_SCHEMA,{...sameId,period_start:`eq.${periodStart}`,select:'note,updated_by,updated_at',limit:1}),
     safe('courier_finance_snapshot',SETTLEMENT_SCHEMA,{...sameId,period_start:`eq.${periodStart}`,select:'id,version,previous_snapshot_id,created_at,created_by',order:'version.desc,created_at.desc,id.desc',limit:2}),
+    complaintAssignees(env).catch(()=>[{key:'bagoly_zoltan',name:'Bagoly Zoltán',email:'zoltan.bagoly@jitt.hu'},{key:'gurzo_balazs',name:'Gurzó Balázs',email:null}]),
   ]);
   const previousParent=historyParents[0]?.id===financeSnapshot?.id?historyParents.find(row=>row.id===historyParents[0].previous_snapshot_id):null;
   const previousItems=previousParent?await safe('courier_finance_snapshot_item',SETTLEMENT_SCHEMA,{snapshot_id:`eq.${previousParent.id}`,section:'eq.finance',amount_kind:'eq.huf',select:'item_key,item_label,amount_value,section,amount_kind',limit:500}):[];
-  const workflowStates=Object.fromEntries(states.filter(row=>!key(row.action_key).startsWith('process:')).map(row=>[row.action_key,row]));
+  const assignments=states.filter(row=>key(row.action_key).startsWith(COMPLAINT_ASSIGNMENT_PREFIX));
+  const publicStates=states.filter(row=>!key(row.action_key).startsWith(COMPLAINT_ASSIGNMENT_PREFIX));
+  const workflowStates=Object.fromEntries(publicStates.filter(row=>!key(row.action_key).startsWith('process:')).map(row=>[row.action_key,row]));
   const closure=closures[0]||null;
   const finance=financeSnapshot?buildCourierRow({courier_id:courierId,workflowStates,dashboardStatus:dashboardRows.find(row=>key(row.courier_id)===courierId)?.dashboard_status_label,salaryAdvanceAdded:advanceAdditions.filter(row=>key(row.courier_id)===courierId).reduce((s,r)=>s+money(r.requested_amount_huf),0)},profiles[0],null,closure,financeSnapshot,metrics[0]):null;
-  const eventLog=[...operational.logs,...states.map(row=>({at:row.updated_at,label:row.action_key+' · '+row.status,detail:row.status_note,actor:row.updated_by,source:'Elszámolási folyamat'})),
+  const eventLog=[...operational.logs,...publicStates.map(row=>({at:row.updated_at,label:row.action_key+' · '+row.status,detail:row.status_note,actor:row.updated_by,source:'Elszámolási folyamat'})),
     ...acceptances.map(row=>({at:row.accepted_at,label:row.action_key+' elfogadása',detail:`Elfogadott összeg: ${row.payable_huf ?? row.tig_final_total_huf ?? '—'} Ft`,actor:row.accepted_by,source:'Elfogadási mentés'}))]
     .sort((a,b)=>key(b.at).localeCompare(key(a.at)));
   return jsonResponse({courier:{id:courierId,name:key(profiles[0]?.courier_name||masters[0]?.courier_name||financeSnapshot?.courier_name||courierId),warehouse:key(profiles[0]?.warehouse_name||masters[0]?.warehouse_code)},
     date,periodStart,generatedAt:now.toISOString(),operational,finance,financeSnapshot:financeSnapshot?{id:financeSnapshot.id,version:financeSnapshot.version,createdAt:financeSnapshot.created_at,items:financeSnapshot.items}:null,
     complaints:complaints.filter(row=>key(row.status).toLowerCase()!=='deleted'),complaintNote:complaintNotes[0]||null,
+    complaintAssignees:assignees,complaintAssignments:Object.fromEntries(assignments.map(row=>{const value=complaintAssignment(row);return [value?.complaintId,value]}).filter(([id,value])=>id&&value)),
     financeComparison:courier360FinanceComparison(financeSnapshot,previousParent,previousItems),documents,workflowStates,acceptances,closure,processMetric:metrics[0]||null,eventLog,sources,
     payment:courier360Payment({courierId,periodStart,profile:profiles[0],snapshot:financeSnapshot,paymentSources,documents,workflowStates,processStates:states,closure,acceptances,complaints,sources})});
 }
@@ -922,11 +939,53 @@ function courier360FinanceComparison(snapshot,previous,previousItems=[]) {
   return {available:true,before:{id:previous.id,version:previous.version,createdAt:previous.created_at,createdBy:previous.created_by},after:{id:snapshot.id,version:snapshot.version,createdAt:snapshot.created_at},rows};
 }
 
-async function courier360ComplaintAction(request,env,user) {
+async function courier360AssignComplaint(body,env,user,executionContext) {
+  const courierId=key(body.courierId),month=key(body.month),id=key(body.complaintId),operationId=key(body.operationId);
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId))return jsonResponse({error:'Hiányzó műveletazonosító. Frissítsd az ablakot.'},422);
+  const [complaints,rows,assignees]=await Promise.all([
+    supabaseFetch(env,PUBLIC_SCHEMA,'peopleforce_complaints',{id:`eq.${id}`,courier_id:`eq.${courierId}`,document_month:`eq.${month}-01`,select:'id,status,courier_name,message',limit:1}),
+    supabaseFetch(env,PUBLIC_SCHEMA,'peopleforce_card_statuses',{courier_id:`eq.${courierId}`,document_month:`eq.${month}-01`,action_key:`eq.${COMPLAINT_ASSIGNMENT_PREFIX}${id}`,select:'action_key,status,status_note,updated_at',limit:1}),
+    complaintAssignees(env),
+  ]);
+  const complaint=complaints[0],old=rows[0],previous=complaintAssignment(old);
+  if(!complaint||complaint.status==='deleted')return jsonResponse({error:'A reklamáció nem található.'},404);
+  if(previous?.assignmentId===operationId)return jsonResponse({ok:true,assignment:previous,message:'A felelős kijelölése már mentve van.'});
+  if(['closed','resolved'].includes(complaint.status))return jsonResponse({error:'Lezárt reklamációt előbb nyiss vissza.'},409);
+  if(old&&!previous)return jsonResponse({error:'A felelős mentése nem értelmezhető. Frissítsd az adatokat.'},409);
+  if(key(body.expectedAssignmentId)!==key(previous?.assignmentId))return jsonResponse({error:'A felelőst időközben módosították. Frissítsd az ablakot.'},409);
+  if(previous?.notification?.status==='sending')return jsonResponse({error:'Az értesítés küldése folyamatban van. Kérlek, várj a felelős módosításával.'},409);
+  const assignee=assignees.find(row=>row.key===body.assigneeKey);
+  if(!assignee?.email)return jsonResponse({error:'Ehhez a felelőshöz nincs ellenőrzött e-mail-cím.'},422);
+  if(previous?.assignee?.key===assignee.key&&previous.assignee.email===assignee.email&&['pending','sent'].includes(previous.notification?.status))return jsonResponse({ok:true,assignment:previous,message:'Ez a felelős már ki van jelölve; nem küldtünk ismételt értesítést.'});
+  const now=new Date().toISOString(),link=new URL('https://jitthub.jitthub.workers.dev/');
+  link.searchParams.set('courier',courierId);link.searchParams.set('month',month);link.searchParams.set('complaint',id);
+  const value={schemaVersion:1,complaintId:id,courierId,month,assignmentId:operationId,assignee,assignedAt:now,assignedBy:user.username,
+    courierName:key(complaint.courier_name)||courierId,complaintMessage:key(complaint.message),hubUrl:link.href,
+    notification:{status:'pending',queuedAt:now,sentAt:null},
+    history:[...(previous?.history||[]),...(previous?[{assignee:previous.assignee,assignedAt:previous.assignedAt,assignedBy:previous.assignedBy,notification:previous.notification}]:[])].slice(-30)};
+  const url=new URL(`${cleanEnv(env.SUPABASE_URL)}/rest/v1/peopleforce_card_statuses`),method=old?'PATCH':'POST';
+  const data={courier_id:courierId,courier_name:value.courierName,document_month:month+'-01',action_key:COMPLAINT_ASSIGNMENT_PREFIX+id,status:'open',status_note:JSON.stringify(value),updated_by:user.username,updated_at:now};
+  if(old)for(const [name,filter]of Object.entries({courier_id:`eq.${courierId}`,document_month:`eq.${month}-01`,action_key:`eq.${data.action_key}`,updated_at:`eq.${old.updated_at}`,status:`eq.${old.status}`}))url.searchParams.set(name,filter);
+  else url.searchParams.set('on_conflict','courier_id,document_month,action_key');
+  const credential=cleanEnv(env.SUPABASE_READ_KEY||env.SUPABASE_SERVICE_ROLE_KEY);
+  const response=await fetch(url,{method,headers:{apikey:credential,authorization:`Bearer ${credential}`,'content-profile':PUBLIC_SCHEMA,'accept-profile':PUBLIC_SCHEMA,'content-type':'application/json',prefer:old?'return=representation':'resolution=ignore-duplicates,return=representation'},body:JSON.stringify(data)});
+  const saved=await response.json().catch(()=>null);
+  if(!response.ok||!Array.isArray(saved)||saved.length!==1)return jsonResponse({error:'A kijelölés nem igazolható, vagy időközben módosult. Frissítsd az ablakot.'},409);
+  // Wake the PWA host if its free instance is asleep. Delivery itself is owned
+  // by the persisted queue and the PWA's existing SMTP/Resend configuration.
+  if(executionContext?.waitUntil){
+    const wakeUrl=new URL('/api/health',cleanEnv(env.PWA_API_URL||'https://futar.jitt.hu'));
+    executionContext.waitUntil(fetch(wakeUrl,{headers:{accept:'application/json'},signal:AbortSignal.timeout(25000)}).catch(()=>{}));
+  }
+  return jsonResponse({ok:true,assignment:value,message:'A felelős mentve. Az e-mailes értesítés küldésre vár.'});
+}
+
+async function courier360ComplaintAction(request,env,user,executionContext) {
   if(request.headers.get('origin')!==new URL(request.url).origin)return jsonResponse({error:'Érvénytelen kérésforrás.'},403);
   if(!request.headers.get('content-type')?.includes('application/json'))return jsonResponse({error:'JSON kérés szükséges.'},415);
   const body=await request.json().catch(()=>null),courierId=key(body?.courierId),month=key(body?.month),id=key(body?.complaintId),action=key(body?.action);
-  if(!/^\d{1,12}$/.test(courierId)||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)||! /^[0-9a-f-]{36}$/i.test(id)||!['start','respond','close','reopen','note'].includes(action))return jsonResponse({error:'Hiányzó vagy hibás reklamációs azonosítók.'},400);
+  if(!/^\d{1,12}$/.test(courierId)||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)||! /^[0-9a-f-]{36}$/i.test(id)||!['start','respond','close','reopen','note','assign'].includes(action))return jsonResponse({error:'Hiányzó vagy hibás reklamációs azonosítók.'},400);
+  if(action==='assign')return courier360AssignComplaint(body,env,user,executionContext);
   const rows=await supabaseFetch(env,PUBLIC_SCHEMA,'peopleforce_complaints',{id:`eq.${id}`,courier_id:`eq.${courierId}`,document_month:`eq.${month}-01`,select:'id,status,admin_response,responded_at',limit:1});
   const row=rows[0];if(!row||row.status==='deleted')return jsonResponse({error:'A reklamáció nem található.'},404);
   const noteRows=await supabaseFetch(env,PUBLIC_SCHEMA,'peopleforce_complaint_notes',{courier_id:`eq.${courierId}`,period_start:`eq.${month}-01`,select:'note,updated_at',limit:1});
@@ -1123,7 +1182,7 @@ async function courier360Document(request,env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, executionContext) {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/login") {
@@ -1152,7 +1211,7 @@ export default {
     if (['/api/courier360-payment-close','/api/courier360-bank-account','/api/courier360-complaint'].includes(url.pathname)) {
       if(request.method!=='POST')return jsonResponse({error:'Use POST.'},405);
       const access=await requireDashboardUser(request,env);if(access.error)return access.error;
-      try{return url.pathname.endsWith('complaint')?await courier360ComplaintAction(request,env,access.user):url.pathname.endsWith('bank-account')?await courier360SaveBankAccount(request,env,access.user):await courier360ClosePayment(request,env,access.user)}
+      try{return url.pathname.endsWith('complaint')?await courier360ComplaintAction(request,env,access.user,executionContext):url.pathname.endsWith('bank-account')?await courier360SaveBankAccount(request,env,access.user):await courier360ClosePayment(request,env,access.user)}
       catch{return jsonResponse({error:'A művelet nem menthető. Frissítsd az adatokat és ellenőrizd a források elérhetőségét.'},500)}
     }
 
