@@ -6,7 +6,7 @@ from threading import Event, Thread
 from zoneinfo import ZoneInfo
 
 
-RECIPIENT = "bagoly.zoltan@jitt.hu"
+RECIPIENT = "zoltan.bagoly@jitt.hu"
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 DOCUMENTS = {
     "invoice": "Számla feltöltve", "cash_invoice": "KP-számla feltöltve",

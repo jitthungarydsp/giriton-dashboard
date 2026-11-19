@@ -27,7 +27,7 @@ class InvoiceAdminNotificationsTest(unittest.TestCase):
         send = Mock()
         self.assertEqual(notifications.send_pending_invoice_notifications(rest, send), 1)
         recipient, subject, body = send.call_args.args
-        self.assertEqual(recipient, "bagoly.zoltan@jitt.hu")
+        self.assertEqual(recipient, "zoltan.bagoly@jitt.hu")
         self.assertIn("Teszt Futár (2026-10)", subject)
         self.assertIn("11.19. 08:00", body)
         self.assertIn("Számlaellenőrzésre vár", body)
