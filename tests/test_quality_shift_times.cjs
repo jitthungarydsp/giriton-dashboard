@@ -12,5 +12,6 @@ test("separate labels show Budapest queue time and attendance clock", () => {
 });
 test("missing events are explicit and unrelated quality topics are unchanged", () => {
   assert.equal((context.qualityShiftTimes({}, "lateShift").match(/Nincs adat/g) || []).length, 2);
-  assert.equal(context.qualityShiftTimes({}, "noShow"), "");
+  assert.equal((context.qualityShiftTimes({}, "noShow").match(/Nincs adat/g) || []).length, 2);
+  assert.equal(context.qualityShiftTimes({}, "uncleanedTimeWindowLate"), "");
 });

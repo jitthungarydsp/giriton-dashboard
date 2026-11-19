@@ -5,7 +5,7 @@ const test = require('node:test');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../pwa/app.js'), 'utf8');
 function setup() {
   const node = {};
-  const context = { state: { statistics: { month: '2026-10' }, user: {} }, $: () => node,
+  const context = { state: { statistics: { month: '2026-11' }, user: {} }, $: () => node, QUALITY_COMPLAINT_MONTH:'2026-11',
     URLSearchParams, encodeURIComponent, shortDateTime: String,
     escapeHtml: value => String(value || '').replaceAll('<', '&lt;').replaceAll('>', '&gt;') };
   vm.runInNewContext(source.slice(source.indexOf('function qualityComplaintStatus('), source.indexOf('async function loadQualityComplaints(')), context);
@@ -32,11 +32,18 @@ test('an old month response cannot overwrite current month data', async () => {
   let resolve;
   context.api = () => new Promise(done => { resolve = done; });
   const pending = context.refreshCourierQualityComplaints();
-  context.state.statistics = { month: '2026-11' };
+  context.state.statistics = { month: '2026-10' };
   resolve({ items: [{ id: 'old' }] });
   await pending;
   assert.equal(context.state.statistics.qualityComplaints, undefined);
   assert.equal(node.innerHTML, undefined);
+});
+
+test('complaints are only fetched for the November review period', async () => {
+  const { context } = setup();
+  context.state.statistics = {month:'2026-10'};
+  context.api = () => assert.fail('Outside November');
+  await context.refreshCourierQualityComplaints();
 });
 
 test('route and shift signals appear with safe text and owned photo links', () => {

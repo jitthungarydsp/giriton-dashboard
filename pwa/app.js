@@ -121,7 +121,8 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v289";
+const APP_VERSION = "v293";
+const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
 const ROUTE_REPORT_FIELDS = [
@@ -1554,12 +1555,12 @@ function renderQualitySummaryChart(payload = {}) {
                 <div class="quality-bar-track"><span style="width: ${width}%"></span></div>
                 <b>${formatCount(item.value)}</b>
               </button>
-              ${activeTopic === item.key ? renderQualitySummaryDetails(item.key, details) : ""}
+              ${activeTopic === item.key ? renderQualitySummaryDetails(item.key, details, payload) : ""}
             </div>
           `;
         }).join("")}
       </div>
-      <div id="courier-quality-complaints" aria-live="polite">${renderCourierQualityComplaints(payload)}</div>
+      ${(payload.month || state.statisticsMonth) === QUALITY_COMPLAINT_MONTH ? `<div id="courier-quality-complaints" aria-live="polite">${renderCourierQualityComplaints(payload)}</div>` : ""}
     </section>
   `;
 }
@@ -1609,7 +1610,7 @@ function renderCourierQualityComplaintCards(payload = {}) {
 
 async function refreshCourierQualityComplaints() {
   const payload = state.statistics;
-  if (!payload) return;
+  if (!payload || (payload.month || state.statisticsMonth) !== QUALITY_COMPLAINT_MONTH) return;
   const sequence = (state.courierComplaintRequest || 0) + 1;
   state.courierComplaintRequest = sequence;
   const params = new URLSearchParams({ month: payload.month || state.statisticsMonth });
@@ -1635,7 +1636,7 @@ async function refreshCourierQualityComplaints() {
 }
 
 function qualityShiftTimes(row, topic) {
-  if (topic !== "lateShift") return "";
+  if (topic !== "lateShift" && topic !== "noShow") return "";
   const clock = (value) => {
     if (!value) return "Nincs adat";
     if (/^\d{2}:\d{2}(?::\d{2})?$/.test(value)) return value.slice(0, 5);
@@ -1645,7 +1646,7 @@ function qualityShiftTimes(row, topic) {
   return `<small>Giriton-bejelentkezés: ${escapeHtml(clock(row.giritonLoginAt))}</small><small>Sorba állás: ${escapeHtml(clock(row.queueStartedAt))}</small>`;
 }
 
-function renderQualitySummaryDetails(topic, details = {}) {
+function renderQualitySummaryDetails(topic, details = {}, payload = {}) {
   if (!topic) return "";
   const labels = {
     lateShift: "Vizsgálandó műszak késések",
@@ -1654,6 +1655,7 @@ function renderQualitySummaryDetails(topic, details = {}) {
     noShow: "Vizsgálandó no-show műszakok",
   };
   const rows = Array.isArray(details[topic]) ? details[topic] : [];
+  const canComplain = (payload.month || state.statisticsMonth) === QUALITY_COMPLAINT_MONTH;
   return `
     <div class="quality-detail-list">
       <h4>${escapeHtml(labels[topic] || "Vizsgálandó tételek")}</h4>
@@ -1663,7 +1665,7 @@ function renderQualitySummaryDetails(topic, details = {}) {
           <span>${escapeHtml(row.label || "-")}</span>
           <small>${escapeHtml(row.note || "")}${row.routeId ? ` · Route ${escapeHtml(row.routeId)}` : ""}</small>
           ${qualityShiftTimes(row, topic)}
-          <button class="secondary quality-reclamation-trigger" type="button" data-quality-reclamation-topic="${escapeHtml(topic)}">Reklamáció</button>
+          ${canComplain ? `<button class="secondary quality-reclamation-trigger" type="button" data-quality-reclamation-topic="${escapeHtml(topic)}">Reklamáció</button>` : ""}
         </div>
       `).join("") : `<p>Nincs külön vizsgálandó sor ehhez a jelzéshez.</p>`}
     </div>
@@ -1752,20 +1754,19 @@ async function loadAdminRouteSignals(offset = 0) {
 async function loadQualityComplaints() {
   if (!["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
   if (!await prepareQualityWorkspace()) return;
-  // Keep the signals list above the focused complaint at a stable height.
-  if (!state.qualityComplaintFocus && !state.qualityWorkspace) loadAdminRouteSignals();
   const target = $("#quality-complaints-list");
   const status = $("#quality-complaints-status");
   const request = (state.qualityComplaintRequest || 0) + 1;
   state.qualityComplaintRequest = request;
   status.textContent = "Betöltés…";
   try {
-    const payload = await api(`/api/quality/complaints?status=${encodeURIComponent($("#quality-complaints-filter").value)}&offset=${state.qualityComplaintOffset || 0}${state.qualityComplaintFocus ? `&complaint=${encodeURIComponent(state.qualityComplaintFocus)}` : ''}${state.qualityWorkspaceCourier ? `&courier=${encodeURIComponent(state.qualityWorkspaceCourier)}` : ''}${state.qualityWorkspaceDay ? `&work_date=${encodeURIComponent(state.qualityWorkspaceDay)}` : ''}`);
+    const filter = state.qualityComplaintFocus ? "all" : $("#quality-complaints-filter").value;
+    const payload = await api(`/api/quality/complaints?status=${encodeURIComponent(filter)}&offset=${state.qualityComplaintOffset || 0}${state.qualityComplaintFocus ? `&complaint=${encodeURIComponent(state.qualityComplaintFocus)}` : ''}${state.qualityWorkspaceCourier ? `&courier=${encodeURIComponent(state.qualityWorkspaceCourier)}` : ''}${state.qualityWorkspaceDay ? `&work_date=${encodeURIComponent(state.qualityWorkspaceDay)}` : ''}`);
     if (state.qualityComplaintRequest !== request) return;
     target.innerHTML = payload.items.length ? payload.items.map((item) => {
       const topics = { lateShift: "Műszakkésés", noShow: "No-show", uncleanedTimeWindowLate: "Nem mentesített címkésés", cleanedTimeWindowLate: "Mentesített címkésés" };
       const delivery = item.delivery;
-      const deliveryLabels = {queued:"Jóváhagyva · kitöltésre vár", processing:"Google-űrlap kitöltése folyamatban", prepared:"Űrlap kitöltve · kézi ellenőrzés és beküldés szükséges", login_required:"Google-bejelentkezés szükséges", failed:"Kitöltési hiba · nem indult beküldés", uncertain:"Beküldés ellenőrzése szükséges · automatikusan nem ismételjük", sent:"Google-beküldés igazolva"};
+      const deliveryLabels = {queued:"Jóváhagyva · kitöltésre vár", processing:"Google-űrlap kitöltése folyamatban", prepared:"Jóváhagyva · kézi beküldésre vár", login_required:"Google-bejelentkezés szükséges", failed:"Kitöltési hiba · nem indult beküldés", uncertain:"Beküldés ellenőrzése szükséges · automatikusan nem ismételjük", sent:"Google-beküldés igazolva"};
       const category = (item.affected_items || []).find(row => row.category)?.category || (["lateShift", "noShow"].includes(item.topic) ? "Műszak" : "Túra alatti késés");
       const busy = ["queued", "processing"].includes(delivery?.state);
       return `<article class="shift-card" data-complaint-id="${escapeHtml(item.id)}">
@@ -1775,12 +1776,13 @@ async function loadQualityComplaints() {
         ${renderComplaintShiftDetails(item)}
         ${payload.canManage ? `<details data-complaint-evidence><summary>Részletes műszak- és Hub-események</summary><div data-evidence-content role="status">Lenyitáskor betöltjük az érintett nap adatbázisadatait.</div><button type="button" class="secondary" data-evidence-refresh>Adatok újraellenőrzése</button></details>` : ""}
         ${delivery ? `<div class="notice ${["failed", "uncertain", "login_required"].includes(delivery.state) ? "error" : ""}"><strong>${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}</strong><p>${escapeHtml(delivery.last_error || "")}</p><small>${escapeHtml(delivery.approved_by)} · ${escapeHtml(shortDateTime(delivery.approved_at))}</small></div>` : ""}
-        ${payload.canManage && item.status === "open" && !["queued", "processing", "uncertain", "prepared", "sent"].includes(delivery?.state) ? `<details data-complaint-approval><summary>Jóváhagyás és Google-űrlap kitöltése</summary>
+        ${payload.canManage && item.status === "open" && delivery?.state === "prepared" ? `<button class="secondary" type="button" data-complaint-action="reopen-form">Jóváhagyott űrlap megnyitása</button>` : ""}
+        ${payload.canManage && item.status === "open" && !["processing", "uncertain", "prepared", "sent"].includes(delivery?.state) ? `<details data-complaint-approval><summary>Jóváhagyás és Google-űrlap kitöltése</summary>
           <label>Kategória<select data-complaint-category>${qualityComplaintCategories().map(value => `<option ${value === category ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
           <label>Túraszám / Cargo ID (túrakésésnél kötelező)<input data-complaint-route maxlength="500" value="${escapeHtml([...new Set((item.affected_items || []).map(row => row.routeId).filter(Boolean))].join(", "))}"></label>
           <label>Rendszám (járműpanasznál kötelező)<input data-complaint-plate maxlength="30"></label>
           <p class="muted" data-prefill-status role="status">Lenyitáskor előtöltjük a műszakhoz kapcsolható túraszámot és rendszámot. A mezők szerkeszthetők.</p>
-          <p class="muted">A reklamáció adataival előkitöltött Google-űrlap új lapon nyílik meg. Ellenőrizd a Google-fiókot, majd a Következő gombbal lépj a részletekre. A Küldés gombot te nyomod meg. A megnyitás nem ment jóváhagyást és nem rögzít továbbítást. A képek nem kerülnek át az űrlapba.</p>
+          <p class="muted">A gomb elmenti a jóváhagyást, és új lapon megnyitja az előkitöltött Google-űrlapot. A Google-űrlapot ellenőrzés után a Küldés gombbal küldheted be.</p>
           <button class="primary" type="button" data-complaint-action="approve">Jóváhagyás és kitöltés</button></details>` : ""}
         ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
         <details><summary>Érintett tételek és előzmények</summary>
@@ -1800,7 +1802,10 @@ async function loadQualityComplaints() {
     if (state.qualityComplaintFocus) {
       const back = document.createElement('button');
       back.type = 'button'; back.className = 'secondary'; back.textContent = 'Vissza az összes reklamációhoz';
-      back.addEventListener('click', () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = 0; loadQualityComplaints(); });
+      back.addEventListener('click', () => {
+        state.qualityComplaintFocus = ''; state.qualityWorkspaceCourier = ''; state.qualityWorkspaceDay = '';
+        state.qualityComplaintOffset = 0; loadQualityComplaints();
+      });
       status.append(' · ', back);
     }
     target.querySelectorAll("[data-complaint-evidence]").forEach(panel => {
@@ -1850,30 +1855,43 @@ async function loadQualityComplaints() {
       const action = button.dataset.complaintAction;
       const message = card.querySelector("[data-complaint-response]")?.value.trim() || "";
       const reference = card.querySelector("[data-complaint-reference]")?.value.trim() || "";
-      if (!["forward", "approve"].includes(action) && message.length < 5) { result.textContent = "Legalább 5 karakteres válasz szükséges."; return; }
+      if (!["forward", "approve", "reopen-form"].includes(action) && message.length < 5) { result.textContent = "Legalább 5 karakteres válasz szükséges."; return; }
       if (action === "forward" && reference.length < 3) { result.textContent = "Add meg a továbbítás hivatkozását."; return; }
-      if (action === "approve") {
+      if (action === "approve" || action === "reopen-form") {
+        const body = action === "approve" ? {
+          category: card.querySelector("[data-complaint-category]").value,
+          route_id: card.querySelector("[data-complaint-route]").value,
+          license_plate: card.querySelector("[data-complaint-plate]").value,
+        } : null;
+        const tab = window.open("about:blank", "_blank");
+        if (tab) tab.opener = null;
+        button.disabled = true;
+        result.textContent = "Az űrlap előkészítése…";
         try {
-          const item = payload.items.find(item => String(item.id) === card.dataset.complaintId);
-          if (!item) throw new Error("A reklamáció nem található. Frissítsd a listát.");
-          const url = qualityComplaintFormUrl(item,
-            card.querySelector("[data-complaint-category]").value,
-            card.querySelector("[data-complaint-route]").value,
-            card.querySelector("[data-complaint-plate]").value);
-          const link = document.createElement("a");
-          link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer";
-          link.textContent = "Előkitöltött űrlap megnyitása";
-          result.replaceChildren("Ha nem nyílt új lap, kattints ide: ", link);
-          link.click();
-        } catch (error) { result.textContent = error.message; }
+          const approval = await api(`/api/quality/complaints/${encodeURIComponent(card.dataset.complaintId)}/prepare-form`,
+            {method: "POST", body: JSON.stringify(body)});
+          const url = qualityComplaintFormUrlFromPayload(approval.formPayload);
+          if (tab && !tab.closed) {
+            tab.location.replace(url);
+            await loadQualityComplaints();
+          } else {
+            const link = document.createElement("a");
+            link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer";
+            link.textContent = "Jóváhagyott űrlap megnyitása";
+            link.addEventListener("click", () => loadQualityComplaints(), {once: true});
+            result.replaceChildren("Jóváhagyva. ", link);
+          }
+        } catch (error) {
+          tab?.close();
+          result.textContent = error.message;
+        } finally { button.disabled = false; }
         return;
       }
       const buttons = card.querySelectorAll("button");
       buttons.forEach(b => b.disabled = true);
       result.textContent = "Mentés…";
       try {
-        const body = action === "approve" ? {category:card.querySelector("[data-complaint-category]").value,route_id:card.querySelector("[data-complaint-route]").value,license_plate:card.querySelector("[data-complaint-plate]").value} : {action,message,reference};
-        const response = await api(`/api/quality/complaints/${encodeURIComponent(card.dataset.complaintId)}/${action === "approve" ? "approve" : "actions"}`, { method: "POST", body: JSON.stringify(body) });
+        const response = await api(`/api/quality/complaints/${encodeURIComponent(card.dataset.complaintId)}/actions`, { method: "POST", body: JSON.stringify({action,message,reference}) });
         if (!response.ok) throw new Error("Nem igazolható a mentés.");
         await loadQualityComplaints();
       } catch (error) {
@@ -1921,6 +1939,12 @@ function qualityComplaintDraftKey(courier, month, topic) {
 
 function qualityComplaintCategories() {
   return ["Túra alatti késés", "Futárbüntetés", "Pénztárca/tankolás", "Elszámolás", "Jármű", "Műszak"];
+}
+
+function qualityComplaintDailyBucket(topic) {
+  if (topic === "noShow") return "noShow";
+  if (["cleanedTimeWindowLate", "uncleanedTimeWindowLate"].includes(topic)) return "address";
+  return "";
 }
 
 function qualityComplaintDays(rows, drafts = {}, defaultCategory = "Túra alatti késés") {
@@ -1973,7 +1997,17 @@ async function submitQualityComplaintDays(context, report = () => {}) {
         items: day.rows, message: day.message.trim(), category: day.category,
       };
       rememberQualityComplaintDays(context);
-      const result = await api("/api/quality/complaints", { method: "POST", body: JSON.stringify(day.submittedPayload), silentLoading: true });
+      let result;
+      try {
+        result = await api("/api/quality/complaints", { method: "POST", body: JSON.stringify(day.submittedPayload), silentLoading: true });
+      } catch (error) {
+        if (error.status === 409) {
+          day.saved = true;
+          day.selected = false;
+          rememberQualityComplaintDays(context);
+        }
+        throw error;
+      }
       if (!result.ok || !result.id) throw new Error(`${day.date}: a mentés nem igazolható.`);
       day.complaintId = result.id;
       rememberQualityComplaintDays(context);
@@ -2025,7 +2059,7 @@ function ensureQualityReclamationDialog() {
       showQualitySubmissionProgress("success", `${count} napi reklamációt külön ügyként elmentettünk.`, dialog);
     } catch (error) {
       const saved = context.days.filter(day => day.saved).length;
-      status.textContent = `${saved ? `${saved} nap már sikeresen beküldve. ` : ""}${error.message} A többi piszkozat megmaradt; újrapróbálhatod.`;
+      status.textContent = `${saved ? `${saved} nap már rögzítve. ` : ""}${error.message} A többi piszkozat megmaradt.`;
       status.className = "notice error";
       showQualitySubmissionProgress("error", status.textContent, dialog);
     } finally {
@@ -2050,28 +2084,44 @@ function syncQualityComplaintDayControls(dialog) {
     const day = context.days[index];
     section.classList.toggle("selected", day.selected && !day.saved);
     section.querySelector("[data-quality-day-saved]").textContent = day.saved ? "Beküldve" : "";
-    section.querySelector("textarea").disabled = Boolean(day.complaintId || day.submittedPayload);
-    section.querySelector("[data-quality-day-category]").disabled = Boolean(day.complaintId || day.submittedPayload);
-    section.querySelector("[data-quality-day-selected]").disabled = Boolean(day.complaintId || day.submittedPayload);
+    const locked = Boolean(day.saved || day.complaintId || day.submittedPayload);
+    section.querySelector("textarea").disabled = locked;
+    section.querySelector("[data-quality-day-category]").disabled = locked;
+    section.querySelector("[data-quality-day-selected]").disabled = locked;
     section.querySelector("[data-quality-day-photos]").disabled = day.saved || (Boolean(day.complaintId) && day.photos.length > 0);
   });
   const count = context.days.filter(day => day.selected && !day.saved).length;
-  dialog.querySelector("[data-quality-reclamation-submit]").textContent = `Reklamáció beküldése (${count} nap)`;
+  const submit = dialog.querySelector("[data-quality-reclamation-submit]");
+  submit.textContent = `Reklamáció beküldése (${count} nap)`;
+  submit.disabled = !context.canSubmit || !count;
 }
 
 function openQualityReclamation(topic) {
+  const month = state.statistics?.month || state.statisticsMonth;
+  if (month !== QUALITY_COMPLAINT_MONTH) return;
   const dialog = ensureQualityReclamationDialog();
   if (dialog.complaintContext?.submitting) return;
   const details = state.statistics?.qualitySummary?.details || {};
   const rows = topic === "noShow" ? pastQualityDetails(details.noShow || []) : (details[topic] || []);
   const courier = String(previewCourierValue() || state.workflowPreviewCourierId || "").trim();
-  const month = state.statistics?.month || state.statisticsMonth;
   const draftKey = qualityComplaintDraftKey(courier, month, topic);
   let stored = {};
   try { stored = JSON.parse(localStorage.getItem(draftKey) || "{}"); } catch (_) {}
   const days = qualityComplaintDays(rows, state.qualityDayDrafts?.[draftKey] || stored,
     ["lateShift", "noShow"].includes(topic) ? "Műszak" : "Túra alatti késés");
-  const context = { topic, courier, month, draftKey, days, saved: false, submitting: false };
+  const bucket = qualityComplaintDailyBucket(topic);
+  if (bucket) {
+    const recordedDates = new Set((state.statistics?.qualityComplaints || [])
+      .filter(item => qualityComplaintDailyBucket(item.topic) === bucket)
+      .flatMap(item => (item.affected_items || [])
+        .filter(row => row.signalKind !== "route" || row.category !== "Futárbüntetés")
+        .map(row => row.date)));
+    for (const day of days) {
+      if (recordedDates.has(day.date) && !day.submittedPayload && !day.complaintId) day.saved = true;
+    }
+  }
+  const canSubmit = !courier || ["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase());
+  const context = { topic, courier, month, draftKey, days, canSubmit, saved: false, submitting: false };
   dialog.complaintContext = context;
   const labels = { lateShift: "Műszakkésés reklamáció", uncleanedTimeWindowLate: "Nem mentesített címkésés reklamáció",
     cleanedTimeWindowLate: "Mentesített címkésés reklamáció", noShow: "No-show reklamáció" };
@@ -2099,8 +2149,6 @@ function openQualityReclamation(topic) {
       rememberQualityComplaintDays(context);
     });
   });
-  const canSubmit = !courier || ["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase());
-  dialog.querySelector("[data-quality-reclamation-submit]").disabled = !canSubmit || !days.length;
   const status = dialog.querySelector("[data-quality-reclamation-status]"); status.className = "";
   status.textContent = courier ? (canSubmit ? "A reklamációk a kiválasztott futárhoz kerülnek. A beküldő admin nevét naplózzuk." : "Másik futár nevében csak admin küldhet be reklamációt.") : "";
   syncQualityComplaintDayControls(dialog);

@@ -30,3 +30,37 @@ test('coordinator cannot load admin complaint UI', async () => {
   context.api = () => { throw Error('Unauthorized fetch'); };
   await context.loadQualityComplaints();
 });
+
+test('one click saves approval before opening the validated form', async () => {
+  const item = {id:'a', courier_name:'Futár', topic:'lateShift', status:'open'};
+  const {context, get} = setup('admin', [item]);
+  const events = [];
+  const result = {};
+  const tab = {location:{replace:url => events.push(['navigate',url])}};
+  const inputs = new Map([
+    ['[data-complaint-result]', result], ['[data-complaint-category]', {value:'Műszak'}],
+    ['[data-complaint-route]', {value:'route'}], ['[data-complaint-plate]', {value:'ABC-123'}],
+  ]);
+  const card = {dataset:{complaintId:'a'},querySelector:selector => inputs.get(selector)};
+  const button = {dataset:{complaintAction:'approve'},closest:() => card,
+    addEventListener:(_, handler) => { button.click = handler; }};
+  get('#quality-complaints-list').querySelectorAll = selector => selector === '[data-complaint-action]' ? [button] : [];
+  context.window = {open:() => tab};
+  const approved = {category:'Műszak',courier_id:'1234',courier_name:'Futár',description:'Mentett indoklás'};
+  context.api = async (path, options) => {
+    if (!options) return {items:[item],canManage:true,hasMore:false};
+    events.push(['approve',path,JSON.parse(options.body)]);
+    return {ok:true,formPayload:approved};
+  };
+  context.qualityComplaintFormUrlFromPayload = payload => {
+    assert.equal(payload, approved);
+    return 'https://docs.google.com/forms/test/viewform';
+  };
+  await context.loadQualityComplaints();
+  await button.click();
+  assert.deepEqual(events, [
+    ['approve','/api/quality/complaints/a/prepare-form',{category:'Műszak',route_id:'route',license_plate:'ABC-123'}],
+    ['navigate','https://docs.google.com/forms/test/viewform'],
+  ]);
+  assert.equal(tab.opener, null);
+});

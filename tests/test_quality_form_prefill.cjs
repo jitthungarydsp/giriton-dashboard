@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const context = vm.createContext({URL});
 vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../pwa/quality_form_test.js'), 'utf8'), context);
-const complaint = {id:'complaint-1', courier_id:'1234', courier_name:'Árvíz & Teszt', message:'Saját indoklás & részletek?',
-  affected_items:[{date:'2026-11-09', label:'Route 10', note:'15 perc'}]};
+const complaint = {courier_id:'1234', courier_name:'Árvíz & Teszt', route_id:'NEW-ROUTE', license_plate:'ABC-123',
+  description:'JITT reklamáció: complaint-1\nDátum: 2026-11-09\nSaját indoklás & részletek?\nRoute 10 · 15 perc'};
 const fields = {
   'Túra alatti késés':[1629541155,139333198,1757898114],
   'Futárbüntetés':[229683135,2026925449,727698089],
@@ -17,24 +17,22 @@ const fields = {
 test('all category branches preserve complaint data and editable route/plate overrides without side effects', () => {
   const before = JSON.stringify(complaint);
   for (const [category,[id,name,description]] of Object.entries(fields)) {
-    const url = new URL(context.qualityComplaintFormUrl(complaint,category,'NEW-ROUTE','abc-123'));
+    const url = new URL(context.qualityComplaintFormUrlFromPayload({...complaint,category}));
     assert.equal(url.pathname.endsWith('/viewform'),true);
     assert.equal(url.searchParams.get('entry.493012323'),'Just in Time Kft.');
     if (id) {
       assert.equal(url.searchParams.get(`entry.${id}`),'1234');
       assert.equal(url.searchParams.get(`entry.${name}`),complaint.courier_name);
     }
-    const text = url.searchParams.get(`entry.${description}`);
-    for (const expected of ['complaint-1','2026-11-09',complaint.message,complaint.courier_name,'Route 10 · 15 perc']) assert.ok(text.includes(expected));
+    assert.equal(url.searchParams.get(`entry.${description}`),complaint.description);
     if (category === 'Túra alatti késés') assert.equal(url.searchParams.get('entry.584723978'),'NEW-ROUTE');
     if (category === 'Jármű') assert.equal(url.searchParams.get('entry.1445819589'),'ABC-123');
   }
   assert.equal(JSON.stringify(complaint),before);
 });
-test('missing required fields and multiple dates prevent opening an incomplete form', () => {
-  assert.throws(()=>context.qualityComplaintFormUrl(complaint,'Túra alatti késés'));
-  assert.throws(()=>context.qualityComplaintFormUrl(complaint,'Jármű'));
-  assert.throws(()=>context.qualityComplaintFormUrl(complaint,'invalid'));
-  assert.throws(()=>context.qualityComplaintFormUrl({...complaint,courier_name:''},'Műszak'));
-  assert.throws(()=>context.qualityComplaintFormUrl({...complaint,affected_items:[...complaint.affected_items,{date:'2026-11-10'}]},'Műszak'));
+test('missing required fields prevent opening an incomplete form', () => {
+  assert.throws(()=>context.qualityComplaintFormUrlFromPayload({...complaint,category:'Túra alatti késés',route_id:''}));
+  assert.throws(()=>context.qualityComplaintFormUrlFromPayload({...complaint,category:'Jármű',license_plate:''}));
+  assert.throws(()=>context.qualityComplaintFormUrlFromPayload({...complaint,category:'invalid'}));
+  assert.throws(()=>context.qualityComplaintFormUrlFromPayload({...complaint,category:'Műszak',courier_name:''}));
 });

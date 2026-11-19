@@ -12,15 +12,22 @@ async function setup(browser){
   window.$=selector=>document.querySelector(selector);
   window.escapeHtml=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;');
   window.qualityShiftTimes=()=>'';window.pastQualityDetails=rows=>rows;
+  window.QUALITY_COMPLAINT_MONTH='2026-11';
   window.previewCourierValue=()=>'';
-  window.state={statistics:{month:'2026-10',qualitySummary:{details:{uncleanedTimeWindowLate:[{date:'2026-10-09',label:'Route 1566147',note:'1 cím · 6 perc'}]}}}};
+  window.state={statistics:{month:'2026-11',qualitySummary:{details:{uncleanedTimeWindowLate:[{date:'2026-11-09',label:'Route 1566147',note:'1 cím · 6 perc'}]}}}};
   window.requests=[];window.pending=[];
   window.api=(url,options)=>{requests.push({url,body:options.body,silentLoading:options.silentLoading});return new Promise((resolve,reject)=>pending.push({resolve,reject}))};
   window.refreshCourierQualityComplaints=async()=>{throw Error('A listafrissítés hibája nem változtathatja sikertelenné a mentést')};
  });
  await page.addScriptTag({content:functions+'\nopenQualityReclamation("uncleanedTimeWindowLate");'});
- await page.locator('[data-quality-reclamation-note]').fill('Teszt reklamáció');
+ await selectDay(page,'Teszt reklamáció');
  return page;
+}
+
+async function selectDay(page, message) {
+ await page.locator('[data-quality-day] summary').click();
+ await page.locator('[data-quality-day-note]').fill(message);
+ await page.locator('[data-quality-day-selected]').check();
 }
 
 test('submission opens a top-layer loading modal immediately; confirmed save shows success and prevents duplicate posts',{skip:!fs.existsSync(runtime)},async()=>{
@@ -58,8 +65,8 @@ test('admin preview submits the selected courier; non-admin preview stays blocke
    state.user={role:'admin'};window.previewCourierValue=()=> '7644';
    openQualityReclamation('uncleanedTimeWindowLate');
   });
+  await selectDay(page,'Admin próba');
   assert.equal(await page.locator('[data-quality-reclamation-submit]').isEnabled(),true);
-  await page.locator('[data-quality-reclamation-note]').fill('Admin próba');
   await page.locator('[data-quality-reclamation-submit]').click();
   assert.equal(await page.evaluate(()=>JSON.parse(requests[0].body).courier),'7644');
   await page.evaluate(()=>pending.shift().resolve({ok:true,id:'admin-saved'}));
@@ -75,7 +82,7 @@ test('partial photo upload never reports success; retry resumes without creating
  const {chromium}=require(runtime);const browser=await chromium.launch({channel:'chrome',headless:true});
  try{
   const page=await setup(browser);
-  await page.locator('[data-quality-reclamation-photos]').setInputFiles(['a.png','b.png'].map(name=>({name,mimeType:'image/png',buffer:Buffer.from('fixture')})));
+  await page.locator('[data-quality-day-photos]').setInputFiles(['a.png','b.png'].map(name=>({name,mimeType:'image/png',buffer:Buffer.from('fixture')})));
   await page.locator('[data-quality-reclamation-submit]').click();
   await page.evaluate(()=>pending.shift().resolve({ok:true,id:'photo-complaint'}));
   await page.waitForFunction(()=>requests.length===2);await page.evaluate(()=>pending.shift().resolve({ok:true}));
@@ -84,24 +91,24 @@ test('partial photo upload never reports success; retry resumes without creating
   assert.equal(await page.getByText('Sikeres beküldés',{exact:true}).count(),0);
   await page.locator('[data-quality-submission-close]').click();
   assert.equal(await page.locator('#quality-reclamation-dialog').evaluate(node=>node.open),true);
-  assert.equal(await page.locator('[data-quality-reclamation-note]').inputValue(),'Teszt reklamáció');
+  assert.equal(await page.locator('[data-quality-day-note]').inputValue(),'Teszt reklamáció');
   await page.locator('[data-quality-reclamation-submit]').click();
   await page.waitForFunction(()=>requests.length===4);
   assert.equal(await page.evaluate(()=>requests.filter(request=>request.url==='/api/quality/complaints').length),1);
   await page.evaluate(()=>pending.shift().resolve({ok:true}));
   await page.getByText('Sikeres beküldés',{exact:true}).waitFor();
-  assert.match(await page.locator('#quality-submission-message').textContent(),/2 képet/);
+  assert.equal(await page.evaluate(()=>requests.filter(request=>request.url.endsWith('/photos')).length),3);
  }finally{await browser.close()}
 });
 
-test('an unconfirmed response is an error and keeps the draft editable',{skip:!fs.existsSync(runtime)},async()=>{
+test('an unconfirmed response keeps the same draft available for retry',{skip:!fs.existsSync(runtime)},async()=>{
  const {chromium}=require(runtime);const browser=await chromium.launch({channel:'chrome',headless:true});
  try{
   const page=await setup(browser);await page.locator('[data-quality-reclamation-submit]').click();
   await page.evaluate(()=>pending.shift().resolve({ok:true}));
   await page.getByText('A beküldés nem fejeződött be',{exact:true}).waitFor();
   await page.locator('[data-quality-submission-close]').click();
-  assert.equal(await page.locator('[data-quality-reclamation-note]').isEnabled(),true);
+  assert.equal(await page.locator('[data-quality-day-note]').inputValue(),'Teszt reklamáció');
   assert.equal(await page.locator('[data-quality-reclamation-submit]').isEnabled(),true);
  }finally{await browser.close()}
 });

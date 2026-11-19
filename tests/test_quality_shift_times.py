@@ -7,13 +7,13 @@ from typing import Any
 
 
 class QualityShiftTimesTest(unittest.TestCase):
-    def enrich(self, details, records, logins):
+    def enrich(self, details, records, logins, topic="lateShift"):
         tree = ast.parse((Path(__file__).resolve().parents[1] / "pwa_api.py").read_text(encoding="utf-8"))
         nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {"quality_shift_clock", "attach_quality_shift_times"}]
         ns = {"Any": Any, "re": re, "normalize_time": lambda v: str(v or "")[:5],
               "local_datetime": lambda v: datetime.fromisoformat(v) if v else None}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "pwa_api.py", "exec"), ns)
-        summary = {"details": {"lateShift": details}}
+        summary = {"details": {topic: details}}
         ns["attach_quality_shift_times"](summary, records, logins)
         return details
 
@@ -34,6 +34,14 @@ class QualityShiftTimesTest(unittest.TestCase):
         row = self.enrich(details, records, {"2026-10-12": {"checkin_start": "08:30"}})[0]
         self.assertEqual(row["giritonLoginAt"], "")
         self.assertEqual(row["queueStartedAt"], "")
+
+    def test_no_show_retains_login_and_matching_queue(self):
+        row = self.enrich([{"date": "2026-11-13", "label": "08:45-13:15"}],
+                          [{"work_date": "2026-11-13", "shift_start_at": "08:45",
+                            "queue_started_at": "2026-11-13T08:51:00+01:00"}],
+                          {"2026-11-13": {"checkin_start": "08:39"}}, topic="noShow")[0]
+        self.assertEqual(row["giritonLoginAt"], "08:39")
+        self.assertEqual(row["queueStartedAt"], "2026-11-13T08:51:00+01:00")
 
 
 if __name__ == "__main__":

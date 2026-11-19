@@ -1,5 +1,6 @@
-// Browser-only form preparation. Never submits or changes complaint state.
-function qualityComplaintFormUrl(item, category, routeId = "", licensePlate = "") {
+// Build the external form link from the approved data returned by the server.
+function qualityComplaintFormUrlFromPayload({category, courier_name: name, courier_id: courierId,
+  route_id: routeId, license_plate: licensePlate, description}) {
   const categories = {
     "Túra alatti késés": ["Túra alatti késés / Route delay", 1629541155, 139333198, 1757898114],
     "Futárbüntetés": ["Futár büntetés / Courier penalty", 229683135, 2026925449, 727698089],
@@ -9,18 +10,9 @@ function qualityComplaintFormUrl(item, category, routeId = "", licensePlate = ""
     "Műszak": ["Műszak / Shift", 871178890, 1494998302, 2121626944]
   };
   if (!Object.hasOwn(categories, category)) throw new Error("Válassz érvényes kategóriát.");
-  const name = String(item.courier_name || "").trim();
-  const courierId = String(item.courier_id || "").trim();
-  const message = String(item.message || "").trim();
-  if (!name || !courierId || message.length < 5) throw new Error("Hiányos futáradatok vagy indoklás.");
-  routeId = routeId.trim(); licensePlate = licensePlate.trim().toUpperCase();
+  if (!name || !courierId || !description) throw new Error("Hiányos futáradatok vagy indoklás.");
   if (category === "Túra alatti késés" && !routeId) throw new Error("Add meg a túraszámot / Cargo ID-t.");
   if (category === "Jármű" && !licensePlate) throw new Error("Add meg a rendszámot.");
-  const items = item.affected_items || [];
-  const dates = [...new Set(items.map(row => row.date).filter(Boolean))];
-  if (dates.length !== 1) throw new Error("Egy űrlap egy érintett naphoz tartozhat.");
-  const description = [`JITT reklamáció: ${item.id}`, `Dátum: ${dates[0]}`, `Futár: ${name} (#${courierId})`, "", message,
-    ...items.map(row => `${row.label || ""} · ${row.note || ""}`)].join("\n");
   const [label, courierEntry, nameEntry, descriptionEntry] = categories[category];
   const url = new URL("https://docs.google.com/forms/d/e/1FAIpQLSdizw4bsOc0bEgapo8qXcrsV6ui2Nsjaois0YSpHynTFe3NsQ/viewform");
   url.searchParams.set("usp", "pp_url");

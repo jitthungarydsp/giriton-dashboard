@@ -396,6 +396,9 @@ class QualityComplaintApprovalRequest(BaseModel):
     license_plate: str = Field(default="", max_length=30)
 
 
+QUALITY_COMPLAINT_MONTH = date(2026, 11, 1)
+
+
 class PasswordLinkRequest(BaseModel):
     token: str = Field(min_length=40, max_length=100)
     password: str = Field(min_length=12, max_length=128)
@@ -9687,6 +9690,13 @@ def supabase_rest(
     )
 
     if not response.ok:
+        if method == "POST" and table == "pwa_quality_complaints":
+            try:
+                complaint_error = response.json()
+            except ValueError:
+                complaint_error = {}
+            if isinstance(complaint_error, dict) and complaint_error.get("code") == "PZ001":
+                raise HTTPException(status_code=409, detail="Erre a napra már van ilyen típusú reklamáció.")
         print("Supabase table:", table)
         print("Supabase status:", response.status_code)
         print("Supabase response:", response.text)
@@ -14164,7 +14174,8 @@ def attach_quality_shift_times(
     giriton_by_date: dict[str, dict[str, Any]],
 ) -> None:
     """Keep attendance check-in separate from the matching shift's queue event."""
-    for detail in (summary.get("details") or {}).get("lateShift") or []:
+    details = summary.get("details") or {}
+    for detail in [*(details.get("lateShift") or []), *(details.get("noShow") or [])]:
         work_date = str(detail.get("date") or "")[:10]
         login = giriton_by_date.get(work_date) or {}
         detail["giritonLoginAt"] = normalize_time(login.get("checkin_start"))
@@ -22868,7 +22879,8 @@ def list_quality_complaints(
     manager = quality_complaint_manager(user)
     if status not in {"all", "open", "forwarded", "closed"}:
         raise HTTPException(status_code=422, detail="Ismeretlen státusz.")
-    params = {"select": "*", "order": "created_at.desc,id.desc", "limit": "51", "offset": str(offset)}
+    params = {"select": "*", "order": "created_at.desc,id.desc", "limit": "51", "offset": str(offset),
+              "work_month": f"eq.{QUALITY_COMPLAINT_MONTH.isoformat()}"}
     if manager and courier:
         params["courier_id"] = f"eq.{courier}"
     if work_date:
@@ -22884,11 +22896,16 @@ def list_quality_complaints(
         params["courier_id"] = f"eq.{courier_id}"
     rows = supabase_rest("GET", "pwa_quality_complaints", params=params)
     forwarding_enabled = manager and load_setting("QUALITY_FORM_FORWARDING_ENABLED").lower() == "true"
-    if forwarding_enabled and rows:
+    if manager and rows:
         ids = ",".join(str(UUID(str(row["id"]))) for row in rows[:50])
-        deliveries = supabase_rest("GET", "pwa_quality_complaint_deliveries", params={
-            "select": "complaint_id,state,approved_by,approved_at,updated_at,last_error,confirmation",
-            "complaint_id": f"in.({ids})"})
+        try:
+            deliveries = supabase_rest("GET", "pwa_quality_complaint_deliveries", params={
+                "select": "complaint_id,state,approved_by,approved_at,updated_at,last_error,confirmation",
+                "complaint_id": f"in.({ids})"})
+        except HTTPException as exc:
+            if forwarding_enabled or exc.detail != "Adatbázis-hiba (404).":
+                raise
+            deliveries = []
         by_id = {str(item["complaint_id"]): item for item in deliveries}
         for row in rows[:50]:
             row["delivery"] = by_id.get(str(row["id"]))
@@ -22903,13 +22920,15 @@ def quality_workspace(month: str = Query(default=""), giriton_pwa_session: str |
     def read(table, params):
         schema, table = table.split('.', 1) if '.' in table else ('public', table)
         return supabase_rest('GET', table, params=params, schema=schema, timeout=20)
-    return monthly_workspace(parse_month(month), read)
+    return monthly_workspace(QUALITY_COMPLAINT_MONTH, read)
 
 
 @app.get("/api/quality/workspace/day")
 def quality_workspace_day(courier: str, work_date: date, giriton_pwa_session: str | None = Cookie(default=None)):
     if not quality_complaint_manager(require_user(giriton_pwa_session)):
         raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    if work_date.replace(day=1) != QUALITY_COMPLAINT_MONTH:
+        raise HTTPException(status_code=422, detail="A reklamációs nézet 2026. novemberre érhető el.")
     if not courier.isdecimal():
         raise HTTPException(status_code=422, detail="Hibás futárazonosító.")
     names = supabase_rest('GET','courier_master',params={'select':'courier_name','courier_id':f'eq.{courier}','limit':'2'})
@@ -22937,13 +22956,19 @@ def admin_route_signals(
     user = require_user(giriton_pwa_session)
     if not quality_complaint_manager(user):
         raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    start = QUALITY_COMPLAINT_MONTH
+    end = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    lower = datetime.combine(start, datetime.min.time(), tzinfo=LOCAL_TIMEZONE).isoformat()
+    upper = datetime.combine(end, datetime.min.time(), tzinfo=LOCAL_TIMEZONE).isoformat()
     alerts = supabase_rest("GET", "courier_route_alerts", params={
         "select": "id,courier_id,courier_name,route_id,alert_type,message,status,created_at,dispatcher_notified",
         "alert_type": "in.(delay,bag_missing)", "order": "created_at.desc,id.desc",
+        "created_at": f"gte.{lower}", "and": f"(created_at.lt.{upper})",
         "offset": str(offset), "limit": "51"})
     shifts = supabase_rest("GET", "courier_shift_checkins", params={
         "select": "id,courier_id,courier_name,work_date,start_time,end_time,warehouse,event_type,shift_name,created_at",
         "event_type": "in.(shift_late,coordinator_shift_late)", "order": "created_at.desc,id.desc",
+        "work_date": f"gte.{start.isoformat()}", "and": f"(work_date.lt.{end.isoformat()})",
         "offset": str(offset), "limit": "51"})
     photos = []
     if alerts:
@@ -22989,6 +23014,8 @@ def route_signal_to_complaint(
     work_date = str(row.get("work_date") or "")[:10]
     if not work_date:
         work_date = datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00")).astimezone(LOCAL_TIMEZONE).date().isoformat()
+    if work_date[:7] != QUALITY_COMPLAINT_MONTH.isoformat()[:7]:
+        raise HTTPException(status_code=422, detail="Csak 2026. novemberi jelzésből készíthető reklamáció.")
     bag = row.get("alert_type") == "bag_missing"
     label = "Táskahiány" if bag else "Műszakkésés" if kind == "shift" else "Túra alatti késés"
     message = str(row.get("message") or row.get("shift_name") or label).strip()
@@ -23063,6 +23090,33 @@ def approve_quality_complaint(
 
 
 
+@app.post("/api/quality/complaints/{complaint_id}/prepare-form")
+def prepare_quality_complaint_form(
+    complaint_id: UUID,
+    payload: QualityComplaintApprovalRequest | None = None,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    from resources.quality_form_forwarding import build_payload
+
+    user = require_user(giriton_pwa_session)
+    if not quality_complaint_manager(user):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    approved_payload = None
+    if payload is not None:
+        rows = supabase_rest("GET", "pwa_quality_complaints", params={"select": "*", "id": f"eq.{complaint_id}", "limit": "1"})
+        if not rows:
+            raise HTTPException(status_code=404, detail="A reklamáció nem található.")
+        try:
+            approved_payload = build_payload(rows[0], payload.category, payload.route_id, payload.license_plate)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    saved = supabase_rest("POST", "rpc/pwa_prepare_quality_form", payload={
+        "p_id": str(complaint_id), "p_actor": str(user.get("username") or "admin"), "p_payload": approved_payload})
+    if not saved:
+        raise HTTPException(status_code=409, detail="A reklamáció állapota nem engedi az űrlap megnyitását. Frissítsd a listát.")
+    return {"ok": True, "formPayload": saved[0]["payload"]}
+
+
 @app.post("/api/quality/complaints/{complaint_id}/actions")
 def manage_quality_complaint(
     complaint_id: UUID,
@@ -23104,6 +23158,8 @@ def create_quality_complaint(
     if category not in {"Túra alatti késés", "Futárbüntetés", "Pénztárca/tankolás", "Elszámolás", "Jármű", "Műszak"}:
         raise HTTPException(status_code=422, detail="Ismeretlen reklamációkategória.")
     month = parse_month(payload.month)
+    if month != QUALITY_COMPLAINT_MONTH:
+        raise HTTPException(status_code=422, detail="Csak 2026. novemberi napra rögzíthető reklamáció.")
     message = payload.message.strip()
     if len(message) < 5:
         raise HTTPException(status_code=422, detail="Legalább 5 karakteres indoklást adj meg.")

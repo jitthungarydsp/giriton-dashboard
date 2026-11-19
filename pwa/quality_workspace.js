@@ -26,18 +26,21 @@ function renderQualityRoster() {
 async function prepareQualityWorkspace() {
   const root = document.querySelector('#quality-workspace');
   if (!root) return true;
+  const panel = root.closest('details');
+  if (panel && state.qualityComplaintFocus) panel.open = true;
+  if (panel && !panel.open && !state.qualityWorkspaceCourier) return true;
   if (state.qualityComplaintFocus && state.qualityWorkspaceFocus !== state.qualityComplaintFocus) {
     try {
       const focused = await api(`/api/quality/complaints?complaint=${encodeURIComponent(state.qualityComplaintFocus)}`);
       const item = focused.items?.[0], day = item?.affected_items?.[0]?.date;
-      if (item && day) {
+      if (item && day?.slice(0, 7) === QUALITY_COMPLAINT_MONTH) {
         state.qualityWorkspaceCourier = String(item.courier_id);
-        state.qualityWorkspaceDay = day; state.qualityWorkspaceMonth = day.slice(0, 7);
+        state.qualityWorkspaceDay = day;
         state.qualityWorkspaceFocus = state.qualityComplaintFocus;
       }
     } catch(error) { root.textContent = error.message; return false; }
   }
-  const month = state.qualityWorkspaceMonth || state.workflowMonth || state.statisticsMonth || new Date().toISOString().slice(0, 7);
+  const month = QUALITY_COMPLAINT_MONTH;
   const request = (state.qualityWorkspaceRequest || 0) + 1;
   state.qualityWorkspaceRequest = request;
   try {
@@ -51,17 +54,12 @@ async function prepareQualityWorkspace() {
     const courier = payload.couriers.find(row => row.courierId === state.qualityWorkspaceCourier);
     const categories = payload.categories || {};
     root.innerHTML = `<div class="settlement-dashboard-filter-grid">
-      <label>Hónap<input id="quality-workspace-month" type="month" value="${escapeHtml(month)}"></label>
       <label>Reklamáció típusa<select id="quality-workspace-type"><option value="all">Összes reklamáció</option>${Object.entries(categories).map(([key,label]) => `<option value="${escapeHtml(key)}" ${state.qualityWorkspaceType === key ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label></div>
       ${(payload.warnings || []).map(text => `<p class="notice error">${escapeHtml(text)}</p>`).join('')}
       ${courier ? `<article class="shift-card"><div class="shift-top"><div><h3>${escapeHtml(courier.courierName)}</h3><p>#${escapeHtml(courier.courierId)} · ${escapeHtml(month)}</p></div><button type="button" class="secondary" id="quality-workspace-back">Vissza a futárlistához</button></div>
         <div class="workflow-tabs">${Object.entries(categories).map(([key,label]) => `<button type="button" class="secondary" data-quality-type="${escapeHtml(key)}">${escapeHtml(label)}</button>`).join('')}</div>
         <div class="shift-list">${qualityWorkspaceDays(courier).map(day => `<button type="button" class="financial-card" data-quality-day="${escapeHtml(day.date)}"><strong>${escapeHtml(day.date)}</strong><span>${escapeHtml([...new Set(day.items.map(item => categories[item.category] || 'Egyéb'))].join(' · '))}</span><small>${day.items.length} ügy vagy jelzés</small></button>`).join('') || '<p class="empty-card">Ebben a hónapban és kategóriában nincs rögzített ügy.</p>'}</div>
         <div id="quality-workspace-day"></div></article>` : `<div class="settlement-quick-search"><label>Gyorskeresés az összes futár között<input id="quality-workspace-search" type="search" value="${escapeHtml(state.qualityWorkspaceQuery || '')}" placeholder="Név vagy futár ID részlete…" autocomplete="off"></label><p>Részleges név- és ID-keresés, ékezet nélkül is.</p></div><div id="quality-workspace-roster"></div>`}`;
-    document.querySelector('#quality-workspace-month').onchange = event => {
-      state.qualityWorkspaceMonth = event.target.value; state.qualityWorkspace = null;
-      state.qualityWorkspaceDay = ''; state.qualityComplaintFocus = ''; loadQualityComplaints();
-    };
     document.querySelector('#quality-workspace-type').onchange = event => {
       state.qualityWorkspaceType = event.target.value; state.qualityWorkspaceDay = ''; state.qualityComplaintFocus = ''; loadQualityComplaints();
     };
@@ -77,12 +75,9 @@ async function prepareQualityWorkspace() {
     root.querySelectorAll('[data-quality-day]').forEach(button => button.onclick = () => {
       state.qualityWorkspaceDay = button.dataset.qualityDay; state.qualityComplaintFocus = ''; state.qualityComplaintOffset = 0; loadQualityComplaints();
     });
-    document.querySelector('#admin-route-signals')?.closest('section')?.classList.add('hidden');
     const selected = Boolean(courier && state.qualityWorkspaceDay);
-    document.querySelector('#quality-complaints-list')?.classList.toggle('hidden', !selected);
-    document.querySelector('#quality-complaints-prev')?.parentElement.classList.toggle('hidden', !selected);
     if (!courier) renderQualityRoster();
-    if (!selected) { document.querySelector('#quality-complaints-status').textContent = 'Válassz futárt, majd dátumot az ügyekhez és a teljes napi bizonyítékokhoz.'; return false; }
+    if (!selected) return true;
     const day = qualityWorkspaceDays(courier).find(item => item.date === state.qualityWorkspaceDay);
     const detail = document.querySelector('#quality-workspace-day');
     const sourceLabels = {complaint:'Futár reklamáció', route:'Menet közbeni jelzés', shift:'Műszakjelzés', google:'Google-űrlapos ügy'};
@@ -103,5 +98,14 @@ async function prepareQualityWorkspace() {
   } catch(error) { if (state.qualityWorkspaceRequest === request) root.textContent = error.message; return false; }
 }
 document.addEventListener('DOMContentLoaded', () => {
-  document.querySelector('#quality-complaints-refresh')?.addEventListener('click', () => { state.qualityWorkspace = null; }, true);
+  document.querySelector('#quality-workspace-panel')?.addEventListener('toggle', event => {
+    if (event.target.open && !state.qualityComplaintFocus) loadQualityComplaints();
+  });
+  document.querySelector('#quality-route-signals-panel')?.addEventListener('toggle', event => {
+    if (event.target.open) loadAdminRouteSignals();
+  });
+  document.querySelector('#quality-complaints-refresh')?.addEventListener('click', () => {
+    state.qualityWorkspace = null;
+    if (document.querySelector('#quality-route-signals-panel')?.open) loadAdminRouteSignals();
+  }, true);
 });
