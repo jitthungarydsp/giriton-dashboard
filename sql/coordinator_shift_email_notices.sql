@@ -10,7 +10,7 @@ create table if not exists public.coordinator_shift_email_notices (
     event_type text not null check (event_type in ('late', 'absence')),
     courier_label text not null,
     courier_id text,
-    late_occurrence integer check (late_occurrence > 0 and event_type = 'late'),
+    late_occurrence integer check (late_occurrence is null or (late_occurrence > 0 and event_type = 'late')),
     shift_label text not null,
     body_text text not null,
     body_html text not null,
