@@ -16855,16 +16855,49 @@ def refresh_google_bonus_malus_for_courier(
     courier_name: str,
     period_start: date,
     period_end: date,
-) -> dict[str, int]:
+) -> dict[str, object]:
     """Pull the selected courier/month from the configured Google Sheet."""
     from scripts.import_google_bonus_malus_adjustments import sync_courier_from_sheet
+    from scripts.refresh_google_adjustment_snapshots import check_reconciliation_schema, refresh_finance_snapshots
 
-    return sync_courier_from_sheet(
+    check_reconciliation_schema()
+    result = sync_courier_from_sheet(
         courier_id=courier_id,
         courier_name=courier_name,
         period_start=period_start,
         period_end=period_end,
     )
+    settlement = refresh_finance_snapshots([(courier_id, period_start.replace(day=1))])
+    if settlement["failed"]:
+        raise RuntimeError(settlement["errors"][0])
+    return {**result, "settlement": settlement}
+
+
+def show_google_adjustment_review(courier_id: str, period_start: date) -> None:
+    try:
+        rows = (
+            get_db().schema("settlement").table("google_adjustment_review")
+            .select("reason,previous_payable_huf,proposed_payable_huf,google_delta_huf")
+            .eq("courier_id", courier_id).eq("period_start", period_start.replace(day=1).isoformat())
+            .limit(1).execute().data or []
+        )
+    except Exception:
+        return
+    if not rows:
+        return
+    from scripts.refresh_google_adjustment_snapshots import REVIEW_REASONS
+
+    review = rows[0]
+    reason = REVIEW_REASONS.get(review["reason"], "Pénzügyi egyeztetés szükséges")
+    previous = review["previous_payable_huf"]
+    proposed = review["proposed_payable_huf"]
+    delta = review["google_delta_huf"]
+    amount = ""
+    if previous is not None and proposed is not None:
+        amount = f" Mentett összeg {format_huf(float(previous))}, számított összeg {format_huf(float(proposed))}."
+    elif delta is not None:
+        amount = f" Google Sheet-különbözet {format_huf(float(delta))}."
+    st.warning(f"Google Sheet-tétel egyeztetésre vár. {reason}.{amount}")
 
 
 def refresh_loyalty_calculation_data() -> None:
@@ -17725,13 +17758,21 @@ def render_courier_detail_page() -> None:
                         period_start=period_start,
                         period_end=period_end,
                     )
-                st.session_state["courier_refresh_notice"] = (
+                settlement = refresh_result["settlement"]
+                notice = (
                     f"MALUS/BONUS frissítve a {period_start:%Y-%m} hónapra: "
                     f"{refresh_result.get('sheet_rows', 0)} Sheet-sor, "
                     f"{refresh_result.get('inserted', 0)} új, "
                     f"{refresh_result.get('updated', 0)} módosított, "
                     f"{refresh_result.get('deactivated', 0)} régi sor kikapcsolva."
                 )
+                if settlement["review"]:
+                    notice += f" {settlement['reviews'][0]}"
+                elif settlement["saved"]:
+                    notice += " Az elszámolás új verziója elkészült."
+                else:
+                    notice += " Az elszámolás tételei egyeznek."
+                st.session_state["courier_refresh_notice"] = notice
             saved_filtered_data = st.session_state.get("current_filtered_data")
             saved_filtered_context = st.session_state.get("current_filtered_context")
             refresh_settlement_profile_data()
@@ -17740,13 +17781,11 @@ def render_courier_detail_page() -> None:
                 st.session_state["current_filtered_data"] = saved_filtered_data
             if saved_filtered_context is not None:
                 st.session_state["current_filtered_context"] = saved_filtered_context
-            if google_refresh_requested:
-                st.session_state[f"force_fresh_google_adjustments_{courier_id}_{period_start:%Y%m}"] = True
-                # A Sheet-frissítés teljes újraszámítás: ilyenkor a korábbi
-                # snapshotból ne örökítsünk át részadatokat.
-                st.session_state.pop(f"preserve_snapshot_components_{courier_id}", None)
             st.session_state["selected_courier_id"] = courier_id
             st.session_state[menu_key] = "Pénzügy"
+            if google_refresh_requested:
+                clear_devtest_finance_snapshot_cache()
+                st.rerun()
             st.session_state[finance_preflight_key] = True
             st.session_state[finance_preflight_target_key] = str(rebuild_request.get("target_menu") or "Pénzügy")
             st.rerun()
@@ -17811,6 +17850,7 @@ def render_courier_detail_page() -> None:
             f"<div class=\"section-title\">Pénzügy - {html.escape(courier_name)}</div>",
             unsafe_allow_html=True,
         )
+        show_google_adjustment_review(courier_id, period_start)
         if finance_snapshot:
             snapshot_row = row.copy()
             snapshot_column_map = {
@@ -20288,6 +20328,7 @@ def render_courier_detail_page() -> None:
 
     if selected_menu == "Kifizetés":
         st.markdown("#### Kifizetés")
+        show_google_adjustment_review(courier_id, period_start)
         payment_month = period_start.replace(day=1)
         actor = str(st.session_state.get("user", {}).get("username") or "unknown")
         payment_flash_key = f"payment_close_result_{courier_id}_{payment_month:%Y%m}"

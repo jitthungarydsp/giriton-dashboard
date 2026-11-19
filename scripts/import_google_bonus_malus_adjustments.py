@@ -338,6 +338,22 @@ def payload_month_key(payload: dict[str, Any]) -> tuple[str, str]:
     return courier_id, period_start
 
 
+def reconciliation_periods(prepared, existing, source_prefix, from_date=None, to_date=None):
+    """Include unchanged and inactive rows so interrupted refreshes can catch up."""
+    candidates = set()
+    for key, row in [*prepared, *existing.items()]:
+        if not key.startswith(source_prefix):
+            continue
+        try:
+            day = date.fromisoformat(str(row.get("valid_from") or "")[:10])
+        except ValueError:
+            continue
+        courier_id = str(row.get("courier_id") or "").strip()
+        if courier_id and (from_date is None or day >= from_date) and (to_date is None or day <= to_date):
+            candidates.add((courier_id, day.replace(day=1)))
+    return candidates
+
+
 def adjustment_payload(row: dict[str, Any], courier: dict[str, str], key: str) -> dict[str, Any]:
     effective = row["effective_date"]
     valid_to = month_end(effective)
@@ -528,7 +544,7 @@ def main() -> int:
     parser.add_argument(
         "--refresh-finance-snapshots",
         action="store_true",
-        help="A változott Google tételek érintett pénzügyi snapshotjait is új verzióra frissíti.",
+        help=argparse.SUPPRESS,  # Compatibility with existing scheduled invocations.
     )
     args = parser.parse_args()
 
@@ -583,19 +599,28 @@ def main() -> int:
     inserted = 0
     updated = 0
     deactivated = 0
-    changed_periods: set[tuple[str, date]] = set()
+    source_prefix = f"{SOURCE_PREFIX}:{args.sheet_id}:{args.gid}:"
+    closed_changes = set()
     if args.apply:
+        from scripts.refresh_google_adjustment_snapshots import check_reconciliation_schema
+
+        check_reconciliation_schema()
         for key, payload in prepared:
-            if payload_month_key(payload) in closed:
-                protected_closed += 1
-                continue
             current = existing.get(key)
+            month_key = payload_month_key(payload)
+            if month_key in closed:
+                protected_closed += 1
+                if current is None or (
+                    (current.get("is_active") and not adjustment_matches_payload(current, payload))
+                    or current.get("deleted_by") == "google-sheet-refresh"
+                ):
+                    closed_changes.add((month_key[0], date.fromisoformat(month_key[1])))
+                continue
             if current and current.get("id"):
                 if current.get("deleted_at") or current.get("is_active") is False:
                     if current.get("deleted_by") == "google-sheet-refresh":
                         reactivate_sheet_adjustment(str(current["id"]), payload)
                         updated += 1
-                        changed_periods.add((str(payload["courier_id"]), date.fromisoformat(str(payload["valid_from"])[:10]).replace(day=1)))
                         continue
                     protected_existing += 1
                     continue
@@ -603,13 +628,10 @@ def main() -> int:
                     continue
                 update_adjustment(str(current["id"]), payload)
                 updated += 1
-                changed_periods.add((str(payload["courier_id"]), date.fromisoformat(str(payload["valid_from"])[:10]).replace(day=1)))
             else:
                 insert_adjustment(payload)
                 inserted += 1
-                changed_periods.add((str(payload["courier_id"]), date.fromisoformat(str(payload["valid_from"])[:10]).replace(day=1)))
         current_source_keys = {key for key, _payload in prepared}
-        source_prefix = f"{SOURCE_PREFIX}:{args.sheet_id}:{args.gid}:"
         for current_key, current in existing.items():
             if current_key in current_source_keys or not current_key.startswith(source_prefix):
                 continue
@@ -619,12 +641,14 @@ def main() -> int:
                 current_date = date.fromisoformat(str(current.get("valid_from") or "")[:10])
             except ValueError:
                 continue
+            if (from_date and current_date < from_date) or (to_date and current_date > to_date):
+                continue
             if (str(current.get("courier_id") or ""), current_date.replace(day=1).isoformat()) in closed:
                 protected_closed += 1
+                closed_changes.add((str(current["courier_id"]), current_date.replace(day=1)))
                 continue
             deactivate_adjustment(str(current["id"]))
             deactivated += 1
-            changed_periods.add((str(current["courier_id"]), current_date.replace(day=1)))
     else:
         inserted = sum(1 for key, _payload in prepared if key not in existing)
         protected_existing = sum(
@@ -672,22 +696,28 @@ def main() -> int:
                 f"::warning::{len(unmatched)} Google Sheet-sor futárneve nem egyeztethető a futártörzzsel. "
                 "Az egyező sorok feldolgozása sikeres."
             )
-        else:
-            return 2 if args.apply else 0
+    if args.apply:
+        from scripts.refresh_google_adjustment_snapshots import refresh_finance_snapshots, report_closed_sheet_change
 
-    if args.apply and args.refresh_finance_snapshots and changed_periods:
-        from scripts.refresh_google_adjustment_snapshots import refresh_finance_snapshots
-
-        snapshot_result = refresh_finance_snapshots(changed_periods)
+        periods = reconciliation_periods(prepared, existing, source_prefix, from_date, to_date)
+        snapshot_result = refresh_finance_snapshots(periods - closed_changes)
+        for courier_id, month in sorted(closed_changes):
+            report_closed_sheet_change(courier_id, month)
+            snapshot_result["review"] += 1
+            snapshot_result["reviews"].append(f"{courier_id} {month}: új Sheet-eltérés lezárt hónapban.")
         print(
             "Pénzügyi snapshot frissítés: "
             f"{snapshot_result['saved']} új, {snapshot_result['unchanged']} változatlan, "
-            f"{snapshot_result['skipped']} kihagyva, {snapshot_result['failed']} hiba."
+            f"{snapshot_result['review']} admin ellenőrzésre vár, {snapshot_result['failed']} hiba."
         )
+        for review in snapshot_result["reviews"]:
+            print(f"::warning::{review}")
         for error in snapshot_result["errors"]:
             print(f"  - {error}")
         if snapshot_result["failed"]:
             return 1
+        if unmatched and not args.allow_unmatched:
+            return 2
     return 0
 
 
