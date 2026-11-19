@@ -1,3 +1,46 @@
+import sys
+
+
+def finance_invoice_notification_rest(db):
+    def notification_rest(method, path, *, schema, payload, params=None, prefer=None):
+        client = db.schema(schema)
+        if method == "POST":
+            return client.rpc(path.removeprefix("rpc/"), payload).execute().data
+        if method != "PATCH":
+            raise ValueError(f"Unsupported notification queue method: {method}")
+
+        query = client.table(path).update(payload, returning="minimal")
+        for key, value in params.items():
+            query = query.eq(key, value.removeprefix("eq."))
+        query.execute()
+
+    return notification_rest
+
+
+# These entry points process the queue without launching the Streamlit UI.
+if __name__ == "__main__" and sys.argv[1:] in (["--invoice-notifications-worker"], ["--invoice-notifications-once"]):
+    import logging
+    from supabase import create_client
+    from resources.email_sender import get_setting, send_custom_email, smtp_config
+    from resources.invoice_admin_notifications import send_pending_invoice_notifications, start_invoice_admin_notifier
+
+    logging.basicConfig(level=logging.INFO)
+    worker_db = create_client(get_setting("SUPABASE_URL"), get_setting("SUPABASE_SERVICE_ROLE_KEY"))
+    worker_rest = finance_invoice_notification_rest(worker_db)
+    if sys.argv[1] == "--invoice-notifications-once":
+        smtp_config()
+        sent = send_pending_invoice_notifications(worker_rest, send_custom_email, limit=1000)
+        logging.info("Sent %s invoice notifications", sent)
+        raise SystemExit(0)
+
+    worker_stop, _ = start_invoice_admin_notifier(worker_rest)
+    try:
+        worker_stop.wait()
+    except KeyboardInterrupt:
+        worker_stop.set()
+    raise SystemExit(0)
+
+
 import hashlib
 from resources.finance_adjustment_details import snapshot_manual_adjustment_details, snapshot_correction_amounts
 from resources.efo_deduction import calculate_efo_adjustments, EfoCalculationError
@@ -105,12 +148,21 @@ from resources.auth import (
 
 login_screen()
 
+
 @st.cache_resource
 def get_db():
     return get_supabase_client(
         st.secrets["SUPABASE_URL"],
         st.secrets["SUPABASE_SERVICE_ROLE_KEY"],
     )
+
+
+@st.cache_resource(show_spinner=False)
+def finance_invoice_notification_worker():
+    from resources.invoice_admin_notifications import start_invoice_admin_notifier
+
+    stop, _ = start_invoice_admin_notifier(finance_invoice_notification_rest(get_db()))
+    return stop
 
 
 supabase = get_db()
@@ -120,6 +172,7 @@ if "user" not in st.session_state:
     st.stop()
 
 user = st.session_state["user"]
+finance_invoice_notification_worker()
 
 
 def can_view_accounting_invoice_archive(current_user: dict[str, object]) -> bool:
