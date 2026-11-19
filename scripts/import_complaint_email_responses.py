@@ -40,7 +40,15 @@ def request_json(service, url, *, headers=None, data=None):
             body = response.read()
             return json.loads(body) if body else None
     except HTTPError as exc:
-        raise RuntimeError(f"{service}: HTTP {exc.code}") from None
+        code = ""
+        if service.startswith("Supabase"):
+            try:
+                value = json.load(exc).get("code", "")
+                if isinstance(value, str) and re.fullmatch(r"[A-Z0-9]{5,12}", value):
+                    code = f" ({value})"
+            except (ValueError, AttributeError):
+                pass
+        raise RuntimeError(f"{service}: HTTP {exc.code}{code}") from None
     except (URLError, TimeoutError) as exc:
         raise RuntimeError(f"{service}: connection failed") from exc
 
@@ -62,6 +70,10 @@ def gmail_reader(settings):
     return get
 
 
+def clean_text(value):
+    return re.sub(r"[\x00\ud800-\udfff]", "\ufffd", value)
+
+
 def coordinator_fields(subject, sender):
     if parseaddr(sender)[1].casefold() != COORDINATOR_SENDER:
         return None
@@ -72,10 +84,10 @@ def coordinator_fields(subject, sender):
     courier_ids = re.findall(r"\b[0-9]{3,8}\b", courier)
     return {
         "event_type": "absence" if match["absence"] else "late",
-        "courier_label": courier.replace("\x00", "\ufffd"),
+        "courier_label": clean_text(courier),
         "courier_id": courier_ids[0] if len(courier_ids) == 1 else None,
         "late_occurrence": int(match["ordinal"]) if match["ordinal"] else None,
-        "shift_label": match["shift"].replace("\x00", "\ufffd"),
+        "shift_label": clean_text(match["shift"]),
     }
 
 
@@ -95,16 +107,16 @@ def parse_message(message, *, coordinator=False):
         if part is None:
             return ""
         try:
-            return part.get_content().replace("\x00", "\ufffd")
+            return clean_text(part.get_content())
         except LookupError:
-            return part.get_payload(decode=True).decode("utf-8", errors="replace").replace("\x00", "\ufffd")
+            return clean_text(part.get_payload(decode=True).decode("utf-8", errors="replace"))
 
     return {
         "mailbox": MAILBOX,
         "gmail_id": message["id"],
         "gmail_thread_id": message["threadId"],
-        "subject": subject.replace("\x00", "\ufffd"),
-        "sender": sender.replace("\x00", "\ufffd"),
+        "subject": clean_text(subject),
+        "sender": clean_text(sender),
         "received_at": datetime.fromtimestamp(int(message["internalDate"]) / 1000, timezone.utc).isoformat(),
         "body_text": body("plain"),
         "body_html": body("html"),
@@ -138,18 +150,18 @@ def supabase_writer(settings, *, table=COMPLAINT_TABLE):
     key = settings["SUPABASE_SERVICE_ROLE_KEY"]
     url = settings["SUPABASE_URL"].rstrip("/") + f"/rest/v1/{table}"
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
-    request_json("Supabase", url + "?select=gmail_id&limit=1", headers=headers)
+    request_json("Supabase table check", url + "?select=gmail_id&limit=1", headers=headers)
     headers.update({"Content-Type": "application/json", "Prefer": "resolution=ignore-duplicates,return=representation"})
 
     def save(rows):
         return len(request_json(
-            "Supabase", url + "?on_conflict=mailbox,gmail_id&select=gmail_id", headers=headers,
+            "Supabase insert", url + "?on_conflict=mailbox,gmail_id&select=gmail_id", headers=headers,
             data=json.dumps(rows, ensure_ascii=True).encode(),
         ) or [])
 
     def known_ids(ids):
         params = urlencode({"mailbox": f"eq.{MAILBOX}", "gmail_id": f"in.({','.join(ids)})", "select": "gmail_id"})
-        rows = request_json("Supabase", url + "?" + params, headers=headers)
+        rows = request_json("Supabase existing-email lookup", url + "?" + params, headers=headers)
         return {row["gmail_id"] for row in rows}
 
     return save, known_ids
