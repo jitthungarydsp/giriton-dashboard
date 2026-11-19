@@ -17,6 +17,7 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from resources.complaint_assignment_notifications import start_assignment_notifier
+from resources.invoice_admin_notifications import start_invoice_admin_notifier
 from resources.complaint_assignments import AssignmentError, load_profiles as load_complaint_profiles, list_cases as list_assigned_complaints, assign_case as assign_complaint_case, add_note as add_assigned_complaint_note, start_case as start_assigned_complaint
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -21249,9 +21250,11 @@ def disable_push_subscription(
 @asynccontextmanager
 async def pwa_lifespan(_app):
     assignment_stop = start_assignment_notifier(supabase_rest, legacy_users_provider=load_users)
+    invoice_notification_stop, _app.state.invoice_notification_ready = start_invoice_admin_notifier(supabase_rest)
     try:
         yield
     finally:
+        invoice_notification_stop.set()
         assignment_stop.set()
 
 
@@ -27307,7 +27310,8 @@ async def create_atm_payment(
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    ready = getattr(app.state, "invoice_notification_ready", None)
+    return {"status": "ok", "invoice_notifications": "ready" if ready and ready.is_set() else "starting"}
 
 
 app.mount("/assets", StaticFiles(directory=PWA_ROOT), name="pwa-assets")
