@@ -23094,7 +23094,8 @@ def approve_quality_complaint(
     if rows[0].get("status") != "open":
         raise HTTPException(status_code=409, detail="Csak nyitott reklamáció hagyható jóvá.")
     try:
-        prepared = build_payload(rows[0], payload.category, payload.route_id, payload.license_plate)
+        prepared = build_payload(rows[0], payload.category, payload.route_id, payload.license_plate,
+                                 description=payload.description)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     result = supabase_rest("POST", "rpc/pwa_approve_quality_delivery", payload={
@@ -23115,6 +23116,12 @@ def quality_complaint_form_draft(complaint_id: UUID, giriton_pwa_session: str | 
     complaint = read_accessible_quality_complaint(complaint_id, user, columns="*")
     if complaint.get("status") != "open":
         raise HTTPException(status_code=409, detail="Csak nyitott reklamáció továbbítható.")
+    deliveries = supabase_rest("GET", "pwa_quality_complaint_deliveries", params={
+        "select": "state,payload,last_error", "complaint_id": f"eq.{complaint_id}", "limit": "1"})
+    if deliveries:
+        delivery = deliveries[0]
+        return {"formPayload": delivery["payload"], "deliveryState": delivery["state"],
+                "lastError": delivery.get("last_error", "")}
     try:
         return {"formPayload": build_payload(complaint, draft=True)}
     except ValueError as exc:

@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v294";
+const APP_VERSION = "v295";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1785,7 +1785,7 @@ async function loadQualityComplaints() {
         ${delivery ? `<div class="notice ${blocked || delivery.state === "failed" ? "error" : ""}">${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}${delivery.last_error ? ` · ${escapeHtml(delivery.last_error)}` : ""}</div>` : ""}
         ${payload.canManage && item.status !== "closed" ? `<div class="quality-inbox-actions">
           <button type="button" class="secondary" data-complaint-action="close" ${blocked || delivery?.state === "queued" ? "disabled" : ""}>Reklamáció lezárása</button>
-          ${item.status === "open" ? `<button type="button" class="primary" data-complaint-action="forward" ${blocked || delivery?.state === "sent" ? "disabled" : ""}>${delivery?.state === "prepared" ? "Továbbítás folytatása" : "Továbbítás"}</button>` : ""}
+          ${item.status === "open" ? `<button type="button" class="primary" data-complaint-action="forward" ${["uncertain", "sent"].includes(delivery?.state) ? "disabled" : ""}>${["queued", "processing", "prepared"].includes(delivery?.state) ? "Továbbítás folytatása" : "Továbbítás"}</button>` : ""}
         </div>` : ""}
         ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
         ${payload.canManage ? `<details data-complaint-evidence><summary>Műszak- és Hub-adatok</summary><div data-evidence-content role="status"></div><button type="button" class="secondary" data-evidence-refresh>Adatok frissítése</button></details>` : ""}
@@ -1839,7 +1839,7 @@ async function loadQualityComplaints() {
     target.querySelectorAll("[data-complaint-action]").forEach(button => button.addEventListener("click", () => {
       const id = button.closest("[data-complaint-id]").dataset.complaintId;
       const item = payload.items.find(row => String(row.id) === id);
-      if (item) openQualityInboxAction(item, button.dataset.complaintAction);
+      if (item) openQualityInboxAction(item, button.dataset.complaintAction, payload.forwardingEnabled);
     }));
     if (state.qualityComplaintFocus) {
       const selected = cards.find(card => card.dataset.complaintId === state.qualityComplaintFocus);
@@ -1853,7 +1853,7 @@ async function loadQualityComplaints() {
   }
 }
 
-async function openQualityInboxAction(item, action) {
+async function openQualityInboxAction(item, action, robotEnabled = false) {
   const closing = action === "close";
   const base = `/api/quality/complaints/${encodeURIComponent(item.id)}`;
   const dialog = document.createElement("dialog");
@@ -1869,7 +1869,7 @@ async function openQualityInboxAction(item, action) {
     ${closing ? "" : '<label class="hidden" data-inbox-reference-field>Kifli ügyazonosító, ha van<input data-inbox-reference maxlength="450"></label>'}
     <p data-inbox-status role="status" aria-live="polite"></p>
     <div class="quality-inbox-actions"><button type="button" class="secondary" data-inbox-dismiss>Mégse</button>
-      ${closing ? '<button type="button" class="primary" data-inbox-confirm>Lezárás válasszal</button>' : '<button type="button" class="primary" data-inbox-open-form disabled>Google-űrlap megnyitása</button><button type="button" class="primary hidden" data-inbox-confirm>Beküldtem a Google-űrlapot</button>'}</div>`;
+      ${closing ? '<button type="button" class="primary" data-inbox-confirm>Lezárás válasszal</button>' : `<button type="button" class="${robotEnabled ? "secondary" : "primary"}" data-inbox-open-form disabled>${robotEnabled ? "Kézi megnyitás" : "Google-űrlap megnyitása"}</button>${robotEnabled ? '<button type="button" class="primary" data-inbox-robot disabled>Automatikus kitöltés</button>' : ""}<button type="button" class="primary hidden" data-inbox-confirm>Beküldtem a Google-űrlapot</button>`}</div>`;
   document.body.appendChild(dialog);
   const get = selector => dialog.querySelector(selector);
   const status = get("[data-inbox-status]");
@@ -1878,6 +1878,7 @@ async function openQualityInboxAction(item, action) {
   const dismiss = get("[data-inbox-dismiss]");
   const tabs = state.qualityInboxFormTabs ||= new Map();
   let busy = false;
+  let deliveryState = item.delivery?.state || "";
   let prepared = !closing && item.delivery?.state === "prepared";
   let savedAction = false;
   const setBusy = value => {
@@ -1889,7 +1890,7 @@ async function openQualityInboxAction(item, action) {
   dialog.addEventListener("cancel", event => { if (busy) event.preventDefault(); });
   dialog.addEventListener("close", () => {
     dialog.remove();
-    if (prepared && !savedAction) loadQualityComplaints();
+    if (!closing && !savedAction && (prepared || ["queued", "processing"].includes(deliveryState))) loadQualityComplaints();
   }, {once: true});
   confirm.addEventListener("click", async () => {
     if (busy || (!closing && !prepared)) return;
@@ -1920,6 +1921,10 @@ async function openQualityInboxAction(item, action) {
   const route = get("[data-inbox-route]");
   const plate = get("[data-inbox-plate]");
   const open = get("[data-inbox-open-form]");
+  const robot = get("[data-inbox-robot]");
+  let statusTimer;
+  let deliveryRead = 0;
+  dialog.addEventListener("close", () => clearTimeout(statusTimer), {once:true});
   const showCategoryFields = () => {
     get("[data-inbox-route-field]").hidden = category.value !== "Túra alatti késés";
     get("[data-inbox-plate-field]").hidden = category.value !== "Jármű";
@@ -1932,19 +1937,58 @@ async function openQualityInboxAction(item, action) {
     plate.value = form.license_plate || "";
     description.value = form.description;
     showCategoryFields();
-    category.disabled = prepared;
-    [route, plate, description].forEach(input => { input.readOnly = prepared; });
+    const locked = prepared || ["queued", "processing", "uncertain", "sent"].includes(deliveryState);
+    category.disabled = locked;
+    [route, plate, description].forEach(input => { input.readOnly = locked; });
     if (prepared) {
       confirm.classList.remove("hidden");
       get("[data-inbox-reference-field]").classList.remove("hidden");
       dismiss.textContent = "Bezárás";
     }
   };
+  const currentForm = () => ({category:category.value, route_id:route.value.trim(), license_plate:plate.value.trim(), description:description.value.trim()});
+  const formIsComplete = body => body.description.length >= 5 &&
+    (body.category !== "Túra alatti késés" || body.route_id) && (body.category !== "Jármű" || body.license_plate);
+  const syncDelivery = async () => {
+    const sequence = ++deliveryRead;
+    const result = await api(`${base}/form-draft`, {silentLoading:true});
+    if (!dialog.open || sequence !== deliveryRead) return;
+    deliveryState = result.deliveryState || "";
+    prepared = deliveryState === "prepared";
+    showApproved(result.formPayload);
+    open.disabled = ["processing", "uncertain", "sent"].includes(deliveryState);
+    if (robot) robot.disabled = ["queued", "processing", "prepared", "uncertain", "sent"].includes(deliveryState);
+    if (deliveryState === "queued" || deliveryState === "processing") {
+      status.textContent = deliveryState === "queued" ? "Az űrlap a robotra vár." : "A robot kitölti a Google-űrlapot.";
+      statusTimer = setTimeout(() => syncDelivery().catch(error => { status.textContent = error.message; }), 4000);
+    } else if (prepared) {
+      status.textContent = "Az űrlap elő van készítve. A Google visszaigazolása után kattints a Beküldtem gombra.";
+    } else {
+      status.textContent = result.lastError || "";
+    }
+  };
+  robot?.addEventListener("click", async () => {
+    if (busy) return;
+    const body = currentForm();
+    if (!formIsComplete(body)) { status.textContent = "Töltsd ki a szöveget és a kategória kötelező mezőit."; return; }
+    setBusy(true);
+    robot.disabled = true;
+    open.disabled = true;
+    try {
+      const result = await api(`${base}/approve`, {method:"POST",body:JSON.stringify(body)});
+      if (!result.ok) throw Error("A robot indítása nem igazolható.");
+      await syncDelivery();
+    } catch (error) {
+      status.textContent = error.message;
+      robot.disabled = false;
+      open.disabled = false;
+    } finally { setBusy(false); }
+  });
   const readPrepared = () => api(`${base}/prepare-form`, {method:"POST", body:"null"});
   open.addEventListener("click", async () => {
     if (busy) return;
-    const body = {category:category.value, route_id:route.value.trim(), license_plate:plate.value.trim(), description:description.value.trim()};
-    if (!prepared && (body.description.length < 5 || (body.category === "Túra alatti késés" && !body.route_id) || (body.category === "Jármű" && !body.license_plate))) {
+    const body = currentForm();
+    if (!prepared && !formIsComplete(body)) {
       status.textContent = "Töltsd ki a szöveget és a kategóriához tartozó kötelező mezőt.";
       return;
     }
@@ -1954,11 +1998,14 @@ async function openQualityInboxAction(item, action) {
     if (tab && !reused) tab.opener = null;
     setBusy(true);
     open.disabled = true;
+    clearTimeout(statusTimer);
+    deliveryRead++;
     try {
       const result = prepared ? await readPrepared() : await api(`${base}/prepare-form`, {method:"POST",body:JSON.stringify(body)});
       const url = qualityComplaintFormUrlFromPayload(result.formPayload);
       prepared = true;
       showApproved(result.formPayload);
+      if (robot) robot.disabled = true;
       if (tab && !tab.closed) {
         tabs.set(item.id, tab);
         if (reused) tab.focus();
@@ -1975,15 +2022,15 @@ async function openQualityInboxAction(item, action) {
     } catch (error) {
       if (!reused) tab?.close();
       status.textContent = error.message;
+      if (["queued", "processing"].includes(deliveryState)) {
+        syncDelivery().catch(() => {});
+      }
     } finally { setBusy(false); open.disabled = false; }
   });
   status.textContent = "Űrlapadatok betöltése…";
   try {
-    const result = prepared ? await readPrepared() : await api(`${base}/form-draft`);
-    showApproved(result.formPayload);
-    open.disabled = false;
-    status.textContent = prepared ? "Ha a Google már visszaigazolta a beküldést, rögzítsd itt." : "";
-    if (!prepared && (!route.value || !plate.value)) {
+    await syncDelivery();
+    if (!["queued", "processing", "prepared", "sent", "uncertain"].includes(deliveryState) && (!route.value || !plate.value)) {
       api(`${base}/evidence`, {silentLoading:true}).then(evidence => {
         if (prepared || !dialog.open) return;
         if (!route.value) route.value = evidence.formDefaults?.routeId || "";

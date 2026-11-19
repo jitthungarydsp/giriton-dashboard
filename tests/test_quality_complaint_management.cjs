@@ -78,5 +78,28 @@ test('forward keeps edited text and records status only after the admin confirms
     await page.getByRole('button',{name:'Beküldtem a Google-űrlapot'}).click();
     await page.waitForFunction(() => popup.closed && !document.querySelector('dialog'));
     assert.equal(await page.evaluate(() => requests.find(r=>r.path.endsWith('/actions')).body.action),'forward');
+    await page.evaluate(() => {
+      requests.length = 0;
+      let approval;
+      let polls = 0;
+      window.open = () => { throw Error('Robot mode must leave Google Forms to the worker'); };
+      const delay = window.setTimeout.bind(window);
+      window.setTimeout = (callback, ms) => delay(callback, ms === 4000 ? 20 : ms);
+      window.api = async (path, options) => {
+        const body = options?.body ? JSON.parse(options.body) : null;
+        requests.push({path,body});
+        if (path.endsWith('/approve')) { approval = body; return {ok:true,state:'queued'}; }
+        if (path.endsWith('/actions')) return {ok:true};
+        if (path.endsWith('/evidence')) return {formDefaults:{}};
+        const deliveryState = approval ? (++polls === 1 ? 'queued' : 'prepared') : '';
+        return {deliveryState,formPayload:{category:'Műszak',description:'Eredeti szöveg',...approval}};
+      };
+      return openQualityInboxAction({id:'b',courier_name:'Futár',courier_id:'1234'},'forward',true);
+    });
+    await page.locator('[data-inbox-description]').fill('A robotnak jóváhagyott szöveg');
+    await page.getByRole('button',{name:'Automatikus kitöltés'}).click();
+    await page.getByRole('button',{name:'Beküldtem a Google-űrlapot'}).waitFor();
+    assert.equal(await page.evaluate(() => requests.find(r=>r.path.endsWith('/approve')).body.description),'A robotnak jóváhagyott szöveg');
+    assert.equal(await page.evaluate(() => requests.filter(r=>r.path.endsWith('/actions')).length),0);
   } finally { await browser.close(); }
 });

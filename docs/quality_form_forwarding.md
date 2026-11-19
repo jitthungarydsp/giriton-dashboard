@@ -4,10 +4,10 @@ A robot kizárólag kitölt. A végső **Küldés** gombot mindig az admin nyomj
 
 ## Használat
 
-1. A PWA Futár reklamációk kezelése menüjében az admin kiválasztja a kategóriát, szükség esetén a túraszámot vagy rendszámot, és megnyomja a **Jóváhagyás és kitöltés** gombot.
-2. A robot gépén látható, külön Chrome-ablak nyílik, a system@jitt.hu profiljával. A partner, kategória és a kategóriához tartozó adatok automatikusan bekerülnek.
+1. A PWA Futárreklamációk oldalán az admin a **Továbbítás** ablakban ellenőrzi a kategóriát, a szükséges mezőket és az elküldendő szöveget. A bekapcsolt robotnak az **Automatikus kitöltés** gombbal adja át a szerkesztett adatokat. A **Kézi megnyitás** a saját böngészőben nyitja meg az előkitöltött űrlapot.
+2. A robot gépén külön Chrome-ablak nyílik, a konfigurált Google-fiókkal. A robot szükség esetén a jelenlegi piszkozatot folytatja, bejelöli az e-mail rögzítését, majd a partner és a kategória kiválasztása után a részletekhez lép, és kitölti azokat.
 3. A robot nyitva hagyja az űrlapot. Az admin ellenőrzi az adatokat, kézzel megnyomja a Küldés gombot, és megvárja a Google visszaigazolását. A képek a PWA privát tárhelyén maradnak: a Google-form jelenlegi mezői között nincs képfeltöltés.
-4. Csak igazolt beküldés után a PWA **Továbbítottként rögzítés** gombjával rögzíti a továbbítást, bizonyítékhivatkozással. Ezután bezárhatja a robot Chrome-ablakát, és a robot folytathatja a következő üggyel.
+4. Csak igazolt beküldés után a PWA **Beküldtem a Google-űrlapot** gombjával rögzíti a továbbítást. Ha ismert, megadhatja a Kifli ügyazonosítót. A robot akkor folytatja a következő üggyel, ha az admin bezárta a robot Chrome-ablakát.
 
 A PWA gombja nem a telefonon nyitja meg a kitöltött űrlapot: az a robotot futtató gépen jelenik meg. A böngészőablak bezárásáig a következő ügy nem indul el.
 
