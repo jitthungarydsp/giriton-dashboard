@@ -1,0 +1,38 @@
+name: Import complaint email responses
+
+on:
+  schedule:
+    - cron: '4-59/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: import-complaint-email-responses
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Import responses into Supabase
+        env:
+          GMAIL_COMPLAINT_CLIENT_ID: ${{ secrets.GMAIL_COMPLAINT_CLIENT_ID }}
+          GMAIL_COMPLAINT_CLIENT_SECRET: ${{ secrets.GMAIL_COMPLAINT_CLIENT_SECRET }}
+          GMAIL_COMPLAINT_REFRESH_TOKEN: ${{ secrets.GMAIL_COMPLAINT_REFRESH_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == schedule ]] && [[ -z "$GMAIL_COMPLAINT_CLIENT_ID" || -z "$GMAIL_COMPLAINT_CLIENT_SECRET" || -z "$GMAIL_COMPLAINT_REFRESH_TOKEN" ]]; then
+            echo '::notice::Gmail OAuth secrets are required to enable this import.'
+            exit 0
+          fi
+          python scripts/import_complaint_email_responses.py
