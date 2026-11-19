@@ -8405,6 +8405,38 @@ def save_courier_monthly_closure(
     load_courier_monthly_closure.clear()
 
 
+def notify_invoice_paid(
+    *,
+    courier_id: str,
+    courier_name: str,
+    recipient_name: str,
+    invoice_number: str,
+    amount_huf: float,
+    actor: str,
+) -> str:
+    invoice_number = invoice_number.strip()
+    if not invoice_number:
+        return "Az e-mail-értesítéshez szükséges a számla sorszáma."
+    try:
+        result = send_courier_template_email(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            template_key="invoice_paid",
+            variables={
+                "payment_recipient_name": recipient_name.strip() or courier_name,
+                "invoice_number": invoice_number,
+                "amount_huf": format_huf(amount_huf),
+                "payment_date": pd.Timestamp.now(tz="Europe/Budapest").date().isoformat(),
+            },
+            sent_by=actor,
+        )
+    except Exception:
+        return "Az e-mail-értesítés küldése sikertelen."
+    if result.get("error"):
+        return "Az e-mail-értesítés küldése sikertelen. Részletek az e-mail-naplóban."
+    return ""
+
+
 def payment_close_note_error(note: object, amount_huf: object) -> str:
     clean_note = str(note or "").strip()
     if not clean_note:
@@ -20258,6 +20290,12 @@ def render_courier_detail_page() -> None:
         st.markdown("#### Kifizetés")
         payment_month = period_start.replace(day=1)
         actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+        payment_flash_key = f"payment_close_result_{courier_id}_{payment_month:%Y%m}"
+        if payment_flash_key in st.session_state:
+            payment_message, email_error = st.session_state.pop(payment_flash_key)
+            st.success(payment_message)
+            if email_error:
+                st.warning(email_error)
         try:
             workflow_statuses = read_peopleforce_card_statuses(courier_id, payment_month)
         except Exception as exc:
@@ -20367,10 +20405,19 @@ def render_courier_detail_page() -> None:
                     status_note=quick_close_note,
                     updated_by=actor,
                 )
-                st.success("A havi folyamat lezárva.")
-                st.rerun()
             except Exception as exc:
                 st.error(f"A havi folyamat lezárása sikertelen: {exc}")
+            else:
+                email_error = notify_invoice_paid(
+                    courier_id=courier_id,
+                    courier_name=str(row["Futár"]),
+                    recipient_name=quick_recipient_name,
+                    invoice_number=quick_invoice_number,
+                    amount_huf=monthly_payment_amount,
+                    actor=actor,
+                )
+                st.session_state[payment_flash_key] = ("A havi folyamat lezárva.", email_error)
+                st.rerun()
         st.divider()
 
         process_ids = {""}
@@ -20909,10 +20956,19 @@ def render_courier_detail_page() -> None:
                             status_note=close_note,
                             updated_by=actor,
                         )
-                    st.success("Kifizetés lezárva.")
-                    st.rerun()
                 except Exception as exc:
                     st.error(f"A kifizetés lezárása sikertelen: {exc}")
+                else:
+                    email_error = notify_invoice_paid(
+                        courier_id=courier_id,
+                        courier_name=str(row["Futár"]),
+                        recipient_name=recipient_name,
+                        invoice_number=invoice_number,
+                        amount_huf=amount_huf,
+                        actor=actor,
+                    )
+                    st.session_state[payment_flash_key] = ("Kifizetés lezárva.", email_error)
+                    st.rerun()
             reject_label = "Havi kifizetés elutasítása / visszanyitás" if not process_id else "Elutasítás / folyamat visszavonása"
             if reject_col.button(reject_label, use_container_width=True, key=f"payment_reject_{courier_id}_{process_id or 'monthly'}"):
                 try:
@@ -22677,7 +22733,7 @@ def render_courier_detail_page() -> None:
         template_by_key = {
             str(item.get("template_key") or ""): item
             for item in template_rows
-            if str(item.get("template_key") or "").strip()
+            if str(item.get("template_key") or "").strip() not in {"", "invoice_paid"}
         }
         template_keys = list(template_by_key) or ["free_text"]
         selected_template_key = st.selectbox(

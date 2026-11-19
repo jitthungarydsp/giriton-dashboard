@@ -264,6 +264,19 @@ DEFAULT_EMAIL_TEMPLATES = {
             "Üdvözlettel:\nJITT"
         ),
     },
+    "invoice_paid": {
+        "name": "Számla kifizetve",
+        "subject": "A(z) {invoice_number} számú számla kifizetve",
+        "body": (
+            "Kedves {payment_recipient_name}!\n\n"
+            "Ezúton tájékoztatjuk, hogy az alábbi számla kiegyenlítésre került.\n\n"
+            "Számla sorszáma: {invoice_number}\n"
+            "Kifizetett összeg: {amount_huf}\n"
+            "Kifizetés dátuma: {payment_date}\n\n"
+            "Üdvözlettel\n"
+            "Jitt Hungary Kft."
+        ),
+    },
     "payment_rejected": {
         "name": "Kifizetés elutasítva / visszanyitva",
         "subject": "Kifizetés státusza módosult",
