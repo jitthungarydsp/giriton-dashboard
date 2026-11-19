@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v293";
+const APP_VERSION = "v294";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1698,6 +1698,14 @@ function qualityComplaintStatus(value) {
   return ({ open: "Nyitott", forwarded: "Továbbított", closed: "Lezárt" })[value] || value;
 }
 
+function qualityInboxTopic(item) {
+  if ((item.affected_items || []).some(row => row.signalKind === "route")) return "Menet közben";
+  if (item.topic === "noShow") return "No-show";
+  if (item.topic === "lateShift") return "Műszakkésés";
+  if (["cleanedTimeWindowLate", "uncleanedTimeWindowLate"].includes(item.topic)) return "Címkésési panasz";
+  return "Reklamáció";
+}
+
 function renderAdminRouteSignals(payload, offset = 0) {
   const entries = [...(payload.alerts || []), ...(payload.shifts || [])]
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
@@ -1764,37 +1772,30 @@ async function loadQualityComplaints() {
     const payload = await api(`/api/quality/complaints?status=${encodeURIComponent(filter)}&offset=${state.qualityComplaintOffset || 0}${state.qualityComplaintFocus ? `&complaint=${encodeURIComponent(state.qualityComplaintFocus)}` : ''}${state.qualityWorkspaceCourier ? `&courier=${encodeURIComponent(state.qualityWorkspaceCourier)}` : ''}${state.qualityWorkspaceDay ? `&work_date=${encodeURIComponent(state.qualityWorkspaceDay)}` : ''}`);
     if (state.qualityComplaintRequest !== request) return;
     target.innerHTML = payload.items.length ? payload.items.map((item) => {
-      const topics = { lateShift: "Műszakkésés", noShow: "No-show", uncleanedTimeWindowLate: "Nem mentesített címkésés", cleanedTimeWindowLate: "Mentesített címkésés" };
       const delivery = item.delivery;
       const deliveryLabels = {queued:"Jóváhagyva · kitöltésre vár", processing:"Google-űrlap kitöltése folyamatban", prepared:"Jóváhagyva · kézi beküldésre vár", login_required:"Google-bejelentkezés szükséges", failed:"Kitöltési hiba · nem indult beküldés", uncertain:"Beküldés ellenőrzése szükséges · automatikusan nem ismételjük", sent:"Google-beküldés igazolva"};
-      const category = (item.affected_items || []).find(row => row.category)?.category || (["lateShift", "noShow"].includes(item.topic) ? "Műszak" : "Túra alatti késés");
-      const busy = ["queued", "processing"].includes(delivery?.state);
-      return `<article class="shift-card" data-complaint-id="${escapeHtml(item.id)}">
-        <div class="shift-top"><div><h3>${escapeHtml(item.courier_name)} · #${escapeHtml(item.courier_id)}</h3><p>${escapeHtml(topics[item.topic] || item.topic)} · ${escapeHtml(shortDateTime(item.created_at))}</p></div><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></div>
-        <p class="quality-complaint-work-date"><strong>Érintett nap: ${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></p>
+      const blocked = ["processing", "uncertain"].includes(delivery?.state);
+      const open = String(item.id) === (state.qualityComplaintFocus || state.qualityInboxOpen);
+      return `<details class="quality-inbox-item" name="quality-inbox" data-complaint-id="${escapeHtml(item.id)}" ${open ? "open" : ""}>
+        <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}</strong><span>${escapeHtml(qualityInboxTopic(item))}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></summary>
+        <div class="quality-inbox-body">
+        <div class="quality-inbox-meta"><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span></div>
         <p class="complaint-text">${escapeHtml(item.message)}</p>
         ${renderComplaintShiftDetails(item)}
-        ${payload.canManage ? `<details data-complaint-evidence><summary>Részletes műszak- és Hub-események</summary><div data-evidence-content role="status">Lenyitáskor betöltjük az érintett nap adatbázisadatait.</div><button type="button" class="secondary" data-evidence-refresh>Adatok újraellenőrzése</button></details>` : ""}
-        ${delivery ? `<div class="notice ${["failed", "uncertain", "login_required"].includes(delivery.state) ? "error" : ""}"><strong>${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}</strong><p>${escapeHtml(delivery.last_error || "")}</p><small>${escapeHtml(delivery.approved_by)} · ${escapeHtml(shortDateTime(delivery.approved_at))}</small></div>` : ""}
-        ${payload.canManage && item.status === "open" && delivery?.state === "prepared" ? `<button class="secondary" type="button" data-complaint-action="reopen-form">Jóváhagyott űrlap megnyitása</button>` : ""}
-        ${payload.canManage && item.status === "open" && !["processing", "uncertain", "prepared", "sent"].includes(delivery?.state) ? `<details data-complaint-approval><summary>Jóváhagyás és Google-űrlap kitöltése</summary>
-          <label>Kategória<select data-complaint-category>${qualityComplaintCategories().map(value => `<option ${value === category ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
-          <label>Túraszám / Cargo ID (túrakésésnél kötelező)<input data-complaint-route maxlength="500" value="${escapeHtml([...new Set((item.affected_items || []).map(row => row.routeId).filter(Boolean))].join(", "))}"></label>
-          <label>Rendszám (járműpanasznál kötelező)<input data-complaint-plate maxlength="30"></label>
-          <p class="muted" data-prefill-status role="status">Lenyitáskor előtöltjük a műszakhoz kapcsolható túraszámot és rendszámot. A mezők szerkeszthetők.</p>
-          <p class="muted">A gomb elmenti a jóváhagyást, és új lapon megnyitja az előkitöltött Google-űrlapot. A Google-űrlapot ellenőrzés után a Küldés gombbal küldheted be.</p>
-          <button class="primary" type="button" data-complaint-action="approve">Jóváhagyás és kitöltés</button></details>` : ""}
+        ${delivery ? `<div class="notice ${blocked || delivery.state === "failed" ? "error" : ""}">${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}${delivery.last_error ? ` · ${escapeHtml(delivery.last_error)}` : ""}</div>` : ""}
+        ${payload.canManage && item.status !== "closed" ? `<div class="quality-inbox-actions">
+          <button type="button" class="secondary" data-complaint-action="close" ${blocked || delivery?.state === "queued" ? "disabled" : ""}>Reklamáció lezárása</button>
+          ${item.status === "open" ? `<button type="button" class="primary" data-complaint-action="forward" ${blocked || delivery?.state === "sent" ? "disabled" : ""}>${delivery?.state === "prepared" ? "Továbbítás folytatása" : "Továbbítás"}</button>` : ""}
+        </div>` : ""}
         ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
+        ${payload.canManage ? `<details data-complaint-evidence><summary>Műszak- és Hub-adatok</summary><div data-evidence-content role="status"></div><button type="button" class="secondary" data-evidence-refresh>Adatok frissítése</button></details>` : ""}
         <details><summary>Érintett tételek és előzmények</summary>
           ${(item.affected_items || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.date)} · ${escapeHtml(row.label)}</span><strong>${escapeHtml(row.note)}</strong></div>`).join("")}
           ${(item.history || []).map(event => `<p class="complaint-text">${escapeHtml(shortDateTime(event.at))} · ${escapeHtml(event.actor)} · ${escapeHtml(qualityComplaintStatus(event.status))}<br>${escapeHtml(event.message || event.reference)}</p>`).join("")}
         </details>
         ${item.admin_response ? `<div class="notice complaint-text"><strong>Válasz:</strong> ${escapeHtml(item.admin_response)}</div>` : ""}
-        ${payload.canManage && item.status !== "closed" ? `<label>Szöveges válasz<textarea data-complaint-response maxlength="5000" placeholder="Válasz a futárnak…"></textarea></label>
-          <div class="dialog-actions"><button type="button" class="secondary" data-complaint-action="reply">Válasz mentése</button><button type="button" data-complaint-action="close" ${busy || delivery?.state === "uncertain" ? "disabled" : ""}>Lezárás válasszal</button></div>
-          ${item.status === "open" ? `<details><summary>Kifli-továbbítás rögzítése</summary><p class="muted">Csak a tényleges továbbítás után. Ez a gomb nem küldi el a reklamációt.</p><label>Kifli ügyazonosító / feltöltési hivatkozás<input data-complaint-reference maxlength="500" /></label><button type="button" class="secondary" data-complaint-action="forward">Továbbítottként rögzítés</button></details>` : ""}` : ""}
-        <p data-complaint-result role="status" aria-live="polite"></p>
-      </article>`;
+        </div>
+      </details>`;
     }).join("") : '<div class="empty-card">Nincs ilyen státuszú reklamáció.</div>';
     $("#quality-complaints-prev").disabled = !(state.qualityComplaintOffset > 0);
     $("#quality-complaints-next").disabled = !payload.hasMore;
@@ -1811,105 +1812,185 @@ async function loadQualityComplaints() {
     target.querySelectorAll("[data-complaint-evidence]").forEach(panel => {
       const content = panel.querySelector("[data-evidence-content]");
       const refresh = panel.querySelector("[data-evidence-refresh]");
-      const card = panel.closest("[data-complaint-id]");
-      const prefillStatus = card.querySelector("[data-prefill-status]");
-      card.querySelectorAll("[data-complaint-route], [data-complaint-plate]").forEach(input =>
-        input.addEventListener("input", () => { input.dataset.edited = "true"; }));
-      let loaded = false, loading = false;
+      let loaded = false;
       const loadEvidence = async () => {
-        if (loading) return;
-        loading = true; refresh.disabled = true;
-        content.textContent = "Műszak- és Hub-események betöltése…";
+        if (refresh.disabled) return;
+        refresh.disabled = true;
+        content.textContent = "Műszak- és Hub-adatok betöltése…";
         try {
           const id = panel.closest("[data-complaint-id]").dataset.complaintId;
           const evidence = await api(`/api/quality/complaints/${encodeURIComponent(id)}/evidence`);
-          const defaults = evidence.formDefaults || {};
-          for (const [selector, value] of [["[data-complaint-route]", defaults.routeId], ["[data-complaint-plate]", defaults.licensePlate]]) {
-            const input = card.querySelector(selector);
-            if (input && !input.dataset.edited && !input.value.trim() && value) input.value = value;
-          }
-          if (prefillStatus) prefillStatus.textContent = [
-            "Az elérhető adatokat előtöltöttük az érintett futár és nap alapján. Ellenőrizd, szükség esetén javítsd.",
-            ...defaults.notes || [],
-            ...(evidence.warnings || []).filter(text => text.includes("nem olvasható")),
-            defaults.licensePlate ? "" : "Nincs egyértelmű rendszám: szükség esetén add meg kézzel."
-          ].filter(Boolean).join(" ");
-          content.innerHTML = `<p class="muted">Adatbázisban tárolt adatok, budapesti idő szerint. Nem élő Hub-lekérdezés.</p>
-            ${(evidence.warnings || []).map(text => `<div class="notice error">${escapeHtml(text)}</div>`).join("")}
+          content.innerHTML = `${(evidence.warnings || []).map(text => `<p class="notice error">${escapeHtml(text)}</p>`).join("")}
             ${(evidence.sections || []).map(section => `<section class="complaint-shift-details"><h4>${escapeHtml(section.title)}</h4>
               ${(section.rows || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join("")}
-              <small>Forrás: ${escapeHtml(section.source)} · Utolsó mentés: ${escapeHtml(shortDateTime(section.updatedAt) || "Nincs adat")}</small></section>`).join("")}`;
+              <small>${escapeHtml(section.source)} · ${escapeHtml(shortDateTime(section.updatedAt) || "Nincs adat")}</small></section>`).join("")}`;
           loaded = true;
-        } catch (error) { content.textContent = error.message; if (prefillStatus) prefillStatus.textContent = "Az előtöltés nem sikerült. A mezők kézzel kitölthetők. " + error.message; }
-        finally { loading = false; refresh.disabled = false; }
+        } catch (error) { content.textContent = error.message; }
+        finally { refresh.disabled = false; }
       };
       panel.addEventListener("toggle", () => { if (panel.open && !loaded) loadEvidence(); });
       refresh.addEventListener("click", loadEvidence);
-      card.querySelector("[data-complaint-approval]")?.addEventListener("toggle", event => {
-        if (event.currentTarget.open && !loaded) loadEvidence();
-      });
     });
-    target.querySelectorAll("[data-complaint-action]").forEach(button => button.addEventListener("click", async () => {
-      const card = button.closest("[data-complaint-id]");
-      const result = card.querySelector("[data-complaint-result]");
-      const action = button.dataset.complaintAction;
-      const message = card.querySelector("[data-complaint-response]")?.value.trim() || "";
-      const reference = card.querySelector("[data-complaint-reference]")?.value.trim() || "";
-      if (!["forward", "approve", "reopen-form"].includes(action) && message.length < 5) { result.textContent = "Legalább 5 karakteres válasz szükséges."; return; }
-      if (action === "forward" && reference.length < 3) { result.textContent = "Add meg a továbbítás hivatkozását."; return; }
-      if (action === "approve" || action === "reopen-form") {
-        const body = action === "approve" ? {
-          category: card.querySelector("[data-complaint-category]").value,
-          route_id: card.querySelector("[data-complaint-route]").value,
-          license_plate: card.querySelector("[data-complaint-plate]").value,
-        } : null;
-        const tab = window.open("about:blank", "_blank");
-        if (tab) tab.opener = null;
-        button.disabled = true;
-        result.textContent = "Az űrlap előkészítése…";
-        try {
-          const approval = await api(`/api/quality/complaints/${encodeURIComponent(card.dataset.complaintId)}/prepare-form`,
-            {method: "POST", body: JSON.stringify(body)});
-          const url = qualityComplaintFormUrlFromPayload(approval.formPayload);
-          if (tab && !tab.closed) {
-            tab.location.replace(url);
-            await loadQualityComplaints();
-          } else {
-            const link = document.createElement("a");
-            link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer";
-            link.textContent = "Jóváhagyott űrlap megnyitása";
-            link.addEventListener("click", () => loadQualityComplaints(), {once: true});
-            result.replaceChildren("Jóváhagyva. ", link);
-          }
-        } catch (error) {
-          tab?.close();
-          result.textContent = error.message;
-        } finally { button.disabled = false; }
-        return;
-      }
-      const buttons = card.querySelectorAll("button");
-      buttons.forEach(b => b.disabled = true);
-      result.textContent = "Mentés…";
-      try {
-        const response = await api(`/api/quality/complaints/${encodeURIComponent(card.dataset.complaintId)}/actions`, { method: "POST", body: JSON.stringify({action,message,reference}) });
-        if (!response.ok) throw new Error("Nem igazolható a mentés.");
-        await loadQualityComplaints();
-      } catch (error) {
-        result.textContent = error.message;
-        buttons.forEach(b => b.disabled = false);
-      }
+    const cards = Array.from(target.querySelectorAll("[data-complaint-id]"));
+    cards.forEach(card => card.addEventListener?.("toggle", () => {
+      if (card.open) state.qualityInboxOpen = card.dataset.complaintId;
+      else if (state.qualityInboxOpen === card.dataset.complaintId) state.qualityInboxOpen = "";
+    }));
+    target.querySelectorAll("[data-complaint-action]").forEach(button => button.addEventListener("click", () => {
+      const id = button.closest("[data-complaint-id]").dataset.complaintId;
+      const item = payload.items.find(row => String(row.id) === id);
+      if (item) openQualityInboxAction(item, button.dataset.complaintAction);
     }));
     if (state.qualityComplaintFocus) {
-      const selected = [...target.querySelectorAll('[data-complaint-id]')].find(card => card.dataset.complaintId === state.qualityComplaintFocus);
+      const selected = cards.find(card => card.dataset.complaintId === state.qualityComplaintFocus);
       if (selected) {
-        const approval = selected.querySelector('[data-complaint-approval]');
-        if (approval) approval.open = true;
-        selected.scrollIntoView({behavior:'smooth',block:'start'});
+        selected.open = true;
+        selected.scrollIntoView({behavior:"smooth",block:"start"});
       }
     }
   } catch (error) {
     if (state.qualityComplaintRequest === request) status.textContent = error.message;
   }
+}
+
+async function openQualityInboxAction(item, action) {
+  const closing = action === "close";
+  const base = `/api/quality/complaints/${encodeURIComponent(item.id)}`;
+  const dialog = document.createElement("dialog");
+  dialog.className = "quality-inbox-dialog";
+  dialog.setAttribute("aria-labelledby", "quality-inbox-dialog-title");
+  dialog.innerHTML = `<h3 id="quality-inbox-dialog-title">${closing ? "Reklamáció lezárása" : "Reklamáció továbbítása"}</h3>
+    <div class="quality-inbox-meta"><span>Futár <strong>${escapeHtml(item.courier_name)}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs adat")}</strong></span></div>
+    <div data-inbox-fields>${closing ? '<label>Válasz a futárnak<textarea data-inbox-description maxlength="5000" rows="5"></textarea></label>' : `
+      <label>Kategória<select data-inbox-category>${qualityComplaintCategories().map(category => `<option>${escapeHtml(category)}</option>`).join("")}</select></label>
+      <label data-inbox-route-field>Túraszám / Cargo ID<input data-inbox-route maxlength="500"></label>
+      <label data-inbox-plate-field>Rendszám<input data-inbox-plate maxlength="30"></label>
+      <label>A Google-űrlapra kerülő szöveg<textarea data-inbox-description maxlength="20000" rows="8"></textarea></label>`}</div>
+    ${closing ? "" : '<label class="hidden" data-inbox-reference-field>Kifli ügyazonosító, ha van<input data-inbox-reference maxlength="450"></label>'}
+    <p data-inbox-status role="status" aria-live="polite"></p>
+    <div class="quality-inbox-actions"><button type="button" class="secondary" data-inbox-dismiss>Mégse</button>
+      ${closing ? '<button type="button" class="primary" data-inbox-confirm>Lezárás válasszal</button>' : '<button type="button" class="primary" data-inbox-open-form disabled>Google-űrlap megnyitása</button><button type="button" class="primary hidden" data-inbox-confirm>Beküldtem a Google-űrlapot</button>'}</div>`;
+  document.body.appendChild(dialog);
+  const get = selector => dialog.querySelector(selector);
+  const status = get("[data-inbox-status]");
+  const description = get("[data-inbox-description]");
+  const confirm = get("[data-inbox-confirm]");
+  const dismiss = get("[data-inbox-dismiss]");
+  const tabs = state.qualityInboxFormTabs ||= new Map();
+  let busy = false;
+  let prepared = !closing && item.delivery?.state === "prepared";
+  let savedAction = false;
+  const setBusy = value => {
+    busy = value;
+    dismiss.disabled = value;
+    confirm.disabled = value;
+  };
+  dismiss.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("cancel", event => { if (busy) event.preventDefault(); });
+  dialog.addEventListener("close", () => {
+    dialog.remove();
+    if (prepared && !savedAction) loadQualityComplaints();
+  }, {once: true});
+  confirm.addEventListener("click", async () => {
+    if (busy || (!closing && !prepared)) return;
+    const message = closing ? description.value.trim() : "";
+    if (closing && message.length < 5) { status.textContent = "Adj meg legalább 5 karakteres választ."; return; }
+    const kifliId = get("[data-inbox-reference]")?.value.trim();
+    const reference = closing ? "" : `Google Forms · admin visszaigazolta${kifliId ? ` · ${kifliId}` : ""}`;
+    setBusy(true);
+    status.textContent = "Mentés…";
+    try {
+      const result = await api(`${base}/actions`, {method:"POST", body:JSON.stringify({action,message,reference})});
+      if (!result.ok) throw Error("A mentés nem igazolható.");
+      savedAction = true;
+      const tab = tabs.get(item.id);
+      if (!closing && tab && !tab.closed) {
+        try { tab.close(); } catch (_) { /* The browser can detach an external tab. */ }
+      }
+      if (!closing) tabs.delete(item.id);
+      dialog.close();
+      await loadQualityComplaints();
+    } catch (error) { status.textContent = error.message; }
+    finally { setBusy(false); }
+  });
+  dialog.showModal();
+  if (closing) return;
+
+  const category = get("[data-inbox-category]");
+  const route = get("[data-inbox-route]");
+  const plate = get("[data-inbox-plate]");
+  const open = get("[data-inbox-open-form]");
+  const showCategoryFields = () => {
+    get("[data-inbox-route-field]").hidden = category.value !== "Túra alatti késés";
+    get("[data-inbox-plate-field]").hidden = category.value !== "Jármű";
+  };
+  category.addEventListener("change", showCategoryFields);
+  showCategoryFields();
+  const showApproved = form => {
+    category.value = form.category;
+    route.value = form.route_id || "";
+    plate.value = form.license_plate || "";
+    description.value = form.description;
+    showCategoryFields();
+    category.disabled = prepared;
+    [route, plate, description].forEach(input => { input.readOnly = prepared; });
+    if (prepared) {
+      confirm.classList.remove("hidden");
+      get("[data-inbox-reference-field]").classList.remove("hidden");
+      dismiss.textContent = "Bezárás";
+    }
+  };
+  const readPrepared = () => api(`${base}/prepare-form`, {method:"POST", body:"null"});
+  open.addEventListener("click", async () => {
+    if (busy) return;
+    const body = {category:category.value, route_id:route.value.trim(), license_plate:plate.value.trim(), description:description.value.trim()};
+    if (!prepared && (body.description.length < 5 || (body.category === "Túra alatti késés" && !body.route_id) || (body.category === "Jármű" && !body.license_plate))) {
+      status.textContent = "Töltsd ki a szöveget és a kategóriához tartozó kötelező mezőt.";
+      return;
+    }
+    const existing = tabs.get(item.id);
+    const reused = existing && !existing.closed;
+    const tab = reused ? existing : window.open("about:blank", "_blank");
+    if (tab && !reused) tab.opener = null;
+    setBusy(true);
+    open.disabled = true;
+    try {
+      const result = prepared ? await readPrepared() : await api(`${base}/prepare-form`, {method:"POST",body:JSON.stringify(body)});
+      const url = qualityComplaintFormUrlFromPayload(result.formPayload);
+      prepared = true;
+      showApproved(result.formPayload);
+      if (tab && !tab.closed) {
+        tabs.set(item.id, tab);
+        if (reused) tab.focus();
+        else tab.location.replace(url);
+        status.textContent = "A Google-lapon küldd be az űrlapot. A Google visszaigazolása után itt kattints a Beküldtem gombra.";
+      } else {
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Előkitöltött Google-űrlap megnyitása";
+        status.replaceChildren(link);
+      }
+    } catch (error) {
+      if (!reused) tab?.close();
+      status.textContent = error.message;
+    } finally { setBusy(false); open.disabled = false; }
+  });
+  status.textContent = "Űrlapadatok betöltése…";
+  try {
+    const result = prepared ? await readPrepared() : await api(`${base}/form-draft`);
+    showApproved(result.formPayload);
+    open.disabled = false;
+    status.textContent = prepared ? "Ha a Google már visszaigazolta a beküldést, rögzítsd itt." : "";
+    if (!prepared && (!route.value || !plate.value)) {
+      api(`${base}/evidence`, {silentLoading:true}).then(evidence => {
+        if (prepared || !dialog.open) return;
+        if (!route.value) route.value = evidence.formDefaults?.routeId || "";
+        if (!plate.value) plate.value = evidence.formDefaults?.licensePlate || "";
+      }).catch(() => {});
+    }
+  } catch (error) { status.textContent = error.message; }
 }
 
 function showQualitySubmissionProgress(phase, message, complaintDialog) {

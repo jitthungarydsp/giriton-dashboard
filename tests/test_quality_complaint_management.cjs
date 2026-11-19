@@ -31,36 +31,52 @@ test('coordinator cannot load admin complaint UI', async () => {
   await context.loadQualityComplaints();
 });
 
-test('one click saves approval before opening the validated form', async () => {
-  const item = {id:'a', courier_name:'Futár', topic:'lateShift', status:'open'};
-  const {context, get} = setup('admin', [item]);
-  const events = [];
-  const result = {};
-  const tab = {location:{replace:url => events.push(['navigate',url])}};
-  const inputs = new Map([
-    ['[data-complaint-result]', result], ['[data-complaint-category]', {value:'Műszak'}],
-    ['[data-complaint-route]', {value:'route'}], ['[data-complaint-plate]', {value:'ABC-123'}],
+test('three incoming types show up in compact rows and reveal the JITT identifier', async () => {
+  const {context,get} = setup('admin', [
+    {id:'a',topic:'noShow',status:'open',courier_name:'Futár',jitt_internal_id:'1000000000001234'},
+    {id:'b',topic:'uncleanedTimeWindowLate',status:'open'},
+    {id:'c',topic:'uncleanedTimeWindowLate',status:'open',affected_items:[{signalKind:'route'}]},
   ]);
-  const card = {dataset:{complaintId:'a'},querySelector:selector => inputs.get(selector)};
-  const button = {dataset:{complaintAction:'approve'},closest:() => card,
-    addEventListener:(_, handler) => { button.click = handler; }};
-  get('#quality-complaints-list').querySelectorAll = selector => selector === '[data-complaint-action]' ? [button] : [];
-  context.window = {open:() => tab};
-  const approved = {category:'Műszak',courier_id:'1234',courier_name:'Futár',description:'Mentett indoklás'};
-  context.api = async (path, options) => {
-    if (!options) return {items:[item],canManage:true,hasMore:false};
-    events.push(['approve',path,JSON.parse(options.body)]);
-    return {ok:true,formPayload:approved};
-  };
-  context.qualityComplaintFormUrlFromPayload = payload => {
-    assert.equal(payload, approved);
-    return 'https://docs.google.com/forms/test/viewform';
-  };
   await context.loadQualityComplaints();
-  await button.click();
-  assert.deepEqual(events, [
-    ['approve','/api/quality/complaints/a/prepare-form',{category:'Műszak',route_id:'route',license_plate:'ABC-123'}],
-    ['navigate','https://docs.google.com/forms/test/viewform'],
-  ]);
-  assert.equal(tab.opener, null);
+  const html = get('#quality-complaints-list').innerHTML;
+  assert.equal((html.match(/name="quality-inbox"/g)||[]).length,3);
+  for (const text of ['No-show','Címkésési panasz','Menet közben','1000000000001234']) assert.ok(html.includes(text));
+});
+
+const runtime = require('node:path').join(require('node:os').homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+test('forward keeps edited text and records status only after the admin confirms', {skip:!fs.existsSync(runtime)}, async () => {
+  const {chromium} = require(runtime);
+  const browser = await chromium.launch({channel:'chrome',headless:true});
+  try {
+    const page = await browser.newPage({viewport:{width:390,height:844}});
+    await page.route('http://localhost/', route => route.fulfill({contentType:'text/html',body:'<meta name="viewport" content="width=device-width,initial-scale=1">'}));
+    await page.goto('http://localhost/');
+    await page.evaluate(() => {
+      window.escapeHtml = value => String(value || '');
+      window.qualityComplaintCategories = () => ['Műszak'];
+      window.state = {};
+      window.requests = [];
+      window.loadQualityComplaints = async () => {};
+      window.popup = {location:{replace:url => {popup.url=url;}},close:() => {popup.closed=true;}};
+      window.open = () => popup;
+      const base = {courier_name:'Futár',courier_id:'1234',category:'Műszak',description:'Eredeti szöveg',license_plate:'',route_id:''};
+      window.api = async (path, options) => {
+        const body = options?.body ? JSON.parse(options.body) : null;
+        requests.push({path,body});
+        if (path.endsWith('/actions')) return {ok:true};
+        if (path.endsWith('/evidence')) return {formDefaults:{}};
+        return {formPayload:{...base,...body}};
+      };
+      window.qualityComplaintFormUrlFromPayload = ({description}) => 'https://docs.google.com/forms/test/viewform?text='+encodeURIComponent(description);
+    });
+    await page.addScriptTag({content:source.slice(source.indexOf('async function openQualityInboxAction('),source.indexOf('function showQualitySubmissionProgress('))});
+    await page.evaluate(() => openQualityInboxAction({id:'a',courier_name:'Futár',courier_id:'1234'},'forward'));
+    await page.locator('[data-inbox-description]').fill('Szerkesztett szöveg');
+    await page.getByRole('button',{name:'Google-űrlap megnyitása'}).click();
+    assert.match(await page.evaluate(() => decodeURIComponent(popup.url)), /Szerkesztett szöveg/);
+    assert.equal(await page.evaluate(() => requests.filter(r=>r.path.endsWith('/actions')).length),0);
+    await page.getByRole('button',{name:'Beküldtem a Google-űrlapot'}).click();
+    await page.waitForFunction(() => popup.closed && !document.querySelector('dialog'));
+    assert.equal(await page.evaluate(() => requests.find(r=>r.path.endsWith('/actions')).body.action),'forward');
+  } finally { await browser.close(); }
 });

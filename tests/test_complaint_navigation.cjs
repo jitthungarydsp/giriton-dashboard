@@ -18,7 +18,7 @@ test('background refresh never reloads an interactive complaint view',async()=>{
 
 test('opening a complaint retains focus and avoids layout changes above it',async()=>{
   let signals=0,opened=false,scrolled=false;
-  const card={dataset:{complaintId:'selected'},querySelector:()=>({set open(v){opened=v;}}),scrollIntoView:()=>{scrolled=true;}};
+  const card={dataset:{complaintId:'selected'},set open(v){opened=v;},scrollIntoView:()=>{scrolled=true;}};
   const list={innerHTML:'',querySelectorAll:selector=>selector==='[data-complaint-id]'?[card]:[]};
   const status={textContent:'',append:()=>{}};
   const context={state:{user:{role:'admin'},qualityComplaintFocus:'selected'}, prepareQualityWorkspace:async()=>true,

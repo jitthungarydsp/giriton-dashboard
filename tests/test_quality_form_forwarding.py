@@ -36,6 +36,14 @@ class PayloadTest(unittest.TestCase):
  def test_legacy_shift_default(self):
   row=self.complaint();row['topic']='noShow'
   self.assertEqual(forward.build_payload(row)['category'],'Műszak')
+ def test_preview_allows_missing_route_and_approval_keeps_edited_description(self):
+  complaint=self.complaint();complaint['affected_items'][0]['routeId']=''
+  self.assertEqual(forward.build_payload(complaint,draft=True)['route_id'],'')
+  edited='A jóváhagyó átírta ezt a szöveget.'
+  approved=forward.build_payload(complaint,route_id='123',description=edited)
+  self.assertEqual(approved['description'],edited)
+  self.assertEqual(approved['courier_id'],'7644')
+  with self.assertRaises(ValueError):forward.build_payload(complaint,route_id='123',description='')
 
 
 class WorkerTest(unittest.TestCase):

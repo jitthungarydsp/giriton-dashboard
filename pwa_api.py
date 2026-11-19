@@ -394,6 +394,7 @@ class QualityComplaintApprovalRequest(BaseModel):
     category: str = Field(default="", max_length=80)
     route_id: str = Field(default="", max_length=500)
     license_plate: str = Field(default="", max_length=30)
+    description: str | None = Field(default=None, max_length=20000)
 
 
 QUALITY_COMPLAINT_MONTH = date(2026, 11, 1)
@@ -22505,8 +22506,9 @@ def quality_complaint_manager(user: dict[str, Any]) -> bool:
     return str(user.get("role") or "").lower() in {"admin", "superadmin"}
 
 
-def read_accessible_quality_complaint(complaint_id: UUID, user: dict[str, Any]) -> dict[str, Any]:
-    params = {"select": "id,courier_id,status,attachments", "id": f"eq.{complaint_id}", "limit": "1"}
+def read_accessible_quality_complaint(complaint_id: UUID, user: dict[str, Any], *,
+                                      columns: str = "id,courier_id,status,attachments") -> dict[str, Any]:
+    params = {"select": columns, "id": f"eq.{complaint_id}", "limit": "1"}
     if not quality_complaint_manager(user):
         courier_id, _name = courier_identity(user)
         params["courier_id"] = f"eq.{courier_id}"
@@ -22907,8 +22909,21 @@ def list_quality_complaints(
                 raise
             deliveries = []
         by_id = {str(item["complaint_id"]): item for item in deliveries}
+        courier_ids = sorted({str(row["courier_id"]) for row in rows[:50] if re.fullmatch(r"[0-9]{1,10}", str(row["courier_id"]))})
+        jitt_ids: dict[str, set[str]] = {}
+        if courier_ids:
+            try:
+                identities = supabase_rest("GET", "courier_hub_courier_identity_raw", params={
+                    "select": "courier_id,jitt_internal_id", "courier_id": "in.(" + ",".join(courier_ids) + ")"})
+            except HTTPException:
+                identities = []
+            for identity in identities or []:
+                if identity.get("jitt_internal_id"):
+                    jitt_ids.setdefault(str(identity["courier_id"]), set()).add(str(identity["jitt_internal_id"]))
         for row in rows[:50]:
             row["delivery"] = by_id.get(str(row["id"]))
+            matches = jitt_ids.get(str(row["courier_id"]), set())
+            row["jitt_internal_id"] = next(iter(matches)) if len(matches) == 1 else None
     return {"items": rows[:50], "hasMore": len(rows) > 50, "canManage": manager, "forwardingEnabled": forwarding_enabled}
 
 
@@ -23090,6 +23105,22 @@ def approve_quality_complaint(
 
 
 
+@app.get("/api/quality/complaints/{complaint_id}/form-draft")
+def quality_complaint_form_draft(complaint_id: UUID, giriton_pwa_session: str | None = Cookie(default=None)):
+    from resources.quality_form_forwarding import build_payload
+
+    user = require_user(giriton_pwa_session)
+    if not quality_complaint_manager(user):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    complaint = read_accessible_quality_complaint(complaint_id, user, columns="*")
+    if complaint.get("status") != "open":
+        raise HTTPException(status_code=409, detail="Csak nyitott reklamáció továbbítható.")
+    try:
+        return {"formPayload": build_payload(complaint, draft=True)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.post("/api/quality/complaints/{complaint_id}/prepare-form")
 def prepare_quality_complaint_form(
     complaint_id: UUID,
@@ -23103,11 +23134,10 @@ def prepare_quality_complaint_form(
         raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
     approved_payload = None
     if payload is not None:
-        rows = supabase_rest("GET", "pwa_quality_complaints", params={"select": "*", "id": f"eq.{complaint_id}", "limit": "1"})
-        if not rows:
-            raise HTTPException(status_code=404, detail="A reklamáció nem található.")
+        complaint = read_accessible_quality_complaint(complaint_id, user, columns="*")
         try:
-            approved_payload = build_payload(rows[0], payload.category, payload.route_id, payload.license_plate)
+            approved_payload = build_payload(complaint, payload.category, payload.route_id, payload.license_plate,
+                                             description=payload.description)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     saved = supabase_rest("POST", "rpc/pwa_prepare_quality_form", payload={

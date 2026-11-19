@@ -25,6 +25,34 @@
 .settlement-quick-search > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .settlement-quick-search p { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
 .complaint-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.quality-inbox-item { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.quality-inbox-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; list-style: none; }
+.quality-inbox-row::-webkit-details-marker { display: none; }
+.quality-inbox-row strong::before { content: "›"; color: var(--muted); margin-right: .5em; }
+.quality-inbox-item[open] > .quality-inbox-row strong::before { content: "⌄"; }
+.quality-inbox-row time { color: var(--muted); white-space: nowrap; }
+.quality-inbox-body { padding: 16px; border-top: 1px solid var(--line); }
+.quality-inbox-body > details { margin-top: 12px; }
+.quality-inbox-body > details summary { cursor: pointer; }
+.quality-inbox-meta, .quality-inbox-actions { display: flex; gap: 12px 20px; flex-wrap: wrap; }
+.quality-inbox-meta { font-size: .9rem; color: var(--muted); }
+.quality-inbox-meta strong { color: var(--ink); }
+.quality-inbox-actions { justify-content: flex-end; margin: 16px 0; }
+.quality-inbox-dialog { box-sizing: border-box; width: min(680px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); padding: 22px; border: 1px solid var(--line); border-radius: 18px; color: var(--ink); background: var(--surface); }
+.quality-inbox-dialog::backdrop { background: rgb(23 35 28 / .55); }
+.quality-inbox-dialog h3 { margin: 0 0 14px; }
+.quality-inbox-dialog label:not([hidden]):not(.hidden) { display: block; margin-top: 12px; }
+.quality-inbox-dialog [hidden] { display: none; }
+.quality-inbox-dialog input, .quality-inbox-dialog select, .quality-inbox-dialog textarea { width: 100%; }
+.quality-inbox-dialog [data-inbox-status]:empty { display: none; }
+.quality-inbox-dialog .quality-inbox-actions { margin-bottom: 0; }
+@media (max-width: 620px) {
+  .quality-inbox-row { grid-template-columns: minmax(0, 1fr) auto; gap: 5px 10px; }
+  .quality-inbox-row strong { grid-column: 1; grid-row: 1; }
+  .quality-inbox-row time { grid-column: 2; grid-row: 1; }
+  .quality-inbox-row .source { justify-self: end; }
+  .quality-inbox-actions > button { flex: 1 1 auto; }
+}
 .courier-complaints { margin-top: 12px; padding-top: 18px; border-top: 1px solid var(--line); }
 .courier-complaint-heading, .courier-complaint-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .courier-complaint-heading { margin-bottom: 14px; }
