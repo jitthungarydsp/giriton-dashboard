@@ -14,6 +14,15 @@ concurrency:
 
 jobs:
   import:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - source: complaint-responses
+            arguments: ''
+          - source: coordinator-shifts
+            arguments: '--coordinator-shifts'
+    name: Import ${{ matrix.source }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -25,6 +34,7 @@ jobs:
           python-version: '3.11'
       - name: Import responses into Supabase
         env:
+          IMPORT_ARGUMENT: ${{ matrix.arguments }}
           GMAIL_COMPLAINT_CLIENT_ID: ${{ secrets.GMAIL_COMPLAINT_CLIENT_ID }}
           GMAIL_COMPLAINT_CLIENT_SECRET: ${{ secrets.GMAIL_COMPLAINT_CLIENT_SECRET }}
           GMAIL_COMPLAINT_REFRESH_TOKEN: ${{ secrets.GMAIL_COMPLAINT_REFRESH_TOKEN }}
@@ -35,4 +45,8 @@ jobs:
             echo '::notice::Gmail OAuth secrets are required to enable this import.'
             exit 0
           fi
-          python scripts/import_complaint_email_responses.py
+          args=()
+          if [[ -n "$IMPORT_ARGUMENT" ]]; then
+            args+=("$IMPORT_ARGUMENT")
+          fi
+          python scripts/import_complaint_email_responses.py "${args[@]}"

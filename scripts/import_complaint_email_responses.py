@@ -1,10 +1,11 @@
-"""Import received complaint decisions from Gmail into Supabase."""
+"""Import complaint decisions or coordinator shift notices from Gmail into Supabase."""
 
 import argparse
 import base64
 from datetime import datetime, timezone
 from email import policy
 from email.parser import BytesParser
+from email.utils import parseaddr
 import json
 import os
 from pathlib import Path
@@ -17,8 +18,19 @@ from urllib.request import Request, urlopen
 
 MAILBOX = "balazs.gurzo@jitt.hu"
 GMAIL_URL = "https://gmail.googleapis.com/gmail/v1/users/me/"
-GMAIL_QUERY = '{subject:"Panasz elbírálva" subject:"Panasz elbiralva"} -in:sent -in:drafts -in:spam -in:trash'
+INCOMING_FILTER = " -in:sent -in:drafts -in:spam -in:trash"
+GMAIL_QUERY = '{subject:"Panasz elbírálva" subject:"Panasz elbiralva"}' + INCOMING_FILTER
+COORDINATOR_SENDER = "koordinator@jitt.hu"
+COORDINATOR_QUERY = f"from:{COORDINATOR_SENDER} {{subject:késés subject:távolmaradás}}" + INCOMING_FILTER
+COMPLAINT_TABLE = "complaint_email_responses"
+COORDINATOR_TABLE = "coordinator_shift_email_notices"
 SUBJECT = re.compile(r"\bpanasz\s+elb[íi]r[áa]lva\b", re.IGNORECASE)
+COORDINATOR_SUBJECT = re.compile(
+    r"^JITT\s*[-–]\s*Koordin[áa]tor\s+(?P<courier>.+?)\s+[-–]\s+"
+    r"(?:(?:(?P<ordinal>[1-9]\d{0,2})\.\s*)?k[ée]s[ée]s|(?P<absence>t[áa]volmarad[áa]s))"
+    r"\s+[-–]\s+(?P<shift>.+)$",
+    re.IGNORECASE,
+)
 EXCLUDED_LABELS = {"SENT", "DRAFT", "SPAM", "TRASH"}
 
 
@@ -50,13 +62,32 @@ def gmail_reader(settings):
     return get
 
 
-def parse_message(message):
+def coordinator_fields(subject, sender):
+    if parseaddr(sender)[1].casefold() != COORDINATOR_SENDER:
+        return None
+    match = COORDINATOR_SUBJECT.fullmatch(" ".join(subject.split()))
+    if not match:
+        return None
+    courier = match["courier"]
+    courier_ids = re.findall(r"\b[0-9]{3,8}\b", courier)
+    return {
+        "event_type": "absence" if match["absence"] else "late",
+        "courier_label": courier.replace("\x00", "\ufffd"),
+        "courier_id": courier_ids[0] if len(courier_ids) == 1 else None,
+        "late_occurrence": int(match["ordinal"]) if match["ordinal"] else None,
+        "shift_label": match["shift"].replace("\x00", "\ufffd"),
+    }
+
+
+def parse_message(message, *, coordinator=False):
     if EXCLUDED_LABELS.intersection(message.get("labelIds", ())):
         return None
     raw = message["raw"]
     email = BytesParser(policy=policy.default).parsebytes(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
     subject = str(email.get("Subject", ""))
-    if not SUBJECT.search(subject):
+    sender = str(email.get("From", ""))
+    extra = coordinator_fields(subject, sender) if coordinator else ({} if SUBJECT.search(subject) else None)
+    if extra is None:
         return None
 
     def body(content_type):
@@ -73,16 +104,17 @@ def parse_message(message):
         "gmail_id": message["id"],
         "gmail_thread_id": message["threadId"],
         "subject": subject.replace("\x00", "\ufffd"),
-        "sender": str(email.get("From", "")).replace("\x00", "\ufffd"),
+        "sender": sender.replace("\x00", "\ufffd"),
         "received_at": datetime.fromtimestamp(int(message["internalDate"]) / 1000, timezone.utc).isoformat(),
         "body_text": body("plain"),
         "body_html": body("html"),
+        **extra,
     }
 
 
-def import_messages(get, save, known_ids=lambda ids: set()):
+def import_messages(get, save, known_ids=lambda ids: set(), *, coordinator=False):
     matched = inserted = 0
-    params = {"q": GMAIL_QUERY, "maxResults": 25}
+    params = {"q": COORDINATOR_QUERY if coordinator else GMAIL_QUERY, "maxResults": 25}
     while True:
         page = get("messages", **params)
         ids = [item["id"] for item in page.get("messages", ())]
@@ -91,7 +123,7 @@ def import_messages(get, save, known_ids=lambda ids: set()):
         for gmail_id in ids:
             if gmail_id in known:
                 continue
-            row = parse_message(get(f"messages/{gmail_id}", format="raw"))
+            row = parse_message(get(f"messages/{gmail_id}", format="raw"), coordinator=coordinator)
             if row is not None:
                 rows.append(row)
         if rows:
@@ -102,9 +134,9 @@ def import_messages(get, save, known_ids=lambda ids: set()):
         params["pageToken"] = page["nextPageToken"]
 
 
-def supabase_writer(settings):
+def supabase_writer(settings, *, table=COMPLAINT_TABLE):
     key = settings["SUPABASE_SERVICE_ROLE_KEY"]
-    url = settings["SUPABASE_URL"].rstrip("/") + "/rest/v1/complaint_email_responses"
+    url = settings["SUPABASE_URL"].rstrip("/") + f"/rest/v1/{table}"
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
     request_json("Supabase", url + "?select=gmail_id&limit=1", headers=headers)
     headers.update({"Content-Type": "application/json", "Prefer": "resolution=ignore-duplicates,return=representation"})
@@ -126,6 +158,7 @@ def supabase_writer(settings):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="Count matches without writing to the database.")
+    parser.add_argument("--coordinator-shifts", action="store_true", help="Import coordinator late and absent shift notices.")
     args = parser.parse_args()
     secrets = Path(__file__).resolve().parents[1] / ".streamlit" / "secrets.toml"
     local = tomllib.loads(secrets.read_text(encoding="utf-8")) if secrets.exists() else {}
@@ -140,10 +173,11 @@ def main():
     try:
         get = gmail_reader(settings)
         if args.dry_run:
-            matched, inserted = import_messages(get, lambda rows: 0)
+            matched, inserted = import_messages(get, lambda rows: 0, coordinator=args.coordinator_shifts)
         else:
-            save, known_ids = supabase_writer(settings)
-            matched, inserted = import_messages(get, save, known_ids)
+            table = COORDINATOR_TABLE if args.coordinator_shifts else COMPLAINT_TABLE
+            save, known_ids = supabase_writer(settings, table=table)
+            matched, inserted = import_messages(get, save, known_ids, coordinator=args.coordinator_shifts)
     except RuntimeError as exc:
         parser.exit(1, f"{exc}\n")
     print(f"Matching emails: {matched}. New database rows: {inserted}.")
