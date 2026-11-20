@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v299";
+const APP_VERSION = "v300";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1973,6 +1973,7 @@ async function loadQualityComplaints() {
         if (!response.ok || !response.item?.id) throw Error('A mentés nem igazolható.');
         state.qualityComplaintFocus = String(response.item.id);
         if (response.alreadyExists) $('#quality-complaints-filter').value = response.item.status === 'forwarded' ? 'forwarded' : 'all';
+        else if ($('#quality-complaints-filter').value === 'unrecorded') $('#quality-complaints-filter').value = 'pending-forward';
         await loadQualityComplaints();
       } catch (error) { output.textContent = error.message; button.disabled = false; }
     }));

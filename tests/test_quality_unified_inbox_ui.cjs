@@ -134,6 +134,24 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
     assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('1 külön túra'));
     await page.selectOption('#quality-complaints-filter','pending-forward');
     assert.equal(await page.locator('.quality-inbox-item').count(),0);
+    // A new case must remain visible after conversion from the unrecorded filter.
+    await page.evaluate(()=>{
+      const previous=window.api;
+      window.convertedRoute=false;
+      const created={id:'created-route',courier_id:'9460',courier_name:'Juhász József',topic:'uncleanedTimeWindowLate',status:'open',created_at:'2026-11-20T13:00:00Z',message:'Másik túra',affected_items:[{date:'2026-11-20',routeId:'1612800',signalKind:'route',signalId:'114'}]};
+      window.api=async(url,options)=>{
+        if(url.endsWith('/route/114/complaint')&&options?.method==='POST'){convertedRoute=true;return {ok:true,item:created};}
+        const result=await previous(url,options);
+        if(convertedRoute&&result.items)result.items.push(created);
+        return result;
+      };
+    });
+    await page.selectOption('#quality-complaints-filter','unrecorded');
+    await page.locator('[data-signal-id="signal:route:114"] > summary').click();
+    await page.locator('[data-signal-id="signal:route:114"]').getByRole('button',{name:'Reklamáció kezelése / Google-űrlap'}).click();
+    await page.locator('[data-complaint-id="created-route"][open]').waitFor();
+    assert.equal(await page.locator('#quality-complaints-filter').inputValue(),'pending-forward');
+    assert.equal(await page.locator('[data-complaint-id="created-route"]').getByRole('button',{name:'Továbbítás',exact:true}).isEnabled(),true);
     await page.selectOption('#quality-complaints-filter','forwarded');
     assert.ok((await page.locator('[data-complaint-id="juhasz-sent"] > summary').innerText()).includes('Beküldött Route ID: 1612799'));
     await page.setViewportSize({width:390,height:844});

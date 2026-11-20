@@ -5,6 +5,11 @@ on:
     - cron: '0 8 * * *'
       timezone: Europe/Budapest
   workflow_dispatch:
+    inputs:
+      retry_delivery_id:
+        description: 'Kifejezetten jóváhagyott, nem igazolt napi riport újraküldése (UUID); üresen a szokásos várólista'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -31,8 +36,14 @@ jobs:
       - name: Install notification dependencies
         run: pip install -r requirements-account-worker.txt 'supabase>=2.15.3'
       - name: Send pending invoice notifications
-        run: python devtest.py --invoice-notifications-once
+        run: |
+          if [ -n "$RETRY_DELIVERY_ID" ]; then
+            python scripts/retry_invoice_digest.py --delivery-id "$RETRY_DELIVERY_ID"
+          else
+            python devtest.py --invoice-notifications-once
+          fi
         env:
+          RETRY_DELIVERY_ID: ${{ inputs.retry_delivery_id }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SMTP_HOST: smtp.gmail.com

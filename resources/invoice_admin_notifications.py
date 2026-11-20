@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import logging
 from threading import Event, Thread
 from zoneinfo import ZoneInfo
+from uuid import UUID
 
 
 RECIPIENT = "zoltan.bagoly@jitt.hu"
@@ -81,6 +82,40 @@ def send_pending_invoice_notifications(rest, send_email, *, limit=10):
              payload={"state": state, "finished_at": datetime.now(timezone.utc).isoformat()},
              prefer="return=minimal")
     return sent
+
+
+def retry_invoice_digest(rest, send_email, delivery_id):
+    """Explicitly authorized retry of one saved digest; never requeue other mail."""
+    delivery_id = str(UUID(str(delivery_id)))
+    rows = rest('GET', 'invoice_notification_delivery', schema='settlement',
+                params={'select': '*', 'id': 'eq.' + delivery_id, 'limit': '1'}) or []
+    if not rows or rows[0].get('kind') != 'digest':
+        raise ValueError('A mentett napi riport nem található.')
+    delivery = rows[0]
+    if delivery['state'] == 'sent':
+        return {'id': delivery_id, 'state': 'sent', 'already_sent': True}
+    if delivery['state'] != 'uncertain':
+        raise ValueError('Csak a nem igazolt küldésű riport indítható újra.')
+    subject, body = build_invoice_admin_message(delivery)
+    started = datetime.now(timezone.utc).isoformat()
+    claimed = rest('PATCH', 'invoice_notification_delivery', schema='settlement',
+        params={'id': 'eq.' + delivery_id, 'state': 'eq.uncertain',
+                'started_at': 'eq.' + str(delivery['started_at'])},
+        payload={'state': 'sending', 'started_at': started, 'finished_at': None}, prefer='return=representation') or []
+    if len(claimed) != 1:
+        raise RuntimeError('A riport közben megváltozott; nem indult levélküldés.')
+    state, error_type = 'sent', ''
+    try:
+        send_email(RECIPIENT, subject, body)
+    except Exception as exc:
+        state, error_type = 'uncertain', type(exc).__name__
+        logger.warning('Invoice digest retry uncertain id=%s error_type=%s', delivery_id, error_type)
+    confirmed = rest('PATCH', 'invoice_notification_delivery', schema='settlement',
+        params={'id': 'eq.' + delivery_id, 'state': 'eq.sending', 'started_at': 'eq.' + str(claimed[0]['started_at'])},
+        payload={'state': state, 'finished_at': datetime.now(timezone.utc).isoformat()}, prefer='return=representation') or []
+    if len(confirmed) != 1 or confirmed[0].get('state') != state:
+        raise RuntimeError('A küldés eredménye nem menthető; automatikus újraküldés nem indulhat.')
+    return {'id': delivery_id, 'state': state, 'error_type': error_type, 'already_sent': False}
 
 
 def start_invoice_admin_notifier(rest):

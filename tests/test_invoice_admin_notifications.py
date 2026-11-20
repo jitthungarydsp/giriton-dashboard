@@ -22,6 +22,41 @@ def delivery(kind="immediate", events=None):
 
 
 class InvoiceAdminNotificationsTest(unittest.TestCase):
+    def test_explicit_retry_claims_only_one_digest_and_confirms_delivery(self):
+        row = {**delivery('digest'), 'state':'uncertain', 'started_at':'2026-11-20T07:00:10+00:00'}
+        identifier = 'bbba3705-99a9-49b0-87de-358948355c14'
+        claimed = {**row, 'state':'sending', 'started_at':'2026-11-20T14:00:00+00:00'}
+        rest = Mock(side_effect=[[row],[claimed],[{**claimed,'state':'sent'}]])
+        send = Mock()
+        result = notifications.retry_invoice_digest(rest, send, identifier)
+        self.assertEqual(result['state'],'sent')
+        self.assertEqual(send.call_args.args[0],notifications.RECIPIENT)
+        self.assertEqual(rest.call_args_list[1].kwargs['params']['state'],'eq.uncertain')
+        self.assertEqual(rest.call_args_list[2].kwargs['params']['started_at'],'eq.'+claimed['started_at'])
+        send.assert_called_once()
+
+    def test_explicit_retry_never_resends_sent_or_concurrently_claimed_digest(self):
+        identifier = 'bbba3705-99a9-49b0-87de-358948355c14'
+        send=Mock()
+        row={**delivery('digest'),'state':'sent'}
+        self.assertTrue(notifications.retry_invoice_digest(Mock(return_value=[row]),send,identifier)['already_sent'])
+        send.assert_not_called()
+        row.update(state='uncertain',started_at='2026-11-20T07:00:10+00:00')
+        with self.assertRaises(RuntimeError):
+            notifications.retry_invoice_digest(Mock(side_effect=[[row],[]]),send,identifier)
+        send.assert_not_called()
+
+    def test_failed_retry_stays_uncertain_and_never_claims_another_email(self):
+        identifier = 'bbba3705-99a9-49b0-87de-358948355c14'
+        row={**delivery('digest'),'state':'uncertain','started_at':'2026-11-20T07:00:10+00:00'}
+        rest=Mock(side_effect=[[row],[{**row,'state':'sending'}],[row]])
+        send=Mock(side_effect=TimeoutError)
+        with self.assertLogs(notifications.logger,level='WARNING'):
+            result=notifications.retry_invoice_digest(rest,send,identifier)
+        self.assertEqual(result['state'],'uncertain')
+        send.assert_called_once()
+        self.assertEqual(rest.call_count,3)
+
     def test_claim_sends_to_explicit_mailbox_and_marks_sent(self):
         rest = Mock(side_effect=[[delivery()], None, []])
         send = Mock()
