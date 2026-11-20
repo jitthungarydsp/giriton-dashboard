@@ -19,14 +19,15 @@ function draft(context) {
   days.forEach((day, i) => Object.assign(day, {selected:true, message:`Indoklás ${i}`}));
   return {days, courier:'', month:'2026-10', topic:'uncleanedTimeWindowLate', draftKey:'draft'};
 }
-test('several routes of one day form one complaint, with separate messages for other days', async () => {
+test('each Route ID forms a separate complaint even on the same day', async () => {
   const calls=[]; const {context}=setup(async (url, options) => {
     calls.push(JSON.parse(options.body)); return {ok:true,id:String(calls.length)};
   });
   const ctx=draft(context);
-  assert.equal(await context.submitQualityComplaintDays(ctx),2);
-  assert.equal(calls.length,2);
-  assert.equal(calls[0].items.length,2);
+  assert.equal(await context.submitQualityComplaintDays(ctx),3);
+  assert.equal(calls.length,3);
+  assert.equal(calls[0].items.length,1);
+  assert.equal(calls[1].items[0].routeId,'2');
   assert.equal(calls[0].message,'Indoklás 0');assert.equal(calls[1].message,'Indoklás 1');
   assert.equal(calls[0].category,'Túra alatti késés');
   assert.notEqual(calls[0].request_id,calls[1].request_id);
@@ -50,7 +51,7 @@ test('all six categories are selectable, sent per day, with shift defaults for s
   });
   assert.equal(context.qualityComplaintCategories().length,6);
   for(const category of context.qualityComplaintCategories()){
-    const ctx=draft(context);ctx.days[1].selected=false;ctx.days[0].category=category;
+    const ctx=draft(context);ctx.days.slice(1).forEach(day=>day.selected=false);ctx.days[0].category=category;
     await context.submitQualityComplaintDays(ctx);assert.equal(calls.at(-1).category,category);
   }
   assert.equal(context.qualityComplaintDays([{date:'2026-10-17'}],{},'Műszak')[0].category,'Műszak');
@@ -64,13 +65,13 @@ test('failed second day retries only that day with the same request identity', a
   });
   const ctx=draft(context);
   await assert.rejects(context.submitQualityComplaintDays(ctx));
-  assert.equal(ctx.days[0].saved,true);assert.equal(ctx.days[1].saved,false);
+  assert.equal(ctx.days[0].saved,true);assert.equal(ctx.days[1].saved,true);assert.equal(ctx.days[2].saved,false);
   await context.submitQualityComplaintDays(ctx);
-  assert.equal(calls.length,3);assert.equal(calls[1].request_id,calls[2].request_id);
+  assert.equal(calls.length,4);assert.equal(calls[2].request_id,calls[3].request_id);
 });
 test('unselected and invalid days are never posted', async () => {
   const {context}=setup(()=>assert.fail('No API call expected'));
-  const ctx=draft(context);ctx.days[1].message='';
+  const ctx=draft(context);ctx.days[2].message='';
   await assert.rejects(context.submitQualityComplaintDays(ctx),/2026-10-10/);
   ctx.days.forEach(day=>day.selected=false);
   await assert.rejects(context.submitQualityComplaintDays(ctx),/Jelöld/);
@@ -82,7 +83,7 @@ test('photo retry resumes the saved case without duplicating the database compla
     if(url.endsWith('/photos')&&fail){fail=false;throw new Error('Interrupted photo');}
     return {ok:true,id:'saved-case'};
   });
-  const ctx=draft(context);ctx.days[1].selected=false;
+  const ctx=draft(context);ctx.days.slice(1).forEach(day=>day.selected=false);
   ctx.days[0].photos=[{size:100}];
   await assert.rejects(context.submitQualityComplaintDays(ctx));
   await context.submitQualityComplaintDays(ctx);
@@ -97,10 +98,25 @@ test('lost response retries the exact same payload and request ID after restorin
     if(calls.length===1) throw new Error('Response lost');
     return {ok:true,id:'existing-case'};
   });
-  let ctx=draft(context);ctx.days[1].selected=false;
+  let ctx=draft(context);ctx.days.slice(1).forEach(day=>day.selected=false);
   await assert.rejects(context.submitQualityComplaintDays(ctx));
   ctx.days=context.qualityComplaintDays(ctx.days.flatMap(day=>day.rows),JSON.parse(storage.get('draft')));
   ctx.days[0].message='Changed locally';
   await context.submitQualityComplaintDays(ctx);
   assert.deepEqual(calls[0],calls[1]);
+});
+
+test('legacy multi-route day draft keeps text but never reuses its request or selection',()=>{
+ const {context}=setup();
+ const days=context.qualityComplaintDays([{date:'2026-11-20',routeId:'1'},{date:'2026-11-20',routeId:'2'}],
+  {'2026-11-20':{message:'Régi szöveg',selected:true,requestId:'old',submittedPayload:{items:[]}}});
+ assert.equal(days.length,2);assert.equal(days[0].message,'Régi szöveg');
+ assert.equal(days[0].selected,false);assert.equal(days[0].submittedPayload,null);
+ assert.notEqual(days[0].requestId,'old');assert.notEqual(days[0].requestId,days[1].requestId);
+});
+
+test('several entries of one route remain one case; shift days still group by date',()=>{
+ const {context}=setup();const rows=[{date:'2026-11-20',routeId:'1'},{date:'2026-11-20',routeId:'1'}];
+ assert.equal(context.qualityComplaintDays(rows).length,1);
+ assert.equal(context.qualityComplaintDays([...rows,{date:'2026-11-20',routeId:'2'}],{},'Műszak').length,1);
 });

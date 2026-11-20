@@ -2,7 +2,8 @@ const test=require('node:test');const assert=require('node:assert/strict');
 const fs=require('node:fs');const path=require('node:path');
 const root=path.join(__dirname,'..');const source=fs.readFileSync(path.join(root,'pwa/app.js'),'utf8');
 const functions=source.slice(source.indexOf('function showQualitySubmissionProgress('),source.indexOf('function routeStoryDistance('));
-const runtime=path.join(require('node:os').homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+let runtime=path.join(require('node:os').homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+if(!fs.existsSync(runtime)){try{runtime=require.resolve('playwright')}catch{}}
 
 async function setup(browser){
  const page=await browser.newPage({viewport:{width:390,height:844}});
@@ -14,7 +15,7 @@ async function setup(browser){
   window.qualityShiftTimes=()=>'';window.pastQualityDetails=rows=>rows;
   window.QUALITY_COMPLAINT_MONTH='2026-11';
   window.previewCourierValue=()=>'';
-  window.state={statistics:{month:'2026-11',qualitySummary:{details:{uncleanedTimeWindowLate:[{date:'2026-11-09',label:'Route 1566147',note:'1 cím · 6 perc'}]}}}};
+  window.state={statistics:{month:'2026-11',qualitySummary:{details:{uncleanedTimeWindowLate:[{date:'2026-11-09',routeId:'1566147',label:'Route 1566147',note:'1 cím · 6 perc'}]}}}};
   window.requests=[];window.pending=[];
   window.api=(url,options)=>{requests.push({url,body:options.body,silentLoading:options.silentLoading});return new Promise((resolve,reject)=>pending.push({resolve,reject}))};
   window.refreshCourierQualityComplaints=async()=>{throw Error('A listafrissítés hibája nem változtathatja sikertelenné a mentést')};

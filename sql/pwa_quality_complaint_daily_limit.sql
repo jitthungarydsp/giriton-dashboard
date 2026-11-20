@@ -1,3 +1,4 @@
+-- Legacy migration. Apply pwa_quality_complaint_route_limit.sql AFTER this file.
 begin;
 
 create table if not exists public.pwa_quality_complaint_day_claims (

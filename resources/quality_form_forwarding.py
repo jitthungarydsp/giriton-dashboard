@@ -24,7 +24,15 @@ def build_payload(complaint, category='', route_id='', license_plate='', *, desc
     courier_id, name = str(complaint.get('courier_id') or '').strip(), str(complaint.get('courier_name') or '').strip()
     if not courier_id or not name:
         raise ValueError('Hiányzik a futár neve vagy azonosítója.')
-    route_id = route_id.strip() or ', '.join(dict.fromkeys(str(row['routeId']) for row in items if row.get('routeId')))
+    routes = list(dict.fromkeys(str(row.get('routeId') or '').strip() for row in items if str(row.get('routeId') or '').strip()))
+    route_id = route_id.strip() or ', '.join(routes)
+    if complaint.get('topic') in {'cleanedTimeWindowLate', 'uncleanedTimeWindowLate'}:
+        if len(routes) != 1 or any(not str(row.get('routeId') or '').strip() for row in items):
+            raise ValueError('A reklamációhoz pontosan egy Route ID szükséges. A több túrás régi ügyet előbb külön kell rendezni.')
+        if route_id != routes[0]:
+            raise ValueError('A továbbítás Route ID-ja nem térhet el a reklamációhoz mentett túrától.')
+        if any(char.isspace() or char in ',;' for char in route_id):
+            raise ValueError('Pontosan egy Route ID adható meg, elválasztó nélkül.')
     if not draft and category == 'Túra alatti késés' and not route_id:
         raise ValueError('Túra alatti késéshez túraszám vagy Cargo ID szükséges.')
     license_plate = license_plate.strip().upper()
@@ -34,7 +42,7 @@ def build_payload(complaint, category='', route_id='', license_plate='', *, desc
     if len(message) < 5:
         raise ValueError('Hiányzó reklamációindoklás.')
     if description is None:
-        description = f"JITT reklamáció: {complaint['id']}\nDátum: {dates[0]}\nFutár: {name} (#{courier_id})\n\n{message}"
+        description = f"JITT reklamáció: {complaint['id']}\nDátum: {dates[0]}\nFutár: {name} (#{courier_id})\nRoute ID: {route_id or 'Nincs megadva'}\n\n{message}"
         for row in items:
             description += f"\n{row.get('label', '')} · {row.get('note', '')}"
     else:

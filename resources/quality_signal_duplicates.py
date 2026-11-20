@@ -1,4 +1,4 @@
-"""Audited closure of raw quality signals, independent of daily complaint limits."""
+"""Audited signal closure and exact Route ID complaint lookup."""
 from datetime import datetime, timezone
 import json
 import re
@@ -67,19 +67,14 @@ def close_duplicate(rest, kind, signal, month, actor):
 
 
 def find_existing_day_complaint(rest, kind, signal, work_date):
-    # Mirror the address_delay bucket in pwa_quality_complaint_daily_limit.sql.
-    # Bag-missing penalties and late-shift signals do not claim that bucket.
-    if kind != 'route' or signal.get('alert_type') == 'bag_missing':
+    # Retain the function name for callers; dates never identify a tour.
+    if kind != 'route':
         return None
-    for offset in range(0, 10000, 100):
-        rows = rest('GET', 'pwa_quality_complaints', params={'select': '*',
-            'courier_id': 'eq.' + str(signal['courier_id']), 'work_month': 'eq.' + work_date[:7] + '-01',
-            'topic': 'in.(cleanedTimeWindowLate,uncleanedTimeWindowLate)',
-            'affected_items': 'cs.' + json.dumps([{'date': work_date}]),
-            'order': 'created_at.asc,id.asc', 'offset': str(offset), 'limit': '100'}) or []
-        for row in rows:
-            if any(item.get('date') == work_date and not (item.get('signalKind') == 'route' and item.get('category') == 'Futárbüntetés') for item in row.get('affected_items') or []):
-                return row
-        if len(rows) < 100:
-            return None
-    raise RuntimeError('A meglévő napi reklamáció nem azonosítható egyértelműen.')
+    route_id = str(signal.get('route_id') or '').strip()
+    if not route_id:
+        raise ValueError('Hiányzó Route ID: a túra nem azonosítható. Másik napi jelzés alapján nem kapcsoljuk össze.')
+    # The claim table decides ownership, including historical duplicates where
+    # a newer case was actually sent. No date/category/name-based guessing.
+    rows = rest('POST', 'rpc/pwa_find_quality_route_complaint', payload={
+        'p_route_id': route_id, 'p_courier_id': str(signal['courier_id'])}) or []
+    return rows[0] if rows else None

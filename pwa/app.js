@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v298";
+const APP_VERSION = "v299";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1606,7 +1606,7 @@ function renderCourierQualityComplaintCards(payload = {}) {
       ${item.admin_response && !decision ? `<div class="courier-complaint-response"><strong>Válasz a reklamációdra</strong>${item.responded_at ? `<small>${escapeHtml(shortDateTime(item.responded_at))}</small>` : ""}<p class="complaint-text">${escapeHtml(item.admin_response)}</p></div>` : ""}
       <details><summary>Beküldött reklamáció és érintett műszakok</summary><p class="complaint-text">${escapeHtml(item.message)}</p>
       ${item.admin_response && decision ? `<p class="complaint-text"><strong>Korábbi adminválasz:</strong> ${escapeHtml(item.admin_response)}</p>` : ''}
-      ${(item.affected_items || []).map(row => `<p class="courier-complaint-item">${escapeHtml(row.date)} · ${escapeHtml(row.label)}</p>`).join("")}
+      ${(item.affected_items || []).map(row => `<p class="courier-complaint-item">${escapeHtml(row.date)} · ${escapeHtml(row.label)}${row.routeId ? ` · Route ID: ${escapeHtml(row.routeId)}` : ''}</p>`).join("")}
       ${(item.attachments || []).map((photo, index) => `<a class="courier-complaint-photo" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Csatolt kép ${index + 1}</a>`).join("")}
       ${(item.history || []).filter(event => event.message).map(event => `<p class="complaint-text">${escapeHtml(shortDateTime(event.at))} · ${escapeHtml(event.message)}</p>`).join("")}</details>
     </article>`;
@@ -1731,6 +1731,18 @@ function qualityInboxTopic(item) {
   return "Reklamáció";
 }
 
+function qualityComplaintRoutes(item) {
+  return [...new Set((item.affected_items || []).map(row => String(row.routeId || '').trim()).filter(Boolean))];
+}
+
+function qualityComplaintRouteLabel(item) {
+  const sent = String(item.delivery?.route_id || '').trim();
+  const routes = qualityComplaintRoutes(item);
+  if (sent) return `${item.delivery?.state === 'sent' || item.status === 'forwarded' ? 'Beküldött' : 'Továbbításhoz mentett'} Route ID: ${sent}`;
+  if (routes.length) return `Route ID: ${routes.join(', ')}`;
+  return ['cleanedTimeWindowLate', 'uncleanedTimeWindowLate'].includes(item.topic) ? 'Route ID: nincs rögzítve' : '';
+}
+
 function renderAdminRouteSignals(payload, offset = 0) {
   const entries = [...(payload.alerts || []), ...(payload.shifts || [])]
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
@@ -1807,10 +1819,14 @@ function mergeQualityInbox(complaints, alerts, shifts) {
     if (row.resolution?.reason === 'duplicate') continue;
     const date = new Date(row.created_at);
     const workDate = row.work_date || (Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('sv-SE', {timeZone: 'Europe/Budapest'}));
+    const relatedComplaint = row.signalKind === 'route' && row.route_id ? complaints.find(item =>
+      String(item.courier_id) === String(row.courier_id) &&
+      ['cleanedTimeWindowLate', 'uncleanedTimeWindowLate'].includes(item.topic) &&
+      [...qualityComplaintRoutes(item), String(item.delivery?.route_id || '').trim()].includes(String(row.route_id).trim())) || null : null;
     items.push({id: `signal:${key}`, courier_id: row.courier_id, courier_name: row.courier_name || 'Futár',
       topic: row.signalKind === 'shift' ? 'lateShift' : 'uncleanedTimeWindowLate',
       status: row.complaint?.status || 'open', created_at: row.created_at,
-      message: row.message || row.shift_name || '', inboxOrigin: qualitySignalOrigin(row), inboxSignal: row,
+      message: row.message || row.shift_name || '', inboxOrigin: qualitySignalOrigin(row), inboxSignal: row, relatedComplaint,
       affected_items: [{date: workDate, signalKind: row.signalKind, routeId: row.route_id}]});
   }
   return items.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')) || String(a.id).localeCompare(String(b.id)));
@@ -1818,6 +1834,9 @@ function mergeQualityInbox(complaints, alerts, shifts) {
 
 function filterQualityInbox(items, filter) {
   if (filter === 'forwarded') return items.filter(item => item.status === 'forwarded');
+  if (filter === 'unrecorded') return items.filter(item => item.inboxSignal?.signalKind === 'route' &&
+    qualityComplaintRoutes(item).length && !item.relatedComplaint && !item.inboxSignal.complaint);
+  if (filter === 'pending-forward') return items.filter(item => !item.inboxSignal && item.status === 'open' && item.delivery?.state !== 'sent');
   return items.filter(item => item.status !== 'forwarded' && (filter === 'all' || item.inboxOrigin === filter));
 }
 
@@ -1852,14 +1871,15 @@ function renderQualityInboxSignal(item) {
   const row = item.inboxSignal;
   const label = row.alert_type === 'bag_missing' ? 'Táskahiány' : row.signalKind === 'shift' ? 'Műszakkésés' : 'Menet közben';
   return `<details class="quality-inbox-item" name="quality-inbox" data-signal-id="${escapeHtml(item.id)}" ${state.qualityInboxOpen === item.id ? 'open' : ''}>
-    <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}</strong><span>${label}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></summary>
+    <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}<small class="quality-route-id">${escapeHtml(qualityComplaintRouteLabel(item))}</small></strong><span>${label}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></summary>
     <div class="quality-inbox-body"><div class="quality-inbox-meta"><span>${item.inboxOrigin === 'automatic' ? 'Automatikus jelzés' : 'Futár jelzés'}</span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>Érintett nap <strong>${escapeHtml(item.affected_items[0].date || 'Nincs adat')}</strong></span>${row.route_id ? `<span>Túra <strong>${escapeHtml(row.route_id)}</strong></span>` : ''}</div>
     ${row.work_date ? `<p>${escapeHtml(row.start_time || '')}–${escapeHtml(row.end_time || '')} · ${escapeHtml(row.warehouse || '')}</p>` : ''}
+    ${item.relatedComplaint ? `<div class="notice">Ehhez a Route ID-hoz már van reklamáció: ${escapeHtml(qualityComplaintStatus(item.relatedComplaint.status))}. Ügy: ${escapeHtml(item.relatedComplaint.id)}. A meglévő ügy nyitható meg, új beküldés nem készül.</div>` : ''}
     <p class="complaint-text">${escapeHtml(item.message)}</p>
     ${row.event_type === 'coordinator_shift_late' ? '<p class="muted">Koordinátor által rögzítve</p>' : ''}
     ${(row.photos || []).map((id, i) => `<a class="secondary" href="/api/quality/route-signals/${encodeURIComponent(row.id)}/photos/${encodeURIComponent(id)}?courier=${encodeURIComponent(row.courier_id)}" target="_blank" rel="noopener">Csatolt kép ${i + 1}</a>`).join(' ')}
     ${row.complaint?.admin_response ? `<p class="complaint-text">Válasz: ${escapeHtml(row.complaint.admin_response)}</p>` : ''}
-    <div class="quality-inbox-actions">${!row.complaint ? `<button type="button" class="secondary" data-signal-close-duplicate="${escapeHtml(item.id)}">Lezárás duplikációként</button>` : ''}<button type="button" class="primary" data-route-signal-complaint="${escapeHtml(row.id)}" data-signal-kind="${escapeHtml(row.signalKind)}">Reklamáció kezelése / Google-űrlap</button></div><p data-signal-result role="status"></p></div></details>`;
+    <div class="quality-inbox-actions">${!row.complaint ? `<button type="button" class="secondary" data-signal-close-duplicate="${escapeHtml(item.id)}">Lezárás duplikációként</button>` : ''}<button type="button" class="primary" data-route-signal-complaint="${escapeHtml(row.id)}" data-signal-kind="${escapeHtml(row.signalKind)}">${item.relatedComplaint ? 'Meglévő reklamáció megnyitása' : 'Reklamáció kezelése / Google-űrlap'}</button></div><p data-signal-result role="status"></p></div></details>`;
 }
 
 function openQualitySignalDuplicateDialog(item) {
@@ -1914,9 +1934,10 @@ async function loadQualityComplaints() {
       const blocked = ["processing", "uncertain"].includes(delivery?.state);
       const open = String(item.id) === (state.qualityComplaintFocus || state.qualityInboxOpen);
       return `<details class="quality-inbox-item" name="quality-inbox" data-complaint-id="${escapeHtml(item.id)}" ${open ? "open" : ""}>
-        <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}</strong><span>${escapeHtml(qualityInboxTopic(item))}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintDisplayStatus(item))}</span></summary>
+        <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}<small class="quality-route-id">${escapeHtml(qualityComplaintRouteLabel(item))}</small></strong><span>${escapeHtml(qualityInboxTopic(item))}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintDisplayStatus(item))}</span></summary>
         <div class="quality-inbox-body">
         <div class="quality-inbox-meta"><span>${item.inboxOrigin === 'automatic' ? 'Automatikus jelzés' : 'Futár jelzés'}</span><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span></div>
+        <p><strong>${escapeHtml(qualityComplaintRouteLabel(item))}</strong>${item.delivery?.route_id && !qualityComplaintRoutes(item).includes(String(item.delivery.route_id).trim()) ? ' · Eltérés: az eredeti tétel Route ID-ja más vagy hiányzik; ellenőrzés szükséges.' : ''}</p>
         <p class="complaint-text">${escapeHtml(item.message)}</p>
         ${renderQualityPartnerDecision(item)}
         ${renderComplaintShiftDetails(item)}
@@ -1928,7 +1949,7 @@ async function loadQualityComplaints() {
         ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
         ${payload.canManage ? `<details data-complaint-evidence><summary>Műszak- és Hub-adatok</summary><div data-evidence-content role="status"></div><button type="button" class="secondary" data-evidence-refresh>Adatok frissítése</button></details>` : ""}
         <details><summary>Érintett tételek és előzmények</summary>
-          ${(item.affected_items || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.date)} · ${escapeHtml(row.label)}</span><strong>${escapeHtml(row.note)}</strong></div>`).join("")}
+          ${(item.affected_items || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.date)} · ${escapeHtml(row.label)}${row.routeId ? ` · Route ID: ${escapeHtml(row.routeId)}` : ''}</span><strong>${escapeHtml(row.note)}</strong></div>`).join("")}
           ${(item.history || []).map(event => `<p class="complaint-text">${escapeHtml(shortDateTime(event.at))} · ${escapeHtml(event.actor)} · ${escapeHtml(qualityComplaintStatus(event.status))}<br>${escapeHtml(event.message || event.reference)}</p>`).join("")}
         </details>
         ${item.admin_response ? `<div class="notice complaint-text"><strong>Válasz:</strong> ${escapeHtml(item.admin_response)}</div>` : ""}
@@ -1936,6 +1957,8 @@ async function loadQualityComplaints() {
       </details>`;
     }).join("") : '<div class="empty-card">Nincs ilyen forrású jelzés.</div>';
     status.textContent = `${items.length} ${filter === 'forwarded' ? 'továbbított jelzés' : 'jelzés'}${['automatic', 'courier'].includes(filter) ? ` / összesen ${filterQualityInbox(payload.items, 'all').length}` : ''} · minden találat egy oldalon`;
+    if (filter === 'unrecorded') status.textContent += ` · ${new Set(items.map(item => `${item.courier_id}:${qualityComplaintRoutes(item)[0]}`)).size} külön túra · reklamáció még nincs rögzítve`;
+    if (filter === 'pending-forward') status.textContent += ' · rögzített ügyek, továbbításra várnak';
     if (payload.partnerDecisionsAvailable === false) status.textContent += ' · A Kifli-válaszok most nem érhetők el.';
     target.querySelectorAll('[data-signal-close-duplicate]').forEach(button => button.addEventListener('click', () => {
       const item = items.find(row => row.id === button.dataset.signalCloseDuplicate);
@@ -2011,7 +2034,7 @@ async function openQualityInboxAction(item, action, robotEnabled = false) {
     <div class="quality-inbox-meta"><span>Futár <strong>${escapeHtml(item.courier_name)}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs adat")}</strong></span></div>
     <div data-inbox-fields>${closing ? '<label>Válasz a futárnak<textarea data-inbox-description maxlength="5000" rows="5"></textarea></label>' : `
       <label>Kategória<select data-inbox-category>${qualityComplaintCategories().map(category => `<option>${escapeHtml(category)}</option>`).join("")}</select></label>
-      <label data-inbox-route-field>Túraszám / Cargo ID<input data-inbox-route maxlength="500"></label>
+      <label data-inbox-route-field>Route ID<input data-inbox-route maxlength="500"></label>
       <label data-inbox-plate-field>Rendszám<input data-inbox-plate maxlength="30"></label>
       <label>A Google-űrlapra kerülő szöveg<textarea data-inbox-description maxlength="20000" rows="8"></textarea></label>`}</div>
     ${closing ? "" : '<label class="hidden" data-inbox-reference-field>Kifli ügyazonosító, ha van<input data-inbox-reference maxlength="450"></label>'}
@@ -2087,7 +2110,7 @@ async function openQualityInboxAction(item, action, robotEnabled = false) {
     showCategoryFields();
     const locked = prepared || ["queued", "processing", "uncertain", "sent"].includes(deliveryState);
     category.disabled = locked;
-    [route, plate, description].forEach(input => { input.readOnly = locked; });
+    [route, plate, description].forEach(input => { input.readOnly = locked || (input === route && ['cleanedTimeWindowLate','uncleanedTimeWindowLate'].includes(item.topic)); });
     if (prepared) {
       confirm.classList.remove("hidden");
       get("[data-inbox-reference-field]").classList.remove("hidden");
@@ -2228,12 +2251,17 @@ function qualityComplaintDays(rows, drafts = {}, defaultCategory = "Túra alatti
   const groups = new Map();
   rows.forEach(row => {
     const date = String(row.date || "");
-    if (!groups.has(date)) groups.set(date, []);
-    groups.get(date).push(row);
+    const routeId = defaultCategory === 'Túra alatti késés' ? String(row.routeId || '').trim() : '';
+    const key = routeId ? `${date}:route:${routeId}` : date;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
   });
-  return Array.from(groups, ([date, items]) => {
-    const draft = drafts[date] || {};
-    return { date, rows: items, message: draft.message || "", selected: Boolean(draft.selected),
+  return Array.from(groups, ([key, items]) => {
+    const date = String(items[0].date || '');
+    // A legacy day draft may contain several tours. Preserve its text, never its
+    // selection/request identity: a new request must not reuse a different payload.
+    const draft = drafts[key] || (key !== date && drafts[date] ? {message: drafts[date].message, category: drafts[date].category} : {});
+    return { key, date, routeId: key !== date ? String(items[0].routeId || '').trim() : '', rows: items, message: draft.message || "", selected: Boolean(draft.selected),
       category: qualityComplaintCategories().includes(draft.category) ? draft.category : defaultCategory,
       requestId: draft.requestId || crypto.randomUUID(), complaintId: draft.complaintId || "",
       submittedPayload: draft.submittedPayload || null,
@@ -2244,8 +2272,8 @@ function qualityComplaintDays(rows, drafts = {}, defaultCategory = "Túra alatti
 
 function rememberQualityComplaintDays(context) {
   state.qualityDayDrafts ||= {};
-  state.qualityDayDrafts[context.draftKey] = Object.fromEntries(context.days.map(day => [day.date, day]));
-  const stored = Object.fromEntries(context.days.map(day => [day.date, {
+  state.qualityDayDrafts[context.draftKey] = Object.fromEntries(context.days.map(day => [day.key, day]));
+  const stored = Object.fromEntries(context.days.map(day => [day.key, {
     message: day.message, selected: day.selected, requestId: day.requestId,
     category: day.category,
     complaintId: day.complaintId, saved: day.saved, expanded: day.expanded,
@@ -2312,7 +2340,7 @@ function ensureQualityReclamationDialog() {
     <div class="worker-shift-dialog-head"><div><span>MINŐSÉGI ELLENŐRZÉS</span>
       <strong data-quality-reclamation-title>Reklamáció</strong><small data-quality-reclamation-subtitle></small></div>
       <button type="button" class="icon-button" data-quality-reclamation-close aria-label="Bezárás">×</button></div>
-    <p class="muted">Nyisd le az érintett napokat, írd meg az indoklást, és jelöld be a beküldeni kívánt reklamációkat. A piszkozatok megmaradnak.</p>
+    <p class="muted">Nyisd le az érintett túrát vagy műszakot, írd meg az indoklást, és jelöld be a beküldeni kívánt reklamációkat. Egy Route ID-hoz egyszer lehet reklamálni. A piszkozatok megmaradnak.</p>
     <div data-quality-reclamation-body></div><p data-quality-reclamation-status role="status" aria-live="polite"></p>
     <div class="dialog-actions"><button type="button" class="secondary" data-quality-reclamation-close>Bezárás</button>
       <button type="button" class="primary" data-quality-reclamation-submit>Reklamáció beküldése</button></div></form>`;
@@ -2332,7 +2360,7 @@ function ensureQualityReclamationDialog() {
       const remaining = context.days.filter(day => !day.saved);
       rememberQualityComplaintDays({ ...context, days: remaining });
       dialog.close();
-      showQualitySubmissionProgress("success", `${count} napi reklamációt külön ügyként elmentettünk.`, dialog);
+      showQualitySubmissionProgress("success", `${count} reklamációt külön ügyként elmentettünk.`, dialog);
     } catch (error) {
       const saved = context.days.filter(day => day.saved).length;
       status.textContent = `${saved ? `${saved} nap már rögzítve. ` : ""}${error.message} A többi piszkozat megmaradt.`;
@@ -2368,7 +2396,7 @@ function syncQualityComplaintDayControls(dialog) {
   });
   const count = context.days.filter(day => day.selected && !day.saved).length;
   const submit = dialog.querySelector("[data-quality-reclamation-submit]");
-  submit.textContent = `Reklamáció beküldése (${count} nap)`;
+  submit.textContent = `Reklamáció beküldése (${count} ügy)`;
   submit.disabled = !context.canSubmit || !count;
 }
 
@@ -2390,10 +2418,9 @@ function openQualityReclamation(topic) {
     const recordedDates = new Set((state.statistics?.qualityComplaints || [])
       .filter(item => qualityComplaintDailyBucket(item.topic) === bucket)
       .flatMap(item => (item.affected_items || [])
-        .filter(row => row.signalKind !== "route" || row.category !== "Futárbüntetés")
-        .map(row => row.date)));
+        .map(row => bucket === 'address' ? (row.routeId ? `route:${String(row.routeId).trim()}` : '') : row.date)).filter(Boolean));
     for (const day of days) {
-      if (recordedDates.has(day.date) && !day.submittedPayload && !day.complaintId) day.saved = true;
+      if (recordedDates.has(bucket === 'address' ? `route:${day.routeId}` : day.date) && !day.submittedPayload && !day.complaintId) day.saved = true;
     }
   }
   const canSubmit = !courier || ["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase());
@@ -2402,10 +2429,10 @@ function openQualityReclamation(topic) {
   const labels = { lateShift: "Műszakkésés reklamáció", uncleanedTimeWindowLate: "Nem mentesített címkésés reklamáció",
     cleanedTimeWindowLate: "Mentesített címkésés reklamáció", noShow: "No-show reklamáció" };
   dialog.querySelector("[data-quality-reclamation-title]").textContent = labels[topic] || "Reklamáció";
-  dialog.querySelector("[data-quality-reclamation-subtitle]").textContent = `${days.length} nap · ${rows.length} érintett tétel`;
+  dialog.querySelector("[data-quality-reclamation-subtitle]").textContent = `${days.length} túra vagy műszak · ${rows.length} érintett tétel`;
   dialog.querySelector("[data-quality-reclamation-body]").innerHTML = days.length ? days.map((day, index) => `
     <details class="quality-day" data-quality-day ${day.expanded ? "open" : ""}>
-      <summary><strong>${escapeHtml(day.date)}</strong><span>${day.rows.length} tétel</span><span data-quality-day-saved></span></summary>
+      <summary><strong>${escapeHtml(day.date)}${day.routeId ? ` · Route ID: ${escapeHtml(day.routeId)}` : ''}</strong><span>${day.rows.length} tétel</span><span data-quality-day-saved></span></summary>
       <div class="quality-day-content">${day.rows.map(row => `<div class="stat-row"><span>${escapeHtml(row.label || "Műszak")}${qualityShiftTimes(row, topic)}</span><strong>${escapeHtml(row.note || "")}</strong></div>`).join("")}
       <label>Kategória<select data-quality-day-category>${qualityComplaintCategories().map(category => `<option value="${escapeHtml(category)}" ${day.category === category ? "selected" : ""}>${escapeHtml(category)}</option>`).join("")}</select></label>
       <label>Reklamáció indoka<textarea maxlength="5000" data-quality-day-note placeholder="Írd le az ehhez a naphoz tartozó reklamációdat…">${escapeHtml(day.message)}</textarea></label>

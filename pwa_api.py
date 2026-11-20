@@ -9691,13 +9691,15 @@ def supabase_rest(
     )
 
     if not response.ok:
-        if method == "POST" and table == "pwa_quality_complaints":
+        if method in {"POST", "PATCH"} and (table.startswith("pwa_quality_complaint") or table.startswith("rpc/pwa_") and "quality" in table):
             try:
                 complaint_error = response.json()
             except ValueError:
                 complaint_error = {}
             if isinstance(complaint_error, dict) and complaint_error.get("code") == "PZ001":
-                raise HTTPException(status_code=409, detail="Erre a napra már van ilyen típusú reklamáció.")
+                raise HTTPException(status_code=409, detail=str(complaint_error.get("message") or "Ehhez a Route ID-hoz már van reklamáció."))
+            if isinstance(complaint_error, dict) and complaint_error.get("code") == "22023":
+                raise HTTPException(status_code=422, detail=str(complaint_error.get("message") or "Hibás reklamációs adatok."))
         print("Supabase table:", table)
         print("Supabase status:", response.status_code)
         print("Supabase response:", response.text)
@@ -22909,7 +22911,7 @@ def list_quality_complaints(
         ids = ",".join(str(UUID(str(row["id"]))) for row in rows[:50])
         try:
             deliveries = supabase_rest("GET", "pwa_quality_complaint_deliveries", params={
-                "select": "complaint_id,state,approved_by,approved_at,updated_at,last_error,confirmation",
+                "select": "complaint_id,state,approved_by,approved_at,updated_at,last_error,confirmation,route_id:payload->>route_id",
                 "complaint_id": f"in.({ids})"})
         except HTTPException as exc:
             if forwarding_enabled or exc.detail != "Adatbázis-hiba (404).":
@@ -23091,7 +23093,10 @@ def route_signal_to_complaint(
         work_date = datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00")).astimezone(LOCAL_TIMEZONE).date().isoformat()
     if work_date[:7] != QUALITY_COMPLAINT_MONTH.isoformat()[:7]:
         raise HTTPException(status_code=422, detail="Csak 2026. novemberi jelzésből készíthető reklamáció.")
-    daily = find_existing_day_complaint(supabase_rest, kind, row, work_date)
+    try:
+        daily = find_existing_day_complaint(supabase_rest, kind, row, work_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if daily:
         return {"ok": True, "item": daily, "alreadyExists": True}
     bag = row.get("alert_type") == "bag_missing"
@@ -23289,6 +23294,11 @@ def create_quality_complaint(
         items[-1]["category"] = category
     if not items or len({item["date"] for item in items}) != 1:
         raise HTTPException(status_code=422, detail="Egy reklamáció egy naphoz tartozhat. A napokat külön küldd be.")
+    if payload.topic in {"cleanedTimeWindowLate", "uncleanedTimeWindowLate"}:
+        for item in items:
+            item["routeId"] = item["routeId"].strip()
+        if any(not item["routeId"] or any(char.isspace() or char in ',;' for char in item["routeId"]) for item in items) or len({item["routeId"] for item in items}) != 1:
+            raise HTTPException(status_code=422, detail="Egy reklamáció pontosan egy Route ID-hoz tartozhat. A túrákat külön küldd be.")
     # Idempotent retries: a lost response must not create a second complaint.
     saved = supabase_rest("POST", "pwa_quality_complaints",
         params={"on_conflict": "request_id"},

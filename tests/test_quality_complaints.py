@@ -82,14 +82,21 @@ class QualityComplaintTest(unittest.TestCase):
             fn(self.payload(items=[{'date': '2026-10-13'}, {'date': '2026-10-14'}]))
         self.assertEqual(error.exception.status_code, 422)
 
-    def test_multiple_routes_same_day_remain_one_case(self):
+    def test_multiple_routes_same_day_rejected_before_write(self):
         calls = []
         def db(*args, **kwargs):
             calls.append(kwargs['payload'])
             return [{'id': 'day-case'}]
-        result = self.function(db)(self.payload(items=[{'date': '2026-10-13', 'routeId': '1'}, {'date': '2026-10-13', 'routeId': '2'}]))
-        self.assertEqual(result['id'], 'day-case')
-        self.assertEqual(len(calls[0]['affected_items']), 2)
+        with self.assertRaises(ApiError) as error:
+            self.function(db)(self.payload(topic='uncleanedTimeWindowLate', items=[{'date': '2026-10-13', 'routeId': '1'}, {'date': '2026-10-13', 'routeId': '2'}]))
+        self.assertEqual(error.exception.status_code,422)
+        self.assertEqual(calls,[])
+
+    def test_route_is_required_and_cannot_contain_a_list(self):
+        for route in ['', '1,2', '1 2', '1;2']:
+            with self.assertRaises(ApiError) as error:
+                self.function(lambda *a, **k: self.fail('Must reject before write'))(self.payload(topic='cleanedTimeWindowLate',items=[{'date':'2026-10-13','routeId':route}]))
+            self.assertEqual(error.exception.status_code,422)
 
     def test_category_is_saved_on_every_affected_item(self):
         for category in ['Túra alatti késés', 'Futárbüntetés', 'Pénztárca/tankolás', 'Elszámolás', 'Jármű', 'Műszak']:

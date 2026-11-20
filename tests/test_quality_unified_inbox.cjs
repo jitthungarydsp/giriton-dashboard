@@ -4,8 +4,29 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../pwa/app.js'),'utf8');
-const helpers=source.slice(source.indexOf('function qualitySignalOrigin('),source.indexOf('async function loadQualityComplaints('));
+const helpers=source.slice(source.indexOf('function qualityComplaintRoutes('),source.indexOf('function renderAdminRouteSignals('))+source.slice(source.indexOf('function qualitySignalOrigin('),source.indexOf('async function loadQualityComplaints('));
 function setup(api){const ctx={api,Date,Intl};vm.runInNewContext(helpers,ctx);return ctx;}
+
+test('Juhász sibling signals match the submitted route only; another tour stays independent',()=>{
+ const ctx=setup();
+ const complaint={id:'case',courier_id:'9460',topic:'uncleanedTimeWindowLate',status:'forwarded',affected_items:[{date:'2026-11-20',routeId:'1612799'}],delivery:{state:'sent',route_id:'1612799'}};
+ const result=ctx.mergeQualityInbox([complaint],[{id:112,courier_id:9460,route_id:'1612799',created_at:'2026-11-20'},
+  {id:114,courier_id:9460,route_id:'different-route',created_at:'2026-11-20'}],[]);
+ assert.equal(result.find(x=>x.id==='signal:route:112').relatedComplaint.id,'case');
+ assert.equal(result.find(x=>x.id==='signal:route:114').relatedComplaint,null);
+ assert.deepEqual(Array.from(ctx.filterQualityInbox(result,'unrecorded'),x=>x.id),['signal:route:114']);
+ assert.equal(ctx.filterQualityInbox(result,'pending-forward').length,0);
+ assert.equal(ctx.qualityComplaintRouteLabel(complaint),'Beküldött Route ID: 1612799');
+ assert.equal(ctx.qualityComplaintRouteLabel({topic:'uncleanedTimeWindowLate'}),'Route ID: nincs rögzítve');
+});
+
+test('unrecorded filter requires a known route and pending forwarding excludes sent and closed cases',()=>{
+ const ctx=setup();const items=ctx.mergeQualityInbox([
+  {id:'open',status:'open'},{id:'sent',status:'open',delivery:{state:'sent'}},{id:'closed',status:'closed'}],
+  [{id:1,courier_id:1,created_at:'2026-11-20'}],[]);
+ assert.equal(ctx.filterQualityInbox(items,'unrecorded').length,0);
+ assert.deepEqual(Array.from(ctx.filterQualityInbox(items,'pending-forward'),x=>x.id),['open']);
+});
 
 test('loads every source page, merges linked cases once and retains original automatic source',async()=>{
   const calls=[];

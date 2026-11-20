@@ -114,6 +114,31 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
     assert.equal(await raw.count(),0);
     assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('50 jelzés'));
     assert.deepEqual(errors,[]);
+    // Realistic route identities: two reports from one submitted tour, plus a
+    // separate tour on the same day. Show IDs even with the cards collapsed.
+    await page.evaluate(()=>{
+      window.api=async url=>url.includes('/complaints?') ? {items:[{id:'juhasz-sent',courier_id:'9460',courier_name:'Juhász József',topic:'uncleanedTimeWindowLate',status:'forwarded',message:'Beküldött reklamáció',created_at:'2026-11-20T11:20:10Z',affected_items:[{date:'2026-11-20',routeId:'1612799'}],delivery:{state:'sent',route_id:'1612799'}}],hasMore:false,canManage:true} : {alerts:[{id:112,courier_id:9460,courier_name:'Juhász József',route_id:'1612799',alert_type:'problem',message:'Második jelzés',created_at:'2026-11-20T10:16:13Z'},{id:114,courier_id:9460,courier_name:'Juhász József',route_id:'1612800',alert_type:'problem',message:'Másik túra',created_at:'2026-11-20T12:16:13Z'}],shifts:[],hasMore:false};
+      document.querySelector('#quality-complaints-filter').value='all';
+      return loadQualityComplaints();
+    });
+    const same=page.locator('[data-signal-id="signal:route:112"]'),other=page.locator('[data-signal-id="signal:route:114"]');
+    assert.ok((await same.locator('summary').innerText()).includes('Route ID: 1612799'));
+    assert.ok((await other.locator('summary').innerText()).includes('Route ID: 1612800'));
+    await same.locator('summary').click();
+    assert.ok((await same.innerText()).includes('Ehhez a Route ID-hoz már van reklamáció: Továbbított'));
+    assert.equal(await same.getByRole('button',{name:'Meglévő reklamáció megnyitása'}).count(),1);
+    assert.equal(await other.getByRole('button',{name:'Meglévő reklamáció megnyitása'}).count(),0);
+    await page.selectOption('#quality-complaints-filter','unrecorded');
+    assert.equal(await page.locator('.quality-inbox-item').count(),1);
+    assert.ok((await page.locator('.quality-inbox-item > summary').innerText()).includes('1612800'));
+    assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('1 külön túra'));
+    await page.selectOption('#quality-complaints-filter','pending-forward');
+    assert.equal(await page.locator('.quality-inbox-item').count(),0);
+    await page.selectOption('#quality-complaints-filter','forwarded');
+    assert.ok((await page.locator('[data-complaint-id="juhasz-sent"] > summary').innerText()).includes('Beküldött Route ID: 1612799'));
+    await page.setViewportSize({width:390,height:844});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),true);
+    if(process.env.QUALITY_ROUTE_SCREENSHOT)await page.screenshot({path:process.env.QUALITY_ROUTE_SCREENSHOT});
     console.log('Unified inbox UI passed: source and forwarded filters, existing daily case navigation, duplicate confirmation/cancel/retry, persisted closure, accurate counts, mobile layout.');
   }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

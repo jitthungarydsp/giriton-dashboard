@@ -9,7 +9,7 @@ from test_courier_route_signals import load_functions, HttpError
 class DuplicateSignalTest(unittest.TestCase):
     def setUp(self):
         self.signal = {'id': '123', 'courier_id': 9136, 'courier_name': 'Szendi Balázs',
-                       'alert_type': 'problem', 'message': 'Baleset miatt torlódás.', 'created_at': '2026-11-11T17:35:00Z'}
+                       'alert_type': 'problem', 'route_id': '1602226', 'message': 'Baleset miatt torlódás.', 'created_at': '2026-11-11T17:35:00Z'}
         self.records = []
         self.complaint = None
         self.day_case = None
@@ -21,10 +21,12 @@ class DuplicateSignalTest(unittest.TestCase):
         self.ns['quality_complaint_manager'] = lambda user: user.get('role') == 'admin'
 
     def rest(self, method, table, params=None, payload=None, **kwargs):
-        if method != 'GET':
+        if method != 'GET' and not table.startswith('rpc/'):
             self.writes.append((table, copy.deepcopy(payload)))
         if table in {'courier_route_alerts', 'courier_shift_checkins'}:
             return [copy.deepcopy(self.signal)] if self.signal else []
+        if table == 'rpc/pwa_find_quality_route_complaint':
+            return [copy.deepcopy(self.day_case)] if self.day_case and any(item.get('routeId') == payload['p_route_id'] for item in self.day_case['affected_items']) else []
         if table == 'peopleforce_card_statuses':
             if method == 'POST':
                 if self.fail_save:
@@ -37,7 +39,7 @@ class DuplicateSignalTest(unittest.TestCase):
         if table == 'pwa_quality_complaints':
             if method == 'POST':
                 if self.race:
-                    self.day_case = {'id': 'won-race', 'affected_items': [{'date': '2026-11-11'}], 'status': 'open'}
+                    self.day_case = {'id': 'won-race', 'affected_items': [{'date': '2026-11-11','routeId':'1602226'}], 'status': 'open'}
                     raise HttpError(409, 'Erre a napra már van ilyen típusú reklamáció.')
                 self.complaint = {'id': 'created', **payload}
                 return [self.complaint]
@@ -110,7 +112,7 @@ class DuplicateSignalTest(unittest.TestCase):
         self.assertFalse(any(table == 'pwa_quality_complaints' for table, _ in self.writes))
 
     def test_existing_day_case_opens_without_new_complaint_or_signal_write(self):
-        self.day_case = {'id': 'daily-original', 'affected_items': [{'date': '2026-11-11'}], 'status': 'forwarded'}
+        self.day_case = {'id': 'daily-original', 'affected_items': [{'date': '2026-11-11','routeId':'1602226'}], 'status': 'forwarded'}
         result = self.ns['route_signal_to_complaint']('route', '123', None)
         self.assertTrue(result['alreadyExists'])
         self.assertEqual(result['item']['id'], 'daily-original')
@@ -125,9 +127,9 @@ class DuplicateSignalTest(unittest.TestCase):
         self.assertEqual(result['item']['id'], 'won-race')
         self.assertEqual(self.complaint, None)
 
-    def test_bag_missing_does_not_reuse_address_delay_case(self):
+    def test_same_day_different_route_does_not_reuse_address_delay_case(self):
         self.signal['alert_type'] = 'bag_missing'
-        self.day_case = {'id': 'unrelated', 'affected_items': [{'date': '2026-11-11'}]}
+        self.day_case = {'id': 'unrelated', 'affected_items': [{'date': '2026-11-11','routeId':'other-route'}]}
         result = self.ns['route_signal_to_complaint']('route', '123', None)
         self.assertEqual(result['item']['id'], 'created')
         self.assertFalse(result.get('alreadyExists'))
@@ -139,16 +141,24 @@ class DuplicateSignalTest(unittest.TestCase):
         spec.loader.exec_module(module)
         self.assertIsNone(module.assignment_value(self.records[0]))
 
-    def test_day_lookup_ignores_penalty_items_and_filters_the_selected_courier_and_date(self):
+    def test_lookup_uses_authoritative_claim_with_exact_route_not_date_or_category(self):
         seen = []
-        def rest(method, table, params):
-            seen.append(params)
-            return [{'id': 'penalty', 'affected_items': [{'date': '2026-11-11', 'signalKind': 'route', 'category': 'Futárbüntetés'}]},
-                    {'id': 'original', 'affected_items': [{'date': '2026-11-11', 'category': 'Túra alatti késés'}]}]
+        def rest(method, table, payload):
+            self.assertEqual((method,table),('POST','rpc/pwa_find_quality_route_complaint'))
+            seen.append(payload)
+            return [{'id': 'original', 'affected_items': [{'date': '2026-11-10','routeId':'1602226','category':'Futárbüntetés'}]}]
         result = self.ns['find_existing_day_complaint'](rest, 'route', self.signal, '2026-11-11')
         self.assertEqual(result['id'], 'original')
-        self.assertEqual(seen[0]['courier_id'], 'eq.9136')
-        self.assertEqual(json.loads(seen[0]['affected_items'][3:]), [{'date': '2026-11-11'}])
+        self.assertEqual(seen[0]['p_courier_id'], '9136')
+        self.assertEqual(seen[0]['p_route_id'], '1602226')
+        self.assertNotIn('work_month',seen[0])
+
+    def test_missing_route_is_not_guessed_from_another_signal(self):
+        self.signal.pop('route_id')
+        with self.assertRaises(HttpError) as error:
+            self.ns['route_signal_to_complaint']('route','123',None)
+        self.assertEqual(error.exception.status_code,422)
+        self.assertEqual(self.writes,[])
 
 
 if __name__ == '__main__':
