@@ -18,7 +18,7 @@ def load_functions(rest):
     nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in {'own_route_signals','own_route_signal_photo','admin_route_signals','route_signal_to_complaint'}]
     for n in nodes:n.decorator_list=[]
     ns=dict(Query=lambda *a,**k:None,Cookie=lambda *a,**k:None,date=date,datetime=datetime,timedelta=timedelta,
-            LOCAL_TIMEZONE=ZoneInfo('Europe/Budapest'),UUID=UUID,re=re,base64=base64,hashlib=hashlib,
+            LOCAL_TIMEZONE=ZoneInfo('Europe/Budapest'),QUALITY_COMPLAINT_MONTH=date(2026,11,1),UUID=UUID,re=re,base64=base64,hashlib=hashlib,
             require_user=lambda _: {'courierId':'42'},workflow_view_user=lambda u,c:(u,False),
             courier_identity=lambda u:('42','Futár'),parse_month=lambda s:date.fromisoformat(s+'-01'),
             supabase_rest=rest,HTTPException=HttpError,Response=lambda **k:k,
@@ -37,7 +37,7 @@ class RouteSignalTests(unittest.TestCase):
             if table=='pwa_quality_complaints':
                 if method=='GET':return stored
                 stored.append({'id':'complaint-id',**payload});return stored
-            if table=='courier_route_alerts':return [{'id':'123','courier_id':42,'courier_name':'Futár','alert_type':'delay','route_id':'1600493','message':'Baleset miatt késtem','created_at':'2026-10-31T23:30:00Z'}]
+            if table=='courier_route_alerts':return [{'id':'123','courier_id':42,'courier_name':'Futár','alert_type':'delay','status':'auto','route_id':'1600493','message':'Baleset miatt késtem','created_at':'2026-10-31T23:30:00Z'}]
             return []
         ns=load_functions(rest);ns['quality_complaint_manager']=lambda u:True
         one=ns['route_signal_to_complaint']('route','123',None)
@@ -48,6 +48,7 @@ class RouteSignalTests(unittest.TestCase):
         self.assertEqual(stored[0]['work_month'],'2026-11-01')
         self.assertEqual(stored[0]['affected_items'][0]['routeId'],'1600493')
         self.assertEqual(stored[0]['affected_items'][0]['signalId'],'123')
+        self.assertEqual(stored[0]['affected_items'][0]['signalOrigin'],'automatic')
         self.assertFalse(any('delivery' in table for _,table in calls))
 
     def test_non_manager_cannot_convert_signal(self):
@@ -73,6 +74,7 @@ class RouteSignalTests(unittest.TestCase):
         self.assertEqual(result['alerts'][1]['photos'],['photo'])
         self.assertNotIn('courier_id',calls[0][1])
         self.assertEqual(calls[0][1]['offset'],'50')
+        self.assertEqual(calls[0][1]['alert_type'],'in.(delay,bag_missing,problem)')
         self.assertEqual(calls[1][1]['event_type'],'in.(shift_late,coordinator_shift_late)')
 
     def test_queries_are_scoped_to_courier_month_and_relevant_types(self):

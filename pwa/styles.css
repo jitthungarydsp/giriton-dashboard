@@ -28,6 +28,7 @@
 .quality-inbox-item { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .quality-inbox-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; list-style: none; }
 .quality-inbox-row::-webkit-details-marker { display: none; }
+.quality-inbox-row > strong { min-width: 0; overflow-wrap: anywhere; }
 .quality-inbox-row strong::before { content: "›"; color: var(--muted); margin-right: .5em; }
 .quality-inbox-item[open] > .quality-inbox-row strong::before { content: "⌄"; }
 .quality-inbox-row time { color: var(--muted); white-space: nowrap; }

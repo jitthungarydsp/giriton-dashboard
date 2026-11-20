@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v295";
+const APP_VERSION = "v296";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1759,19 +1759,93 @@ async function loadAdminRouteSignals(offset = 0) {
   }
 }
 
+function qualitySignalOrigin(row) {
+  return row.status === 'auto' || row.signalOrigin === 'automatic' ? 'automatic' : 'courier';
+}
+
+function mergeQualityInbox(complaints, alerts, shifts) {
+  const signals = new Map();
+  for (const [kind, rows] of [['route', alerts], ['shift', shifts]]) {
+    for (const row of rows) signals.set(`${kind}:${row.id}`, {...row, signalKind: kind});
+  }
+  const linked = new Set();
+  const items = complaints.map(item => {
+    const references = (item.affected_items || []).map(row => `${row.signalKind}:${row.signalId}`);
+    const matches = [...signals.entries()].filter(([key, row]) => references.includes(key) || String(row.complaint?.id || '') === String(item.id));
+    matches.forEach(([key]) => linked.add(key));
+    const automatic = matches.some(([, row]) => qualitySignalOrigin(row) === 'automatic') ||
+      (item.affected_items || []).some(row => row.signalOrigin === 'automatic');
+    return {...item, inboxOrigin: automatic ? 'automatic' : 'courier'};
+  });
+  for (const [key, row] of signals) {
+    if (linked.has(key)) continue;
+    const date = new Date(row.created_at);
+    const workDate = row.work_date || (Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('sv-SE', {timeZone: 'Europe/Budapest'}));
+    items.push({id: `signal:${key}`, courier_id: row.courier_id, courier_name: row.courier_name || 'Futár',
+      topic: row.signalKind === 'shift' ? 'lateShift' : 'uncleanedTimeWindowLate',
+      status: row.complaint?.status || 'open', created_at: row.created_at,
+      message: row.message || row.shift_name || '', inboxOrigin: qualitySignalOrigin(row), inboxSignal: row,
+      affected_items: [{date: workDate, signalKind: row.signalKind, routeId: row.route_id}]});
+  }
+  return items.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')) || String(a.id).localeCompare(String(b.id)));
+}
+
+async function loadQualityInboxPages(isCurrent = () => true) {
+  async function pages(path, fields) {
+    const result = Object.fromEntries(fields.map(field => [field, []]));
+    const seen = Object.fromEntries(fields.map(field => [field, new Set()]));
+    for (let offset = 0; ; offset += 50) {
+      if (!isCurrent()) return null;
+      const page = await api(`${path}${path.includes('?') ? '&' : '?'}offset=${offset}`, {silentLoading: true});
+      if (!isCurrent()) return null;
+      let added = 0;
+      for (const field of fields) for (const row of page[field] || []) {
+        if (seen[field].has(String(row.id))) continue;
+        seen[field].add(String(row.id)); result[field].push(row); added++;
+      }
+      if (offset === 0) Object.assign(result, {canManage: page.canManage, forwardingEnabled: page.forwardingEnabled});
+      if (!page.hasMore) return result;
+      if (!added) throw Error('A teljes jelzéslista nem tölthető be. Próbáld újra a Frissítés gombbal.');
+    }
+  }
+  const [complaints, signals] = await Promise.all([
+    pages('/api/quality/complaints?status=all', ['items']),
+    pages('/api/quality/route-signals', ['alerts', 'shifts']),
+  ]);
+  if (!complaints || !signals) return null;
+  return {...complaints, items: mergeQualityInbox(complaints.items, signals.alerts, signals.shifts)};
+}
+
+function renderQualityInboxSignal(item) {
+  const row = item.inboxSignal;
+  const label = row.alert_type === 'bag_missing' ? 'Táskahiány' : row.signalKind === 'shift' ? 'Műszakkésés' : 'Menet közben';
+  return `<details class="quality-inbox-item" name="quality-inbox" data-signal-id="${escapeHtml(item.id)}" ${state.qualityInboxOpen === item.id ? 'open' : ''}>
+    <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}</strong><span>${label}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></summary>
+    <div class="quality-inbox-body"><div class="quality-inbox-meta"><span>${item.inboxOrigin === 'automatic' ? 'Automatikus jelzés' : 'Futár jelzés'}</span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>Érintett nap <strong>${escapeHtml(item.affected_items[0].date || 'Nincs adat')}</strong></span>${row.route_id ? `<span>Túra <strong>${escapeHtml(row.route_id)}</strong></span>` : ''}</div>
+    ${row.work_date ? `<p>${escapeHtml(row.start_time || '')}–${escapeHtml(row.end_time || '')} · ${escapeHtml(row.warehouse || '')}</p>` : ''}
+    <p class="complaint-text">${escapeHtml(item.message)}</p>
+    ${row.event_type === 'coordinator_shift_late' ? '<p class="muted">Koordinátor által rögzítve</p>' : ''}
+    ${(row.photos || []).map((id, i) => `<a class="secondary" href="/api/quality/route-signals/${encodeURIComponent(row.id)}/photos/${encodeURIComponent(id)}?courier=${encodeURIComponent(row.courier_id)}" target="_blank" rel="noopener">Csatolt kép ${i + 1}</a>`).join(' ')}
+    ${row.complaint?.admin_response ? `<p class="complaint-text">Válasz: ${escapeHtml(row.complaint.admin_response)}</p>` : ''}
+    <div class="quality-inbox-actions"><button type="button" class="primary" data-route-signal-complaint="${escapeHtml(row.id)}" data-signal-kind="${escapeHtml(row.signalKind)}">Reklamáció kezelése / Google-űrlap</button></div><p data-signal-result role="status"></p></div></details>`;
+}
+
 async function loadQualityComplaints() {
   if (!["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
-  if (!await prepareQualityWorkspace()) return;
   const target = $("#quality-complaints-list");
   const status = $("#quality-complaints-status");
   const request = (state.qualityComplaintRequest || 0) + 1;
   state.qualityComplaintRequest = request;
   status.textContent = "Betöltés…";
+  target.innerHTML = '';
   try {
-    const filter = state.qualityComplaintFocus ? "all" : $("#quality-complaints-filter").value;
-    const payload = await api(`/api/quality/complaints?status=${encodeURIComponent(filter)}&offset=${state.qualityComplaintOffset || 0}${state.qualityComplaintFocus ? `&complaint=${encodeURIComponent(state.qualityComplaintFocus)}` : ''}${state.qualityWorkspaceCourier ? `&courier=${encodeURIComponent(state.qualityWorkspaceCourier)}` : ''}${state.qualityWorkspaceDay ? `&work_date=${encodeURIComponent(state.qualityWorkspaceDay)}` : ''}`);
+    const payload = await loadQualityInboxPages(() => state.qualityComplaintRequest === request);
     if (state.qualityComplaintRequest !== request) return;
-    target.innerHTML = payload.items.length ? payload.items.map((item) => {
+    if (!payload) return;
+    const filter = $("#quality-complaints-filter").value;
+    const items = payload.items.filter(item => filter === 'all' || item.inboxOrigin === filter);
+    target.innerHTML = items.length ? items.map((item) => {
+      if (item.inboxSignal) return renderQualityInboxSignal(item);
       const delivery = item.delivery;
       const deliveryLabels = {queued:"Jóváhagyva · kitöltésre vár", processing:"Google-űrlap kitöltése folyamatban", prepared:"Jóváhagyva · kézi beküldésre vár", login_required:"Google-bejelentkezés szükséges", failed:"Kitöltési hiba · nem indult beküldés", uncertain:"Beküldés ellenőrzése szükséges · automatikusan nem ismételjük", sent:"Google-beküldés igazolva"};
       const blocked = ["processing", "uncertain"].includes(delivery?.state);
@@ -1779,7 +1853,7 @@ async function loadQualityComplaints() {
       return `<details class="quality-inbox-item" name="quality-inbox" data-complaint-id="${escapeHtml(item.id)}" ${open ? "open" : ""}>
         <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}</strong><span>${escapeHtml(qualityInboxTopic(item))}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></summary>
         <div class="quality-inbox-body">
-        <div class="quality-inbox-meta"><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span></div>
+        <div class="quality-inbox-meta"><span>${item.inboxOrigin === 'automatic' ? 'Automatikus jelzés' : 'Futár jelzés'}</span><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span></div>
         <p class="complaint-text">${escapeHtml(item.message)}</p>
         ${renderComplaintShiftDetails(item)}
         ${delivery ? `<div class="notice ${blocked || delivery.state === "failed" ? "error" : ""}">${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}${delivery.last_error ? ` · ${escapeHtml(delivery.last_error)}` : ""}</div>` : ""}
@@ -1796,19 +1870,23 @@ async function loadQualityComplaints() {
         ${item.admin_response ? `<div class="notice complaint-text"><strong>Válasz:</strong> ${escapeHtml(item.admin_response)}</div>` : ""}
         </div>
       </details>`;
-    }).join("") : '<div class="empty-card">Nincs ilyen státuszú reklamáció.</div>';
-    $("#quality-complaints-prev").disabled = !(state.qualityComplaintOffset > 0);
-    $("#quality-complaints-next").disabled = !payload.hasMore;
-    status.textContent = `${payload.items.length} reklamáció ezen az oldalon`;
-    if (state.qualityComplaintFocus) {
-      const back = document.createElement('button');
-      back.type = 'button'; back.className = 'secondary'; back.textContent = 'Vissza az összes reklamációhoz';
-      back.addEventListener('click', () => {
-        state.qualityComplaintFocus = ''; state.qualityWorkspaceCourier = ''; state.qualityWorkspaceDay = '';
-        state.qualityComplaintOffset = 0; loadQualityComplaints();
-      });
-      status.append(' · ', back);
-    }
+    }).join("") : '<div class="empty-card">Nincs ilyen forrású jelzés.</div>';
+    status.textContent = `${items.length} jelzés${filter === 'all' ? '' : ` / összesen ${payload.items.length}`} · minden találat egy oldalon`;
+    target.querySelectorAll('[data-route-signal-complaint]').forEach(button => button.addEventListener('click', async () => {
+      const output = button.closest('.quality-inbox-body').querySelector('[data-signal-result]');
+      button.disabled = true;
+      output.textContent = 'A jelzés hozzákapcsolása a reklamációs folyamathoz…';
+      try {
+        const response = await api(`/api/quality/route-signals/${encodeURIComponent(button.dataset.signalKind)}/${encodeURIComponent(button.dataset.routeSignalComplaint)}/complaint`, {method:'POST', body:'{}'});
+        if (!response.ok || !response.item?.id) throw Error('A mentés nem igazolható.');
+        state.qualityComplaintFocus = String(response.item.id);
+        await loadQualityComplaints();
+      } catch (error) { output.textContent = error.message; button.disabled = false; }
+    }));
+    target.querySelectorAll('[data-signal-id]').forEach(card => card.addEventListener('toggle', () => {
+      if (card.open) state.qualityInboxOpen = card.dataset.signalId;
+      else if (state.qualityInboxOpen === card.dataset.signalId) state.qualityInboxOpen = '';
+    }));
     target.querySelectorAll("[data-complaint-evidence]").forEach(panel => {
       const content = panel.querySelector("[data-evidence-content]");
       const refresh = panel.querySelector("[data-evidence-refresh]");
@@ -12556,8 +12634,6 @@ $("#nav-complaint-assignments")?.addEventListener("click", () => showSection("co
 $("#quality-complaints-refresh").addEventListener("click", () => loadQualityComplaints());
 $("#quality-form-test")?.addEventListener("click", () => openQualityFormTest());
 $("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = 0; loadQualityComplaints(); });
-$("#quality-complaints-prev").addEventListener("click", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = Math.max(0, (state.qualityComplaintOffset || 0) - 50); loadQualityComplaints(); });
-$("#quality-complaints-next").addEventListener("click", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = (state.qualityComplaintOffset || 0) + 50; loadQualityComplaints(); });
 $("#refresh").addEventListener("click", loadShifts);
 $("#open-muszakpro-refresh").addEventListener("click", toggleOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));

@@ -22977,7 +22977,7 @@ def admin_route_signals(
     upper = datetime.combine(end, datetime.min.time(), tzinfo=LOCAL_TIMEZONE).isoformat()
     alerts = supabase_rest("GET", "courier_route_alerts", params={
         "select": "id,courier_id,courier_name,route_id,alert_type,message,status,created_at,dispatcher_notified",
-        "alert_type": "in.(delay,bag_missing)", "order": "created_at.desc,id.desc",
+        "alert_type": "in.(delay,bag_missing,problem)", "order": "created_at.desc,id.desc",
         "created_at": f"gte.{lower}", "and": f"(created_at.lt.{upper})",
         "offset": str(offset), "limit": "51"})
     shifts = supabase_rest("GET", "courier_shift_checkins", params={
@@ -23024,7 +23024,7 @@ def route_signal_to_complaint(
     if not rows:
         raise HTTPException(status_code=404, detail="A jelzés nem található.")
     row = rows[0]
-    if kind == "route" and row.get("alert_type") not in {"delay", "bag_missing"} or kind == "shift" and row.get("event_type") not in {"shift_late", "coordinator_shift_late"}:
+    if kind == "route" and row.get("alert_type") not in {"delay", "bag_missing", "problem"} or kind == "shift" and row.get("event_type") not in {"shift_late", "coordinator_shift_late"}:
         raise HTTPException(status_code=422, detail="Ez a jelzéstípus nem továbbítható.")
     work_date = str(row.get("work_date") or "")[:10]
     if not work_date:
@@ -23032,7 +23032,7 @@ def route_signal_to_complaint(
     if work_date[:7] != QUALITY_COMPLAINT_MONTH.isoformat()[:7]:
         raise HTTPException(status_code=422, detail="Csak 2026. novemberi jelzésből készíthető reklamáció.")
     bag = row.get("alert_type") == "bag_missing"
-    label = "Táskahiány" if bag else "Műszakkésés" if kind == "shift" else "Túra alatti késés"
+    label = "Táskahiány" if bag else "Műszakkésés" if kind == "shift" else "Menet közben jelzett probléma" if row.get("alert_type") == "problem" else "Túra alatti késés"
     message = str(row.get("message") or row.get("shift_name") or label).strip()
     attachments = []
     if kind == "route":
@@ -23053,7 +23053,8 @@ def route_signal_to_complaint(
         "created_by": str(user.get("username") or "admin"), "attachments": attachments,
         "affected_items": [{"date": work_date, "label": label, "note": message[:500],
             "routeId": str(row.get("route_id") or ""), "category": "Futárbüntetés" if bag else "Műszak" if kind == "shift" else "Túra alatti késés",
-            "signalKind": kind, "signalId": signal_id, "signalCreatedAt": row.get("created_at")}]
+            "signalKind": kind, "signalId": signal_id, "signalCreatedAt": row.get("created_at"),
+            "signalOrigin": "automatic" if row.get("status") == "auto" else "courier"}]
     }, prefer="resolution=ignore-duplicates,return=representation")
     if not saved:
         saved = supabase_rest("GET", "pwa_quality_complaints", params={"select": "*", "request_id": f"eq.{request_id}", "limit": "1"})

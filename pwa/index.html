@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest?v=244" />
     <link rel="icon" href="/icon.svg?v=244" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg?v=244" />
-    <link rel="stylesheet" href="/styles.css?v=294" />
+    <link rel="stylesheet" href="/styles.css?v=296" />
     <link rel="stylesheet" href="/webshop.css?v=277" />
     <link rel="stylesheet" href="/complaint_assignments.css?v=1" />
     <title>Jitt</title>
@@ -749,18 +749,10 @@
       <div id="gate-content" class="hidden"></div>
       <div id="webshop-content" class="hidden"></div>
       <div id="quality-complaints-content" class="hidden">
-        <section class="section-heading"><div><h2 id="quality-complaints-title">Futárreklamációk</h2><p>2026. november</p></div><button id="quality-complaints-refresh" class="secondary" type="button">Frissítés</button></section>
-        <h3>Beérkezett reklamációk</h3>
-        <label>Státusz<select id="quality-complaints-filter"><option value="all">Összes</option><option value="open" selected>Nyitott</option><option value="forwarded">Továbbított</option><option value="closed">Lezárt</option></select></label>
+        <section class="section-heading"><div><h2 id="quality-complaints-title">Összes jelzés</h2><p>2026. november · Automatikus és futárjelzések egy helyen.</p></div><button id="quality-complaints-refresh" class="secondary" type="button">Frissítés</button></section>
+        <label>Jelzés forrása<select id="quality-complaints-filter"><option value="all">Összes</option><option value="automatic">Automatikus jelzés</option><option value="courier">Futár jelzés</option></select></label>
         <p id="quality-complaints-status" role="status" aria-live="polite"></p>
         <section id="quality-complaints-list" class="shift-list"></section>
-        <div class="dialog-actions"><button id="quality-complaints-prev" class="secondary" type="button">Előző</button><button id="quality-complaints-next" class="secondary" type="button">Következő</button></div>
-        <details class="shift-card" id="quality-route-signals-panel"><summary>Menet közbeni és műszakjelzések</summary>
-          <div id="admin-route-signals" class="shift-list" aria-live="polite"></div>
-        </details>
-        <details class="shift-card" id="quality-workspace-panel"><summary>Keresés futár és nap szerint</summary><section id="quality-workspace"></section></details>
-        <details class="shift-card"><summary>Google-űrlap teszt</summary><p>Kitalált adatokkal nyit előkitöltött űrlapot.</p>
-          <button id="quality-form-test" class="secondary" type="button">Űrlap tesztkitöltése</button></details>
       </div>
       <div id="today-workers-content" class="hidden">
         <section class="workflow-header">
@@ -951,6 +943,6 @@
     <script src="/quality_form_test.js?v=3" defer></script>
     <script src="/quality_workspace.js?v=293" defer></script>
     <script src="/complaint_assignments.js?v=1" defer></script>
-    <script src="/app.js?v=295" defer></script>
+    <script src="/app.js?v=296" defer></script>
   </body>
 </html>

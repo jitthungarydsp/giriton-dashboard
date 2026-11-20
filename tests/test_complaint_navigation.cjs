@@ -24,7 +24,7 @@ test('opening a complaint retains focus and avoids layout changes above it',asyn
   const context={state:{user:{role:'admin'},qualityComplaintFocus:'selected'}, prepareQualityWorkspace:async()=>true,
     loadAdminRouteSignals:()=>{signals++;},
     $:selector=>selector==='#quality-complaints-list'?list:selector==='#quality-complaints-status'?status:{value:'all'},
-    api:async()=>({items:[],hasMore:false}),
+    loadQualityInboxPages:async()=>({items:[],hasMore:false}),
     document:{createElement:()=>({addEventListener:()=>{}})},encodeURIComponent};
   const start=source.indexOf('async function loadQualityComplaints(');
   const end=source.indexOf('function showQualitySubmissionProgress(',start);
