@@ -22804,10 +22804,17 @@ def own_quality_complaints(
     courier_id, _name = courier_identity(view_user)
     work_month = parse_month(month)
     rows = supabase_rest("GET", "pwa_quality_complaints", params={
-        "select": "id,topic,status,message,affected_items,created_at,forwarded_at,closed_at,admin_response,responded_at,history,attachments",
+        "select": "id,topic,status,message,affected_items,created_at,forwarded_at,closed_at,admin_response,responded_at,history,attachments,forwarding_reference",
         "courier_id": f"eq.{courier_id}", "work_month": f"eq.{work_month.isoformat()}",
         "order": "created_at.desc,id.desc", "limit": "201"})
-    return {"items": rows[:200], "hasMore": len(rows) > 200}
+    from resources.quality_complaint_decisions import attach_partner_decisions
+    decisions_available = True
+    try:
+        attach_partner_decisions(supabase_rest, rows[:200], courier_id=courier_id)
+    except Exception:
+        logging.getLogger(__name__).warning('Courier partner decisions could not be loaded')
+        decisions_available = False
+    return {"items": rows[:200], "hasMore": len(rows) > 200, "partnerDecisionsAvailable": decisions_available}
 
 
 @app.get("/api/quality/route-signals/mine")
@@ -22924,7 +22931,15 @@ def list_quality_complaints(
             row["delivery"] = by_id.get(str(row["id"]))
             matches = jitt_ids.get(str(row["courier_id"]), set())
             row["jitt_internal_id"] = next(iter(matches)) if len(matches) == 1 else None
-    return {"items": rows[:50], "hasMore": len(rows) > 50, "canManage": manager, "forwardingEnabled": forwarding_enabled}
+    from resources.quality_complaint_decisions import attach_partner_decisions
+    decisions_available = True
+    try:
+        attach_partner_decisions(supabase_rest, rows[:50])
+    except Exception:
+        logging.getLogger(__name__).warning('Admin partner decisions could not be loaded')
+        decisions_available = False
+    return {"items": rows[:50], "hasMore": len(rows) > 50, "canManage": manager, "forwardingEnabled": forwarding_enabled,
+            "partnerDecisionsAvailable": decisions_available}
 
 
 @app.get("/api/quality/workspace")

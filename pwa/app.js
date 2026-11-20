@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v297";
+const APP_VERSION = "v298";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1576,8 +1576,9 @@ function renderCourierRouteSignals(payload = {}) {
     ${alerts.map(row => `<article class="courier-complaint-card"><h4>${row.alert_type === 'bag_missing' ? 'Táskahiány' : 'Túra közbeni késés'}</h4>
       <p>${escapeHtml(shortDateTime(row.created_at))} · Túra: ${escapeHtml(row.route_id)}</p>
       <p class="complaint-text">${escapeHtml(row.message)}</p><p class="muted">${row.status === 'auto' ? 'Automatikusan rögzített jelzés' : 'Rögzített jelzés'}${row.dispatcher_notified ? ' · Diszpécser értesítve' : ''}</p>
+      ${renderQualityPartnerDecision(qualityDecisionForSignal(payload, 'route', row))}
       ${(row.photos || []).map((id, i) => `<a href="/api/quality/route-signals/${encodeURIComponent(row.id)}/photos/${encodeURIComponent(id)}${preview}" target="_blank" rel="noopener">Csatolt kép ${i + 1}</a>`).join(' · ')}</article>`).join('')}
-    ${shifts.map(row => `<article class="courier-complaint-card"><h4>Műszakkésés</h4><p>${escapeHtml(row.work_date)} · ${escapeHtml(row.start_time)}–${escapeHtml(row.end_time)} · ${escapeHtml(row.warehouse)}</p><p class="complaint-text">${escapeHtml(row.shift_name)}</p><p class="muted">${row.event_type === 'coordinator_shift_late' ? 'Koordinátor által rögzítve' : 'Futár által jelzett késés'}</p></article>`).join('')}
+    ${shifts.map(row => `<article class="courier-complaint-card"><h4>Műszakkésés</h4><p>${escapeHtml(row.work_date)} · ${escapeHtml(row.start_time)}–${escapeHtml(row.end_time)} · ${escapeHtml(row.warehouse)}</p><p class="complaint-text">${escapeHtml(row.shift_name)}</p><p class="muted">${row.event_type === 'coordinator_shift_late' ? 'Koordinátor által rögzítve' : 'Futár által jelzett késés'}</p>${renderQualityPartnerDecision(qualityDecisionForSignal(payload, 'shift', row))}</article>`).join('')}
     ${hasMore ? '<p class="muted">Jelzéstípusonként a legutóbbi 200 bejegyzést mutatjuk.</p>' : ''}`;
 }
 
@@ -1592,15 +1593,19 @@ function renderCourierQualityComplaintCards(payload = {}) {
   if (!payload.qualityComplaints.length) return `<section class="courier-complaints">${header}<p class="muted">Erre a hónapra még nincs beküldött reklamációd.</p></section>`;
   const labels = { lateShift: "Műszakkésés", noShow: "No-show", uncleanedTimeWindowLate: "Nem mentesített címkésés", cleanedTimeWindowLate: "Mentesített címkésés" };
   const explanations = { open: "Megkaptuk a reklamációdat, feldolgozásra vár.", forwarded: "A reklamációdat továbbítottuk a Kifli felé. Válaszra várunk.", closed: "Az ügyet lezártuk. Az alábbi válaszban találod az eredményt." };
-  return `<section class="courier-complaints">${header}<div class="courier-complaint-list">${payload.qualityComplaints.map(item => {
-    const status = ["open", "forwarded", "closed"].includes(item.status) ? item.status : "unknown";
+  return `<section class="courier-complaints">${header}${payload.partnerDecisionsAvailable === false ? '<p class="notice error">A Kifli-válaszok most nem érhetők el. Az Állapot frissítése gombbal újrapróbálhatod.</p>' : ''}<div class="courier-complaint-list">${payload.qualityComplaints.map(item => {
+    const decision = qualityPartnerDecision(item);
+    const status = decision ? decision.status : ["open", "forwarded", "closed"].includes(item.status) ? item.status : "unknown";
     return `<article class="courier-complaint-card">
-      <div class="courier-complaint-top"><h4>${escapeHtml(labels[item.topic] || "Reklamáció")}</h4><span class="courier-complaint-badge ${status}">${escapeHtml(qualityComplaintStatus(item.status))}</span></div>
+      <div class="courier-complaint-top"><h4>${escapeHtml(labels[item.topic] || "Reklamáció")}</h4><span class="courier-complaint-badge ${status}">${escapeHtml(qualityComplaintDisplayStatus(item))}</span></div>
       ${(item.affected_items || []).find(row => row.category) ? `<p class="muted">Kategória: ${escapeHtml(item.affected_items.find(row => row.category).category)}</p>` : ""}
-      <p class="courier-complaint-description">${escapeHtml(explanations[status] || "Az ügy állapota frissítésre vár.")}</p>
+      <p class="courier-complaint-description">${escapeHtml(decision ? 'Megérkezett a Kifli elbírálása. Az eredményt és az indoklást alább látod.' : explanations[status] || "Az ügy állapota frissítésre vár.")}</p>
+      ${renderQualityPartnerDecision(item)}
+      ${item.partnerDecisionWarning ? `<p class="notice error">${escapeHtml(item.partnerDecisionWarning)}</p>` : ''}
       <div class="courier-complaint-dates"><span>Beküldve <strong>${escapeHtml(shortDateTime(item.created_at))}</strong></span>${item.forwarded_at ? `<span>Továbbítva <strong>${escapeHtml(shortDateTime(item.forwarded_at))}</strong></span>` : ""}${item.closed_at ? `<span>Lezárva <strong>${escapeHtml(shortDateTime(item.closed_at))}</strong></span>` : ""}</div>
-      ${item.admin_response ? `<div class="courier-complaint-response"><strong>Válasz a reklamációdra</strong>${item.responded_at ? `<small>${escapeHtml(shortDateTime(item.responded_at))}</small>` : ""}<p class="complaint-text">${escapeHtml(item.admin_response)}</p></div>` : ""}
+      ${item.admin_response && !decision ? `<div class="courier-complaint-response"><strong>Válasz a reklamációdra</strong>${item.responded_at ? `<small>${escapeHtml(shortDateTime(item.responded_at))}</small>` : ""}<p class="complaint-text">${escapeHtml(item.admin_response)}</p></div>` : ""}
       <details><summary>Beküldött reklamáció és érintett műszakok</summary><p class="complaint-text">${escapeHtml(item.message)}</p>
+      ${item.admin_response && decision ? `<p class="complaint-text"><strong>Korábbi adminválasz:</strong> ${escapeHtml(item.admin_response)}</p>` : ''}
       ${(item.affected_items || []).map(row => `<p class="courier-complaint-item">${escapeHtml(row.date)} · ${escapeHtml(row.label)}</p>`).join("")}
       ${(item.attachments || []).map((photo, index) => `<a class="courier-complaint-photo" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Csatolt kép ${index + 1}</a>`).join("")}
       ${(item.history || []).filter(event => event.message).map(event => `<p class="complaint-text">${escapeHtml(shortDateTime(event.at))} · ${escapeHtml(event.message)}</p>`).join("")}</details>
@@ -1623,6 +1628,7 @@ async function refreshCourierQualityComplaints() {
     payload.qualityComplaints = result.items || [];
     payload.qualityComplaintsHasMore = result.hasMore;
     payload.qualityComplaintsError = false;
+    payload.partnerDecisionsAvailable = result.partnerDecisionsAvailable;
   } catch (_) {
     if (state.statistics !== payload || state.courierComplaintRequest !== sequence) return;
     payload.qualityComplaintsError = true;
@@ -1696,6 +1702,25 @@ function renderComplaintShiftDetails(item) {
 
 function qualityComplaintStatus(value) {
   return ({ open: "Nyitott", forwarded: "Továbbított", closed: "Lezárt" })[value] || value;
+}
+
+function qualityPartnerDecision(item) {
+  return ['accepted', 'rejected', 'partially_accepted'].includes(item.partnerDecision?.status) ? item.partnerDecision : null;
+}
+
+function qualityDecisionForSignal(payload, kind, signal) {
+  return (payload.qualityComplaints || []).find(item => (item.affected_items || []).some(row => row.signalKind === kind && String(row.signalId) === String(signal.id))) || {};
+}
+
+function qualityComplaintDisplayStatus(item) {
+  const decision = qualityPartnerDecision(item);
+  return decision ? ({accepted: 'Kifli elfogadta', rejected: 'Kifli elutasította', partially_accepted: 'Kifli részben elfogadta'})[decision.status] : qualityComplaintStatus(item.status);
+}
+
+function renderQualityPartnerDecision(item) {
+  const decision = qualityPartnerDecision(item);
+  if (!decision) return '';
+  return `<section class="courier-complaint-response partner-decision ${decision.status}" aria-label="Kifli elbírálása"><strong>${escapeHtml(qualityComplaintDisplayStatus(item))}</strong><small>Válasz érkezett: ${escapeHtml(shortDateTime(decision.respondedAt))}${decision.reference ? ` · Panaszazonosító: ${escapeHtml(decision.reference)}` : ''}</small><p class="complaint-text">${escapeHtml(decision.reason || 'A Kifli külön indoklást nem adott meg.')}</p></section>`;
 }
 
 function qualityInboxTopic(item) {
@@ -1810,6 +1835,7 @@ async function loadQualityInboxPages(isCurrent = () => true) {
         seen[field].add(String(row.id)); result[field].push(row); added++;
       }
       if (offset === 0) Object.assign(result, {canManage: page.canManage, forwardingEnabled: page.forwardingEnabled});
+      if (page.partnerDecisionsAvailable === false) result.partnerDecisionsAvailable = false;
       if (!page.hasMore) return result;
       if (!added) throw Error('A teljes jelzéslista nem tölthető be. Próbáld újra a Frissítés gombbal.');
     }
@@ -1888,10 +1914,11 @@ async function loadQualityComplaints() {
       const blocked = ["processing", "uncertain"].includes(delivery?.state);
       const open = String(item.id) === (state.qualityComplaintFocus || state.qualityInboxOpen);
       return `<details class="quality-inbox-item" name="quality-inbox" data-complaint-id="${escapeHtml(item.id)}" ${open ? "open" : ""}>
-        <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}</strong><span>${escapeHtml(qualityInboxTopic(item))}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintStatus(item.status))}</span></summary>
+        <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}</strong><span>${escapeHtml(qualityInboxTopic(item))}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintDisplayStatus(item))}</span></summary>
         <div class="quality-inbox-body">
         <div class="quality-inbox-meta"><span>${item.inboxOrigin === 'automatic' ? 'Automatikus jelzés' : 'Futár jelzés'}</span><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span></div>
         <p class="complaint-text">${escapeHtml(item.message)}</p>
+        ${renderQualityPartnerDecision(item)}
         ${renderComplaintShiftDetails(item)}
         ${delivery ? `<div class="notice ${blocked || delivery.state === "failed" ? "error" : ""}">${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}${delivery.last_error ? ` · ${escapeHtml(delivery.last_error)}` : ""}</div>` : ""}
         ${payload.canManage && item.status !== "closed" ? `<div class="quality-inbox-actions">
@@ -1909,6 +1936,7 @@ async function loadQualityComplaints() {
       </details>`;
     }).join("") : '<div class="empty-card">Nincs ilyen forrású jelzés.</div>';
     status.textContent = `${items.length} ${filter === 'forwarded' ? 'továbbított jelzés' : 'jelzés'}${['automatic', 'courier'].includes(filter) ? ` / összesen ${filterQualityInbox(payload.items, 'all').length}` : ''} · minden találat egy oldalon`;
+    if (payload.partnerDecisionsAvailable === false) status.textContent += ' · A Kifli-válaszok most nem érhetők el.';
     target.querySelectorAll('[data-signal-close-duplicate]').forEach(button => button.addEventListener('click', () => {
       const item = items.find(row => row.id === button.dataset.signalCloseDuplicate);
       if (item) openQualitySignalDuplicateDialog(item);

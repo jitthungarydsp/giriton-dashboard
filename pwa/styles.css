@@ -65,6 +65,12 @@
 .courier-complaint-badge.open { color: var(--warning); background: #fff3d3; }
 .courier-complaint-badge.forwarded { color: var(--green-dark); background: #edf3e7; }
 .courier-complaint-badge.closed { color: var(--green-dark); background: #dfeedd; }
+.courier-complaint-badge.accepted { color: #24552b; background: #dfeedd; }
+.courier-complaint-badge.rejected { color: #8c2925; background: #fcebea; }
+.courier-complaint-badge.partially_accepted { color: #7a5311; background: #fff3d3; }
+.partner-decision.rejected { border-left-color: var(--danger); }
+.partner-decision.partially_accepted { border-left-color: var(--warning); }
+.partner-decision { overflow-wrap: anywhere; }
 .courier-complaint-description { margin: 10px 0; font-size: 13px; color: var(--ink); }
 .courier-complaint-dates { display: flex; flex-wrap: wrap; gap: 10px 20px; font-size: 12px; color: var(--muted); }
 .courier-complaint-dates strong { display: block; color: var(--ink); margin-top: 3px; }

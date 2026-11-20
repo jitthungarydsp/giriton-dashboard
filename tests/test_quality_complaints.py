@@ -22,7 +22,7 @@ class QualityComplaintTest(unittest.TestCase):
                   workflow_view_user=lambda u, target: (dict(u, courierId=target, username='Kiválasztott futár'), True) if target else (u, False),
                   courier_identity=lambda u: (u['courierId'], u['username']),
                   parse_month=lambda m: date.fromisoformat(m + '-01'),
-                  HTTPException=ApiError, supabase_rest=db)
+                  HTTPException=ApiError, supabase_rest=db, QUALITY_COMPLAINT_MONTH=date(2026,10,1))
         exec(compile(ast.Module(body=[node], type_ignores=[]), 'quality_complaints', 'exec'), ns)
         return ns['create_quality_complaint']
 
@@ -122,6 +122,7 @@ class ComplaintManagementTest(unittest.TestCase):
         nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
         for node in nodes:
             node.decorator_list = []
+            node.body = [statement for statement in node.body if not (isinstance(statement, ast.ImportFrom) and statement.module == 'resources.quality_complaint_decisions')]
         ns = dict(Any=Any, UUID=UUID, date=date, QualityComplaintActionRequest=Any,
                   Cookie=lambda **k: None, Query=lambda *args, **k: k.get('default'),
                   require_user=lambda _: {'username': 'Operator', 'role': role},
@@ -129,7 +130,8 @@ class ComplaintManagementTest(unittest.TestCase):
                   workflow_view_user=lambda user, courier: (user, False),
                   parse_month=lambda value: date.fromisoformat(value + '-01'),
                   load_setting=lambda name: '',
-                  HTTPException=ApiError, supabase_rest=db)
+                  HTTPException=ApiError, supabase_rest=db, QUALITY_COMPLAINT_MONTH=date(2026,11,1),
+                  attach_partner_decisions=lambda *args, **kwargs: None)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'management', 'exec'), ns)
         return ns
 

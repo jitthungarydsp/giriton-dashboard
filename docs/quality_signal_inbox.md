@@ -40,3 +40,30 @@ ilyen meglévő ügyet talál, a **Reklamáció kezelése / Google-űrlap** gomb
 az admin kifejezett, külön művelete; az eredeti napi reklamáció nem íródik át.
 A táskahiányhoz tartozó futárbüntetés nem kerül automatikusan a címkésési
 ügyhöz, mert más napi besorolásba tartozik.
+
+## Kifli-döntés a futárnál
+
+A meglévő Gmail-import mindkét postaládából a
+`public.complaint_email_responses` táblába menti a beérkező döntéseket.
+A PWA a saját reklamációk és az adminlista lekérésekor ebből kapcsolja az
+elbírálást az ügyhöz. Az import job következő sikeres futása után az
+**Állapot frissítése** már az új választ olvassa; nincs külön e-mail-küldés.
+
+Az automatikus kapcsoláshoz pontos `JITT reklamáció: <UUID>` vagy
+`[JITT:<UUID>]` hivatkozás, illetve egyértelmű, mentett Kifli
+panaszazonosító szükséges. A futár ID-jának is egyeznie kell.
+Név, nap vagy túraszám önmagában nem indít automatikus besorolást.
+Csak a `noreply@appsheet.com` feladótól archivált, „Panasz elbírálva”
+tárgyú, kifejezett **Döntés:** mezőt tartalmazó válasz kezelhető így.
+Az egymásnak ellentmondó, azonos idejű válaszok ellenőrzési jelzést kapnak.
+
+A futár a **Reklamációim** kártyán **Kifli elfogadta**, **Kifli elutasította**
+vagy **Kifli részben elfogadta** státuszt, időpontot és indoklást lát.
+Közvetlenül kapcsolt nyers jelzésnél ugyanaz az eredmény jelenik meg.
+A teljes postaládalevél, belső címek és Gmail-azonosítók nem kerülnek a
+futár API-válaszába. Sikertelen levéllekéréskor külön hibaüzenet jelenik meg.
+
+A Kifli eredménye külön `partnerDecision` mező. A korábbi adminlezárás,
+válasz és napló megmarad; az új döntés a kártya fő státusza, a korábbi
+adminválasz az előzmények között olvasható. Az eredmény nem számol újra
+elszámolást, nem ír pénzügyi snapshotot, és ehhez nem kell új SQL-migráció.
