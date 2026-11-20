@@ -23000,7 +23000,47 @@ def admin_route_signals(
             "select": "id,request_id,status,forwarded_at,closed_at,admin_response", "request_id": "in.(" + ",".join(keys) + ")"})
         for complaint in complaints:
             keys[str(complaint["request_id"])]["complaint"] = complaint
+    from resources.quality_signal_duplicates import attach_resolutions
+    attach_resolutions(supabase_rest, alerts[:50], shifts[:50], start)
     return {"alerts": alerts[:50], "shifts": shifts[:50], "hasMore": len(alerts) > 50 or len(shifts) > 50}
+
+
+@app.post("/api/quality/route-signals/{kind}/{signal_id}/close-duplicate")
+def close_duplicate_quality_signal(kind: str, signal_id: str,
+                                   giriton_pwa_session: str | None = Cookie(default=None)):
+    from uuid import uuid5, NAMESPACE_URL
+    from resources.quality_signal_duplicates import action_key, close_duplicate, read_resolution
+    user = require_user(giriton_pwa_session)
+    if not quality_complaint_manager(user):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    try:
+        action_key(kind, signal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    table = "courier_route_alerts" if kind == "route" else "courier_shift_checkins"
+    rows = supabase_rest("GET", table, params={"select": "*", "id": f"eq.{signal_id}", "limit": "1"})
+    if not rows:
+        raise HTTPException(status_code=404, detail="A jelzés nem található.")
+    row = rows[0]
+    if kind == "route" and row.get("alert_type") not in {"delay", "bag_missing", "problem"} or kind == "shift" and row.get("event_type") not in {"shift_late", "coordinator_shift_late"}:
+        raise HTTPException(status_code=422, detail="Ez a jelzéstípus nem zárható le itt.")
+    work_date = str(row.get("work_date") or "")[:10]
+    if not work_date:
+        work_date = datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00")).astimezone(LOCAL_TIMEZONE).date().isoformat()
+    if work_date[:7] != QUALITY_COMPLAINT_MONTH.isoformat()[:7]:
+        raise HTTPException(status_code=422, detail="Csak az aktuális reklamációs hónap jelzése zárható le itt.")
+    current = read_resolution(supabase_rest, kind, row, QUALITY_COMPLAINT_MONTH)
+    if current:
+        return {"ok": True, "resolution": current}
+    request_id = str(uuid5(NAMESPACE_URL, f"jitt:route-signal-complaint:{kind}:{row['id']}"))
+    linked = supabase_rest("GET", "pwa_quality_complaints", params={"select": "id", "request_id": f"eq.{request_id}", "limit": "1"})
+    if linked:
+        raise HTTPException(status_code=409, detail="A jelzéshez már reklamáció tartozik. A reklamáció kezelőfelületén zárd le.")
+    try:
+        resolution = close_duplicate(supabase_rest, kind, row, QUALITY_COMPLAINT_MONTH, str(user.get("username") or "admin"))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "resolution": resolution}
 
 
 @app.post("/api/quality/route-signals/{kind}/{signal_id}/complaint")
@@ -23012,8 +23052,11 @@ def route_signal_to_complaint(
     user = require_user(giriton_pwa_session)
     if not quality_complaint_manager(user):
         raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
-    if kind not in {"route", "shift"} or not re.fullmatch(r"[0-9a-fA-F-]{1,40}", signal_id):
-        raise HTTPException(status_code=422, detail="Érvénytelen jelzésazonosító.")
+    from resources.quality_signal_duplicates import action_key, read_resolution, find_existing_day_complaint
+    try:
+        action_key(kind, signal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     request_id = str(uuid5(NAMESPACE_URL, f"jitt:route-signal-complaint:{kind}:{signal_id}"))
     existing = supabase_rest("GET", "pwa_quality_complaints", params={
         "select": "*", "request_id": f"eq.{request_id}", "limit": "1"})
@@ -23026,11 +23069,16 @@ def route_signal_to_complaint(
     row = rows[0]
     if kind == "route" and row.get("alert_type") not in {"delay", "bag_missing", "problem"} or kind == "shift" and row.get("event_type") not in {"shift_late", "coordinator_shift_late"}:
         raise HTTPException(status_code=422, detail="Ez a jelzéstípus nem továbbítható.")
+    if read_resolution(supabase_rest, kind, row, QUALITY_COMPLAINT_MONTH):
+        raise HTTPException(status_code=409, detail="A jelzés duplikációként már le van zárva.")
     work_date = str(row.get("work_date") or "")[:10]
     if not work_date:
         work_date = datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00")).astimezone(LOCAL_TIMEZONE).date().isoformat()
     if work_date[:7] != QUALITY_COMPLAINT_MONTH.isoformat()[:7]:
         raise HTTPException(status_code=422, detail="Csak 2026. novemberi jelzésből készíthető reklamáció.")
+    daily = find_existing_day_complaint(supabase_rest, kind, row, work_date)
+    if daily:
+        return {"ok": True, "item": daily, "alreadyExists": True}
     bag = row.get("alert_type") == "bag_missing"
     label = "Táskahiány" if bag else "Műszakkésés" if kind == "shift" else "Menet közben jelzett probléma" if row.get("alert_type") == "problem" else "Túra alatti késés"
     message = str(row.get("message") or row.get("shift_name") or label).strip()
@@ -23046,7 +23094,7 @@ def route_signal_to_complaint(
             storage = {"storage_bucket": photo["storage_bucket"], "storage_path": photo["storage_path"]} if photo.get("storage_bucket") and photo.get("storage_path") else upload_pwa_attachment(prefix="quality-complaints", record_id=request_id,
                 file_name=photo["file_name"], mime_type=photo["mime_type"], content=content)
             attachments.append({"sha256": digest, "file_name": photo["file_name"], "mime_type": photo["mime_type"], "file_size": len(content), **storage})
-    saved = supabase_rest("POST", "pwa_quality_complaints", params={"on_conflict": "request_id"}, payload={
+    complaint_payload = {
         "request_id": request_id, "courier_id": str(row["courier_id"]), "courier_name": row.get("courier_name") or "Futár",
         "topic": "lateShift" if kind == "shift" else "uncleanedTimeWindowLate",
         "work_month": work_date[:7] + "-01", "status": "open", "message": message[:5000],
@@ -23055,7 +23103,16 @@ def route_signal_to_complaint(
             "routeId": str(row.get("route_id") or ""), "category": "Futárbüntetés" if bag else "Műszak" if kind == "shift" else "Túra alatti késés",
             "signalKind": kind, "signalId": signal_id, "signalCreatedAt": row.get("created_at"),
             "signalOrigin": "automatic" if row.get("status") == "auto" else "courier"}]
-    }, prefer="resolution=ignore-duplicates,return=representation")
+    }
+    try:
+        saved = supabase_rest("POST", "pwa_quality_complaints", params={"on_conflict": "request_id"}, payload=complaint_payload,
+                              prefer="resolution=ignore-duplicates,return=representation")
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            daily = find_existing_day_complaint(supabase_rest, kind, row, work_date)
+            if daily:
+                return {"ok": True, "item": daily, "alreadyExists": True}
+        raise
     if not saved:
         saved = supabase_rest("GET", "pwa_quality_complaints", params={"select": "*", "request_id": f"eq.{request_id}", "limit": "1"})
     if not saved:

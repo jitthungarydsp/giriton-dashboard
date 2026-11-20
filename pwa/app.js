@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v296";
+const APP_VERSION = "v297";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1779,6 +1779,7 @@ function mergeQualityInbox(complaints, alerts, shifts) {
   });
   for (const [key, row] of signals) {
     if (linked.has(key)) continue;
+    if (row.resolution?.reason === 'duplicate') continue;
     const date = new Date(row.created_at);
     const workDate = row.work_date || (Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('sv-SE', {timeZone: 'Europe/Budapest'}));
     items.push({id: `signal:${key}`, courier_id: row.courier_id, courier_name: row.courier_name || 'Futár',
@@ -1788,6 +1789,11 @@ function mergeQualityInbox(complaints, alerts, shifts) {
       affected_items: [{date: workDate, signalKind: row.signalKind, routeId: row.route_id}]});
   }
   return items.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')) || String(a.id).localeCompare(String(b.id)));
+}
+
+function filterQualityInbox(items, filter) {
+  if (filter === 'forwarded') return items.filter(item => item.status === 'forwarded');
+  return items.filter(item => item.status !== 'forwarded' && (filter === 'all' || item.inboxOrigin === filter));
 }
 
 async function loadQualityInboxPages(isCurrent = () => true) {
@@ -1827,7 +1833,38 @@ function renderQualityInboxSignal(item) {
     ${row.event_type === 'coordinator_shift_late' ? '<p class="muted">Koordinátor által rögzítve</p>' : ''}
     ${(row.photos || []).map((id, i) => `<a class="secondary" href="/api/quality/route-signals/${encodeURIComponent(row.id)}/photos/${encodeURIComponent(id)}?courier=${encodeURIComponent(row.courier_id)}" target="_blank" rel="noopener">Csatolt kép ${i + 1}</a>`).join(' ')}
     ${row.complaint?.admin_response ? `<p class="complaint-text">Válasz: ${escapeHtml(row.complaint.admin_response)}</p>` : ''}
-    <div class="quality-inbox-actions"><button type="button" class="primary" data-route-signal-complaint="${escapeHtml(row.id)}" data-signal-kind="${escapeHtml(row.signalKind)}">Reklamáció kezelése / Google-űrlap</button></div><p data-signal-result role="status"></p></div></details>`;
+    <div class="quality-inbox-actions">${!row.complaint ? `<button type="button" class="secondary" data-signal-close-duplicate="${escapeHtml(item.id)}">Lezárás duplikációként</button>` : ''}<button type="button" class="primary" data-route-signal-complaint="${escapeHtml(row.id)}" data-signal-kind="${escapeHtml(row.signalKind)}">Reklamáció kezelése / Google-űrlap</button></div><p data-signal-result role="status"></p></div></details>`;
+}
+
+function openQualitySignalDuplicateDialog(item) {
+  const row = item.inboxSignal;
+  const dialog = document.createElement('dialog');
+  dialog.className = 'quality-inbox-dialog';
+  dialog.setAttribute('aria-label', 'Lezárás duplikációként');
+  dialog.innerHTML = `<h3>Lezárás duplikációként</h3><p><strong>${escapeHtml(item.courier_name)}</strong> · Futár ID ${escapeHtml(item.courier_id)}${row.route_id ? ` · Túra ${escapeHtml(row.route_id)}` : ''}</p><p>Ugyanez az esemény már másik jelzésben vagy reklamációban szerepel? A jelzés kikerül ebből a listából. A duplikáció oka, a lezáró neve és a lezárás időpontja megmarad.</p><p class="complaint-text">${escapeHtml(item.message)}</p><p data-duplicate-status role="status"></p><div class="quality-inbox-actions"><button type="button" class="secondary" data-duplicate-cancel>Mégsem</button><button type="button" class="primary" data-duplicate-confirm>Lezárás duplikációként</button></div>`;
+  let saving = false;
+  dialog.querySelector('[data-duplicate-cancel]').onclick = () => dialog.close();
+  dialog.addEventListener('cancel', event => { if (saving) event.preventDefault(); });
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.querySelector('[data-duplicate-confirm]').onclick = async () => {
+    if (saving) return;
+    saving = true;
+    dialog.querySelectorAll('button').forEach(button => button.disabled = true);
+    const output = dialog.querySelector('[data-duplicate-status]');
+    output.textContent = 'Duplikációs lezárás mentése…';
+    try {
+      const result = await api(`/api/quality/route-signals/${encodeURIComponent(row.signalKind)}/${encodeURIComponent(row.id)}/close-duplicate`, {method: 'POST', body: '{}'});
+      if (!result.ok || result.resolution?.reason !== 'duplicate') throw Error('A lezárás mentése nem igazolható.');
+      dialog.close();
+      await loadQualityComplaints();
+    } catch (error) {
+      output.textContent = error.message;
+      saving = false;
+      dialog.querySelectorAll('button').forEach(button => button.disabled = false);
+    }
+  };
+  document.body.append(dialog);
+  dialog.showModal();
 }
 
 async function loadQualityComplaints() {
@@ -1843,7 +1880,7 @@ async function loadQualityComplaints() {
     if (state.qualityComplaintRequest !== request) return;
     if (!payload) return;
     const filter = $("#quality-complaints-filter").value;
-    const items = payload.items.filter(item => filter === 'all' || item.inboxOrigin === filter);
+    const items = filterQualityInbox(payload.items, filter);
     target.innerHTML = items.length ? items.map((item) => {
       if (item.inboxSignal) return renderQualityInboxSignal(item);
       const delivery = item.delivery;
@@ -1871,7 +1908,11 @@ async function loadQualityComplaints() {
         </div>
       </details>`;
     }).join("") : '<div class="empty-card">Nincs ilyen forrású jelzés.</div>';
-    status.textContent = `${items.length} jelzés${filter === 'all' ? '' : ` / összesen ${payload.items.length}`} · minden találat egy oldalon`;
+    status.textContent = `${items.length} ${filter === 'forwarded' ? 'továbbított jelzés' : 'jelzés'}${['automatic', 'courier'].includes(filter) ? ` / összesen ${filterQualityInbox(payload.items, 'all').length}` : ''} · minden találat egy oldalon`;
+    target.querySelectorAll('[data-signal-close-duplicate]').forEach(button => button.addEventListener('click', () => {
+      const item = items.find(row => row.id === button.dataset.signalCloseDuplicate);
+      if (item) openQualitySignalDuplicateDialog(item);
+    }));
     target.querySelectorAll('[data-route-signal-complaint]').forEach(button => button.addEventListener('click', async () => {
       const output = button.closest('.quality-inbox-body').querySelector('[data-signal-result]');
       button.disabled = true;
@@ -1880,6 +1921,7 @@ async function loadQualityComplaints() {
         const response = await api(`/api/quality/route-signals/${encodeURIComponent(button.dataset.signalKind)}/${encodeURIComponent(button.dataset.routeSignalComplaint)}/complaint`, {method:'POST', body:'{}'});
         if (!response.ok || !response.item?.id) throw Error('A mentés nem igazolható.');
         state.qualityComplaintFocus = String(response.item.id);
+        if (response.alreadyExists) $('#quality-complaints-filter').value = response.item.status === 'forwarded' ? 'forwarded' : 'all';
         await loadQualityComplaints();
       } catch (error) { output.textContent = error.message; button.disabled = false; }
     }));

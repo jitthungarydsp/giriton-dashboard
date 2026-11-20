@@ -1,6 +1,7 @@
 import ast
 import base64
 import hashlib
+import importlib.util
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
@@ -14,9 +15,13 @@ class HttpError(Exception):
 
 
 def load_functions(rest):
+    spec=importlib.util.spec_from_file_location('quality_signal_duplicates',Path(__file__).resolve().parents[1]/'resources/quality_signal_duplicates.py')
+    duplicates=importlib.util.module_from_spec(spec);spec.loader.exec_module(duplicates)
     tree=ast.parse((Path(__file__).resolve().parents[1]/'pwa_api.py').read_text(encoding='utf8'))
-    nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in {'own_route_signals','own_route_signal_photo','admin_route_signals','route_signal_to_complaint'}]
-    for n in nodes:n.decorator_list=[]
+    nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in {'own_route_signals','own_route_signal_photo','admin_route_signals','route_signal_to_complaint','close_duplicate_quality_signal'}]
+    for n in nodes:
+        n.decorator_list=[]
+        n.body=[item for item in n.body if not (isinstance(item,ast.ImportFrom) and item.module=='resources.quality_signal_duplicates')]
     ns=dict(Query=lambda *a,**k:None,Cookie=lambda *a,**k:None,date=date,datetime=datetime,timedelta=timedelta,
             LOCAL_TIMEZONE=ZoneInfo('Europe/Budapest'),QUALITY_COMPLAINT_MONTH=date(2026,11,1),UUID=UUID,re=re,base64=base64,hashlib=hashlib,
             require_user=lambda _: {'courierId':'42'},workflow_view_user=lambda u,c:(u,False),
@@ -24,6 +29,7 @@ def load_functions(rest):
             supabase_rest=rest,HTTPException=HttpError,Response=lambda **k:k,
             quality_complaint_manager=lambda u:False,
             download_pwa_attachment=lambda b,p:b'image')
+    ns.update({name:getattr(duplicates,name) for name in ['action_key','close_duplicate','read_resolution','attach_resolutions','find_existing_day_complaint']})
     future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
     exec(compile(ast.fix_missing_locations(ast.Module(body=[future,*nodes],type_ignores=[])),'pwa_api.py','exec'),ns)
     return ns
@@ -65,8 +71,8 @@ class RouteSignalTests(unittest.TestCase):
         calls=[]
         def rest(method,table,params):
             calls.append((table,params))
-            if table=='courier_route_alerts':return [{'id':'a','courier_id':42},{'id':'b','courier_id':43}]
-            if table=='courier_route_alert_photos':return [{'id':'photo','alert_id':'b'}]
+            if table=='courier_route_alerts':return [{'id':'1','courier_id':42},{'id':'2','courier_id':43}]
+            if table=='courier_route_alert_photos':return [{'id':'photo','alert_id':'2'}]
             return []
         ns=load_functions(rest);ns['quality_complaint_manager']=lambda u:True
         result=ns['admin_route_signals'](50,None)
