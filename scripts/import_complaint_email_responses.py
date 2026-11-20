@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 
 MAILBOX = "balazs.gurzo@jitt.hu"
+MAILBOXES = (MAILBOX, "system@jitt.hu")
 GMAIL_URL = "https://gmail.googleapis.com/gmail/v1/users/me/"
 INCOMING_FILTER = " -in:sent -in:drafts -in:spam -in:trash"
 GMAIL_QUERY = '{subject:"Panasz elbírálva" subject:"Panasz elbiralva"}' + INCOMING_FILTER
@@ -53,7 +54,7 @@ def request_json(service, url, *, headers=None, data=None):
         raise RuntimeError(f"{service}: connection failed") from exc
 
 
-def gmail_reader(settings):
+def gmail_reader(settings, *, mailbox=MAILBOX):
     credentials = {key: settings[f"GMAIL_COMPLAINT_{key.upper()}"]
                    for key in ("client_id", "client_secret", "refresh_token")}
     token = request_json(
@@ -65,8 +66,8 @@ def gmail_reader(settings):
     def get(path, **params):
         return request_json("Gmail", GMAIL_URL + path + "?" + urlencode(params), headers=headers)
 
-    if get("profile")["emailAddress"].casefold() != MAILBOX:
-        raise RuntimeError(f"Google OAuth must belong to {MAILBOX}.")
+    if str(get("profile").get("emailAddress", "")).casefold() != mailbox.casefold():
+        raise RuntimeError(f"Google OAuth must belong to {mailbox}.")
     return get
 
 
@@ -91,7 +92,7 @@ def coordinator_fields(subject, sender):
     }
 
 
-def parse_message(message, *, coordinator=False):
+def parse_message(message, *, coordinator=False, mailbox=MAILBOX):
     if EXCLUDED_LABELS.intersection(message.get("labelIds", ())):
         return None
     raw = message["raw"]
@@ -112,7 +113,7 @@ def parse_message(message, *, coordinator=False):
             return clean_text(part.get_payload(decode=True).decode("utf-8", errors="replace"))
 
     return {
-        "mailbox": MAILBOX,
+        "mailbox": mailbox,
         "gmail_id": message["id"],
         "gmail_thread_id": message["threadId"],
         "subject": clean_text(subject),
@@ -124,7 +125,7 @@ def parse_message(message, *, coordinator=False):
     }
 
 
-def import_messages(get, save, known_ids=lambda ids: set(), *, coordinator=False):
+def import_messages(get, save, known_ids=lambda ids: set(), *, coordinator=False, mailbox=MAILBOX):
     matched = inserted = 0
     params = {"q": COORDINATOR_QUERY if coordinator else GMAIL_QUERY, "maxResults": 25}
     while True:
@@ -135,7 +136,7 @@ def import_messages(get, save, known_ids=lambda ids: set(), *, coordinator=False
         for gmail_id in ids:
             if gmail_id in known:
                 continue
-            row = parse_message(get(f"messages/{gmail_id}", format="raw"), coordinator=coordinator)
+            row = parse_message(get(f"messages/{gmail_id}", format="raw"), coordinator=coordinator, mailbox=mailbox)
             if row is not None:
                 rows.append(row)
         if rows:
@@ -146,7 +147,7 @@ def import_messages(get, save, known_ids=lambda ids: set(), *, coordinator=False
         params["pageToken"] = page["nextPageToken"]
 
 
-def supabase_writer(settings, *, table=COMPLAINT_TABLE):
+def supabase_writer(settings, *, table=COMPLAINT_TABLE, mailbox=MAILBOX):
     key = settings["SUPABASE_SERVICE_ROLE_KEY"]
     url = settings["SUPABASE_URL"].rstrip("/") + f"/rest/v1/{table}"
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
@@ -154,13 +155,15 @@ def supabase_writer(settings, *, table=COMPLAINT_TABLE):
     headers.update({"Content-Type": "application/json", "Prefer": "resolution=ignore-duplicates,return=representation"})
 
     def save(rows):
+        if any(row.get("mailbox") != mailbox for row in rows):
+            raise RuntimeError("The email batch contains a different mailbox.")
         return len(request_json(
             "Supabase insert", url + "?on_conflict=mailbox,gmail_id&select=gmail_id", headers=headers,
             data=json.dumps(rows, ensure_ascii=True).encode(),
         ) or [])
 
     def known_ids(ids):
-        params = urlencode({"mailbox": f"eq.{MAILBOX}", "gmail_id": f"in.({','.join(ids)})", "select": "gmail_id"})
+        params = urlencode({"mailbox": f"eq.{mailbox}", "gmail_id": f"in.({','.join(ids)})", "select": "gmail_id"})
         rows = request_json("Supabase existing-email lookup", url + "?" + params, headers=headers)
         return {row["gmail_id"] for row in rows}
 
@@ -169,6 +172,7 @@ def supabase_writer(settings, *, table=COMPLAINT_TABLE):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mailbox", choices=MAILBOXES, default=MAILBOX, help="Expected Google account and database mailbox.")
     parser.add_argument("--dry-run", action="store_true", help="Count matches without writing to the database.")
     parser.add_argument("--coordinator-shifts", action="store_true", help="Import coordinator late and absent shift notices.")
     args = parser.parse_args()
@@ -183,16 +187,16 @@ def main():
         parser.exit(1, "Missing settings: " + ", ".join(missing) + "\n")
 
     try:
-        get = gmail_reader(settings)
+        get = gmail_reader(settings, mailbox=args.mailbox)
         if args.dry_run:
-            matched, inserted = import_messages(get, lambda rows: 0, coordinator=args.coordinator_shifts)
+            matched, inserted = import_messages(get, lambda rows: 0, coordinator=args.coordinator_shifts, mailbox=args.mailbox)
         else:
             table = COORDINATOR_TABLE if args.coordinator_shifts else COMPLAINT_TABLE
-            save, known_ids = supabase_writer(settings, table=table)
-            matched, inserted = import_messages(get, save, known_ids, coordinator=args.coordinator_shifts)
+            save, known_ids = supabase_writer(settings, table=table, mailbox=args.mailbox)
+            matched, inserted = import_messages(get, save, known_ids, coordinator=args.coordinator_shifts, mailbox=args.mailbox)
     except RuntimeError as exc:
         parser.exit(1, f"{exc}\n")
-    print(f"Matching emails: {matched}. New database rows: {inserted}.")
+    print(f"Mailbox: {args.mailbox}. Matching emails: {matched}. New database rows: {inserted}.")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,19 @@ on:
   schedule:
     - cron: '4-59/15 * * * *'
   workflow_dispatch:
+    inputs:
+      mailbox:
+        description: Postaláda
+        type: choice
+        default: all
+        options:
+          - all
+          - balazs.gurzo@jitt.hu
+          - system@jitt.hu
+      dry_run:
+        description: Ellenőrzés adatbázisba mentés nélkül
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -17,36 +30,57 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
+        source:
           - source: complaint-responses
             arguments: ''
           - source: coordinator-shifts
             arguments: '--coordinator-shifts'
-    name: Import ${{ matrix.source }}
+        account:
+          - mailbox: balazs.gurzo@jitt.hu
+            client_id_secret: GMAIL_COMPLAINT_CLIENT_ID
+            client_secret_secret: GMAIL_COMPLAINT_CLIENT_SECRET
+            refresh_token_secret: GMAIL_COMPLAINT_REFRESH_TOKEN
+          - mailbox: system@jitt.hu
+            client_id_secret: GMAIL_SYSTEM_CLIENT_ID
+            client_secret_secret: GMAIL_SYSTEM_CLIENT_SECRET
+            refresh_token_secret: GMAIL_SYSTEM_REFRESH_TOKEN
+    name: Import ${{ matrix.source.source }} (${{ matrix.account.mailbox }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        if: github.event_name == 'schedule' || inputs.mailbox == 'all' || inputs.mailbox == matrix.account.mailbox
         with:
           persist-credentials: false
       - uses: actions/setup-python@v5
+        if: github.event_name == 'schedule' || inputs.mailbox == 'all' || inputs.mailbox == matrix.account.mailbox
         with:
           python-version: '3.11'
       - name: Import responses into Supabase
+        if: github.event_name == 'schedule' || inputs.mailbox == 'all' || inputs.mailbox == matrix.account.mailbox
         env:
-          IMPORT_ARGUMENT: ${{ matrix.arguments }}
-          GMAIL_COMPLAINT_CLIENT_ID: ${{ secrets.GMAIL_COMPLAINT_CLIENT_ID }}
-          GMAIL_COMPLAINT_CLIENT_SECRET: ${{ secrets.GMAIL_COMPLAINT_CLIENT_SECRET }}
-          GMAIL_COMPLAINT_REFRESH_TOKEN: ${{ secrets.GMAIL_COMPLAINT_REFRESH_TOKEN }}
+          IMPORT_ARGUMENT: ${{ matrix.source.arguments }}
+          IMPORT_MAILBOX: ${{ matrix.account.mailbox }}
+          IMPORT_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          GMAIL_COMPLAINT_CLIENT_ID: ${{ secrets[matrix.account.client_id_secret] }}
+          GMAIL_COMPLAINT_CLIENT_SECRET: ${{ secrets[matrix.account.client_secret_secret] }}
+          GMAIL_COMPLAINT_REFRESH_TOKEN: ${{ secrets[matrix.account.refresh_token_secret] }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == schedule ]] && [[ -z "$GMAIL_COMPLAINT_CLIENT_ID" || -z "$GMAIL_COMPLAINT_CLIENT_SECRET" || -z "$GMAIL_COMPLAINT_REFRESH_TOKEN" ]]; then
-            echo '::notice::Gmail OAuth secrets are required to enable this import.'
-            exit 0
+          if [[ -z "$GMAIL_COMPLAINT_CLIENT_ID" || -z "$GMAIL_COMPLAINT_CLIENT_SECRET" || -z "$GMAIL_COMPLAINT_REFRESH_TOKEN" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
+              echo "::notice::OAuth secrets for $IMPORT_MAILBOX are not configured; this mailbox import was skipped."
+              exit 0
+            fi
+            echo "::error::OAuth secrets for $IMPORT_MAILBOX are not configured."
+            exit 1
           fi
-          args=()
+          args=(--mailbox "$IMPORT_MAILBOX")
           if [[ -n "$IMPORT_ARGUMENT" ]]; then
             args+=("$IMPORT_ARGUMENT")
+          fi
+          if [[ "$IMPORT_DRY_RUN" == true ]]; then
+            args+=(--dry-run)
           fi
           python scripts/import_complaint_email_responses.py "${args[@]}"
