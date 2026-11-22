@@ -30,7 +30,7 @@ on:
       dry_run:
         description: "true = csak ellenorzes, false = eles HUB API foglalas"
         required: false
-        default: "true"
+        default: "false"
   schedule:
     # GitHub cron UTC-ben fut. Az uj HUB/API foglalas orankent indul.
     - cron: "17 * * * *"
@@ -100,17 +100,11 @@ jobs:
           COURIER_IDS="${{ inputs.courier_ids }}"
           TOLERANCE_MINUTES="0"
           MIN_GAP_MINUTES="0"
-          DRY_RUN="${{ inputs.dry_run }}"
+          DRY_RUN="${{ inputs.dry_run || 'false' }}"
 
           START_DATE="${START_DATE:-$(TZ=Europe/Budapest date +%F)}"
           DAYS="${DAYS:-30}"
           MAX_COURIER_DAYS="${MAX_COURIER_DAYS:-300}"
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
-            DRY_RUN="${DRY_RUN:-false}"
-          else
-            DRY_RUN="${DRY_RUN:-true}"
-          fi
-
           if ! [[ "$DAYS" =~ ^[0-9]+$ ]]; then DAYS="30"; fi
           if ! [[ "$MAX_COURIER_DAYS" =~ ^[0-9]+$ ]]; then MAX_COURIER_DAYS="300"; fi
           HUB_LOOKAHEAD_DAYS=$((DAYS - 1))
