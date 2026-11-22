@@ -58,7 +58,7 @@ def shift_operation_results(read, operation, warehouses, start, end, dsp_id):
     params = {
         "select": f"warehouse,work_date,shift_start,email,{id_field},{name_field},{status_field},message,{timestamp}",
         "warehouse": f"in.({','.join(warehouses)})",
-        "and": f"({timestamp}.gte.{start},{timestamp}.lt.{end})",
+        "and": f"(work_date.gte.{start},work_date.lt.{end})",
         "order": f"{timestamp}.desc,id.desc",
     }
     if is_booking:

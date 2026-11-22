@@ -344,6 +344,9 @@ textarea { min-height: 96px; resize: vertical; }
 .shift-operation-legend div:last-child::before { background: var(--danger); }
 .shift-operation-legend dd { margin: 0; font-weight: 800; }
 .shift-operation-details { margin-top: 14px; }
+.shift-operation-search { margin-top: 12px; max-width: 360px; }
+.shift-operation-search-status { margin: 8px 0 0; }
+.shift-operation-search-status:empty { display: none; }
 .shift-operation-details ul { list-style: none; margin: 12px 0 0; padding: 0; }
 .shift-operation-details li { border-top: 1px solid var(--line); padding: 10px 0; }
 .shift-operation-details li span { display: block; font-size: 13px; }

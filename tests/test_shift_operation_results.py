@@ -18,7 +18,7 @@ class ShiftOperationResultsTests(unittest.TestCase):
                 return [{"email": "courier@example.invalid", "name_without_identifier": "Futár Minta"}]
             self.assertEqual(table, "external_shift_deletion_requests")
             self.assertEqual(params["warehouse"], "in.(BUD1,BUD2)")
-            self.assertIn("processed_at.lt.2026-11-30T23:00:00+00:00", params["and"])
+            self.assertEqual(params["and"], "(work_date.gte.2026-11-01,work_date.lt.2026-12-01)")
             return [
                 {"warehouse": "BUD1", "deletion_status": "deleted"},
                 {"warehouse": "BUD1", "deletion_status": "pending"},
@@ -29,7 +29,7 @@ class ShiftOperationResultsTests(unittest.TestCase):
 
         bud1, bud2 = shift_operation_results(
             read, "deletion", ["BUD1", "BUD2"],
-            "2026-10-31T23:00:00+00:00", "2026-11-30T23:00:00+00:00", 8,
+            "2026-11-01", "2026-12-01", 8,
         )
         self.assertEqual((bud1["succeeded"], bud1["failed"]), (1, 0))
         self.assertEqual((bud2["succeeded"], bud2["failed"]), (0, 1))
@@ -42,6 +42,7 @@ class ShiftOperationResultsTests(unittest.TestCase):
         def read(table, params):
             self.assertEqual(table, "ops_giriton_auto_booking_log")
             self.assertEqual(params["warehouse"], "in.(BUD2)")
+            self.assertEqual(params["and"], "(work_date.gte.2026-12-01,work_date.lt.2027-01-01)")
             self.assertEqual(params["response_json->>booking_engine"], "eq.hub_api")
             if params["offset"] == "0":
                 return [{"warehouse": "BUD2", "status": "COURIER_ADDED"}] * 1000
@@ -49,9 +50,11 @@ class ShiftOperationResultsTests(unittest.TestCase):
             return [
                 {"warehouse": "BUD2", "status": "HUB_AUTOBOOK_DRY_RUN_OK"},
                 {"warehouse": "BUD2", "status": "ALREADY_BOOKED"},
-                {"warehouse": "BUD2", "status": "HUB_API_REJECTED_OVERLAP", "courier_name": "Futár Minta"},
+                {"warehouse": "BUD2", "status": "HUB_API_REJECTED_OVERLAP", "courier_name": "Futár Minta",
+                 "work_date": "2026-12-15", "created_at": "2026-11-22T17:20:00+00:00"},
             ]
 
-        [bud2] = shift_operation_results(read, "booking", ["BUD2"], "start", "end", 8)
+        [bud2] = shift_operation_results(read, "booking", ["BUD2"], "2026-12-01", "2027-01-01", 8)
         self.assertEqual((bud2["succeeded"], bud2["failed"]), (1000, 1))
         self.assertIn("Átfedés", bud2["failures"][0]["reason"])
+        self.assertEqual(bud2["failures"][0]["workDate"], "2026-12-15")

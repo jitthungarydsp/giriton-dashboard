@@ -8,6 +8,7 @@ const runtime = path.join(homedir(), ".cache/codex-runtimes/codex-primary-runtim
 const pwa = path.join(__dirname, "../pwa");
 const source = fs.readFileSync(path.join(pwa, "app.js"), "utf8");
 const resultsScript = source.slice(source.indexOf("let shiftOperationRequest"), source.indexOf("function formatAverage("));
+const searchScript = source.slice(source.indexOf("function routeDetailsSearchText("), source.indexOf("function routeDetailsTypeKey("));
 
 test("warehouse charts fit mobile and reveal only the selected warehouse failures", { skip: !fs.existsSync(runtime) }, async () => {
   const { chromium } = require(runtime);
@@ -25,31 +26,43 @@ test("warehouse charts fit mobile and reveal only the selected warehouse failure
       window.escapeHtml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;");
       window.localMonth = () => "2026-11";
       const payload = { warehouses: [
-        { warehouse: "BUD1", succeeded: 8, failed: 1, failures: [
-          { courierName: "Első futár", workDate: "2026-11-23", shiftStart: "08:00", reason: "Átfedés" },
+        { warehouse: "BUD1", succeeded: 8, failed: 2, failures: [
+          { courierName: "Első futár", workDate: "2026-12-23", shiftStart: "08:00", reason: "Átfedés" },
+          { courierName: "Minta Ágnes", workDate: "2026-12-24", shiftStart: "08:45", reason: "Nincs szabad hely" },
         ] },
         { warehouse: "BUD2", succeeded: 2, failed: 1, failures: [
-          { courierName: "Második futár", workDate: "2026-11-24", shiftStart: "10:00", reason: "Nincs aktív foglalás" },
+          { courierName: "Második futár", workDate: "2026-12-24", shiftStart: "10:00", reason: "Nincs aktív foglalás" },
         ] },
       ] };
       window.api = async (url) => {
         window.requestedUrl = url;
         return payload;
       };
+      ${searchScript}
       ${resultsScript}
+      $("#shift-operation-month").value = "2026-12";
+      $("#shift-operation-type").value = "booking";
       loadShiftOperationResults();
     ` });
-    assert.equal(await page.evaluate(() => requestedUrl), "/api/coordinator/shift-operation-results?month=2026-11&operation=deletion");
+    assert.equal(await page.evaluate(() => requestedUrl), "/api/coordinator/shift-operation-results?month=2026-12&operation=booking");
     assert.equal(await page.locator(".shift-operation-ring").count(), 2);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 
     const panel = page.locator("#shift-operation-details");
-    const first = page.getByRole("button", { name: /^BUD1, 8 sikeres, 1 hibás/ });
+    const first = page.getByRole("button", { name: /^BUD1, 8 sikeres, 2 hibás/ });
     await first.focus();
     await first.press("Enter");
     assert.match(await panel.innerText(), /Első futár[\s\S]*Átfedés/);
     assert.doesNotMatch(await panel.innerText(), /Második futár/);
     assert.equal(await page.evaluate(() => document.activeElement.id), "shift-operation-details");
+    const search = panel.getByRole("searchbox", { name: "Futár keresése név szerint" });
+    await search.fill("AGNES minta");
+    assert.match(await panel.innerText(), /1 találat[\s\S]*Minta Ágnes/);
+    assert.doesNotMatch(await panel.innerText(), /Első futár/);
+    await search.fill("nincs ilyen");
+    assert.match(await panel.innerText(), /Nincs találat erre a névre/);
+    await search.fill("");
+    assert.equal(await panel.getByRole("listitem").count(), 2);
 
     const second = page.getByRole("button", { name: /^BUD2, 2 sikeres, 1 hibás/ });
     await second.click();

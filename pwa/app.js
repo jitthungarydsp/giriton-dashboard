@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v301";
+const APP_VERSION = "v302";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -815,11 +815,30 @@ function renderShiftOperationResults(warehouses) {
         return;
       }
       details.innerHTML = `<h3 id="shift-operation-details-title">${escapeHtml(warehouse)} · ${formatCount(failed)} hibás</h3>
-        <ul>${failures.map((item) => `<li>
+        <label class="shift-operation-search">Futár keresése név szerint
+          <input type="search" autocomplete="off" placeholder="Írj be egy nevet" />
+        </label>
+        <p class="shift-operation-search-status muted" role="status"></p>
+        <ul></ul>`;
+      const search = details.querySelector("input");
+      const searchStatus = details.querySelector(".shift-operation-search-status");
+      const list = details.querySelector("ul");
+      const updateFailures = () => {
+        const words = routeDetailsSearchText(search.value).split(/\s+/).filter(Boolean);
+        const matches = words.length ? failures.filter((item) => {
+          const name = routeDetailsSearchText(item.courierName);
+          return words.every((word) => name.includes(word));
+        }) : failures;
+        searchStatus.textContent = !words.length ? "" : matches.length
+          ? `${formatCount(matches.length)} találat` : "Nincs találat erre a névre.";
+        list.innerHTML = matches.map((item) => `<li>
           <strong>${escapeHtml(item.courierName)}</strong>
           <span class="muted">${escapeHtml([item.workDate, item.shiftStart].filter(Boolean).join(" · "))}</span>
           <p>${escapeHtml(item.reason)}</p>
-        </li>`).join("")}</ul>`;
+        </li>`).join("");
+      };
+      search.addEventListener("input", updateFailures);
+      updateFailures();
       details.focus();
     });
   });
@@ -843,7 +862,7 @@ async function loadShiftOperationResults() {
     if (request !== shiftOperationRequest) return;
     renderShiftOperationResults(result.warehouses);
     status.textContent = result.warehouses.some((item) => item.succeeded + item.failed)
-      ? "" : "Ebben a hónapban még nincs feldolgozott művelet.";
+      ? "" : "Ehhez a műszakhónaphoz még nincs feldolgozott művelet.";
   } catch (error) {
     if (request !== shiftOperationRequest) return;
     status.classList.add("error");

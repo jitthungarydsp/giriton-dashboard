@@ -23439,8 +23439,6 @@ def coordinator_shift_operation_results(
     try:
         start = date.fromisoformat(f"{month}-01") if month else datetime.now(LOCAL_TIMEZONE).date().replace(day=1)
         end = month_end(start) + timedelta(days=1)
-        lower = datetime.combine(start, datetime.min.time(), tzinfo=LOCAL_TIMEZONE).astimezone(timezone.utc)
-        upper = datetime.combine(end, datetime.min.time(), tzinfo=LOCAL_TIMEZONE).astimezone(timezone.utc)
     except (ValueError, OverflowError) as exc:
         raise HTTPException(status_code=422, detail="Érvénytelen hónap.") from exc
 
@@ -23450,7 +23448,7 @@ def coordinator_shift_operation_results(
     try:
         results = shift_operation_results(
             read, operation, [f"BUD{value}" for value in coordinator_warehouse_ids(user)],
-            lower.isoformat(), upper.isoformat(), COURIER_HUB_DSP_ID,
+            start.isoformat(), end.isoformat(), COURIER_HUB_DSP_ID,
         )
     except (HTTPException, requests.RequestException) as exc:
         raise HTTPException(status_code=502, detail="A műszakműveletek naplója most nem tölthető be.") from exc
