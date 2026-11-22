@@ -10,6 +10,8 @@ function setup() {
     escapeHtml: value => String(value || '').replaceAll('<', '&lt;').replaceAll('>', '&gt;') };
   vm.runInNewContext(source.slice(source.indexOf('function qualityComplaintStatus('), source.indexOf('async function loadQualityComplaints(')), context);
   vm.runInNewContext(source.slice(source.indexOf('function renderCourierRouteSignals('), source.indexOf('function qualityShiftTimes(')), context);
+  vm.runInNewContext(source.slice(source.indexOf('function qualityShiftTimes('), source.indexOf('function renderComplaintShiftDetails(')), context);
+  vm.runInNewContext(source.slice(source.indexOf('function qualityComplaintDailyBucket('), source.indexOf('function qualityComplaintDays(')), context);
   return { context, node };
 }
 test('all statuses, dates and escaped admin response shown inside monthly quality summary', () => {
@@ -67,6 +69,41 @@ test('route signal errors do not hide existing complaints', async () => {
   await context.refreshCourierQualityComplaints();
   assert.equal(context.state.statistics.qualityComplaints.length,1);
   assert.equal(context.state.statistics.routeSignalsError,true);
+});
+
+test('quality details show the status only beside the matching route or shift', () => {
+  const { context } = setup();
+  const day = '2026-11-12';
+  const payload = { month: '2026-11', qualityComplaints: [
+    { topic: 'cleanedTimeWindowLate', status: 'forwarded', affected_items: [{ date: day, routeId: '12' }] },
+    { topic: 'lateShift', status: 'open', affected_items: [{ date: day, label: '7:45–12:15' }] },
+    { topic: 'noShow', status: 'closed', affected_items: [{ date: day, label: 'Műszak' }] },
+  ] };
+  const render = (topic, row) => context.renderQualitySummaryDetails(topic, { [topic]: [row] }, payload);
+  assert.match(render('uncleanedTimeWindowLate', { date: day, routeId: 12 }), /Reklamálva · Továbbított/);
+  assert.match(render('uncleanedTimeWindowLate', { date: day, routeId: '13' }), /data-quality-reclamation-topic/);
+  assert.match(render('uncleanedTimeWindowLate', { date: day }), /data-quality-reclamation-topic/);
+  assert.match(render('lateShift', { date: day, label: '2026-11-12T07:45:00+00:00' }), /Reklamálva · Nyitott/);
+  assert.match(render('lateShift', { date: day, label: '07:45-11:00' }), /data-quality-reclamation-topic/);
+  assert.match(render('lateShift', { date: day, label: '13:00-17:30' }), /data-quality-reclamation-topic/);
+  assert.match(render('noShow', { date: day, label: '07:45' }), /Reklamálva · Lezárt/);
+});
+
+test('refresh updates an open quality detail before the separate signal request finishes', async () => {
+  const { context, node } = setup();
+  const detailsNode = {};
+  node.querySelector = () => detailsNode;
+  context.state.statisticsQualityTopic = 'uncleanedTimeWindowLate';
+  context.state.statistics.qualitySummary = { details: { uncleanedTimeWindowLate: [{ date: '2026-11-12', routeId: '12' }] } };
+  context.pastQualityDetails = rows => rows;
+  let resolveSignals;
+  context.api = async url => url.includes('route-signals') ? new Promise(done => { resolveSignals = done; })
+    : { items: [{ topic: 'uncleanedTimeWindowLate', status: 'open', affected_items: [{ routeId: '12' }] }] };
+  const pending = context.refreshCourierQualityComplaints();
+  await new Promise(done => setImmediate(done));
+  assert.match(detailsNode.outerHTML, /Reklamálva · Nyitott/);
+  resolveSignals({ alerts: [], shifts: [] });
+  await pending;
 });
 
 test('admin signals identify courier, type, escaped note and photo preview owner', () => {

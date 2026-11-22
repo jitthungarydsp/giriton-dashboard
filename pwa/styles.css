@@ -1239,6 +1239,7 @@ textarea { min-height: 96px; resize: vertical; }
 .quality-detail-row small { grid-column: 1 / -1; color: var(--muted); font-size: 11px; font-weight: 750; }
 .quality-reclamation-list .stat-row small { display: block; margin-top: 4px; color: var(--muted); }
 .quality-detail-row .quality-reclamation-trigger { grid-column: 1 / -1; justify-self: end; padding: 6px 10px; border-radius: 999px; font-size: 11px; }
+.quality-detail-row .quality-detail-complaint { grid-column: 1 / -1; justify-self: end; text-align: end; }
 .route-note-form { display: grid; gap: 8px; padding-top: 6px; }
 .route-note-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 850; }
 .route-note-form textarea { min-height: 76px; border-radius: 12px; }

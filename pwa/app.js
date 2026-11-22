@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v304";
+const APP_VERSION = "v305";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1728,6 +1728,14 @@ async function refreshCourierQualityComplaints() {
     if (state.statistics !== payload || state.courierComplaintRequest !== sequence) return;
     payload.qualityComplaintsError = true;
   }
+  const topic = state.statisticsQualityTopic;
+  const visibleDetails = $("#statistics-quality")?.querySelector?.("[data-quality-summary-details]");
+  if (topic && visibleDetails) {
+    const details = (payload.qualitySummary || qualitySummaryFromDailyHistory(payload.dailyHistory || [])).details || {};
+    visibleDetails.outerHTML = renderQualitySummaryDetails(topic, {
+      ...details, noShow: pastQualityDetails(details.noShow || []),
+    }, payload);
+  }
   const signalResult = await signals;
   if (state.statistics !== payload || state.courierComplaintRequest !== sequence) return;
   payload.routeSignals = signalResult.result;
@@ -1747,6 +1755,33 @@ function qualityShiftTimes(row, topic) {
   return `<small>Giriton-bejelentkezés: ${escapeHtml(clock(row.giritonLoginAt))}</small><small>Sorba állás: ${escapeHtml(clock(row.queueStartedAt))}</small>`;
 }
 
+function qualityComplaintForDetail(complaints, topic, row) {
+  const bucket = qualityComplaintDailyBucket(topic);
+  const date = String(row.date || "").slice(0, 10);
+  const routeId = String(row.routeId || "").trim();
+  const clocks = (label) => {
+    const text = String(label || "").trim();
+    const timestamp = text.match(/^\d{4}-\d{2}-\d{2}[T ](\d{2}:\d{2})/);
+    if (timestamp) return [timestamp[1]];
+    return Array.from(text.matchAll(/(?:^|[\s–-])(\d{1,2}:\d{2})(?::\d{2})?/g), match => match[1].padStart(5, "0"));
+  };
+  const [start, end] = clocks(row.label);
+  return (complaints || []).find(item => {
+    if (bucket === "address") return routeId && qualityComplaintDailyBucket(item.topic) === bucket
+      && qualityComplaintRoutes(item).includes(routeId);
+    if (item.topic !== topic || !date) return false;
+    return (item.affected_items || []).some(affected => {
+      if (String(affected.date || "").slice(0, 10) !== date) return false;
+      if (topic === "noShow") return true;
+      if (topic !== "lateShift") return false;
+      const affectedRoute = String(affected.routeId || "").trim();
+      if (routeId && affectedRoute) return routeId === affectedRoute;
+      const [affectedStart, affectedEnd] = clocks(affected.label);
+      return Boolean(start && start === affectedStart && (!end || !affectedEnd || end === affectedEnd));
+    });
+  });
+}
+
 function renderQualitySummaryDetails(topic, details = {}, payload = {}) {
   if (!topic) return "";
   const labels = {
@@ -1758,17 +1793,23 @@ function renderQualitySummaryDetails(topic, details = {}, payload = {}) {
   const rows = Array.isArray(details[topic]) ? details[topic] : [];
   const canComplain = (payload.month || state.statisticsMonth) === QUALITY_COMPLAINT_MONTH;
   return `
-    <div class="quality-detail-list">
+    <div class="quality-detail-list" data-quality-summary-details>
       <h4>${escapeHtml(labels[topic] || "Vizsgálandó tételek")}</h4>
-      ${rows.length ? rows.map((row) => `
+      ${rows.length ? rows.map((row) => {
+        const complaint = canComplain && qualityComplaintForDetail(payload.qualityComplaints, topic, row);
+        const status = complaint && (qualityPartnerDecision(complaint)?.status || complaint.status);
+        const badgeClass = ["open", "forwarded", "closed", "accepted", "rejected", "partially_accepted"].includes(status) ? status : "";
+        return `
         <div class="quality-detail-row" role="button" tabindex="0" data-quality-date="${escapeHtml(row.date || "")}" data-quality-topic-row="${escapeHtml(topic)}">
           <strong>${escapeHtml(row.date || "-")}</strong>
           <span>${escapeHtml(row.label || "-")}</span>
           <small>${escapeHtml(row.note || "")}${row.routeId ? ` · Route ${escapeHtml(row.routeId)}` : ""}</small>
           ${qualityShiftTimes(row, topic)}
-          ${canComplain ? `<button class="secondary quality-reclamation-trigger" type="button" data-quality-reclamation-topic="${escapeHtml(topic)}">Reklamáció</button>` : ""}
+          ${complaint ? `<span class="courier-complaint-badge quality-detail-complaint ${badgeClass}">Reklamálva · ${escapeHtml(qualityComplaintDisplayStatus(complaint) || "Rögzítve")}</span>`
+            : canComplain ? `<button class="secondary quality-reclamation-trigger" type="button" data-quality-reclamation-topic="${escapeHtml(topic)}">Reklamáció</button>` : ""}
         </div>
-      `).join("") : `<p>Nincs külön vizsgálandó sor ehhez a jelzéshez.</p>`}
+      `;
+      }).join("") : `<p>Nincs külön vizsgálandó sor ehhez a jelzéshez.</p>`}
     </div>
   `;
 }
