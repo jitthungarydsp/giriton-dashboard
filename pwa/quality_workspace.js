@@ -75,12 +75,15 @@ async function renderQualityOutreachList(pending, filter, target, status, isCurr
     return;
   }
   const items = result.items.filter(row => {
+    if (filter === "outreach-hub") return row.source === "hub_validated";
     const hasComplaint = Boolean(row.complaint_id) || row.state === "forwarded";
     return filter === "outreach-all" || (filter === "outreach-complained" ? hasComplaint : !hasComplaint);
   });
   status.textContent = `${formatCount(items.length)} minőségi eset`;
   target.innerHTML = items.map(row => `<article class="shift-card quality-outreach-row">
-    <div><strong>${escapeHtml(row.courier_name)}</strong><p>${escapeHtml(row.work_date)} · ${escapeHtml(qualityOutreachTopics[row.topic])}
+    <div><strong>${escapeHtml(row.courier_name)}</strong>
+      ${row.source === "hub_validated" ? '<span class="source quality-outreach-source">Validált HUB adat</span>' : ""}
+      <p>${escapeHtml(row.work_date)} · ${escapeHtml(qualityOutreachTopics[row.topic])}
       · ${row.topic === "uncleanedTimeWindowLate" ? "Route ID " : ""}${escapeHtml(row.reference)}
       ${row.item_count > 1 ? ` · ${formatCount(row.item_count)} cím` : ""}</p>
       <p>${escapeHtml(qualityOutreachStates[row.state])} · ${row.last_email_sent_at

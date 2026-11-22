@@ -46,6 +46,7 @@
 .quality-outreach-breakdown dd { margin: 0; white-space: nowrap; }
 .quality-outreach-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .quality-outreach-row p { margin: 4px 0; overflow-wrap: anywhere; }
+.quality-outreach-source { display: inline-block; margin-inline-start: 8px; }
 .quality-route-id { display: block; margin-top: 5px; color: var(--green-dark); font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
 .quality-inbox-row strong::before { content: "›"; color: var(--muted); margin-right: .5em; }
 .quality-inbox-item[open] > .quality-inbox-row strong::before { content: "⌄"; }

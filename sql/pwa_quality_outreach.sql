@@ -87,7 +87,8 @@ select o.id,o.courier_id,o.work_date,o.topic,o.reference,o.item_count,o.tracked,
             when c.status='closed' then 'closed'
             when c.is_pending or d.state='prepared' then 'in_progress'
             when c.id is not null then 'complained' else 'not_complained' end as state,
-       e.sent_at as last_email_sent_at
+       e.sent_at as last_email_sent_at,
+       'hub_validated'::text as source
 from public.pwa_quality_outreach_cases o
 left join public.courier_master m on m.courier_id::text=o.courier_id
 left join lateral (

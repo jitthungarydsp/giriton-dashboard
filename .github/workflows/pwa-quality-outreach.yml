@@ -23,6 +23,7 @@ concurrency:
 
 jobs:
   outreach:
+    if: github.event_name == 'workflow_dispatch' || vars.PWA_QUALITY_OUTREACH_EMAIL_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -55,7 +56,10 @@ jobs:
           from contextlib import closing
           from pathlib import Path
           import psycopg2
-          with closing(psycopg2.connect(os.environ["DATABASE_URL"])) as conn:
+          dsn = os.environ.get("DATABASE_URL", "").strip()
+          if not dsn:
+              raise SystemExit("Configure the DATABASE_URL or SUPABASE_DB_URL GitHub Actions secret to apply the migration.")
+          with closing(psycopg2.connect(dsn)) as conn:
               conn.autocommit = True
               with conn.cursor() as cursor:
                   cursor.execute(Path("sql/pwa_quality_outreach.sql").read_text(encoding="utf-8"))

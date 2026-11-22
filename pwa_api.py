@@ -22956,7 +22956,7 @@ def quality_outreach(
     rows = []
     for offset in range(0, 50000, 500):
         page = supabase_rest("GET", "pwa_quality_outreach_overview", params={
-            "select": "id,courier_id,courier_name,work_date,topic,reference,item_count,complaint_id,state,last_email_sent_at",
+            "select": "id,courier_id,courier_name,work_date,topic,reference,item_count,complaint_id,state,last_email_sent_at,source",
             "tracked": "eq.true",
             "and": f"(work_date.gte.{month.isoformat()},work_date.lt.{stop.isoformat()})",
             "order": "work_date.desc,id.asc", "offset": str(offset), "limit": "500",
