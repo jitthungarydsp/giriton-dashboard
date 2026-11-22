@@ -44,12 +44,14 @@ class ShiftOperationResultsTests(unittest.TestCase):
             self.assertEqual(params["warehouse"], "in.(BUD2)")
             self.assertEqual(params["and"], "(work_date.gte.2026-12-01,work_date.lt.2027-01-01)")
             self.assertEqual(params["response_json->>booking_engine"], "eq.hub_api")
+            self.assertEqual(params["status"], "neq.HUB_API_REJECTED_ALREADY_ASSIGNED")
             if params["offset"] == "0":
                 return [{"warehouse": "BUD2", "status": "COURIER_ADDED"}] * 1000
             self.assertEqual(params["offset"], "1000")
             return [
                 {"warehouse": "BUD2", "status": "HUB_AUTOBOOK_DRY_RUN_OK"},
                 {"warehouse": "BUD2", "status": "ALREADY_BOOKED"},
+                {"warehouse": "BUD2", "status": "HUB_API_REJECTED_ALREADY_ASSIGNED", "courier_name": "Már felvett futár"},
                 {"warehouse": "BUD2", "status": "HUB_API_REJECTED_OVERLAP", "courier_name": "Futár Minta",
                  "work_date": "2026-12-15", "created_at": "2026-11-22T17:20:00+00:00"},
             ]

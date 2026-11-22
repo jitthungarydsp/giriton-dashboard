@@ -5,6 +5,7 @@ import re
 
 BOOKING_STATUSES = ("COURIER_ADDED", "HUB_AUTOBOOK_ERROR", "HUB_API_ERROR")
 REJECTION_PREFIX = "HUB_API_REJECTED_"
+ALREADY_ASSIGNED = f"{REJECTION_PREFIX}ALREADY_ASSIGNED"
 REJECTION_REASONS = {
     "OVERLAP": "Átfedés egy másik műszakkal.",
     "NO_FREE_SLOT": "Nincs szabad hely a műszakon.",
@@ -63,6 +64,7 @@ def shift_operation_results(read, operation, warehouses, start, end, dsp_id):
     }
     if is_booking:
         params["response_json->>booking_engine"] = "eq.hub_api"
+        params["status"] = f"neq.{ALREADY_ASSIGNED}"
         params["or"] = f"(status.in.({','.join(BOOKING_STATUSES)}),status.like.{REJECTION_PREFIX}*)"
     else:
         params["deletion_status"] = "in.(deleted,not_found,error)"
@@ -82,7 +84,7 @@ def shift_operation_results(read, operation, warehouses, start, end, dsp_id):
             result["succeeded"] += 1
             continue
         is_failure = (
-            status in BOOKING_STATUSES[1:] or status.startswith(REJECTION_PREFIX)
+            status != ALREADY_ASSIGNED and (status in BOOKING_STATUSES[1:] or status.startswith(REJECTION_PREFIX))
             if is_booking else status in {"not_found", "error"}
         )
         if not is_failure:
