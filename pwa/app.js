@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v300";
+const APP_VERSION = "v301";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -583,6 +583,9 @@ function startQueueTimer() {
 
 function showLogin() {
   window.JittComplaintAssignments?.reset();
+  shiftOperationRequest++;
+  $("#shift-operation-charts")?.replaceChildren();
+  $("#shift-operation-details")?.replaceChildren();
   $("#login-view").classList.remove("hidden");
   $("#app-view").classList.add("hidden");
 }
@@ -608,6 +611,7 @@ function showApp() {
   $("#nav-quality-complaints").classList.toggle("hidden", !["admin", "superadmin"].includes(role));
   $("#nav-today-workers").classList.toggle("hidden", !canCoordinate);
   $("#nav-coordinator-schedule").classList.toggle("hidden", !canCoordinate);
+  $("#nav-shift-operation-results")?.classList.toggle("hidden", !canCoordinate);
   ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-game"]
     .forEach((selector) => $(selector)?.classList.remove("hidden"));
   $("#nav-registration-admin").classList.toggle("hidden", !state.user.canApproveRegistrations);
@@ -678,6 +682,7 @@ function showSection(section) {
   $("#departure-helper-content").classList.toggle("hidden", section !== "departure-helper");
   $("#today-workers-content").classList.toggle("hidden", section !== "today-workers");
   $("#coordinator-schedule-content").classList.toggle("hidden", section !== "coordinator-schedule");
+  $("#shift-operation-results-content")?.classList.toggle("hidden", section !== "shift-operation-results");
   $("#registration-admin-content").classList.toggle("hidden", section !== "registration-admin");
   $("#settlement-dashboard-content").classList.toggle("hidden", section !== "settlement-dashboard");
   $("#settlement-import-config-content").classList.toggle("hidden", section !== "settlement-import-config");
@@ -704,6 +709,7 @@ function showSection(section) {
   $("#nav-departure-helper").classList.toggle("active", section === "departure-helper");
   $("#nav-today-workers").classList.toggle("active", section === "today-workers");
   $("#nav-coordinator-schedule").classList.toggle("active", section === "coordinator-schedule");
+  $("#nav-shift-operation-results")?.classList.toggle("active", section === "shift-operation-results");
   $("#nav-registration-admin").classList.toggle("active", section === "registration-admin");
   $("#nav-settlement-dashboard").classList.toggle("active", section === "settlement-dashboard");
   $("#nav-settlement-import-config").classList.toggle("active", section === "settlement-import-config");
@@ -757,6 +763,7 @@ function showSection(section) {
   if (section === "webshop") loadWebshop();
   if (section === "quality-complaints") loadQualityComplaints();
   if (section === "today-workers") loadTodayWorkers();
+  if (section === "shift-operation-results") loadShiftOperationResults();
   if (section === "coordinator-schedule") {
     if (state.coordinatorScheduleView === "day") {
       loadCoordinatorScheduleDay(state.coordinatorScheduleDay, { keepRendered: true });
@@ -773,6 +780,75 @@ function showSection(section) {
 
 function formatCount(value) {
   return new Intl.NumberFormat("hu-HU", { maximumFractionDigits: 0 }).format(Number(value || 0));
+}
+
+let shiftOperationRequest = 0;
+
+function renderShiftOperationResults(warehouses) {
+  const charts = $("#shift-operation-charts");
+  const details = $("#shift-operation-details");
+  charts.innerHTML = warehouses.map(({ warehouse, succeeded, failed }, index) => {
+    const total = succeeded + failed;
+    const label = `${warehouse}, ${formatCount(succeeded)} sikeres, ${formatCount(failed)} hibás`;
+    const chart = `<span aria-hidden="true" class="shift-operation-ring${total ? "" : " is-empty"}"
+      style="--success-share:${total ? 100 * succeeded / total : 0}%"><span><strong>${formatCount(total)}</strong>feldolgozott</span></span>`;
+    return `<article class="shift-operation-card">
+      <h3>${escapeHtml(warehouse)}</h3>
+      ${failed ? `<button type="button" class="shift-operation-chart-button" aria-label="${escapeHtml(label)}. Hibák megtekintése"
+        data-warehouse-index="${index}" aria-controls="shift-operation-details" aria-expanded="false">${chart}</button>` : chart}
+      <dl class="shift-operation-legend">
+        <div><dt>Sikeres</dt><dd>${formatCount(succeeded)}</dd></div>
+        <div><dt>Hibás</dt><dd>${formatCount(failed)}</dd></div>
+      </dl>
+    </article>`;
+  }).join("");
+
+  const buttons = [...charts.querySelectorAll(".shift-operation-chart-button")];
+  buttons.forEach((button) => {
+    const { warehouse, failed, failures } = warehouses[Number(button.dataset.warehouseIndex)];
+    button.addEventListener("click", () => {
+      const expanded = button.getAttribute("aria-expanded") === "true";
+      buttons.forEach((item) => item.setAttribute("aria-expanded", String(item === button && !expanded)));
+      details.classList.toggle("hidden", expanded);
+      if (expanded) {
+        details.replaceChildren();
+        return;
+      }
+      details.innerHTML = `<h3 id="shift-operation-details-title">${escapeHtml(warehouse)} · ${formatCount(failed)} hibás</h3>
+        <ul>${failures.map((item) => `<li>
+          <strong>${escapeHtml(item.courierName)}</strong>
+          <span class="muted">${escapeHtml([item.workDate, item.shiftStart].filter(Boolean).join(" · "))}</span>
+          <p>${escapeHtml(item.reason)}</p>
+        </li>`).join("")}</ul>`;
+      details.focus();
+    });
+  });
+}
+
+async function loadShiftOperationResults() {
+  const month = $("#shift-operation-month");
+  const operation = $("#shift-operation-type");
+  const status = $("#shift-operation-status");
+  const details = $("#shift-operation-details");
+  const request = ++shiftOperationRequest;
+  if (!month.value) month.value = localMonth();
+  $("#shift-operation-charts").replaceChildren();
+  details.classList.add("hidden");
+  details.replaceChildren();
+  status.classList.remove("error");
+  status.textContent = "Műszakműveletek betöltése…";
+  try {
+    const query = new URLSearchParams({ month: month.value, operation: operation.value });
+    const result = await api(`/api/coordinator/shift-operation-results?${query}`);
+    if (request !== shiftOperationRequest) return;
+    renderShiftOperationResults(result.warehouses);
+    status.textContent = result.warehouses.some((item) => item.succeeded + item.failed)
+      ? "" : "Ebben a hónapban még nincs feldolgozott művelet.";
+  } catch (error) {
+    if (request !== shiftOperationRequest) return;
+    status.classList.add("error");
+    status.textContent = error.message;
+  }
 }
 
 function formatAverage(value) {
@@ -12766,6 +12842,10 @@ $("#nav-coordinator-live").addEventListener("click", () => showSection("coordina
 $("#nav-departure-helper").addEventListener("click", () => showSection("departure-helper"));
 $("#nav-today-workers").addEventListener("click", () => showSection("today-workers"));
 $("#nav-coordinator-schedule").addEventListener("click", openCoordinatorSchedule);
+$("#nav-shift-operation-results")?.addEventListener("click", () => showSection("shift-operation-results"));
+$("#shift-operation-month")?.addEventListener("change", loadShiftOperationResults);
+$("#shift-operation-type")?.addEventListener("change", loadShiftOperationResults);
+$("#shift-operation-refresh")?.addEventListener("click", loadShiftOperationResults);
 $("#coordinator-live-refresh")?.addEventListener("click", loadCoordinatorLiveMap);
 $("#departure-helper-refresh")?.addEventListener("click", loadDepartureHelper);
 $("#today-workers-refresh")?.addEventListener("click", loadTodayWorkers);

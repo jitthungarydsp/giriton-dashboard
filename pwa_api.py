@@ -23426,6 +23426,38 @@ def schedule_hub_refresh_status(request_id: UUID, giriton_pwa_session: str | Non
             "conclusion": run.get("conclusion") if run else "", "found": bool(run)}
 
 
+@app.get("/api/coordinator/shift-operation-results")
+def coordinator_shift_operation_results(
+    response: Response,
+    operation: str = Query(default="deletion", pattern="^(booking|deletion)$"),
+    month: str = Query(default="", pattern=r"^([0-9]{4}-[0-9]{2})?$"),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    from resources.shift_operation_results import shift_operation_results
+
+    user = require_coordinator(require_user(giriton_pwa_session))
+    try:
+        start = date.fromisoformat(f"{month}-01") if month else datetime.now(LOCAL_TIMEZONE).date().replace(day=1)
+        end = month_end(start) + timedelta(days=1)
+        lower = datetime.combine(start, datetime.min.time(), tzinfo=LOCAL_TIMEZONE).astimezone(timezone.utc)
+        upper = datetime.combine(end, datetime.min.time(), tzinfo=LOCAL_TIMEZONE).astimezone(timezone.utc)
+    except (ValueError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail="Érvénytelen hónap.") from exc
+
+    def read(table, params):
+        return supabase_rest("GET", table, params=params, timeout=20) or []
+
+    try:
+        results = shift_operation_results(
+            read, operation, [f"BUD{value}" for value in coordinator_warehouse_ids(user)],
+            lower.isoformat(), upper.isoformat(), COURIER_HUB_DSP_ID,
+        )
+    except (HTTPException, requests.RequestException) as exc:
+        raise HTTPException(status_code=502, detail="A műszakműveletek naplója most nem tölthető be.") from exc
+    response.headers["Cache-Control"] = "private, no-store"
+    return {"operation": operation, "month": start.strftime("%Y-%m"), "warehouses": results}
+
+
 @app.get("/api/coordinator/schedule-capacity")
 def coordinator_schedule_capacity(giriton_pwa_session: str | None = Cookie(default=None)):
     user = require_coordinator(require_user(giriton_pwa_session))

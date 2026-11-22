@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest?v=244" />
     <link rel="icon" href="/icon.svg?v=244" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg?v=244" />
-    <link rel="stylesheet" href="/styles.css?v=300" />
+    <link rel="stylesheet" href="/styles.css?v=301" />
     <link rel="stylesheet" href="/webshop.css?v=277" />
     <link rel="stylesheet" href="/complaint_assignments.css?v=1" />
     <title>Jitt</title>
@@ -792,6 +792,28 @@
         <section id="coordinator-schedule-panel" class="ops-panel"></section>
       </div>
 
+      <div id="shift-operation-results-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <h2>Műszakműveletek</h2>
+            <p class="muted">Kattints a raktár kördiagramjára a hibák megtekintéséhez.</p>
+          </div>
+          <div class="workflow-controls">
+            <label class="month-picker">Művelet
+              <select id="shift-operation-type">
+                <option value="deletion">Külső törlések</option>
+                <option value="booking">Courier Hub-foglalások</option>
+              </select>
+            </label>
+            <label class="month-picker">Feldolgozás hónapja<input id="shift-operation-month" type="month" /></label>
+            <button id="shift-operation-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
+        </section>
+        <p id="shift-operation-status" role="status" class="muted"></p>
+        <section id="shift-operation-charts" class="shift-operation-charts" aria-label="Eredmények raktáranként"></section>
+        <section id="shift-operation-details" class="shift-operation-details hidden" tabindex="-1" aria-labelledby="shift-operation-details-title"></section>
+      </div>
+
       <div id="registration-admin-content" class="hidden">
         <section class="workflow-header">
           <div>
@@ -858,6 +880,7 @@
         <button id="nav-quality-complaints" class="hidden"><span>✉</span>Futár reklamációk kezelése</button>
         <button id="nav-complaint-assignments"><span>✉</span>Reklamációs feladataim</button>
         <button id="nav-coordinator-schedule" class="hidden"><span>15</span>Beosztás</button>
+        <button id="nav-shift-operation-results" class="hidden"><span>◔</span>Műszakműveletek</button>
         <button id="nav-coordinator" class="hidden"><span>±</span>Bónusz / Málusz</button>
         <button id="nav-registration-admin" class="hidden"><span>✓</span>Futárok jóváhagyása</button>
         <button disabled><span>☻</span>Bejelentés</button>
@@ -943,6 +966,6 @@
     <script src="/quality_form_test.js?v=3" defer></script>
     <script src="/quality_workspace.js?v=293" defer></script>
     <script src="/complaint_assignments.js?v=1" defer></script>
-    <script src="/app.js?v=300" defer></script>
+    <script src="/app.js?v=301" defer></script>
   </body>
 </html>
