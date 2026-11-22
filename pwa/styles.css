@@ -29,6 +29,23 @@
 .quality-inbox-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; list-style: none; }
 .quality-inbox-row::-webkit-details-marker { display: none; }
 .quality-inbox-row > strong { min-width: 0; overflow-wrap: anywhere; }
+.quality-outreach-summary { margin: 0 0 18px; }
+.quality-outreach-summary h3 { margin: 0 0 8px; }
+.quality-outreach-chart { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.quality-outreach-chart svg { width: 140px; flex: 0 0 140px; }
+.quality-outreach-chart circle { fill: none; stroke-width: 24; transform: rotate(-90deg); transform-origin: 70px 70px; }
+.quality-outreach-chart [data-outreach-filter] { cursor: pointer; }
+.quality-outreach-track { stroke: var(--line); }
+.quality-outreach-pending { stroke: var(--warning); }
+.quality-outreach-complained { stroke: var(--green-dark); }
+.quality-outreach-chart text { text-anchor: middle; font-size: 19px; font-weight: 800; fill: var(--ink); }
+.quality-outreach-breakdown { flex: 1 1 260px; }
+.quality-outreach-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.quality-outreach-breakdown dl { margin: 12px 0 0; }
+.quality-outreach-breakdown dl div { display: flex; justify-content: space-between; gap: 10px; }
+.quality-outreach-breakdown dd { margin: 0; white-space: nowrap; }
+.quality-outreach-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.quality-outreach-row p { margin: 4px 0; overflow-wrap: anywhere; }
 .quality-route-id { display: block; margin-top: 5px; color: var(--green-dark); font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
 .quality-inbox-row strong::before { content: "›"; color: var(--muted); margin-right: .5em; }
 .quality-inbox-item[open] > .quality-inbox-row strong::before { content: "⌄"; }

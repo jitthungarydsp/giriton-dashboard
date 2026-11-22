@@ -1,4 +1,118 @@
 /* Admin complaint workspace. All source text is escaped before rendering. */
+const qualityOutreachTopics = {
+  lateShift: "Műszakkésés",
+  uncleanedTimeWindowLate: "Nem mentesített címkésés",
+  noShow: "No-show",
+};
+
+const qualityOutreachStates = {
+  not_complained: "Még nincs reklamáció",
+  complained: "Reklamáció rögzítve",
+  in_progress: "Továbbítás folyamatban",
+  forwarded: "Továbbítva",
+  closed: "Lezárva",
+};
+
+function applyQualityOutreachFilter(value) {
+  const filter = document.querySelector("#quality-complaints-filter");
+  filter.value = `outreach-${value}`;
+  filter.dispatchEvent(new Event("change"));
+  filter.focus({ preventScroll: true });
+}
+
+function renderQualityOutreachSummary(root, rows) {
+  const complained = rows.filter(row => row.complaint_id || row.state === "forwarded").length;
+  const pending = rows.length - complained;
+  const share = rows.length ? complained / rows.length * 100 : 0;
+  const slice = (count, kind, className, length, offset) => count ? `<circle cx="70" cy="70" r="51" pathLength="100"
+    class="${className}" stroke-dasharray="${length} ${100 - length}" stroke-dashoffset="${-offset}" data-outreach-filter="${kind}" />` : "";
+  root.innerHTML = `<h3>Minőségi jelzések reklamációs aránya</h3>
+    <div class="quality-outreach-chart">
+      <svg viewBox="0 0 140 140" aria-hidden="true">
+        <circle class="quality-outreach-track" cx="70" cy="70" r="51" />
+        ${slice(pending, "not-complained", "quality-outreach-pending", 100 - share, share)}
+        ${slice(complained, "complained", "quality-outreach-complained", share, 0)}
+        <text x="70" y="75">${formatCount(rows.length)}</text>
+      </svg>
+      <div class="quality-outreach-breakdown">
+        <div class="quality-outreach-actions">
+          <button type="button" class="secondary" data-outreach-filter="complained">Reklamált · ${formatCount(complained)}</button>
+          <button type="button" class="secondary" data-outreach-filter="not-complained">Még nincs reklamáció · ${formatCount(pending)}</button>
+        </div>
+        <dl>${Object.entries(qualityOutreachTopics).map(([topic, label]) => {
+          const items = rows.filter(row => row.topic === topic);
+          const filed = items.filter(row => row.complaint_id || row.state === "forwarded").length;
+          return `<div><dt>${label}</dt><dd>${formatCount(filed)} / ${formatCount(items.length)} reklamált</dd></div>`;
+        }).join("")}</dl>
+      </div>
+    </div>`;
+  root.querySelectorAll("[data-outreach-filter]").forEach(control => {
+    control.addEventListener("click", () => applyQualityOutreachFilter(control.dataset.outreachFilter));
+  });
+}
+
+async function loadQualityOutreach(isCurrent) {
+  const root = document.querySelector("#quality-outreach-summary");
+  if (!root) return { items: [] };
+  root.setAttribute("aria-busy", "true");
+  try {
+    const result = await api("/api/quality/outreach", { silentLoading: true });
+    if (isCurrent()) renderQualityOutreachSummary(root, result.items);
+    return result;
+  } catch (error) {
+    if (isCurrent()) root.textContent = "A minőségi összesítő most nem érhető el.";
+    return { error: error.message };
+  } finally {
+    if (isCurrent()) root.removeAttribute("aria-busy");
+  }
+}
+
+async function renderQualityOutreachList(pending, filter, target, status, isCurrent) {
+  const result = await pending;
+  if (!isCurrent()) return;
+  if (result.error) {
+    status.textContent = result.error;
+    return;
+  }
+  const items = result.items.filter(row => {
+    const hasComplaint = Boolean(row.complaint_id) || row.state === "forwarded";
+    return filter === "outreach-all" || (filter === "outreach-complained" ? hasComplaint : !hasComplaint);
+  });
+  status.textContent = `${formatCount(items.length)} minőségi eset`;
+  target.innerHTML = items.map(row => `<article class="shift-card quality-outreach-row">
+    <div><strong>${escapeHtml(row.courier_name)}</strong><p>${escapeHtml(row.work_date)} · ${escapeHtml(qualityOutreachTopics[row.topic])}
+      · ${row.topic === "uncleanedTimeWindowLate" ? "Route ID " : ""}${escapeHtml(row.reference)}
+      ${row.item_count > 1 ? ` · ${formatCount(row.item_count)} cím` : ""}</p>
+      <p>${escapeHtml(qualityOutreachStates[row.state])} · ${row.last_email_sent_at
+        ? `E-mail kiküldve <time datetime="${escapeHtml(row.last_email_sent_at)}">${escapeHtml(new Intl.DateTimeFormat("hu-HU", {
+            dateStyle: "short", timeStyle: "short", timeZone: "Europe/Budapest",
+          }).format(new Date(row.last_email_sent_at)))}</time>` : "Nincs igazolt e-mail-küldés"}</p></div>
+    ${["complained", "not_complained"].includes(row.state) || (row.state === "in_progress" && row.complaint_id)
+      ? `<button type="button" class="secondary" data-outreach-form="${escapeHtml(row.id)}">Google-űrlap előkészítése</button>` : ""}
+  </article>`).join("") || '<p class="empty-card">Nincs ilyen minőségi eset.</p>';
+
+  target.querySelectorAll("[data-outreach-form]").forEach(button => button.addEventListener("click", async () => {
+    const row = items.find(item => item.id === button.dataset.outreachForm);
+    button.disabled = true;
+    try {
+      const id = row.complaint_id || (await api(`/api/quality/outreach/${encodeURIComponent(row.id)}/complaint`, {
+        method: "POST", body: "{}",
+      })).complaintId;
+      const payload = await api(`/api/quality/complaints?complaint=${encodeURIComponent(id)}`);
+      if (!isCurrent()) return;
+      const item = payload.items?.[0];
+      if (!item || item.status !== "open" || ["uncertain", "sent"].includes(item.delivery?.state)) {
+        throw new Error("Ehhez az ügyhöz most nem indítható Google-űrlapos továbbítás.");
+      }
+      await openQualityInboxAction(item, "forward", payload.forwardingEnabled);
+    } catch (error) {
+      if (isCurrent()) status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  }));
+}
+
 function qualityWorkspaceText(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }

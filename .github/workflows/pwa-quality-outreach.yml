@@ -1,0 +1,69 @@
+name: PWA quality outreach
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      migrate:
+        description: Apply the outreach database migration
+        type: boolean
+        default: false
+      send:
+        description: Send the daily courier reminders
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pwa-quality-outreach
+  cancel-in-progress: false
+
+jobs:
+  outreach:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: '587'
+      SMTP_USE_SSL: 'false'
+      SMTP_USE_STARTTLS: 'true'
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      SMTP_FROM_EMAIL: ${{ secrets.SMTP_USERNAME }}
+      SMTP_FROM_NAME: JittFutár
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install worker dependencies
+        run: pip install requests streamlit psycopg2-binary
+      - name: Apply migration
+        if: inputs.migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || secrets.SUPABASE_DB_URL }}
+        run: |
+          python - <<'PY'
+          import os
+          from contextlib import closing
+          from pathlib import Path
+          import psycopg2
+          with closing(psycopg2.connect(os.environ["DATABASE_URL"])) as conn:
+              conn.autocommit = True
+              with conn.cursor() as cursor:
+                  cursor.execute(Path("sql/pwa_quality_outreach.sql").read_text(encoding="utf-8"))
+          PY
+      - name: Refresh cases and process reminders
+        env:
+          SEND_REMINDERS: ${{ inputs.send || (github.event_name == 'schedule' && vars.PWA_QUALITY_OUTREACH_EMAIL_ENABLED == 'true') }}
+        run: |
+          args=(--month 2026-11)
+          if [ "$SEND_REMINDERS" = true ]; then args+=(--send); fi
+          python scripts/run_quality_outreach.py "${args[@]}"

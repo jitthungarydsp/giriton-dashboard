@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v302";
+const APP_VERSION = "v303";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -2016,11 +2016,16 @@ async function loadQualityComplaints() {
   state.qualityComplaintRequest = request;
   status.textContent = "Betöltés…";
   target.innerHTML = '';
+  const filter = $("#quality-complaints-filter").value;
+  const outreach = loadQualityOutreach(() => state.qualityComplaintRequest === request);
+  if (filter.startsWith("outreach-")) {
+    await renderQualityOutreachList(outreach, filter, target, status, () => state.qualityComplaintRequest === request);
+    return;
+  }
   try {
     const payload = await loadQualityInboxPages(() => state.qualityComplaintRequest === request);
     if (state.qualityComplaintRequest !== request) return;
     if (!payload) return;
-    const filter = $("#quality-complaints-filter").value;
     const items = filterQualityInbox(payload.items, filter);
     target.innerHTML = items.length ? items.map((item) => {
       if (item.inboxSignal) return renderQualityInboxSignal(item);

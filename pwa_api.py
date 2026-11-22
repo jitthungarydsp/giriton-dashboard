@@ -22944,6 +22944,48 @@ def list_quality_complaints(
             "partnerDecisionsAvailable": decisions_available}
 
 
+@app.get("/api/quality/outreach")
+def quality_outreach(
+    response: Response,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    if not quality_complaint_manager(require_user(giriton_pwa_session)):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    month = QUALITY_COMPLAINT_MONTH
+    stop = month_end(month) + timedelta(days=1)
+    rows = []
+    for offset in range(0, 50000, 500):
+        page = supabase_rest("GET", "pwa_quality_outreach_overview", params={
+            "select": "id,courier_id,courier_name,work_date,topic,reference,item_count,complaint_id,state,last_email_sent_at",
+            "tracked": "eq.true",
+            "and": f"(work_date.gte.{month.isoformat()},work_date.lt.{stop.isoformat()})",
+            "order": "work_date.desc,id.asc", "offset": str(offset), "limit": "500",
+        }) or []
+        rows.extend(page)
+        if len(page) < 500:
+            break
+    else:
+        raise HTTPException(status_code=503, detail="A minőségi jelzések teljes listája nem tölthető be.")
+    response.headers["Cache-Control"] = "private, no-store"
+    return {"items": rows}
+
+
+@app.post("/api/quality/outreach/{case_id}/complaint")
+def create_quality_outreach_complaint(
+    case_id: UUID,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not quality_complaint_manager(user):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    complaint_id = supabase_rest("POST", "rpc/pwa_create_outreach_complaint", payload={
+        "p_id": str(case_id), "p_actor": str(user.get("username") or "admin"),
+    })
+    if not complaint_id:
+        raise HTTPException(status_code=409, detail="Az ügy állapota megváltozott. Frissítsd a listát.")
+    return {"complaintId": complaint_id}
+
+
 @app.get("/api/quality/workspace")
 def quality_workspace(month: str = Query(default=""), giriton_pwa_session: str | None = Cookie(default=None)):
     if not quality_complaint_manager(require_user(giriton_pwa_session)):
