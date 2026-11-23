@@ -2838,33 +2838,31 @@ def load_latest_jit_session_id() -> str | None:
 @st.cache_data(show_spinner=False, ttl=60)
 def load_latest_excel_jit_session_id(period_start: date | None = None) -> str | None:
     """Find the latest non-API JIT session for Excel calculation mode."""
-    def _first_excel_session(rows: list[dict[str, object]]) -> str | None:
-        for row in rows:
-            source_sheet = str(row.get("source_sheet") or "")
-            if not source_sheet.lower().startswith("api financial overview"):
-                return str(row["session_id"])
-        return None
+    def excel_sessions():
+        return (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select("session_id")
+            .or_("source_sheet.is.null,source_sheet.not.ilike.API financial overview*")
+        )
 
     try:
         if period_start:
             _, period_end = month_bounds(period_start)
             try:
                 dated_rows = (
-                    get_db()
-                    .schema("settlement")
-                    .table("jit_row")
-                    .select("session_id,source_sheet,created_at")
+                    excel_sessions()
                     .gte("route_date", period_start.isoformat())
                     .lte("route_date", period_end.isoformat())
                     .order("created_at", desc=True)
-                    .limit(1000)
+                    .limit(1)
                     .execute()
                     .data
                     or []
                 )
-                dated_session = _first_excel_session(dated_rows)
-                if dated_session:
-                    return dated_session
+                if dated_rows:
+                    return str(dated_rows[0]["session_id"])
                 # Older imports can have a missing or non-normalized
                 # jit_row.route_date while their calculated summary still
                 # stores the correct settlement month.
@@ -2888,17 +2886,14 @@ def load_latest_excel_jit_session_id(period_start: date | None = None) -> str | 
                 pass
 
         rows = (
-            get_db()
-            .schema("settlement")
-            .table("jit_row")
-            .select("session_id,source_sheet,created_at")
+            excel_sessions()
             .order("created_at", desc=True)
-            .limit(1000)
+            .limit(1)
             .execute()
             .data
             or []
         )
-        return _first_excel_session(rows)
+        return str(rows[0]["session_id"]) if rows else None
     except BaseException:
         return None
 

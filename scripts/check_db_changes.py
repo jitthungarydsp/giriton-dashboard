@@ -36,7 +36,12 @@ def main() -> int:
         response = requests.get(
             url,
             headers=headers,
-            params={"select": "updated_at", "updated_at": "not.is.null", "order": "updated_at.desc", "limit": "1"},
+            params={
+                "select": "updated_at",
+                "updated_at": f"gte.{threshold.isoformat()}",
+                "order": "updated_at.desc",
+                "limit": "1",
+            },
             timeout=30,
         )
         if response.status_code in {400, 404}:
