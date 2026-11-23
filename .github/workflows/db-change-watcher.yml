@@ -3,7 +3,7 @@ name: DB change watcher
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "13 * * * *"
 
 concurrency:
   group: db-change-watcher
@@ -34,7 +34,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: python scripts/check_db_changes.py --window-minutes 10
+        run: python scripts/check_db_changes.py --window-minutes 60
 
       - name: Start Hub/PWA refresh
         if: ${{ steps.changes.outputs.changed == 'true' }}
