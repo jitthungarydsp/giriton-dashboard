@@ -63,10 +63,41 @@ begin
           and left(coalesce(s->>'date',s->>'shiftDate'),10) between p_month::text and p_through::text
           and e.value in ('late','késett','kesett','no_show','no show','did_not_come','did not come','nem jelent meg')
         union all
-        select d.courier_id::text,d.delivery_date,'uncleanedTimeWindowLate',btrim(d.route_id::text),d.uncleaned_delay_count
-        from public.courier_financial_overview_delay d
-        where d.delivery_date between p_month and p_through and d.uncleaned_delay_count>0
-          and btrim(d.route_id::text) <> '' and btrim(d.route_id::text) !~ '[,;[:space:]]'
+        -- Quality outreach only uses a delay explicitly reported by Courier Hub.
+        -- Do not infer a case from stop deltaMinutes, and do not substitute billed counts.
+        select r.courier_id::text,
+               left(coalesce(route->>'deliveryDate',route->>'delivery_date'),10)::date,
+               'uncleanedTimeWindowLate',
+               btrim(coalesce(route->>'routeId',route->>'route_id',route->>'id')),
+               greatest(case
+                   when coalesce(route->>'dataportDelayedOrderCount','') ~ '^[0-9]+$'
+                       then (route->>'dataportDelayedOrderCount')::integer
+                   else 0
+               end,0)
+        from (
+            select courier_id,dsp_id,year,month,status_code,response_json
+            from public.courier_financial_overview_raw_bud1
+            where route_layer='COMBINED'
+            union all
+            select courier_id,dsp_id,year,month,status_code,response_json
+            from public.courier_financial_overview_raw_bud2
+            where route_layer='COMBINED'
+        ) r
+        cross join lateral jsonb_array_elements(
+            case when jsonb_typeof(r.response_json->'routes')='array'
+                 then r.response_json->'routes' else '[]'::jsonb end
+        ) route
+        where r.year=extract(year from p_month) and r.month=extract(month from p_month)
+          and r.dsp_id=8 and r.status_code=200
+          and left(coalesce(route->>'deliveryDate',route->>'delivery_date'),10)
+              between p_month::text and p_through::text
+          and btrim(coalesce(route->>'routeId',route->>'route_id',route->>'id','')) <> ''
+          and btrim(coalesce(route->>'routeId',route->>'route_id',route->>'id','')) !~ '[,;[:space:]]'
+          and case
+              when coalesce(route->>'dataportDelayedOrderCount','') ~ '^[0-9]+$'
+                  then (route->>'dataportDelayedOrderCount')::integer
+              else 0
+          end > 0
     ) source
     group by courier_id,work_date,topic,reference
     on conflict(courier_id,work_date,topic,reference)
