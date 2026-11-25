@@ -286,11 +286,19 @@ def render_route_delay_form_sending(get_db, user):
         name = b.text_input('Futár neve',value=record['courier_name'])
         courier = c.text_input('Futár ID',value=record['courier_id'])
         a,b,c = st.columns(3)
-        route = a.text_input('Túraszám / Cargo ID',value=service.display_route_id(record))
+        form_category = str(data.get('Űrlap kategória') or '')
+        is_invoice = form_category == 'Elszámolás'
+        is_generic_form = bool(form_category) and not is_invoice
+        route_label = 'Műszak / túra azonosító' if is_generic_form else 'Túraszám / Cargo ID'
+        route = a.text_input(route_label,value=service.display_route_id(record))
         warehouse = b.text_input('Raktár',value=str(data.get('Raktár')or''))
-        is_invoice = str(data.get('Űrlap kategória') or '') == 'Elszámolás'
         if is_invoice:
             c.text_input('Google-űrlap kategória', value='Elszámolás / Invoice', disabled=True)
+            reason = st.text_area('Google-űrlapra kerülő szöveg',value=str(data.get('Reklamáció indoklása')or''),height=180)
+            evidence = st.text_area('Mentett forrásadat / megfontolás',value=str(data.get('Adat / megfontolás')or''),height=100)
+        elif is_generic_form:
+            category_label = service.preparation.form.CATEGORIES[form_category][0]
+            c.text_input('Google-űrlap kategória', value=category_label, disabled=True)
             reason = st.text_area('Google-űrlapra kerülő szöveg',value=str(data.get('Reklamáció indoklása')or''),height=180)
             evidence = st.text_area('Mentett forrásadat / megfontolás',value=str(data.get('Adat / megfontolás')or''),height=100)
         else:
@@ -304,7 +312,7 @@ def render_route_delay_form_sending(get_db, user):
         if st.form_submit_button('Módosítások mentése',type='primary'):
             changed = {**data,'Dátum':day.isoformat(),'Futár':name,'Futár ID':courier,'Túra ID':route,'Raktár':warehouse,
                        'Reklamáció indoklása':reason,'Adat / megfontolás':evidence}
-            if not is_invoice:
+            if not is_invoice and not is_generic_form:
                 changed.update({'Javasolt kategória száma':int(category),'Kategóriajavaslat':label,
                                 'Kategória futárral egyeztetve':'Igen'if agreed else'Nem',
                                 'Forráseltérés ellenőrizve':'Igen'if checked else'Nem'})
