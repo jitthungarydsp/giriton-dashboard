@@ -286,20 +286,40 @@ async function supabaseFetch(env, schema, table, params) {
   return rows;
 }
 
+function settlementWasReset(states) {
+  const settlement = states?.settlement || {};
+  return key(settlement.status).toLowerCase() !== "done" && (
+    /új pénzügyi snapshot|uj penzugyi snapshot/i.test(settlement.status_note || "") ||
+    key(settlement.updated_by).toLowerCase() === "finance-snapshot-refresh"
+  );
+}
+
 function statusForRow(row, closure) {
   const label = key(row.dashboardStatus);
   const states = row.workflowStates;
   if (states) {
-    const settlement = states.settlement || {};
-    const reset = key(settlement.status).toLowerCase() !== "done" && (
-      /új pénzügyi snapshot|uj penzugyi snapshot/i.test(settlement.status_note || "") ||
-      key(settlement.updated_by).toLowerCase() === "finance-snapshot-refresh"
-    );
     if (label === "Reklamáció") return label;
-    if (reset) return "Elszámolás elfogadásra vár";
+    if (settlementWasReset(states)) return "Elszámolás elfogadásra vár";
     if (key(states.invoice_payment?.status).toLowerCase() === "done" || closure?.status === "done") return "Kifizetve";
   }
   return ({ "TIG-re vár": "Teljesítés-összesítőre vár", "TIG elfogadásra vár": "Teljesítés-összesítő áttekintésre vár" })[label] || label || "Állapot nem elérhető";
+}
+
+const settlementWorkflowKeys = ['settlement','tig','invoice_submit','invoice_check','invoice_payment'];
+
+function courierWorkflowProgress(row, closure) {
+  const states = row.workflowStates || {};
+  const readyAt = {
+    'Elszámolás készül':0, 'Elszámolás':0, 'Elszámolás elfogadásra vár':0,
+    'Teljesítés-összesítőre vár':1, 'Teljesítés-összesítő áttekintésre vár':1,
+    'Számlafeltöltésre vár':2, 'Számla ellenőrzésre vár':3, 'Kifizetésre vár':4, 'Kifizetve':5,
+  };
+  if (settlementWasReset(states)) return {completed:[],current:'settlement'};
+  const label = statusForRow(row, closure);
+  const currentIndex = closure?.status === 'done' || states.invoice_payment?.status === 'done' ? 5 : readyAt[label];
+  const completed = settlementWorkflowKeys.filter((action,index) => index < currentIndex || states[action]?.status === 'done');
+  const hasEvidence = currentIndex !== undefined || settlementWorkflowKeys.some(action => Boolean(states[action]?.status));
+  return {completed,current:hasEvidence ? settlementWorkflowKeys.find(action => !completed.includes(action)) || null : null};
 }
 
 async function loadLatestFinanceSnapshots(env, periodStart, courierId, { trendOnly = false } = {}) {
@@ -424,6 +444,7 @@ function buildCourierRow(row, profile, workload, closure, snapshot, processMetri
     email: key(profile?.email || profile?.billing_email),
     warehouse: key(snapshot?.warehouse_label || profile?.warehouse_name || "BUD"),
     status: statusForRow(row, closure),
+    workflowProgress: courierWorkflowProgress(row, closure),
     routeCount,
     orderCount,
     base,

@@ -12,12 +12,32 @@
     .trend-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.trend-kpis .kpi{min-height:135px}.trend-kpis .kpi b{font-size:26px}.trend-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.trend-chart{display:block;width:100%;height:auto;margin-top:16px}.trend-chart text{font-family:inherit;fill:var(--muted);font-size:11px}.trend-keys{display:flex;gap:16px;margin-top:12px;color:var(--muted);font-size:11px}.trend-keys i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}.trend-note{margin-top:12px!important;line-height:1.5!important}.trend-table-wrap{overflow-x:auto}.trend-table{min-width:650px}.trend-table td:first-child{white-space:nowrap}.trend-missing{color:#a27128!important}@media(max-width:1100px){.trend-kpis{grid-template-columns:repeat(3,1fr)}}@media(max-width:700px){.trend-kpis,.trend-grid{grid-template-columns:1fr}.trend-kpis .kpi{min-height:110px}}
     .credit-breakdown{margin-top:10px;padding-top:18px;border-top:1px solid var(--line)}.credit-breakdown .donut-layout{min-height:220px}.credit-breakdown .legend-row span{line-height:1.35}
     .column-sort{border:0;padding:0;background:transparent;color:inherit;font:inherit;font-weight:700;white-space:nowrap}.column-sort:hover{color:var(--blue)}.column-sort:focus-visible{outline:2px solid var(--blue);outline-offset:4px;border-radius:2px}.column-sort.active{color:var(--blue)}
+    .courier-refresh{display:inline-grid;place-items:center;width:28px;height:28px;margin-inline-start:5px;padding:0;vertical-align:middle;border:1px solid #dce3ef;border-radius:7px;background:#fff;color:var(--blue);font-size:17px;cursor:pointer}
+    .courier-refresh:hover{background:#eef4ff}.courier-refresh:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.courier-refresh:disabled{opacity:.5;cursor:wait}
+
     .courier-filters{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}.process-detail{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.process-detail h4{margin:0;font-size:12px;letter-spacing:-.02em}.process-detail p{margin-top:4px;color:var(--muted);font-size:10px;line-height:1.35}.process-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}.process-card{padding:10px;border-radius:8px;background:#f6f8fc}.process-card span{display:block;color:var(--muted);font-size:10px;line-height:1.25}.process-card b{display:block;margin-top:5px;font-size:14px;letter-spacing:-.04em}
     @media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}.grid,.finance,.couriers{grid-template-columns:1fr}.timeline{grid-template-columns:repeat(3,1fr);gap:16px}.step:not(:last-child):after{display:none}}@media(max-width:820px){.login{grid-template-columns:1fr}.login-hero{min-height:300px;padding:30px}.hero-copy{margin:62px 0 0}.hero-copy h1{font-size:42px}.hero-copy p:last-child,.hero-points{display:none}.login-side{padding:42px 24px}.shell{grid-template-columns:1fr}.sidebar{display:none}.content{padding:20px 16px 36px}.top{display:block}.toolbar{margin-top:18px}.sync{display:none}}@media(max-width:540px){.kpis,.metrics,.compare,.detail-cols,.process-grid{grid-template-columns:1fr}.toolbar{display:block}.picker{width:100%;justify-content:space-between}.timeline{grid-template-columns:1fr}.step{min-height:100px;padding-left:32px}.dot{position:absolute;left:0}.step label{margin-top:0}.courier-filters{justify-content:stretch;margin-top:12px}.search,.courier-table td:nth-child(3),.courier-table th:nth-child(3),.courier-table td:nth-child(4),.courier-table th:nth-child(4){display:none}.footer{display:block;line-height:1.8}}
     .status.Kifizetve,.detail-status.paid{color:#167344;background:#e5f5ed}
     .status.Reklamáció,.detail-status.complaint{color:#b42332;background:#fff0f0}
     .status-filter{max-width:100%;width:260px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);font-size:11px}.status-filter:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
     @media(max-width:540px){.status-filter{width:100%}}
+
+    .courier-workflow-overview{display:flex;align-items:center;gap:14px;margin:12px 0 14px}
+    .workflow-ring{flex:0 0 56px;aspect-ratio:1;display:grid;place-items:center;border-radius:50%;background:conic-gradient(#218459 var(--progress),#e5eaf2 0)}
+    .workflow-ring span{display:grid;place-items:center;width:44px;aspect-ratio:1;border-radius:50%;background:#fff;color:#172a42;font:700 14px/1 system-ui}
+    .workflow-complaint{display:block;color:#a52a32;font-size:12px;margin-top:4px}
+    .courier-workflow-steps{list-style:none;padding:0;margin:0}
+    .courier-workflow-steps li{min-height:38px;display:grid;grid-template-columns:24px minmax(0,1fr) auto;align-items:center;gap:9px;position:relative}
+    .courier-workflow-steps li:not(:last-child)::after{content:"";position:absolute;width:1px;left:11px;top:30px;height:16px;background:#dce3ed}
+    .workflow-step-icon{width:24px;height:24px;display:grid;place-items:center;border:1px solid #cbd5e3;border-radius:50%;background:#fff;color:#53667e;font-weight:800}
+    .courier-workflow-steps .done .workflow-step-icon{background:#e4f4e9;border-color:#aad8b8;color:#196141}
+    .courier-workflow-steps .current .workflow-step-icon{background:#eef3ff;border-color:#446de3;color:#3158c1}
+    .courier-workflow-steps .current .workflow-step-label{color:#244fca;font-weight:750}
+    .courier-workflow-steps small{color:var(--muted);font-size:11px;text-align:right}
+    .courier-workflow-steps .current small{color:#244fca}
+    .workflow-step-label a,.workflow-step-label button{color:inherit;font:inherit;text-align:left;font-weight:inherit;text-decoration:underline;text-underline-offset:3px}
+    .workflow-step-label button{padding:0;background:none;border:0;cursor:pointer}
+    .workflow-step-actions{margin-top:12px}
   </style>
 </head>
 <body>
@@ -27,7 +47,7 @@
     <section class="board" data-view="process" hidden><div class="head"><div><h2>Elszámolási folyamat</h2><p>Megnyitástól a rendszerben rögzített kifizetésig.</p></div><span class="tag" id="process-tag">—</span></div><article class="panel"><div class="panel-head"><div><h3>Folyamat idővonala</h3><p>Az egyes átadási pontok átlagos és medián ideje.</p></div></div><div class="timeline" id="timeline"></div></article><article class="panel" style="margin-top:14px"><div class="panel-head"><div><h3>Szakaszos részletezés</h3><p>Csak az időrendben lezárható folyamatok szerepelnek.</p></div></div><div id="process-table"></div></article></section>
     <section class="board" data-view="complaints" hidden><div class="head"><div><h2>Elszámolási reklamációk</h2><p>Terhelés, válaszidő és levonási összefüggés.</p></div><span class="tag" id="complaint-tag">—</span></div><div class="metrics"><article class="metric"><label>Reklamációk száma</label><b id="c-total">—</b><p>összes elszámolási reklamáció</p></article><article class="metric"><label>Átlag reklamáció</label><b id="c-average">—</b><p>futár–hónaponként</p></article><article class="metric"><label>Megválaszolt / lezárt reklamáció</label><b id="c-responses">—</b><p>státusz vagy rögzített válasz alapján</p></article><article class="metric"><label>Átlagos válaszidő</label><b id="c-time">—</b><p id="c-median">medián: —</p></article></div><article class="panel" style="margin-top:14px"><div class="panel-head"><div><h3>Levonás reklamáció szerint</h3><p>A reklamáló és nem reklamáló futárok pénzügyi összehasonlítása.</p></div></div><div class="compare" id="compare"></div></article></section>
     <section class="board" data-view="finance" hidden><div class="head"><div><h2>Pénzügyi hatás</h2><p>Havi bevétel, levonások és kifizetési állapot.</p></div><span class="tag" id="finance-tag">—</span></div><div class="finance"><article class="panel"><div class="panel-head"><div><h3>Havi pénzügyi kép</h3><p>A futárösszesítőkből számított értékek.</p></div></div><div class="money-total"><b id="payable">—</b><p>Kifizetendő<br>összesen</p></div><div class="money-bars" id="finance-bars"></div></article><article class="panel"><div class="panel-head"><div><h3>Levonások</h3><p>Legfontosabb levonási csoportok.</p></div></div><div class="donut-layout"><div class="donut" id="finance-donut" data-total="—"></div><div class="legend" id="finance-legend"></div></div><div class="credit-breakdown"><div class="panel-head"><div><h3>Jóváírások és hozzáadott előlegek</h3><p>Bónuszok és pozitív korrekciók a kiválasztott hónapban. Az új előleg külön tétel, nem növeli az elszámolási végösszeget.</p></div><span class="badge" id="finance-credit-badge">—</span></div><div class="donut-layout"><div class="donut" id="finance-credit-donut" data-total="—"></div><div class="legend" id="finance-credit-legend"></div></div><p>A hozzáadott előleg a kezdő hónapjához tartozó aktív előlegterv vagy tervhez még nem kapcsolt jóváhagyott igény összege. Nem a havi előleglevonás és nem igazolt banki kifizetés.</p></div></article></div><article class="panel" style="margin-top:14px"><div class="panel-head"><div><h3>Futárösszesítő státuszok</h3><p>Hány futárnál vár még lépés vagy ellenőrzés.</p></div></div><div class="status-list" id="finance-status"></div></article></section>
-    <section class="board" data-view="couriers" hidden><div class="head"><div><h2>Futár 360°</h2><p>Futár ID + hónap szerint megnyitható pénzügyi és folyamatösszesítő.</p></div><div class="courier-filters"><select id="status-filter" class="status-filter" aria-label="Szűrés elszámolási állapot szerint"><option value="">Összes állapot</option></select><input class="search" id="search" placeholder="Név vagy futár ID keresése"></div></div><div class="couriers"><article class="panel"><div class="panel-head"><div><h3>Futárlista</h3><p id="courier-count">Adatok betöltése…</p></div></div><div class="table-wrap"><table class="courier-table"><thead><tr><th>Futár</th><th>Raktár</th><th aria-sort="none"><button type="button" class="column-sort" data-courier-sort="status" data-sort-label="Állapot">Állapot ↕</button></th><th>Felelős</th><th aria-sort="none"><button type="button" class="column-sort" data-courier-sort="deductionImpact" data-sort-label="Levonás">Levonás ↕</button></th><th aria-sort="none"><button type="button" class="column-sort" data-courier-sort="payable" data-sort-label="Kifizetendő">Kifizetendő ↕</button></th></tr></thead><tbody id="courier-rows"></tbody></table></div></article><article class="panel detail" id="courier-detail"><div class="empty">Válassz futárt a listából a havi részletek megnyitásához.</div></article></div></section>
+    <section class="board" data-view="couriers" hidden><div class="head"><div><h2>Futár 360°</h2><p>Futár ID + hónap szerint megnyitható pénzügyi és folyamatösszesítő.</p></div><div class="courier-filters"><select id="status-filter" class="status-filter" aria-label="Szűrés elszámolási állapot szerint"><option value="">Összes állapot</option></select><input class="search" id="search" placeholder="Név vagy futár ID keresése"></div></div><div class="couriers"><article class="panel"><div class="panel-head"><div><h3>Futárlista</h3><p id="courier-count">Adatok betöltése…</p></div></div><div class="table-wrap"><table class="courier-table"><thead><tr><th>Futár</th><th>Raktár</th><th aria-sort="none"><button type="button" class="column-sort" data-courier-sort="status" data-sort-label="Állapot">Állapot ↻</button><button type="button" id="courier-refresh" class="courier-refresh" aria-label="Futárlista frissítése" title="Futárlista frissítése"><span aria-hidden="true">⟳</span></button></th><th>Felelős</th><th aria-sort="none"><button type="button" class="column-sort" data-courier-sort="deductionImpact" data-sort-label="Levonás">Levonás ↕</button></th><th aria-sort="none"><button type="button" class="column-sort" data-courier-sort="payable" data-sort-label="Kifizetendő">Kifizetendő ↕</button></th></tr></thead><tbody id="courier-rows"></tbody></table></div></article><article class="panel detail" id="courier-detail"><div class="empty">Válassz futárt a listából a havi részletek megnyitásához.</div></article></div></section>
     <section class="board" data-view="trends" hidden>
       <div class="head"><div><h2>Az elmúlt 3 hónap tendenciája</h2><p id="trend-period">A kiválasztott hónap és az előtte lévő két hónap.</p></div><span class="tag" id="trend-status">Adatok betöltése…</span></div>
       <div id="trend-error" class="notice" hidden role="alert"></div>
@@ -61,30 +81,93 @@
       if(select.innerHTML!==markup)select.innerHTML=markup;
       select.value=counts.has(selected)?selected:'';
     }
-    let courierSort={key:null,direction:'desc'};
+    const courierStatusOrder=[
+      'Kifizetve','Elszámolás elfogadásra vár','Teljesítés-összesítőre vár',
+      'Teljesítés-összesítő áttekintésre vár','Számlafeltöltésre vár','Számla ellenőrzésre vár',
+      'Kifizetésre vár','Reklamáció','Reklamáció / Folyamatban','Elszámolás','Elszámolás készül',
+    ];
+    const courierStatusOf=row=>row.status||'Állapot nem elérhető';
+    function availableCourierStatuses(rows){
+      const statuses=new Set(rows.map(courierStatusOf));
+      const ordered=courierStatusOrder.filter(status=>statuses.delete(status));
+      return ordered.concat([...statuses].sort((a,b)=>a.localeCompare(b,'hu')));
+    }
+    let courierSort={key:null,direction:'desc',status:null};
     function sortCourierRows(rows){
       if(!courierSort.key)return rows;
+      const statuses=courierSort.key==='status'?availableCourierStatuses(rows):[];
+      const first=statuses.indexOf(courierSort.status);
+      const order=first>0?[...statuses.slice(first),...statuses.slice(0,first)]:statuses;
+      const rank=new Map(order.map((status,index)=>[status,index]));
       const direction=courierSort.direction==='asc'?1:-1;
       return [...rows].sort((a,b)=>{
         const difference=courierSort.key==='status'
-          ? String(a.status||'').localeCompare(String(b.status||''),'hu')
-          : Number(a[courierSort.key]||0)-Number(b[courierSort.key]||0);
-        return difference*direction||String(a.courierName||'').localeCompare(String(b.courierName||''),'hu')||String(a.courierId||'').localeCompare(String(b.courierId||''),'hu');
+          ? rank.get(courierStatusOf(a))-rank.get(courierStatusOf(b))
+          : (Number(a[courierSort.key]||0)-Number(b[courierSort.key]||0))*direction;
+        return difference||String(a.courierName||'').localeCompare(String(b.courierName||''),'hu')||String(a.courierId||'').localeCompare(String(b.courierId||''),'hu');
       });
     }
     function toggleCourierSort(key){
-      courierSort={key,direction:courierSort.key===key&&courierSort.direction==='desc'?'asc':'desc'};
+      if(key==='status'){
+        const statuses=availableCourierStatuses(filterCourierRows(''));
+        const index=courierSort.key===key?statuses.indexOf(courierSort.status):-1;
+        courierSort={key,status:statuses[(index+1)%statuses.length]??null};
+        $('#status-filter').value='';
+      }else{
+        courierSort={key,direction:courierSort.key===key&&courierSort.direction==='desc'?'asc':'desc'};
+      }
       renderCouriers();
     }
     function updateCourierSortHeaders(){
       $$('[data-courier-sort]').forEach(button=>{
         const active=button.dataset.courierSort===courierSort.key;
         button.classList.toggle('active',active);
+        if(button.dataset.courierSort==='status'){
+          button.textContent=button.dataset.sortLabel+' ↻';
+          button.title='A következő állapotcsoport előresorolása';
+          button.closest('th').setAttribute('aria-sort',active?'other':'none');
+          return;
+        }
         button.textContent=button.dataset.sortLabel+' '+(active?(courierSort.direction==='asc'?'↑':'↓'):'↕');
         button.closest('th').setAttribute('aria-sort',active?(courierSort.direction==='asc'?'ascending':'descending'):'none');
       });
     }
-    function detail(r){if(!r){$('#courier-detail').innerHTML='<div class="empty">Válassz futárt a listából a havi részletek megnyitásához.</div>';return}const list=x=>x.map(([n,field])=>`<div><button type="button" class="finance-breakdown-trigger" data-finance-courier="${esc(r.courierId)}" data-finance-field="${field}" data-finance-label="${esc(n)}" aria-haspopup="dialog"><span>${esc(n)}</span><b>${huf(r[field])}</b></button></div>`).join(''),source=r.snapshotIsPublished?'A PWA-ban publikált pénzügyi snapshot szerint.':'Havi összesítő szerint; publikált PWA snapshot nem érhető el.',m=r.processMetric||{},duration=(value,known)=>known?hours(value):'—',metricCard=(label,value,note)=>`<div class="process-card"><span>${label}</span><b>${value}</b><small>${note}</small></div>`;const process=m.hasData?`<div class="process-detail"><h4>Reklamáció és folyamatidő</h4><p>Az adott futár és kiválasztott hónap adatai.</p><div class="process-grid">${metricCard('Elszámolási reklamáció',`${nf.format(m.financialComplaintCount||0)} db`,`${nf.format(m.respondedComplaintCount||0)} megválaszolt / lezárt`)}${metricCard('Reklamáció válaszideje',m.responseTimedCount>0?hours(m.responseAverageHours):'—',m.responseTimedCount>0?`${nf.format(m.responseTimedCount)} időbélyeges válasz átlaga`:'nincs időbélyeges válasz')}${metricCard('Megnyitás → elszámolás',duration(m.openingToSettlementHours,m.hasOpeningToSettlement),'elszámolás elfogadásáig')}${metricCard('Elszámolás → TIG',duration(m.settlementToTigHours,m.hasSettlementToTig),'TIG elfogadásáig')}${metricCard('TIG → számla',duration(m.tigToInvoiceHours,m.hasTigToInvoice),'számlafeltöltésig')}${metricCard('Számla → kifizetés',duration(m.invoiceToPaidHours,m.hasInvoiceToPaid),'rendszerben kifizetve')}</div></div>`:'<div class="process-detail"><h4>Reklamáció és folyamatidő</h4><p>Erre a futár–hónapra még nincs mentett folyamatmutató.</p></div>';$('#courier-detail').innerHTML=`<div class="c360-card-head"><h3>${esc(r.courierName||'Ismeretlen futár')}</h3><button type="button" class="c360-button" data-open-courier="${esc(r.courierId)}">Megnyitás ↗</button></div><p>#${esc(r.courierId||'–')} · ${esc(r.warehouse||'–')} · ${nf.format(r.routeCount||0)} túra</p><button type="button" class="detail-status status-button ${r.status==='Kifizetve'?'paid':String(r.status||'').startsWith('Reklamáció')?'complaint':''}" data-status-courier="${esc(r.courierId)}" data-status-label="${esc(r.status||'')}" aria-haspopup="dialog">${esc(r.status||'—')}</button><p class="muted">${source}</p><div class="detail-cols"><div class="detail-list">${list([['Alapdíj', 'base'],['Borravaló', 'tip'],['Kifli bónusz', 'importedBonus'],['JITT bónusz', 'jittBonus'],['Korrekció +', 'correctionIncome'],['Hozzáadott fizetési előleg', 'salaryAdvanceAdded'],['Jóváírások összesen', 'income']])}</div><div class="detail-list">${list([['Kifli malusz', 'importedMalus'],['JITT malusz', 'jittMalus'],['Korrekció −', 'correctionDeduction'],['ATM / KP', 'atm'],['Fizetéselőleg', 'salaryAdvance'],['Céltartalék', 'reserve'],['Biztosítás', 'insurance'],['Levonások összesen', 'deductionImpact'],['Kifizetendő', 'payable']])}</div></div>${process}`}function renderCouriers(){updateCourierStatusFilter();updateCourierSortHeaders();const selectedStatus=$('#status-filter').value,q=$('#search').value.trim().toLocaleLowerCase('hu-HU'),rows=sortCourierRows((data?.couriers||[]).filter(r=>!selectedStatus||(selectedStatus==='Reklamáció'?String(r.status||'').startsWith('Reklamáció'):(r.status||'Állapot nem elérhető')===selectedStatus)).filter(r=>`${r.courierName||''} ${r.courierId||''}`.toLocaleLowerCase('hu-HU').includes(q))),sel=rows.find(r=>String(r.courierId)===String(chosen))||rows[0];if(sel)chosen=sel.courierId;$('#courier-count').textContent=`${nf.format(rows.length)} futár a listában`;$('#courier-rows').innerHTML=rows.length?rows.map((r,i)=>`<tr data-index="${i}" class="${String(r.courierId)===String(chosen)?'selected':''}"><td><b>${esc(r.courierName||'Ismeretlen')}</b><br><small>#${esc(r.courierId||'–')}</small></td><td>${esc(r.warehouse||'–')}</td><td><button type="button" class="status status-button ${esc(r.status||'')}" data-status-courier="${esc(r.courierId)}" data-status-label="${esc(r.status||'')}" aria-haspopup="dialog">${esc(r.status||'–')}</button></td><td class="courier-assignee">${esc(r.complaintAssignee||(r.complaintStateAvailable===false?'Nem elérhető':'—'))}</td><td>${huf(r.deductionImpact)}</td><td><b>${huf(r.payable)}</b></td></tr>`).join(''):'<tr><td colspan="6" class="empty">Nincs találat.</td></tr>';$$('#courier-rows tr[data-index]').forEach(e=>e.onclick=()=>{chosen=rows[+e.dataset.index].courierId;renderCouriers()});detail(sel)}function render(){const c=$('#month').value,l=monthLabel(c);$('#side-month').textContent=l;$('#side-summary').textContent=`${nf.format(tot().couriers||0)} futár · havi DB összesítő`;$('#footer').textContent=`Adatforrás: ${data?.source||'supabase'} · ${l}`;renderOverview();renderProcess();renderComplaints();renderFinance();renderCouriers()}
+    function renderCourierWorkflow(row){
+      const stages=[
+        ['settlement','Elszámolás elfogadása'],
+        ['tig','Teljesítés-összesítő elfogadása'],
+        ['invoice_submit','Számla feltöltése'],
+        ['invoice_check','Számla ellenőrzése'],
+        ['invoice_payment','Kifizetés'],
+      ];
+      const completed=new Set(row.workflowProgress?.completed||[]);
+      const current=row.workflowProgress?.current;
+      const count=stages.filter(([key])=>completed.has(key)).length;
+      const overview=count===stages.length?'Minden lépés kész':current?'Elszámolás folyamatban':'Nincs rögzített folyamatállapot';
+      const canOpen=/^\d{1,12}$/.test(String(row.courierId||''))&&/^\d{4}-(0[1-9]|1[0-2])$/.test($('#month').value);
+      const action=(key,label,style='')=>{
+        if(!canOpen)return label;
+        if(key==='invoice_payment')return `<button type="button" class="${style}" data-status-courier="${esc(row.courierId)}" data-status-label="Kifizetés" aria-haspopup="dialog">${label}</button>`;
+        const query=new URLSearchParams({'hub-workflow':key,courier:row.courierId,month:$('#month').value});
+        return `<a class="${style}" href="https://futar.jitt.hu/?${esc(String(query))}" target="_blank" rel="noopener">${label}</a>`;
+      };
+      const steps=stages.map(([key,label])=>{
+        const done=completed.has(key),active=!done&&key===current;
+        const status=done?'Kész':active?'Aktuális':current?'Hátravan':'Nincs adat';
+        return `<li class="${done?'done':active?'current':'pending'}"${active?' aria-current="step"':''}><span class="workflow-step-icon" aria-hidden="true">${done?'✓':active?'•':''}</span><span class="workflow-step-label">${action(key,label)}</span><small>${status}</small></li>`;
+      }).join('');
+      return `<section class="process-detail courier-workflow" aria-labelledby="courier-workflow-title"><h4 id="courier-workflow-title">Elszámolási folyamat</h4><div class="courier-workflow-overview"><div class="workflow-ring" style="--progress:${count/stages.length*100}%" role="progressbar" aria-label="Befejezett elszámolási lépések" aria-valuemin="0" aria-valuemax="${stages.length}" aria-valuenow="${count}"><span>${count}/${stages.length}</span></div><div><strong>${overview}</strong>${String(row.status||'').startsWith('Reklamáció')?`<span class="workflow-complaint">${esc(row.status)}</span>`:''}</div></div><ol class="courier-workflow-steps">${steps}</ol>${current&&canOpen?`<div class="workflow-step-actions">${action(current,'Továbbvitel megnyitása ↗','c360-button')}</div>`:''}</section>`;
+    }
+    function detail(r){if(!r){$('#courier-detail').innerHTML='<div class="empty">Válassz futárt a listából a havi részletek megnyitásához.</div>';return}const list=x=>x.map(([n,field])=>`<div><button type="button" class="finance-breakdown-trigger" data-finance-courier="${esc(r.courierId)}" data-finance-field="${field}" data-finance-label="${esc(n)}" aria-haspopup="dialog"><span>${esc(n)}</span><b>${huf(r[field])}</b></button></div>`).join(''),source=r.snapshotIsPublished?'A PWA-ban publikált pénzügyi snapshot szerint.':'Havi összesítő szerint; publikált PWA snapshot nem érhető el.';const process=renderCourierWorkflow(r);$('#courier-detail').innerHTML=`<div class="c360-card-head"><h3>${esc(r.courierName||'Ismeretlen futár')}</h3><button type="button" class="c360-button" data-open-courier="${esc(r.courierId)}">Megnyitás ↗</button></div><p>#${esc(r.courierId||'–')} · ${esc(r.warehouse||'–')} · ${nf.format(r.routeCount||0)} túra</p><button type="button" class="detail-status status-button ${r.status==='Kifizetve'?'paid':String(r.status||'').startsWith('Reklamáció')?'complaint':''}" data-status-courier="${esc(r.courierId)}" data-status-label="${esc(r.status||'')}" aria-haspopup="dialog">${esc(r.status||'—')}</button><p class="muted">${source}</p><div class="detail-cols"><div class="detail-list">${list([['Alapdíj', 'base'],['Borravaló', 'tip'],['Kifli bónusz', 'importedBonus'],['JITT bónusz', 'jittBonus'],['Korrekció +', 'correctionIncome'],['Hozzáadott fizetési előleg', 'salaryAdvanceAdded'],['Jóváírások összesen', 'income']])}</div><div class="detail-list">${list([['Kifli malusz', 'importedMalus'],['JITT malusz', 'jittMalus'],['Korrekció −', 'correctionDeduction'],['ATM / KP', 'atm'],['Fizetéselőleg', 'salaryAdvance'],['Céltartalék', 'reserve'],['Biztosítás', 'insurance'],['Levonások összesen', 'deductionImpact'],['Kifizetendő', 'payable']])}</div></div>${process}`}
+    function filterCourierRows(selectedStatus){
+      const query=$('#search').value.trim().toLocaleLowerCase('hu-HU');
+      return (data?.couriers||[]).filter(row=>{
+        const status=courierStatusOf(row);
+        const statusMatches=!selectedStatus||(selectedStatus==='Reklamáció'?status.startsWith('Reklamáció'):status===selectedStatus);
+        return statusMatches&&`${row.courierName||''} ${row.courierId||''}`.toLocaleLowerCase('hu-HU').includes(query);
+      });
+    }
+    function renderCouriers(){updateCourierStatusFilter();updateCourierSortHeaders();const rows=sortCourierRows(filterCourierRows($('#status-filter').value)),sel=rows.find(r=>String(r.courierId)===String(chosen))||rows[0];if(sel)chosen=sel.courierId;$('#courier-count').textContent=`${nf.format(rows.length)} futár a listában${courierSort.key==='status'&&rows.length?` · Elöl: ${courierStatusOf(rows[0])}`:''}`;$('#courier-rows').innerHTML=rows.length?rows.map((r,i)=>`<tr data-index="${i}" class="${String(r.courierId)===String(chosen)?'selected':''}"><td><b>${esc(r.courierName||'Ismeretlen')}</b><br><small>#${esc(r.courierId||'–')}</small></td><td>${esc(r.warehouse||'–')}</td><td><button type="button" class="status status-button ${esc(r.status||'')}" data-status-courier="${esc(r.courierId)}" data-status-label="${esc(r.status||'')}" aria-haspopup="dialog">${esc(r.status||'–')}</button></td><td class="courier-assignee">${esc(r.complaintAssignee||(r.complaintStateAvailable===false?'Nem elérhető':'—'))}</td><td>${huf(r.deductionImpact)}</td><td><b>${huf(r.payable)}</b></td></tr>`).join(''):'<tr><td colspan="6" class="empty">Nincs találat.</td></tr>';$$('#courier-rows tr[data-index]').forEach(e=>e.onclick=()=>{chosen=rows[+e.dataset.index].courierId;renderCouriers()});detail(sel)}function render(){const c=$('#month').value,l=monthLabel(c);$('#side-month').textContent=l;$('#side-summary').textContent=`${nf.format(tot().couriers||0)} futár · havi DB összesítő`;$('#footer').textContent=`Adatforrás: ${data?.source||'supabase'} · ${l}`;renderOverview();renderProcess();renderComplaints();renderFinance();renderCouriers()}
     let dashboardLoadSequence=0;
     let hubComplaintLink=null,hubComplaintLinkOpened=false;
     if(typeof window!=='undefined'&&window.location){
@@ -115,6 +198,12 @@
       }catch(e){if(sequence!==dashboardLoadSequence)return;$('#error').textContent=`Az élő adatok nem tölthetők be: ${e.message}`;$('#error').hidden=false;sync('error','Adathiba')}
     }
     $$('[data-courier-sort]').forEach(button=>{button.onclick=()=>toggleCourierSort(button.dataset.courierSort)});
+    $('#courier-refresh').onclick=async event=>{
+      const button=event.currentTarget;
+      if(button.disabled)return;
+      button.disabled=true;
+      try{await load()}finally{button.disabled=false}
+    };
     $('#login-form').onsubmit=async e=>{e.preventDefault();const b=$('#login-form button');b.disabled=true;b.textContent='Belépés…';$('#login-error').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify({username:$('#identity').value.trim(),password:$('#password').value})});showApp();await load()}catch(x){$('#login-error').textContent=x.message}finally{b.disabled=false;b.textContent='Belépés a JITT Hubba'}};$('#month').onchange=load;$('#status-filter').onchange=renderCouriers;$('#search').oninput=renderCouriers;$$('.nav button').forEach(b=>b.onclick=()=>{if($('#app').classList.contains('courier360-open'))closeCourier360();const v=b.dataset.board;$$('.nav button').forEach(x=>x.classList.toggle('active',x===b));$$('.board').forEach(x=>x.hidden=x.dataset.view!==v);const c={overview:['VEZETŐI ÁTTEKINTŐ / PÉNZÜGY','Elszámolási teljesítmény','A pénzügyi folyamat, reklamációk és levonások közös havi képe.'],process:['FOLYAMATOK / ELSZÁMOLÁS','Elszámolási folyamat','Megnyitástól a rendszerben rögzített kifizetésig.'],complaints:['REKLAMÁCIÓK / ELSZÁMOLÁS','Elszámolási reklamációk','Terhelés, válaszidő és pénzügyi összefüggés.'],trends:['TRENDEK / 3 HÓNAP','3 havi tendenciák','Reklamációk, válaszidő, bónuszok, maluszok és új előlegek havi összehasonlítása.'],finance:['PÉNZÜGY / HATÁS','Pénzügyi hatás','Bevétel, levonások és kifizetési állapot a kiválasztott hónapban.'],couriers:['FUTÁROK / HAVI RÉSZLETEK','Futár 360°','Futár ID + hónap alapon megnyitható részletező.']}[v];$('#crumb').textContent=c[0];$('#page-title').textContent=c[1];$('#page-subtitle').textContent=c[2];if(v==='trends')loadTrends()});$('#logout').onclick=async()=>{await fetch('/api/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{});$('#password').value='';if($('#app').classList.contains('courier360-open'))closeCourier360();courier360State.payload=null;showLogin()};(async()=>{try{await api('/api/me');showApp();await load()}catch{showLogin()}})();
   </script>
 </body>

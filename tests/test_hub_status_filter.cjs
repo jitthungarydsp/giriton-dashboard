@@ -26,12 +26,37 @@ const {chromium}=require('playwright');
     const filter=page.getByRole('combobox',{name:'Szűrés elszámolási állapot szerint'});
     assert.match(await filter.textContent(),/Kifizetve \(2\)/);
     assert.equal(await page.locator('#courier-rows tr[data-index]').count(),5);
+    await page.evaluate(()=>{data.couriers.push({courierId:'6',courierName:'Elfogadásra váró futár',status:'Elszámolás elfogadásra vár'});renderCouriers()});
+    const statusHeader=page.getByRole('button',{name:/^Állapot/});
+    const topStatus=page.locator('#courier-rows [data-status-courier]').first();
+    for(const status of ['Kifizetve','Elszámolás elfogadásra vár','Számla ellenőrzésre vár','Reklamáció','—','Kifizetve']){
+      await statusHeader.click();
+      const expected=status==='—'?'–':status;
+      assert.equal(await topStatus.textContent(),expected);
+      assert.equal(await page.locator('#courier-rows tr[data-index]').count(),6);
+    }
+    assert.match(await page.locator('#courier-count').textContent(),/Elöl: Kifizetve/);
+    assert.equal(await statusHeader.locator('..').getAttribute('aria-sort'),'other');
+    await page.evaluate(()=>{
+      window.refreshRequests=[];
+      window.fetch=async url=>{
+        refreshRequests.push(String(url));
+        return new Promise(resolve=>{window.finishRefresh=()=>resolve({ok:true,json:async()=>data});});
+      };
+    });
+    const refresh=page.getByRole('button',{name:'Futárlista frissítése'});
+    await refresh.click();
+    assert.equal(await refresh.isDisabled(),true);
+    await page.evaluate(()=>finishRefresh());
+    await page.waitForFunction(()=>!document.querySelector('#courier-refresh').disabled);
+    assert.deepEqual(await page.evaluate(()=>refreshRequests),['/api/settlement-dashboard?month=2026-10&limit=500']);
+    assert.equal(await topStatus.textContent(),'Kifizetve');
     await filter.selectOption('Kifizetve');
     assert.equal(await page.locator('#courier-rows tr[data-index]').count(),2);
     await page.locator('#search').fill('Rácz');
     assert.equal(await page.locator('#courier-rows tr[data-index]').count(),1);
     assert.equal(await page.locator('.courier-filters input[type="number"]').count(),0);
-    await page.locator('#search').fill('no matching courier');
+    await page.locator('#search').fill('nincs ilyen futár');
     assert.equal(await page.locator('#courier-rows tr[data-index]').count(),0);
     assert.match(await page.locator('#courier-detail').textContent(),/Válassz futárt/);
     await page.locator('#search').fill('');
@@ -51,7 +76,7 @@ const {chromium}=require('playwright');
     assert.equal(await page.getByRole('columnheader',{name:'Felelős',exact:true}).count(),1);
     assert.match(await page.locator('#courier-rows .courier-assignee').textContent(),/Bagoly Zoltán/);
     assert.equal(await page.locator('#courier-rows tr td').count(),6);
-    await page.screenshot({path:path.join(root,'tmp/status-filter-preview.png')});
+    if(process.env.HUB_STATUS_SCREENSHOT)await page.screenshot({path:process.env.HUB_STATUS_SCREENSHOT});
     assert.deepEqual(errors,[]);
     console.log('Status filter: counts, combined search, empty detail, unknown status and monthly refresh verified');
   }finally{await browser.close()}

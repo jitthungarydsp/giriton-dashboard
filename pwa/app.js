@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v309";
+const APP_VERSION = "v310";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -6569,6 +6569,17 @@ async function loadWorkflow(options = {}) {
     renderWorkflowProcessPicker();
     renderWorkflow();
     showWorkflowMessage("");
+    if (state.hubWorkflowTarget) {
+      const target = state.hubWorkflowTarget;
+      state.hubWorkflowTarget = null;
+      if (state.workflowMonth !== target.month || state.workflowPreviewCourierId !== target.courier) {
+        showWorkflowMessage("A JITT Hubból megnyitott futár vagy hónap nem elérhető. Ellenőrizd a kiválasztást.", true);
+      } else {
+        const control = $(`#workflow-admin-actions [data-action="${target.step}"]`);
+        control?.focus({preventScroll:true});
+        control?.scrollIntoView({block:"center"});
+      }
+    }
   } catch (error) {
     if (!background || !state.workflow) {
       state.workflow = waitingWorkflow();
@@ -8155,10 +8166,10 @@ async function deleteSettlementImport() {
   }
 }
 
-function openSettlementDashboardCourier(courierId) {
+function openSettlementDashboardCourier(courierId, month = state.settlementDashboardMonth || previousLocalMonth()) {
   const cleanId = String(courierId || "").trim();
   if (!cleanId) return;
-  state.workflowMonth = state.settlementDashboardMonth || previousLocalMonth();
+  state.workflowMonth = month;
   state.workflowPreviewCourierId = cleanId;
   if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = cleanId;
   if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = cleanId;
@@ -8172,6 +8183,21 @@ function openSettlementDashboardCourier(courierId) {
   state.checkedInvoiceMonth = null;
   setAdminPreviewStatus(`Előnézet aktív: ${cleanId}`);
   showSection("settlement");
+}
+
+function openHubSettlementWorkflow() {
+  if (!state.user?.canPreviewCouriers) return false;
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("hub-workflow")) return false;
+  const step = url.searchParams.get("hub-workflow");
+  const courier = url.searchParams.get("courier") || "";
+  const month = url.searchParams.get("month") || "";
+  if (!["settlement", "tig", "invoice_submit", "invoice_check"].includes(step) || !/^\d{1,12}$/.test(courier) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return false;
+  state.hubWorkflowTarget = {courier, month, step};
+  for (const key of ["hub-workflow", "courier", "month"]) url.searchParams.delete(key);
+  window.history.replaceState(null, "", url);
+  openSettlementDashboardCourier(courier, month);
+  return true;
 }
 
 async function acceptDocument(action) {
@@ -12864,6 +12890,7 @@ $("#login-form").addEventListener("submit", async (event) => {
     state.queueStatus = queueStorageRead();
     renderQueueStatus();
     showApp();
+    if (openHubSettlementWorkflow()) return;
     if (["coordinator", "supercoordinator"].includes(String(state.user.role || "").toLowerCase())) {
       showSection("coordinator-live");
     } else if (String(state.user.role || "").toLowerCase() === "hr") {
@@ -13653,13 +13680,15 @@ async function start() {
     const payload = await api("/api/me");
     state.user = payload.user;
     showApp();
-    if (["coordinator", "supercoordinator"].includes(String(state.user.role || "").toLowerCase())) {
-      showSection("coordinator-live");
-    } else if (String(state.user.role || "").toLowerCase() === "hr") {
-      showSection("vehicle");
-    } else {
-      showSection("home");
-      await loadShifts();
+    if (!openHubSettlementWorkflow()) {
+      if (["coordinator", "supercoordinator"].includes(String(state.user.role || "").toLowerCase())) {
+        showSection("coordinator-live");
+      } else if (String(state.user.role || "").toLowerCase() === "hr") {
+        showSection("vehicle");
+      } else {
+        showSection("home");
+        await loadShifts();
+      }
     }
   } catch (_) {
     showLogin();
