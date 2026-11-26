@@ -1,4 +1,5 @@
 import sys
+from textwrap import dedent
 
 
 def finance_invoice_notification_rest(db):
@@ -7953,21 +7954,39 @@ def invoice_amount_from_document(document: dict[str, object]) -> float:
     return 0.0
 
 
+def snapshot_tig_breakdown_for_payment(snapshot: dict[str, object]) -> dict[str, object]:
+    source = _snapshot_source_payload(snapshot, "tig_breakdown")
+    breakdown = dict(source) if isinstance(source, dict) else {}
+    tig_amounts = {
+        item.get("item_key"): parse_huf_value(item["amount_value"])
+        for item in snapshot.get("items") or []
+        if item.get("section") == "tig" and item.get("amount_value") not in (None, "")
+    }
+    metadata = snapshot.get("metadata") or {}
+    saved_total = tig_amounts.get("tig_final_total")
+    if saved_total is None and metadata.get("tig_final_total") not in (None, ""):
+        saved_total = parse_huf_value(metadata["tig_final_total"])
+    saved_cash = tig_amounts.get("tig_cash_service")
+    if saved_total is not None and (not breakdown or round(saved_total) != round(parse_huf_value(breakdown.get("finalTotalHuf")))):
+        breakdown["finalTotalHuf"] = saved_total
+        breakdown["rows"] = []
+    if saved_cash is not None and ("cashGrossHuf" not in breakdown or round(saved_cash) != round(parse_huf_value(breakdown.get("cashGrossHuf")))):
+        breakdown["cashGrossHuf"] = saved_cash
+        breakdown["rows"] = []
+    return breakdown
+
+
 def admin_tig_breakdown_for_payment(courier_id: str, period_start: date) -> dict[str, object]:
     snapshot = load_reliable_devtest_finance_snapshot(courier_id, period_start)
     if snapshot:
-        snapshot_tig = _snapshot_source_payload(snapshot, "tig_breakdown")
-        return snapshot_tig if isinstance(snapshot_tig, dict) else {}
+        return snapshot_tig_breakdown_for_payment(snapshot)
     session_tig_breakdown = (
         st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
     ).get("tig_breakdown") or {}
     if isinstance(session_tig_breakdown, dict) and session_tig_breakdown:
         return session_tig_breakdown
     snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
-    snapshot_tig_breakdown = _snapshot_source_payload(snapshot, "tig_breakdown") if snapshot else {}
-    if isinstance(snapshot_tig_breakdown, dict) and snapshot_tig_breakdown:
-        return snapshot_tig_breakdown
-    return {}
+    return snapshot_tig_breakdown_for_payment(snapshot) if snapshot else {}
 
 
 def admin_tig_invoice_amounts(
@@ -20749,7 +20768,7 @@ def render_courier_detail_page() -> None:
             )
 
             st.markdown(
-                f"""
+                dedent(f"""
                 <div class="settlement-profile-shell">
                 <div class="finance-kpi-grid">
                     <div class="finance-kpi"><div class="finance-kpi-label">Folyamat</div><div class="finance-kpi-value">{html.escape(str(payment_item['label']))}</div></div>
@@ -20760,7 +20779,7 @@ def render_courier_detail_page() -> None:
                     <div class="finance-kpi"><div class="finance-kpi-label">Eltérés</div><div class="finance-kpi-value">{invoice_difference_label}</div></div>
                 </div>
                 </div>
-                """,
+                """).strip(),
                 unsafe_allow_html=True,
             )
             payment_copy_items = [
