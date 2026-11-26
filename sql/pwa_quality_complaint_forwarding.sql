@@ -48,7 +48,7 @@ begin
  order by d.approved_at for update of d skip locked limit 1) returning *;
 end $$;
 
-create or replace function public.pwa_start_quality_submission(p_id uuid,p_token uuid)
+create or replace function public.pwa_start_quality_auto_submission(p_id uuid,p_token uuid)
 returns setof public.pwa_quality_complaint_deliveries language plpgsql security invoker set search_path=public as $$
 begin
  return query update public.pwa_quality_complaint_deliveries set submit_started_at=now(),updated_at=now()
@@ -59,19 +59,25 @@ create or replace function public.pwa_finish_quality_delivery(p_id uuid,p_token 
 returns setof public.pwa_quality_complaint_deliveries language plpgsql security invoker set search_path=public as $$
 declare d public.pwa_quality_complaint_deliveries;
 begin
- -- Same lock order as admin approval. The worker can only prepare, never forward.
+ -- Same lock order as admin approval. Record delivery and forwarding atomically.
  perform 1 from public.pwa_quality_complaints where id=p_id for update;
  select * into d from public.pwa_quality_complaint_deliveries where complaint_id=p_id for update;
  if not found or d.lease_token is distinct from p_token then raise exception 'Invalid worker lease'; end if;
- if d.state <> 'processing' or p_state not in ('login_required','failed','uncertain','prepared') then raise exception 'Invalid transition'; end if;
+ if d.state <> 'processing' or p_state not in ('login_required','failed','uncertain','prepared','sent') then raise exception 'Invalid transition'; end if;
  if d.submit_started_at is not null and p_state='failed' then raise exception 'Submission may have happened'; end if;
  if p_state='prepared' and d.submit_started_at is null then raise exception 'Preparation journal required'; end if;
+ if p_state='sent' and (d.submit_started_at is null or coalesce(length(btrim(p_confirmation)),0)<3) then
+  raise exception 'Google Forms confirmation required';
+ end if;
  update public.pwa_quality_complaint_deliveries set state=p_state,updated_at=now(),
- confirmation='',
+ confirmation=case when p_state='sent' then btrim(p_confirmation) else '' end,
  last_error=case p_state when 'login_required' then 'Google-bejelentkezés szükséges.' when 'failed' then 'A kitöltés nem sikerült; beküldés nem indult.'
  when 'uncertain' then 'A beküldés eredménye nem igazolható. Ellenőrizd a Google-űrlap válaszai között; ne küldd be újra automatikusan.' else '' end
  where complaint_id=p_id;
 
+ if p_state='sent' then
+  perform public.pwa_manage_quality_complaint(p_id,'forward','','google-form-worker',p_confirmation);
+ end if;
  return query select * from public.pwa_quality_complaint_deliveries where complaint_id=p_id;
 end $$;
 
@@ -93,7 +99,7 @@ begin
 end $$;
 drop trigger if exists pwa_quality_delivery_guard on public.pwa_quality_complaints;
 create trigger pwa_quality_delivery_guard before update of status on public.pwa_quality_complaints for each row execute function public.pwa_quality_delivery_guard();
-revoke all on function public.pwa_approve_quality_delivery(uuid,text,jsonb),public.pwa_claim_quality_delivery(),public.pwa_start_quality_submission(uuid,uuid),public.pwa_finish_quality_delivery(uuid,uuid,text,text),public.pwa_quality_delivery_guard() from public,anon,authenticated;
-grant execute on function public.pwa_approve_quality_delivery(uuid,text,jsonb),public.pwa_claim_quality_delivery(),public.pwa_start_quality_submission(uuid,uuid),public.pwa_finish_quality_delivery(uuid,uuid,text,text),public.pwa_quality_delivery_guard() to service_role;
+revoke all on function public.pwa_approve_quality_delivery(uuid,text,jsonb),public.pwa_claim_quality_delivery(),public.pwa_start_quality_auto_submission(uuid,uuid),public.pwa_finish_quality_delivery(uuid,uuid,text,text),public.pwa_quality_delivery_guard() from public,anon,authenticated;
+grant execute on function public.pwa_approve_quality_delivery(uuid,text,jsonb),public.pwa_claim_quality_delivery(),public.pwa_start_quality_auto_submission(uuid,uuid),public.pwa_finish_quality_delivery(uuid,uuid,text,text),public.pwa_quality_delivery_guard() to service_role;
 notify pgrst,'reload schema';
 commit;

@@ -1,6 +1,7 @@
 """Persistent-profile Google Forms worker. Run --login first; never exports Google cookies.
-Fill-only worker: it NEVER clicks Submit. --once/--watch require admin approval in DB.
+--once/--watch submit only complaints explicitly approved by an admin in the PWA.
 """
+from datetime import datetime, timezone
 import argparse
 import importlib.util
 import json
@@ -329,36 +330,44 @@ class GoogleForm:
 
 
 
+    def wait_for_confirmation(self):
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        def confirmed(driver):
+            # This DOM marker is the Google Forms response receipt, not the
+            # /formResponse URL, which is also used between form sections.
+            for node in driver.find_elements(By.CSS_SELECTOR,'.vHW8K'):
+                text=node.text.strip()
+                if node.is_displayed() and any(phrase in text.casefold() for phrase in (
+                    'válaszát rögzítettük','válaszodat rögzítettük','your response has been recorded')):
+                    return text
+            return False
+        receipt=WebDriverWait(self.driver,30).until(confirmed)
+        return f'Google Forms: {receipt} | {datetime.now(timezone.utc).isoformat()}'
+
+
 def process_job(db,job,make_form):
     identity={'p_id':job['complaint_id'],'p_token':job['lease_token']}
     started=False
+    confirmation=''
     try:
-        # Journal the handoff before exposing an editable form. Expired leases must
-        # never open a second copy while an administrator may still be submitting.
-        journal=db.rpc('pwa_start_quality_submission',identity)
-        if not journal:raise ValueError('A kitöltés előtti naplózás nem igazolható.')
-        started=True
         page=make_form()
-        page.fill(job['payload'])  # Deliberately ignore the Submit button.
-        state='prepared'
+        button=page.fill(job['payload'])
+        journal=db.rpc('pwa_start_quality_auto_submission',identity)
+        if not journal:raise ValueError('Submission journal was not acknowledged.')
+        started=True
+        button.click()
+        confirmation=page.wait_for_confirmation()
+        if not confirmation:raise ValueError('Google Forms receipt missing.')
+        state='sent'
     except LoginRequired:
         state='login_required'
-    except Exception:
+    except Exception as exc:
         state='uncertain' if started else 'failed'
-    result=db.rpc('pwa_finish_quality_delivery',{**identity,'p_state':state,'p_confirmation':''})
+        print(f'Google Forms ({state}): {type(exc).__name__}',file=sys.stderr,flush=True)
+    result=db.rpc('pwa_finish_quality_delivery',{**identity,'p_state':state,'p_confirmation':confirmation})
     if not result:raise RuntimeError('A robot eredményének adatbázis-mentése nem igazolható.')
     return state
-
-
-def wait_for_manual_close(driver):
-    print('A form kitöltve. Ellenőrizd, majd TE kattints a Küldés gombra. '
-          'Utána zárd be a robot ablakát. A továbbítást a PWA-ban külön rögzítsd.',flush=True)
-    while True:
-        try:
-            if not driver.window_handles:return
-        except Exception:
-            return
-        time.sleep(1)
 
 
 def main():
@@ -400,7 +409,6 @@ def main():
             try:
                 state=process_job(db,jobs[0],make_form)
                 print('Kitöltő robot:',state,flush=True)
-                if state=='prepared':wait_for_manual_close(driver)
             finally:
                 if driver:driver.quit()
         if not args.watch:break

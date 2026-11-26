@@ -22,6 +22,10 @@ if /i "%~1"=="check" (
  "%ROBOT_PYTHON%" -u scripts\run_route_delay_submission_worker.py --check
  goto done
 )
+if /i "%~1"=="pwa" (
+ "%ROBOT_PYTHON%" -u scripts\run_quality_form_worker.py --watch
+ goto done
+)
 if /i "%~1"=="preview" (
  "%ROBOT_PYTHON%" -u scripts\run_route_delay_submission_worker.py --preview
  goto done

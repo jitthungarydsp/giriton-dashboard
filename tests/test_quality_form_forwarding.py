@@ -49,12 +49,12 @@ class PayloadTest(unittest.TestCase):
 
 
 class WorkerTest(unittest.TestCase):
- def run_job(self,fill_error=None,start_rows=True,finish_error=False):
+ def run_job(self,fill_error=None,start_rows=True,finish_error=False,confirmation_error=False):
   events=[]
   class DB:
    def rpc(self,name,payload):
     events.append((name,payload.copy()))
-    if name=='pwa_start_quality_submission':return [{}] if start_rows else []
+    if name=='pwa_start_quality_auto_submission':return [{}] if start_rows else []
     if finish_error:raise OSError('Lost acknowledgement')
     return [{}]
   class Page:
@@ -62,39 +62,31 @@ class WorkerTest(unittest.TestCase):
     events.append(('fill',payload))
     if fill_error:raise fill_error
     return SimpleNamespace(click=lambda:events.append(('click',None)))
-   def confirm(self):
-    raise AssertionError('Fill-only worker must not confirm a submission')
+   def wait_for_confirmation(self):
+    if confirmation_error:raise TimeoutError()
+    return "Google Forms receipt"
   job=dict(complaint_id='abc',lease_token='lease',payload={})
   return worker.process_job(DB(),job,Page),events
- def test_fill_only_never_clicks_or_marks_forwarded(self):
+ def test_send_clicks_once_and_records_receipt(self):
   state,events=self.run_job()
-  self.assertEqual(state,'prepared')
-  self.assertEqual([name for name,_ in events],['pwa_start_quality_submission','fill','pwa_finish_quality_delivery'])
-  self.assertEqual(events[-1][1]['p_confirmation'],'')
+  self.assertEqual(state,'sent')
+  self.assertEqual([name for name,_ in events],['fill','pwa_start_quality_auto_submission','click','pwa_finish_quality_delivery'])
+  self.assertEqual(events[-1][1]['p_confirmation'],'Google Forms receipt')
  def test_login_never_clicks(self):
   state,events=self.run_job(fill_error=worker.LoginRequired())
   self.assertEqual(state,'login_required');self.assertNotIn('click',[x[0] for x in events])
- def test_exposed_form_failure_never_reopens_automatically(self):
+ def test_fill_failure_can_be_retried_without_clicking(self):
   state,events=self.run_job(fill_error=ValueError())
-  self.assertEqual(state,'uncertain');self.assertNotIn('click',[x[0] for x in events])
- def test_unconfirmed_journal_never_exposes_form(self):
+  self.assertEqual(state,'failed');self.assertNotIn('click',[x[0] for x in events])
+ def test_unconfirmed_journal_never_clicks(self):
   state,events=self.run_job(start_rows=False)
-  self.assertEqual(state,'failed');self.assertNotIn('fill',[x[0] for x in events])
+  self.assertEqual(state,'failed');self.assertNotIn('click',[x[0] for x in events])
+ def test_missing_receipt_is_uncertain_after_one_click(self):
+  state,events=self.run_job(confirmation_error=True)
+  self.assertEqual(state,'uncertain')
+  self.assertEqual([x[0] for x in events].count('click'),1)
  def test_lost_final_db_ack_is_not_retried(self):
   with self.assertRaises(OSError):self.run_job(finish_error=True)
  def test_browser_profile_must_stay_outside_repo(self):
   with self.assertRaises(ValueError):worker.profile_path(str(ROOT/'tmp/private-profile'))
- def test_manual_window_stays_until_closed(self):
-  class Driver:
-   reads=0
-   @property
-   def window_handles(self):
-    self.reads+=1
-    return ['window'] if self.reads==1 else []
-  driver=Driver();original=worker.time.sleep
-  worker.time.sleep=lambda _:None
-  try:worker.wait_for_manual_close(driver)
-  finally:worker.time.sleep=original
-  self.assertEqual(driver.reads,2)
-
 if __name__=='__main__':unittest.main()

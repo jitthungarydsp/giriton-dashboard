@@ -23234,14 +23234,14 @@ def quality_complaint_form_draft(complaint_id: UUID, giriton_pwa_session: str | 
     if not quality_complaint_manager(user):
         raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
     complaint = read_accessible_quality_complaint(complaint_id, user, columns="*")
-    if complaint.get("status") != "open":
-        raise HTTPException(status_code=409, detail="Csak nyitott reklamáció továbbítható.")
     deliveries = supabase_rest("GET", "pwa_quality_complaint_deliveries", params={
         "select": "state,payload,last_error", "complaint_id": f"eq.{complaint_id}", "limit": "1"})
     if deliveries:
         delivery = deliveries[0]
         return {"formPayload": delivery["payload"], "deliveryState": delivery["state"],
                 "lastError": delivery.get("last_error", "")}
+    if complaint.get("status") != "open":
+        raise HTTPException(status_code=409, detail="Csak nyitott reklamáció továbbítható.")
     try:
         return {"formPayload": build_payload(complaint, draft=True)}
     except ValueError as exc:

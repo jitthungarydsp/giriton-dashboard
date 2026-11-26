@@ -2182,7 +2182,7 @@ async function openQualityInboxAction(item, action, robotEnabled = false) {
     ${closing ? "" : '<label class="hidden" data-inbox-reference-field>Kifli ügyazonosító, ha van<input data-inbox-reference maxlength="450"></label>'}
     <p data-inbox-status role="status" aria-live="polite"></p>
     <div class="quality-inbox-actions"><button type="button" class="secondary" data-inbox-dismiss>Mégse</button>
-      ${closing ? '<button type="button" class="primary" data-inbox-confirm>Lezárás válasszal</button>' : `<button type="button" class="${robotEnabled ? "secondary" : "primary"}" data-inbox-open-form disabled>${robotEnabled ? "Kézi megnyitás" : "Google-űrlap megnyitása"}</button>${robotEnabled ? '<button type="button" class="primary" data-inbox-robot disabled>Automatikus kitöltés</button>' : ""}<button type="button" class="primary hidden" data-inbox-confirm>Beküldtem a Google-űrlapot</button>`}</div>`;
+      ${closing ? '<button type="button" class="primary" data-inbox-confirm>Lezárás válasszal</button>' : `<button type="button" class="${robotEnabled ? "secondary" : "primary"}" data-inbox-open-form disabled>${robotEnabled ? "Kézi megnyitás" : "Google-űrlap megnyitása"}</button>${robotEnabled ? '<button type="button" class="primary" data-inbox-robot disabled>Automatikus beküldés</button>' : ""}<button type="button" class="primary hidden" data-inbox-confirm>Beküldtem a Google-űrlapot</button>`}</div>`;
   document.body.appendChild(dialog);
   const get = selector => dialog.querySelector(selector);
   const status = get("[data-inbox-status]");
@@ -2272,8 +2272,10 @@ async function openQualityInboxAction(item, action, robotEnabled = false) {
     open.disabled = ["processing", "uncertain", "sent"].includes(deliveryState);
     if (robot) robot.disabled = ["queued", "processing", "prepared", "uncertain", "sent"].includes(deliveryState);
     if (deliveryState === "queued" || deliveryState === "processing") {
-      status.textContent = deliveryState === "queued" ? "Az űrlap a robotra vár." : "A robot kitölti a Google-űrlapot.";
+      status.textContent = deliveryState === "queued" ? "Az űrlap a robotra vár." : "A robot kitölti és beküldi a Google-űrlapot.";
       statusTimer = setTimeout(() => syncDelivery().catch(error => { status.textContent = error.message; }), 4000);
+    } else if (deliveryState === "sent") {
+      status.textContent = "A Google visszaigazolta a beküldést.";
     } else if (prepared) {
       status.textContent = "Az űrlap elő van készítve. A Google visszaigazolása után kattints a Beküldtem gombra.";
     } else {

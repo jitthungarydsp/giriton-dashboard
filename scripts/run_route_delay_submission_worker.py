@@ -65,22 +65,7 @@ def process_record(record, save, make_page):
         return failed
 
 
-class SubmissionPage(worker.GoogleForm):
-    def wait_for_confirmation(self):
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        def confirmed(driver):
-            # This DOM marker is the Google Forms response receipt, not the
-            # /formResponse URL, which is also used between form sections.
-            for node in driver.find_elements(By.CSS_SELECTOR,'.vHW8K'):
-                text=node.text.strip()
-                if node.is_displayed() and any(phrase in text.casefold() for phrase in (
-                    'válaszát rögzítettük','válaszodat rögzítettük','your response has been recorded')):
-                    return text
-            return False
-        receipt=WebDriverWait(self.driver,30).until(confirmed)
-        return f'Google Forms: {receipt} | {datetime.now(timezone.utc).isoformat()}'
-
+SubmissionPage = worker.GoogleForm
 
 def pause_for_inspection(message):
     print(message,flush=True)
