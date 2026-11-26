@@ -4,7 +4,7 @@ const {chromium}=require('playwright');
   const root=path.join(__dirname,'..');
   const html=fs.readFileSync(path.join(root,'jitt_hub/index.html'),'utf8');
   const inlineStyle=html.match(/<style>([\s\S]*?)<\/style>/)[1];
-  const dialog=html.match(/<dialog[\s\S]*?<\/dialog>/)[0];
+  const dialog=html.match(/<dialog id="courier-status-dialog"[\s\S]*?<\/dialog>/)[0];
   const browser=await chromium.launch({headless:true,channel:'msedge'});
   try{
     const page=await browser.newPage({viewport:{width:1400,height:1000}});
