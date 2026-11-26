@@ -1311,6 +1311,50 @@ export default {
       catch{return jsonResponse({error:'A művelet nem menthető. Frissítsd az adatokat és ellenőrizd a források elérhetőségét.'},500)}
     }
 
+    if (url.pathname === '/api/courier-reki') {
+      if(request.method!=='GET')return jsonResponse({error:'Csak olvasási kérés támogatott.'},405);
+      const access=await requireDashboardUser(request,env);
+      if(access.error)return access.error;
+      if(!['admin','superadmin'].includes(access.user.role.toLowerCase()))return jsonResponse({error:'Reklamációkezelő jogosultság szükséges.'},403);
+      const month=url.searchParams.get('month')||'';
+      if(!/^20[0-9]{2}-(0[1-9]|1[0-2])$/.test(month))return jsonResponse({error:'Érvénytelen hónap.'},400);
+      const start=month+'-01';
+      const [year,number]=month.split('-').map(Number);
+      const end=new Date(Date.UTC(year,number,1)).toISOString().slice(0,10);
+      const qualityEnv={...env,SUPABASE_READ_KEY:env.SUPABASE_SERVICE_ROLE_KEY||env.SUPABASE_READ_KEY};
+      try{
+        const createdRange=`(created_at.gte.${budapestMidnightUtc(start)},created_at.lt.${budapestMidnightUtc(end)})`;
+        const [cases,excel,couriers,alerts,shifts,resolutions]=await Promise.all([
+          supabaseFetch(qualityEnv,PUBLIC_SCHEMA,'pwa_quality_complaints',{
+            work_month:'eq.'+start,select:'id,courier_id,courier_name,topic,status,created_at,forwarded_at,responded_at,message,admin_response,affected_items',
+            order:'created_at.desc,id.desc',limit:10000,
+          }),
+          supabaseFetch(qualityEnv,SETTLEMENT_SCHEMA,'route_delay_form_draft',{
+            state:'eq.sent',and:`(submitted_at.gte.${budapestMidnightUtc(start)},submitted_at.lt.${budapestMidnightUtc(end)})`,
+            select:'id,courier_id,courier_name,route_id,work_date,submitted_at,source_filename,source_row',order:'submitted_at.desc,id.desc',limit:10000,
+          }),
+          supabaseFetch(qualityEnv,PUBLIC_SCHEMA,'courier_master',{select:'courier_id,courier_name',order:'courier_id.asc',limit:10000}),
+          supabaseFetch(qualityEnv,PUBLIC_SCHEMA,'courier_route_alerts',{
+            select:'id,courier_id,courier_name,route_id,alert_type,message,status,created_at',
+            alert_type:'in.(delay,bag_missing,problem)',and:createdRange,order:'created_at.desc,id.desc',limit:10000,
+          }),
+          supabaseFetch(qualityEnv,PUBLIC_SCHEMA,'courier_shift_checkins',{
+            select:'id,courier_id,courier_name,work_date,shift_name,event_type,created_at',event_type:'in.(shift_late,coordinator_shift_late)',
+            and:`(work_date.gte.${start},work_date.lt.${end})`,order:'created_at.desc,id.desc',limit:10000,
+          }),
+          supabaseFetch(qualityEnv,PUBLIC_SCHEMA,'peopleforce_card_statuses',{
+            select:'action_key',document_month:'eq.'+start,status:'eq.done',
+            action_key:'like.internal_complaint_assignment:duplicate-signal:*',order:'action_key.asc',limit:10000,
+          }),
+        ]);
+        const linked=new Set(cases.flatMap(row=>(row.affected_items||[]).map(item=>`${item.signalKind}:${item.signalId}`)));
+        const duplicates=new Set(resolutions.map(row=>row.action_key.split('duplicate-signal:')[1]));
+        const signals=[...alerts.map(row=>({...row,kind:'route'})),...shifts.map(row=>({...row,kind:'shift'}))]
+          .filter(row=>row.status!=='auto'&&!linked.has(row.kind+':'+row.id)&&!duplicates.has(row.kind+':'+row.id));
+        return jsonResponse({cases,excel,couriers,signals});
+      }catch{return jsonResponse({error:'A reklamációs lista most nem tölthető be.'},502);}
+    }
+
     if (url.pathname === '/api/courier-finance-breakdown') {
       if (request.method !== 'GET') return jsonResponse({error:'Csak olvasási kérés támogatott.'},405);
       const access = await requireDashboardUser(request,env);

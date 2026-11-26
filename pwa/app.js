@@ -8185,6 +8185,20 @@ function openSettlementDashboardCourier(courierId, month = state.settlementDashb
   showSection("settlement");
 }
 
+function openHubQualityComplaints() {
+  if (!["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return false;
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("hub-quality")) return false;
+  $("#quality-complaints-filter").value = url.searchParams.get("hub-quality") === "forwarded" ? "forwarded" : "all";
+  const complaint = url.searchParams.get("quality-case") || "";
+  state.qualityComplaintFocus = /^[a-f0-9-]{36}$/i.test(complaint) ? complaint : "";
+  $("#quality-complaints-search").value = (url.searchParams.get("quality-search") || "").slice(0, 100);
+  for (const key of ["hub-quality", "quality-case", "quality-search"]) url.searchParams.delete(key);
+  window.history.replaceState(null, "", url);
+  showSection("quality-complaints");
+  return true;
+}
+
 function openHubSettlementWorkflow() {
   if (!state.user?.canPreviewCouriers) return false;
   const url = new URL(window.location.href);
@@ -12890,7 +12904,7 @@ $("#login-form").addEventListener("submit", async (event) => {
     state.queueStatus = queueStorageRead();
     renderQueueStatus();
     showApp();
-    if (openHubSettlementWorkflow()) return;
+    if (openHubQualityComplaints() || openHubSettlementWorkflow()) return;
     if (["coordinator", "supercoordinator"].includes(String(state.user.role || "").toLowerCase())) {
       showSection("coordinator-live");
     } else if (String(state.user.role || "").toLowerCase() === "hr") {
@@ -13680,7 +13694,7 @@ async function start() {
     const payload = await api("/api/me");
     state.user = payload.user;
     showApp();
-    if (!openHubSettlementWorkflow()) {
+    if (!openHubQualityComplaints() && !openHubSettlementWorkflow()) {
       if (["coordinator", "supercoordinator"].includes(String(state.user.role || "").toLowerCase())) {
         showSection("coordinator-live");
       } else if (String(state.user.role || "").toLowerCase() === "hr") {
