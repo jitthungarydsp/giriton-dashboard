@@ -25,7 +25,8 @@ test('opening a complaint retains focus and avoids layout changes above it',asyn
     loadAdminRouteSignals:()=>{signals++;},
     $:selector=>selector==='#quality-complaints-list'?list:selector==='#quality-complaints-status'?status:{value:'all'},
     loadQualityInboxPages:async()=>({items:[],hasMore:false}),
-    filterQualityInbox:rows=>rows,
+    filterQualityInbox:rows=>rows, loadQualityOutreach:()=>null, loadCourierMasterOptions:async()=>{},
+    qualityInboxCourierGroups:()=>[],
     document:{createElement:()=>({addEventListener:()=>{}})},encodeURIComponent};
   const start=source.indexOf('async function loadQualityComplaints(');
   const end=source.indexOf('function showQualitySubmissionProgress(',start);

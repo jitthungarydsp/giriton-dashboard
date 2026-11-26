@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'../pwa/app.js'),'utf8');
-const helpers=source.slice(source.indexOf('function qualityComplaintRoutes('),source.indexOf('function renderAdminRouteSignals('))+source.slice(source.indexOf('function qualitySignalOrigin('),source.indexOf('async function loadQualityComplaints('));
+const helpers=source.slice(source.indexOf('function qualityInboxTopic('),source.indexOf('function renderAdminRouteSignals('))+source.slice(source.indexOf('function qualitySignalOrigin('),source.indexOf('async function loadQualityComplaints('));
 function setup(api){const ctx={api,Date,Intl};vm.runInNewContext(helpers,ctx);return ctx;}
 
 test('Juhász sibling signals match the submitted route only; another tour stays independent',()=>{
@@ -38,7 +38,6 @@ test('loads every source page, merges linked cases once and retains original aut
   const data=await ctx.loadQualityInboxPages();
   assert.equal(data.items.length,54);
   assert.ok(!ctx.filterQualityInbox(data.items,'all').some(x=>x.id==='c50'));
-  assert.deepEqual(Array.from(ctx.filterQualityInbox(data.items,'forwarded'),x=>x.id),['c50']);
   assert.equal(data.items[0].id,'signal:shift:s2');
   assert.equal(data.items.find(x=>x.id==='c0').inboxOrigin,'automatic');
   assert.equal(data.items.find(x=>x.id==='c0').status,'closed');
@@ -55,7 +54,7 @@ test('failed source never produces an apparently complete partial inbox',async()
   await assert.rejects(ctx.loadQualityInboxPages(),/Source unavailable/);
 });
 
-test('forwarded complaints and linked raw signals stay hidden without dropping open or closed cases',()=>{
+test('forwarded complaints and linked raw signals stay hidden and closed cases stay out of the open list',()=>{
   const ctx=setup();
   const complaints=[
     {id:'forwarded',status:'forwarded',affected_items:[{signalKind:'route',signalId:'1'}]},
@@ -67,8 +66,7 @@ test('forwarded complaints and linked raw signals stay hidden without dropping o
     {id:'3',status:'new'}];
   const shifts=[{id:'4',complaint:{id:'shift-case',status:'forwarded'}}];
   const rows=ctx.mergeQualityInbox(complaints,alerts,shifts);
-  assert.deepEqual(Array.from(ctx.filterQualityInbox(rows,'all'),x=>x.id).sort(),['closed','open','signal:route:3']);
-  assert.equal(ctx.filterQualityInbox(rows,'forwarded').length,3);
+  assert.deepEqual(Array.from(ctx.filterQualityInbox(rows,'all'),x=>x.id).sort(),['open','signal:route:3']);
   for(const filter of ['automatic','courier'])assert.ok(ctx.filterQualityInbox(rows,filter).every(row=>row.status!=='forwarded'));
   assert.equal(complaints[0].status,'forwarded');
   assert.equal(alerts.length,3);
@@ -100,7 +98,22 @@ test('duplicate closures hide only resolved raw signals and keep their source re
 test('page has only one source filter and a shared list without paging or extra panels',()=>{
   const html=fs.readFileSync(path.join(__dirname,'../pwa/index.html'),'utf8');
   const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),html.indexOf('<div id="today-workers-content"'));
-  for(const option of ['all','automatic','courier','forwarded'])assert.ok(section.includes(`value="${option}"`));
+  for(const option of ['all','automatic','courier','in-transit','time-window'])assert.ok(section.includes(`value="${option}"`));
   assert.ok(section.includes('quality-complaints-list'));
   for(const removed of ['quality-complaints-prev','quality-complaints-next','quality-route-signals-panel','quality-workspace-panel','quality-form-test'])assert.ok(!section.includes(removed));
+});
+
+test('category filters and roster counts distinguish signals from submitted complaints',()=>{
+  const ctx=setup();
+  const rows=[
+    {id:'transit',courier_id:1,status:'open',inboxSignal:{signalKind:'route'}},
+    {id:'label',courier_id:1,status:'open',topic:'cleanedTimeWindowLate'},
+    {id:'closed-label',courier_id:1,status:'closed',topic:'cleanedTimeWindowLate',forwarded_at:'2026-11-01'},
+    {id:'sent',courier_id:1,status:'open',delivery:{state:'sent'}},
+  ];
+  assert.deepEqual(Array.from(ctx.filterQualityInbox(rows,'in-transit'),row=>row.id),['transit']);
+  assert.deepEqual(Array.from(ctx.filterQualityInbox(rows,'time-window'),row=>row.id),['label']);
+  const groups=ctx.qualityInboxCourierGroups([{courierId:'1',courierName:'Anna'},{courierId:'2',courierName:'Bela'}],
+    rows,ctx.filterQualityInbox(rows,'all'));
+  assert.deepEqual(Array.from(groups,row=>[row.id,row.open,row.submitted,row.items.length]),[['1',1,2,2],['2',0,0,0]]);
 });

@@ -5,14 +5,14 @@ const test = require('node:test');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../pwa/app.js'), 'utf8');
 function setup(role, items) {
   const nodes = new Map();
-  const get = key => { if (!nodes.has(key)) nodes.set(key, { value: 'all', querySelectorAll: () => [] }); return nodes.get(key); };
-  const context = { state: { user: { role } }, $: get, prepareQualityWorkspace: async () => true,
+  const get = key => { if (!nodes.has(key)) nodes.set(key, { value: 'courier', querySelectorAll: () => [] }); return nodes.get(key); };
+  const context = { state: { user: { role } }, $: get, prepareQualityWorkspace: async () => true, loadQualityOutreach: () => null,
     escapeHtml: value => String(value || '').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
     shortDateTime: String, renderComplaintShiftDetails: () => '', api: async () => ({ items, canManage: true, hasMore: false }) };
   vm.runInNewContext(source.slice(source.indexOf('function qualityComplaintStatus('), source.indexOf('function ensureQualityReclamationDialog(')), context);
   return { context, get };
 }
-test('admin sees open actions, closed response and escaped complaint text', async () => {
+test('admin sees open actions and escaped complaint text', async () => {
   const { context, get } = setup('admin', [
     { id: 'a', courier_name: '<script>', topic: 'lateShift', status: 'open', affected_items: [], history: [] },
     { id: 'b', courier_name: 'Futár', status: 'closed', admin_response: 'Kivizsgáltuk.', affected_items: [], history: [] },
@@ -21,8 +21,8 @@ test('admin sees open actions, closed response and escaped complaint text', asyn
   const html = get('#quality-complaints-list').innerHTML;
   assert.match(html, /&lt;script&gt;/);
   assert.match(html, /Nyitott/);
-  assert.match(html, /Lezárt/);
-  assert.match(html, /Kivizsgáltuk/);
+  assert.doesNotMatch(html, /Lezárt/);
+  assert.doesNotMatch(html, /Kivizsgáltuk/);
   assert.equal((html.match(/data-complaint-action="close"/g) || []).length, 1);
 });
 test('coordinator cannot load admin complaint UI', async () => {
@@ -97,7 +97,7 @@ test('forward keeps edited text and records status only after the admin confirms
       return openQualityInboxAction({id:'b',courier_name:'Futár',courier_id:'1234'},'forward',true);
     });
     await page.locator('[data-inbox-description]').fill('A robotnak jóváhagyott szöveg');
-    await page.getByRole('button',{name:'Automatikus kitöltés'}).click();
+    await page.getByRole('button',{name:'Automatikus beküldés'}).click();
     await page.getByRole('button',{name:'Beküldtem a Google-űrlapot'}).waitFor();
     assert.equal(await page.evaluate(() => requests.find(r=>r.path.endsWith('/approve')).body.description),'A robotnak jóváhagyott szöveg');
     assert.equal(await page.evaluate(() => requests.filter(r=>r.path.endsWith('/actions')).length),0);

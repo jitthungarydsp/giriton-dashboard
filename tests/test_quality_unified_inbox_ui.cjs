@@ -1,15 +1,18 @@
-const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{chromium}=require('playwright');
+const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const source=fs.readFileSync('pwa/app.js','utf8'),html=fs.readFileSync('pwa/index.html','utf8');
 const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),html.indexOf('<div id="today-workers-content"')).replace('class="hidden"','');
 (async()=>{
   const browser=await chromium.launch({headless:true,channel:'msedge'});
   try{
     const page=await browser.newPage({viewport:{width:1200,height:950}}),errors=[];
+    page.setDefaultTimeout(6000);
     page.on('pageerror',e=>errors.push(e.message));
     await page.setContent(`<meta name="viewport" content="width=device-width,initial-scale=1"><style>${fs.readFileSync('pwa/styles.css','utf8')}</style><main style="max-width:1050px;margin:24px auto;padding:12px">${section}</main>`);
     await page.evaluate(()=>{
       window.$=selector=>document.querySelector(selector);
       window.state={user:{role:'admin'},qualityComplaintFocus:'c0',qualityWorkspaceCourier:'stale-filter',qualityWorkspaceDay:'2026-11-01'};
+      window.loadQualityOutreach=()=>null;
+      window.loadCourierMasterOptions=async()=>{state.couriers=[{courierId:'777',courierName:'Nulla Elek'}];};
       window.shortDateTime=value=>String(value||'').slice(0,16).replace('T',' ');
       window.escapeHtml=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
       window.renderComplaintShiftDetails=()=>'';
@@ -27,33 +30,33 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
     await page.addScriptTag({content:source.slice(source.indexOf('function qualityComplaintStatus('),source.indexOf('async function openQualityInboxAction('))});
     await page.addScriptTag({content:source.split('\n').find(line=>line.startsWith('$("#quality-complaints-filter").addEventListener'))});
     await page.evaluate(()=>loadQualityComplaints());
-    assert.equal(await page.locator('.quality-inbox-item').count(),52);
-    assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('52 jelzés'));
+    assert.equal(await page.locator('.quality-inbox-item[data-complaint-id], .quality-inbox-item[data-signal-id]').count(),51);
+    assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('51 nyitott jelzés'));
     assert.equal(await page.getByText('Utolsó oldali futár',{exact:true}).count(),0);
     assert.equal(await page.locator('[data-complaint-id="c0"]').getAttribute('open'),'');
-    assert.ok((await page.locator('[data-complaint-id="c1"] > summary').innerText()).includes('Lezárt'));
+    assert.equal(await page.locator('[data-complaint-id="c1"]').count(),0);
+    assert.match(await page.locator('.quality-inbox-courier').filter({hasText:'Nulla Elek'}).innerText(), /777[\s\S]*0 nyitott[\s\S]*0 bek/);
     assert.equal(await page.locator('#quality-complaints-content select').count(),1);
     assert.equal(await page.locator('#quality-complaints-content img').count(),0);
     assert.equal(await page.evaluate(()=>window.injected),undefined);
     await page.selectOption('#quality-complaints-filter','automatic');
-    await page.waitForFunction(()=>document.querySelectorAll('.quality-inbox-item').length===1);
+    await page.waitForFunction(()=>document.querySelectorAll('[data-complaint-id],[data-signal-id]').length===1);
     assert.ok((await page.locator('.quality-inbox-item').innerText()).includes('Automata Futár'));
     await page.locator('.quality-inbox-item summary').click();
     await page.getByRole('button',{name:'Reklamáció kezelése / Google-űrlap'}).click();
     await page.waitForSelector('[data-complaint-id="converted"]');
-    assert.equal(await page.locator('.quality-inbox-item').count(),1);
+    assert.equal(await page.locator('.quality-inbox-item[data-complaint-id], .quality-inbox-item[data-signal-id]').count(),1);
     assert.equal(await page.evaluate(()=>writes.length),1);
     assert.ok((await page.locator('[data-complaint-id="converted"]').innerText()).includes('Automatikus jelzés'));
     await page.selectOption('#quality-complaints-filter','courier');
-    await page.waitForFunction(()=>document.querySelectorAll('.quality-inbox-item').length===51);
+    await page.waitForFunction(()=>document.querySelectorAll('[data-complaint-id],[data-signal-id]').length===50);
     assert.equal(await page.getByText('Automata Futár',{exact:true}).count(),0);
     await page.selectOption('#quality-complaints-filter','all');
-    await page.waitForFunction(()=>document.querySelectorAll('.quality-inbox-item').length===52);
-    assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('minden találat egy oldalon'));
+    await page.waitForFunction(()=>document.querySelectorAll('[data-complaint-id],[data-signal-id]').length===51);
+    assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('51 nyitott jelzés'));
     assert.ok(await page.evaluate(()=>reads.every(x=>!x.includes('courier=')&&!x.includes('complaint='))));
     await page.setViewportSize({width:390,height:844});
-    await page.locator('[data-complaint-id="c0"] > summary').click();
-    await page.screenshot({path:path.join('tmp','quality-unified-inbox-mobile.png'),fullPage:false});
+    await page.locator('summary.quality-inbox-courier').filter({hasText:'Heged'}).click();
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Mobile layout must fit');
     assert.deepEqual(errors,[]);
     await page.evaluate(()=>{
@@ -66,15 +69,7 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
       return loadQualityComplaints();
     });
     assert.equal(await page.locator('[data-complaint-id="c0"]').count(),0);
-    assert.equal(await page.locator('.quality-inbox-item').count(),51);
-    assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('51 jelzés'));
-    await page.selectOption('#quality-complaints-filter','forwarded');
-    await page.waitForFunction(()=>document.querySelectorAll('.quality-inbox-item').length===2);
-    assert.equal(await page.locator('[data-complaint-id="c0"]').count(),1);
-    assert.equal(await page.locator('[data-complaint-id="last"]').count(),1);
-    assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('2 továbbított jelzés'));
-    await page.selectOption('#quality-complaints-filter','all');
-    await page.waitForFunction(()=>document.querySelectorAll('.quality-inbox-item').length===51);
+    assert.match(await page.locator('.quality-inbox-courier').filter({hasText:'Heged'}).innerText(), /0 nyitott[\s\S]*1 bek/);
     await page.evaluate(()=>{
       const previous=window.api;
       window.duplicateAttempts=0;window.failDuplicate=true;
@@ -91,13 +86,11 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
       };
     });
     const raw=page.locator('[data-signal-id="signal:route:98"]');
-    await raw.evaluate(card=>{card.open=true;});
+    await raw.evaluate(card=>{card.closest('.quality-inbox-body').parentElement.open=true;card.open=true;});
     await raw.getByRole('button',{name:'Reklamáció kezelése / Google-űrlap'}).click();
-    await page.waitForFunction(()=>document.querySelector('#quality-complaints-filter').value==='forwarded');
-    assert.equal(await page.locator('[data-complaint-id="c0"]').getAttribute('open'),'');
-    await page.selectOption('#quality-complaints-filter','all');
-    await page.waitForSelector('[data-signal-id="signal:route:98"]');
-    await raw.evaluate(card=>{card.open=true;});
+    await page.waitForFunction(()=>state.qualityComplaintFocus==='c0');
+    await page.waitForSelector('[data-signal-id="signal:route:98"]',{state:'attached'});
+    await raw.evaluate(card=>{card.closest('.quality-inbox-body').parentElement.open=true;card.open=true;});
     await raw.getByRole('button',{name:'Lezárás duplikációként'}).click();
     await page.getByRole('button',{name:'Mégsem',exact:true}).click();
     assert.equal(await page.evaluate(()=>duplicateAttempts),0);
@@ -107,12 +100,12 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
     assert.equal(await raw.count(),1);
     await page.evaluate(()=>{document.querySelector('[data-duplicate-confirm]').click();document.querySelector('[data-duplicate-confirm]').click();});
     await page.waitForFunction(()=>!document.querySelector('dialog'));
-    await page.waitForFunction(()=>document.querySelectorAll('.quality-inbox-item').length===50);
+    await page.waitForFunction(()=>document.querySelectorAll('[data-complaint-id],[data-signal-id]').length===49);
     assert.equal(await raw.count(),0);
     assert.equal(await page.evaluate(()=>duplicateAttempts),2);
     await page.evaluate(()=>loadQualityComplaints());
     assert.equal(await raw.count(),0);
-    assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('50 jelzés'));
+    assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('49 nyitott jelzés'));
     assert.deepEqual(errors,[]);
     // Realistic route identities: two reports from one submitted tour, plus a
     // separate tour on the same day. Show IDs even with the cards collapsed.
@@ -122,18 +115,19 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
       return loadQualityComplaints();
     });
     const same=page.locator('[data-signal-id="signal:route:112"]'),other=page.locator('[data-signal-id="signal:route:114"]');
-    assert.ok((await same.locator('summary').innerText()).includes('Route ID: 1612799'));
-    assert.ok((await other.locator('summary').innerText()).includes('Route ID: 1612800'));
-    await same.locator('summary').click();
-    assert.ok((await same.innerText()).includes('Ehhez a Route ID-hoz már van reklamáció: Továbbított'));
-    assert.equal(await same.getByRole('button',{name:'Meglévő reklamáció megnyitása'}).count(),1);
-    assert.equal(await other.getByRole('button',{name:'Meglévő reklamáció megnyitása'}).count(),0);
+    assert.equal(await same.count(),0);
+    assert.ok((await other.locator('summary').textContent()).includes('Route ID: 1612800'));
+    assert.match(await page.locator('.quality-inbox-courier').filter({hasText:'9460'}).innerText(), /1 bek/);
+    await page.selectOption('#quality-complaints-filter','in-transit');
+    await page.waitForFunction(()=>document.querySelectorAll('[data-signal-id]').length===1);
+    await page.selectOption('#quality-complaints-filter','time-window');
+    await page.waitForFunction(()=>document.querySelector('#quality-complaints-status').textContent==='0 nyitott jelzés');
     await page.selectOption('#quality-complaints-filter','unrecorded');
-    assert.equal(await page.locator('.quality-inbox-item').count(),1);
+    assert.equal(await page.locator('.quality-inbox-item[data-complaint-id], .quality-inbox-item[data-signal-id]').count(),1);
     assert.ok((await page.locator('.quality-inbox-item > summary').innerText()).includes('1612800'));
     assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('1 külön túra'));
     await page.selectOption('#quality-complaints-filter','pending-forward');
-    assert.equal(await page.locator('.quality-inbox-item').count(),0);
+    assert.equal(await page.locator('.quality-inbox-item[data-complaint-id], .quality-inbox-item[data-signal-id]').count(),0);
     // A new case must remain visible after conversion from the unrecorded filter.
     await page.evaluate(()=>{
       const previous=window.api;
@@ -152,11 +146,9 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
     await page.locator('[data-complaint-id="created-route"][open]').waitFor();
     assert.equal(await page.locator('#quality-complaints-filter').inputValue(),'pending-forward');
     assert.equal(await page.locator('[data-complaint-id="created-route"]').getByRole('button',{name:'Továbbítás',exact:true}).isEnabled(),true);
-    await page.selectOption('#quality-complaints-filter','forwarded');
-    assert.ok((await page.locator('[data-complaint-id="juhasz-sent"] > summary').innerText()).includes('Beküldött Route ID: 1612799'));
     await page.setViewportSize({width:390,height:844});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),true);
     if(process.env.QUALITY_ROUTE_SCREENSHOT)await page.screenshot({path:process.env.QUALITY_ROUTE_SCREENSHOT});
-    console.log('Unified inbox UI passed: source and forwarded filters, existing daily case navigation, duplicate confirmation/cancel/retry, persisted closure, accurate counts, mobile layout.');
+    console.log('Unified inbox UI passed: source filters and courier counts, existing daily case navigation, duplicate confirmation/cancel/retry, persisted closure, accurate counts, mobile layout.');
   }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
