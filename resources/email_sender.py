@@ -428,13 +428,16 @@ def render_template_text(subject, body, variables):
 
 
 def build_custom_message(recipient, subject, body):
-    recipient = validate_email(recipient)
+    recipients = recipient if isinstance(recipient, tuple) else (recipient,)
+    recipients = [validate_email(address) for address in recipients]
+    if not recipients:
+        raise ValueError("Legalább egy címzett szükséges.")
     config = smtp_config()
 
     message = EmailMessage()
     message["Subject"] = str(subject or "").strip() or "JITT üzenet"
     message["From"] = formataddr((config["from_name"], config["from_email"]))
-    message["To"] = recipient
+    message["To"] = ", ".join(recipients)
     # Database-stored templates and free text can still contain the retired
     # OnRender address.  Normalise them immediately before delivery too.
     message.set_content(normalize_courier_portal_links(body).strip())
@@ -445,7 +448,7 @@ def send_custom_email(recipient, subject, body):
     message, config = build_custom_message(recipient, subject, body)
     send_message(message, config)
     return {
-        "recipient": validate_email(recipient),
+        "recipient": str(message["To"]),
         "subject": str(message["Subject"]),
     }
 
@@ -591,13 +594,13 @@ def send_message_with_resend(message, config, api_key):
     from_email = resend_from_email(config.get("from_email", "")).strip()
     from_name = str(config.get("from_name") or "").strip()
     from_header = formataddr((from_name, from_email)) if from_name else from_email
-    recipient = str(message.get("To") or "").strip()
+    recipients = [address.addr_spec for address in message["To"].addresses]
     subject = str(message.get("Subject") or "").strip()
     text_body = message.get_body(preferencelist=("plain",))
     html_body = message.get_body(preferencelist=("html",))
     payload = {
         "from": from_header,
-        "to": [recipient],
+        "to": recipients,
         "subject": subject,
         "text": text_body.get_content() if text_body else "",
     }

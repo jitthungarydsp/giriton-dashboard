@@ -8,6 +8,7 @@ from uuid import UUID
 
 
 RECIPIENT = "zoltan.bagoly@jitt.hu"
+DIGEST_RECIPIENTS = (RECIPIENT, "balazs.gurzo@jitt.hu")
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 DOCUMENTS = {
     "invoice": "Számla feltöltve", "cash_invoice": "KP-számla feltöltve",
@@ -58,7 +59,8 @@ def build_invoice_admin_message(delivery):
                      f"{event['period_start'][:7]} | {text}")
     if not lines:
         heading = "Az előző összefoglaló óta nem érkezett jelentendő számla vagy státuszváltozás."
-    body = "\n\n".join(filter(None, ("Szia Zoltán!", heading, "\n".join(lines), "Üdv,\nJITT Pénzügy")))
+    greeting = "Sziasztok!" if delivery["kind"] == "digest" else "Szia Zoltán!"
+    body = "\n\n".join(filter(None, (greeting, heading, "\n".join(lines), "Üdv,\nJITT Pénzügy")))
     return subject, body
 
 
@@ -72,7 +74,8 @@ def send_pending_invoice_notifications(rest, send_email, *, limit=10):
         state = "uncertain"
         try:
             subject, body = build_invoice_admin_message(delivery)
-            send_email(RECIPIENT, subject, body)
+            recipients = DIGEST_RECIPIENTS if delivery["kind"] == "digest" else RECIPIENT
+            send_email(recipients, subject, body)
             state = "sent"
             sent += 1
         except Exception:
@@ -106,7 +109,7 @@ def retry_invoice_digest(rest, send_email, delivery_id):
         raise RuntimeError('A riport közben megváltozott; nem indult levélküldés.')
     state, error_type = 'sent', ''
     try:
-        send_email(RECIPIENT, subject, body)
+        send_email(DIGEST_RECIPIENTS, subject, body)
     except Exception as exc:
         state, error_type = 'uncertain', type(exc).__name__
         logger.warning('Invoice digest retry uncertain id=%s error_type=%s', delivery_id, error_type)

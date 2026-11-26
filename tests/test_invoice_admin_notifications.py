@@ -30,7 +30,7 @@ class InvoiceAdminNotificationsTest(unittest.TestCase):
         send = Mock()
         result = notifications.retry_invoice_digest(rest, send, identifier)
         self.assertEqual(result['state'],'sent')
-        self.assertEqual(send.call_args.args[0],notifications.RECIPIENT)
+        self.assertEqual(send.call_args.args[0], notifications.DIGEST_RECIPIENTS)
         self.assertEqual(rest.call_args_list[1].kwargs['params']['state'],'eq.uncertain')
         self.assertEqual(rest.call_args_list[2].kwargs['params']['started_at'],'eq.'+claimed['started_at'])
         send.assert_called_once()
@@ -75,6 +75,15 @@ class InvoiceAdminNotificationsTest(unittest.TestCase):
             self.assertEqual(notifications.send_pending_invoice_notifications(rest, send), 0)
         send.assert_called_once()
         self.assertEqual(rest.call_args_list[1].kwargs["payload"]["state"], "uncertain")
+
+    def test_morning_digest_includes_both_recipients(self):
+        rest = Mock(side_effect=[[delivery("digest")], None, []])
+        send = Mock()
+        self.assertEqual(notifications.send_pending_invoice_notifications(rest, send), 1)
+        send.assert_called_once()
+        recipients, _, body = send.call_args.args
+        self.assertEqual(recipients, ("zoltan.bagoly@jitt.hu", "balazs.gurzo@jitt.hu"))
+        self.assertIn("Sziasztok!", body)
 
     def test_empty_morning_and_closed_month_message(self):
         subject, body = notifications.build_invoice_admin_message(delivery("digest", []))
