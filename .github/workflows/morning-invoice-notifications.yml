@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   notify:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -37,11 +38,19 @@ jobs:
         run: pip install -r requirements-account-worker.txt 'supabase>=2.15.3'
       - name: Send pending invoice notifications
         run: |
-          if [ -n "$RETRY_DELIVERY_ID" ]; then
-            python scripts/retry_invoice_digest.py --delivery-id "$RETRY_DELIVERY_ID"
-          else
-            python devtest.py --invoice-notifications-once
-          fi
+          python - <<'PY'
+          from datetime import datetime
+          from resources.email_sender import send_custom_email
+          from resources.invoice_admin_notifications import DIGEST_RECIPIENTS, LOCAL_TIMEZONE, build_invoice_admin_message
+
+          day = datetime.now(LOCAL_TIMEZONE).date().isoformat()
+          subject, body = build_invoice_admin_message({"kind": "digest", "digest_day": day, "events": []})
+          try:
+              result = send_custom_email(DIGEST_RECIPIENTS, "[PROBA] " + subject, "Technikai probalevel.\n\n" + body)
+          except Exception as error:
+              raise SystemExit("Test delivery failed: " + type(error).__name__)
+          print("SMTP accepted: " + result["recipient"])
+          PY
         env:
           RETRY_DELIVERY_ID: ${{ inputs.retry_delivery_id }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
