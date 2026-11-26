@@ -340,11 +340,11 @@ async function loadLatestFinanceSnapshots(env, periodStart, courierId, { trendOn
   return snapshots;
 }
 
-async function loadSalaryAdvanceAdditions(env, periodStart) {
+async function loadSalaryAdvanceAdditions(env, periodStart, courierId) {
   const months=(Array.isArray(periodStart)?periodStart:[periodStart]).map(value=>value.slice(0,7)).sort();
   const [lastYear,lastMonth]=months[months.length-1].split('-').map(Number);
   const end=new Date(Date.UTC(lastYear,lastMonth,1)).toISOString().slice(0,10);
-  const dateFilter={and:`(start_date.gte.${months[0]}-01,start_date.lt.${end})`};
+  const dateFilter={and:`(start_date.gte.${months[0]}-01,start_date.lt.${end})`, ...(courierId ? {courier_id:`eq.${courierId}`} : {})};
   const [plans, requests] = await Promise.all([
     supabaseFetch(env, SETTLEMENT_SCHEMA, "courier_salary_advance_plan", {
       select: "id,courier_id,courier_name,requested_amount_huf,start_date,status", ...dateFilter,status:'in.(open,done)',order: "id.asc", limit: 10000,
@@ -455,6 +455,7 @@ function buildCourierRow(row, profile, workload, closure, snapshot, processMetri
     deductionImpact,
     payable,
     snapshotIsPublished: snapshotHasFinance,
+    financeSnapshotId: snapshotHasFinance ? snapshot.id : null,
     closureStatus: key(closure?.status),
     bookedShiftCount: Number(workload?.booked_shift_count || 0),
     advanceBookedShiftCount: Number(workload?.advance_booked_shift_count || 0),
@@ -735,6 +736,62 @@ function courier360Identity(request) {
   const month=key(url.searchParams.get('month')||date.slice(0,7));
   if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw Object.assign(new Error('Érvényes elszámolási hónap szükséges.'),{status:400});
   return {courierId,date,periodStart:month+'-01'};
+}
+
+const financeDrilldownCards = {
+  base: ['Alapdíj'], tip: ['Borravaló'],
+  importedBonus: ['Kiflis levonások / bónuszok'], importedMalus: ['Kiflis levonások / bónuszok'],
+  jittBonus: ['JITT bónusz / malus'], jittMalus: ['JITT bónusz / malus'],
+  correctionIncome: ['Korrekció +', 'Korrekció'], correctionDeduction: ['Korrekció -', 'Korrekció'],
+  atm: ['ATM hatás'], salaryAdvance: ['Fizetés előleg', 'Fizetéselőleg'],
+  reserve: ['Céltartalék 10%', 'Céltartalék'], insurance: ['Biztosítási díj', 'Biztosítás'],
+};
+
+function financeDrilldownRows(card, values) {
+  const rows = [];
+  for (const item of values) {
+    if (!item || typeof item !== 'object') continue;
+    const raw = item['Összeg'] ?? item.Osszeg ?? item.amount_value ?? item.amountHuf;
+    if (raw === null || raw === undefined || raw === '') continue;
+    const number = typeof raw === 'number' ? raw : Number(String(raw).replace(/\s|Ft/gi, '').replace(',', '.'));
+    if (!Number.isFinite(number)) continue;
+    const unit = item['Egységösszeg'];
+    const calculation = item['Számítás'] || (item.Darab != null && unit != null ? `${item.Darab} × ${unit} Ft` : '');
+    rows.push({label: key(item['Tétel'] || item['Megnevezés'] || item.item_label || card), amount: money(number),
+      note: [calculation, item['Megjegyzés'] || item.note, item['Érvényesség']].map(key).filter(Boolean).join(' · ')});
+  }
+  return rows;
+}
+
+async function courierFinanceBreakdown(request, env) {
+  const {courierId, periodStart} = courier360Identity(request);
+  const url = new URL(request.url);
+  if (url.searchParams.get('kind') === 'advance') {
+    const rows = await loadSalaryAdvanceAdditions(env, periodStart, courierId);
+    return jsonResponse({items: rows.map(row => ({label: 'Fizetési előleg', amount: money(row.requested_amount_huf), note: key(row.start_date)}))});
+  }
+  const id = key(url.searchParams.get('snapshot'));
+  if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) return jsonResponse({error:'Érvényes mentett elszámolás szükséges.'},400);
+  const snapshots = await supabaseFetch(env, SETTLEMENT_SCHEMA, 'courier_finance_snapshot', {
+    select:'id,version,created_at',id:`eq.${id}`,courier_id:`eq.${courierId}`,period_start:`eq.${periodStart}`,limit:1,
+  });
+  if (!snapshots.length) return jsonResponse({error:'A kártyához tartozó mentett elszámolás nem érhető el.'},404);
+  const sources = await supabaseFetch(env, SETTLEMENT_SCHEMA, 'courier_finance_snapshot_source', {
+    select:'payload',snapshot_id:`eq.${id}`,source_key:'eq.card_drilldowns',limit:1,
+  });
+  const cards = sources[0]?.payload || {};
+  const items = Object.fromEntries(Object.entries(financeDrilldownCards).map(([field, names]) => [field, names.flatMap(name => {
+    const rows = cards[name];
+    return Array.isArray(rows) ? [financeDrilldownRows(name, rows)] : [];
+  }).find(rows => rows.length) || []]));
+  const routes = cards['Körök / túrák'];
+  if (Array.isArray(routes)) {
+    const tips = financeDrilldownRows('Borravaló', routes.map(row => ({
+      amount_value: row?.['Borravaló'], item_label: row?.['Route ID'] ? `Route ID ${row['Route ID']}` : 'Túra', note: row?.['Excel dátum'],
+    }))).filter(row => row.amount);
+    if (tips.length) items.tipByRoute = tips;
+  }
+  return jsonResponse({snapshot: snapshots[0], items});
 }
 
 function courier360Fresh(at, now = new Date()) {
@@ -1231,6 +1288,14 @@ export default {
       const access=await requireDashboardUser(request,env);if(access.error)return access.error;
       try{return url.pathname.endsWith('complaint')?await courier360ComplaintAction(request,env,access.user,executionContext):url.pathname.endsWith('bank-account')?await courier360SaveBankAccount(request,env,access.user):await courier360ClosePayment(request,env,access.user)}
       catch{return jsonResponse({error:'A művelet nem menthető. Frissítsd az adatokat és ellenőrizd a források elérhetőségét.'},500)}
+    }
+
+    if (url.pathname === '/api/courier-finance-breakdown') {
+      if (request.method !== 'GET') return jsonResponse({error:'Csak olvasási kérés támogatott.'},405);
+      const access = await requireDashboardUser(request,env);
+      if (access.error) return access.error;
+      try { return await courierFinanceBreakdown(request, env); }
+      catch (error) { return jsonResponse({error:error.status === 400 ? error.message : 'A tételbontás nem tölthető be.'},error.status === 400 ? 400 : 500); }
     }
 
     if (["/api/courier360","/api/courier360-document"].includes(url.pathname)) {
