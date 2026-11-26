@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v307";
+const APP_VERSION = "v308";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1859,6 +1859,32 @@ function renderQualityPartnerDecision(item) {
   return `<section class="courier-complaint-response partner-decision ${decision.status}" aria-label="Kifli elbírálása"><strong>${escapeHtml(qualityComplaintDisplayStatus(item))}</strong><small>Válasz érkezett: ${escapeHtml(shortDateTime(decision.respondedAt))}${decision.reference ? ` · Panaszazonosító: ${escapeHtml(decision.reference)}` : ''}</small><p class="complaint-text">${escapeHtml(decision.reason || 'A Kifli külön indoklást nem adott meg.')}</p></section>`;
 }
 
+function qualityProcessingTime(from, to) {
+  const start = Date.parse(from);
+  const end = Date.parse(to);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return '';
+  let minutes = Math.floor((end - start) / 60000);
+  if (!minutes) return '1 percen belül';
+  const days = Math.floor(minutes / 1440);
+  minutes %= 1440;
+  const hours = Math.floor(minutes / 60);
+  minutes %= 60;
+  return [days && `${days} nap`, hours && `${hours} óra`, minutes && `${minutes} perc`].filter(Boolean).join(' ');
+}
+
+function renderQualityForwardingTimeline(item, decisionsAvailable) {
+  const submitted = item.created_at;
+  const forwarded = item.forwarded_at || (item.delivery?.state === 'sent' ? item.delivery.updated_at : null);
+  const replied = qualityPartnerDecision(item)?.respondedAt;
+  const steps = [
+    ['Beküldve', submitted, 'Nincs időpont', ''],
+    ['Továbbítva', forwarded, 'Nincs időpont', qualityProcessingTime(submitted, forwarded)],
+    ['Kifli-válasz', replied, !decisionsAvailable || item.partnerDecisionWarning ? 'Nem ellenőrizhető' : 'Még nincs rögzített válasz', qualityProcessingTime(forwarded, replied)],
+  ];
+  return `<section aria-label="Feldolgozási idővonal"><h4>Feldolgozási idővonal</h4><dl class="quality-forwarding-timeline">${steps.map(([label, at, empty, duration]) =>
+    `<div><dt>${label}</dt><dd>${at ? `<time datetime="${escapeHtml(at)}">${escapeHtml(fullDateTime(at))}</time>` : empty}${duration ? `<small>Eltelt idő: ${escapeHtml(duration)}</small>` : ''}</dd></div>`).join('')}</dl></section>`;
+}
+
 function qualityInboxTopic(item) {
   if ((item.affected_items || []).some(row => row.signalKind === "route")) return "Menet közben";
   if (item.topic === "noShow") return "No-show";
@@ -1969,6 +1995,7 @@ function mergeQualityInbox(complaints, alerts, shifts) {
 }
 
 function filterQualityInbox(items, filter) {
+  if (filter === 'forwarded') return items.filter(item => !item.inboxSignal && (item.status === 'forwarded' || item.forwarded_at));
   const open = items.filter(item => item.status === 'open' && item.delivery?.state !== 'sent' &&
     !(item.inboxSignal && item.inboxOrigin === 'automatic') &&
     (!item.relatedComplaint || item.relatedComplaint.status === 'open'));
@@ -2009,7 +2036,7 @@ function qualityInboxCourierGroups(roster, complaints, openItems) {
   return [...groups.values()].sort((a, b) => b.open - a.open || a.name.localeCompare(b.name, 'hu') || a.id.localeCompare(b.id, 'hu', {numeric: true}));
 }
 
-async function loadQualityInboxPages(isCurrent = () => true) {
+async function loadQualityInboxPages(isCurrent = () => true, forwarded = false) {
   async function pages(path, fields) {
     const result = Object.fromEntries(fields.map(field => [field, []]));
     const seen = Object.fromEntries(fields.map(field => [field, new Set()]));
@@ -2028,8 +2055,9 @@ async function loadQualityInboxPages(isCurrent = () => true) {
       if (!added) throw Error('A teljes jelzéslista nem tölthető be. Próbáld újra a Frissítés gombbal.');
     }
   }
+  if (forwarded) return pages('/api/quality/complaints?status=forwarded-history', ['items']);
   const [complaints, signals] = await Promise.all([
-    pages('/api/quality/complaints?status=all', ['items']),
+    pages('/api/quality/complaints?status=all&include_partner_decisions=false', ['items']),
     pages('/api/quality/route-signals', ['alerts', 'shifts']),
   ]);
   if (!complaints || !signals) return null;
@@ -2082,7 +2110,7 @@ function openQualitySignalDuplicateDialog(item) {
   dialog.showModal();
 }
 
-async function loadQualityComplaints() {
+async function loadQualityComplaints({reuse = false} = {}) {
   if (!["admin", "superadmin"].includes(String(state.user?.role || "").toLowerCase())) return;
   const target = $("#quality-complaints-list");
   const status = $("#quality-complaints-status");
@@ -2091,31 +2119,49 @@ async function loadQualityComplaints() {
   status.textContent = "Betöltés…";
   target.innerHTML = '';
   const filter = $("#quality-complaints-filter").value;
+  const isCurrent = () => state.qualityComplaintRequest === request;
+  if (!reuse) state.qualityInboxCache = null;
+  const cache = state.qualityInboxCache ||= {};
   const search = $("#quality-complaints-search");
   if (search) {
     search.oninput = null;
     search.parentElement?.classList.toggle('hidden', filter.startsWith('outreach-'));
   }
-  const outreach = loadQualityOutreach(() => state.qualityComplaintRequest === request);
+  const outreach = !reuse || !state.qualityOutreachLoaded || filter.startsWith('outreach-')
+    ? Promise.resolve(loadQualityOutreach(isCurrent)).then(result => {
+      if (isCurrent()) state.qualityOutreachLoaded = Boolean(result && !result.error);
+      return result;
+    }) : null;
   if (filter.startsWith("outreach-")) {
-    await renderQualityOutreachList(outreach, filter, target, status, () => state.qualityComplaintRequest === request);
+    await renderQualityOutreachList(outreach, filter, target, status, isCurrent);
     return;
   }
   try {
-    const [payload] = await Promise.all([
-      loadQualityInboxPages(() => state.qualityComplaintRequest === request),
-      filter === 'all' ? loadCourierMasterOptions() : null,
-    ]);
-    if (state.qualityComplaintRequest !== request) return;
+    const forwarded = filter === 'forwarded';
+    const cacheKey = forwarded ? 'forwarded' : 'open';
+    const cached = cache[cacheKey];
+    const roster = filter === 'all' && !state.couriers?.length ? loadCourierMasterOptions() : null;
+    const payload = cached && Date.now() - cached.loadedAt < 30000
+      ? cached.payload : await loadQualityInboxPages(isCurrent, forwarded);
+    if (!isCurrent()) return;
     if (!payload) return;
+    if (payload !== cached?.payload) cache[cacheKey] = {payload, loadedAt: Date.now()};
     const openItems = filterQualityInbox(payload.items, filter);
-    const groups = filter === 'all' ? qualityInboxCourierGroups(state.couriers || [], payload.items, openItems) : [];
+    const courierGroups = () => filter === 'all' ? qualityInboxCourierGroups(state.couriers || [], payload.items, openItems) : [];
+    let groups = courierGroups();
     const render = () => renderQualityComplaints(payload, filter, target, status, openItems, groups, qualityInboxSearchText(search?.value));
     if (search) search.oninput = () => {
       state.qualityComplaintFocus = '';
       render();
     };
     render();
+    if (roster) {
+      await roster;
+      if (isCurrent()) {
+        groups = courierGroups();
+        render();
+      }
+    }
   } catch (error) {
     if (state.qualityComplaintRequest === request) status.textContent = error.message;
   }
@@ -2141,6 +2187,7 @@ function renderQualityComplaints(payload, filter, target, status, openItems, all
       <div class="quality-inbox-meta"><span>${item.inboxOrigin === 'automatic' ? 'Automatikus jelzés' : 'Futár jelzés'}</span><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span></div>
       <p><strong>${escapeHtml(qualityComplaintRouteLabel(item))}</strong>${item.delivery?.route_id && !qualityComplaintRoutes(item).includes(String(item.delivery.route_id).trim()) ? ' · Eltérés: az eredeti tétel Route ID-ja más vagy hiányzik; ellenőrzés szükséges.' : ''}</p>
       <p class="complaint-text">${escapeHtml(item.message)}</p>
+      ${filter === 'forwarded' ? renderQualityForwardingTimeline(item, payload.partnerDecisionsAvailable !== false) : ''}
       ${renderQualityPartnerDecision(item)}
       ${renderComplaintShiftDetails(item)}
       ${delivery ? `<div class="notice ${blocked || delivery.state === "failed" ? "error" : ""}">${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}${delivery.last_error ? ` · ${escapeHtml(delivery.last_error)}` : ""}</div>` : ""}
@@ -2164,9 +2211,10 @@ function renderQualityComplaints(payload, filter, target, status, openItems, all
     return courier.items.length
       ? `<details class="quality-inbox-item" ${focused ? 'open' : ''}><summary class="quality-inbox-courier">${heading}</summary><div class="quality-inbox-body">${courier.items.map(renderItem).join('')}</div></details>`
       : `<div class="quality-inbox-item quality-inbox-courier">${heading}</div>`;
-  }).join('') : items.map(renderItem).join('')) || `<div class="empty-card">${query ? 'Nincs találat.' : 'Nincs nyitott jelzés.'}</div>`;
-  status.textContent = `${filter === 'all' ? `${groups.length} kolléga · ` : ''}${items.length} nyitott jelzés`;
-  if (filter === 'all' && !state.couriers?.length) status.textContent += ' · A futárnévsor nem érhető el.';
+  }).join('') : items.map(renderItem).join('')) || `<div class="empty-card">${query ? 'Nincs találat.' : filter === 'forwarded' ? 'Nincs továbbított reklamáció.' : 'Nincs nyitott jelzés.'}</div>`;
+  status.textContent = `${filter === 'all' ? `${groups.length} kolléga · ` : ''}${items.length} ${filter === 'forwarded' ? 'továbbított reklamáció' : 'nyitott jelzés'}`;
+  if (filter === 'all' && !state.couriers?.length) status.textContent += state.couriersLoadingPromise
+    ? ' · Futárnévsor betöltése…' : ' · A futárnévsor nem érhető el.';
   if (filter === 'unrecorded') status.textContent += ` · ${new Set(items.map(item => `${item.courier_id}:${qualityComplaintRoutes(item)[0]}`)).size} külön túra · reklamáció még nincs rögzítve`;
   if (filter === 'pending-forward') status.textContent += ' · rögzített ügyek, továbbításra várnak';
   if (payload.partnerDecisionsAvailable === false) status.textContent += ' · A Kifli-válaszok most nem érhetők el.';
@@ -12946,7 +12994,7 @@ $("#nav-quality-complaints").addEventListener("click", () => showSection("qualit
 $("#nav-complaint-assignments")?.addEventListener("click", () => showSection("complaint-assignments"));
 $("#quality-complaints-refresh").addEventListener("click", () => loadQualityComplaints());
 $("#quality-form-test")?.addEventListener("click", () => openQualityFormTest());
-$("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = 0; loadQualityComplaints(); });
+$("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = 0; loadQualityComplaints({reuse:true}); });
 $("#refresh").addEventListener("click", loadShifts);
 $("#open-muszakpro-refresh").addEventListener("click", toggleOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));

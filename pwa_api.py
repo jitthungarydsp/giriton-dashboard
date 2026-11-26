@@ -22885,10 +22885,11 @@ def list_quality_complaints(
     courier: str = Query(default=""),
     work_date: date | None = Query(default=None),
     giriton_pwa_session: str | None = Cookie(default=None),
+    include_partner_decisions: bool = True,
 ):
     user = require_user(giriton_pwa_session)
     manager = quality_complaint_manager(user)
-    if status not in {"all", "open", "forwarded", "closed"}:
+    if status not in {"all", "open", "forwarded", "closed"} and not (manager and status == "forwarded-history"):
         raise HTTPException(status_code=422, detail="Ismeretlen státusz.")
     params = {"select": "*", "order": "created_at.desc,id.desc", "limit": "51", "offset": str(offset),
               "work_month": f"eq.{QUALITY_COMPLAINT_MONTH.isoformat()}"}
@@ -22898,7 +22899,10 @@ def list_quality_complaints(
         params["affected_items"] = "cs." + json.dumps([{"date": work_date.isoformat()}])
     if complaint:
         params["id"] = f"eq.{complaint}"
-    if status != "all":
+    if status == "forwarded-history":
+        params["or"] = "(status.eq.forwarded,forwarded_at.not.is.null)"
+        params["order"] = "forwarded_at.desc.nullslast,created_at.desc,id.desc"
+    elif status != "all":
         params["status"] = f"eq.{status}"
     if not manager:
         courier_id, _name = courier_identity(user)
@@ -22935,11 +22939,12 @@ def list_quality_complaints(
             row["jitt_internal_id"] = next(iter(matches)) if len(matches) == 1 else None
     from resources.quality_complaint_decisions import attach_partner_decisions
     decisions_available = True
-    try:
-        attach_partner_decisions(supabase_rest, rows[:50])
-    except Exception:
-        logging.getLogger(__name__).warning('Admin partner decisions could not be loaded')
-        decisions_available = False
+    if include_partner_decisions:
+        try:
+            attach_partner_decisions(supabase_rest, rows[:50])
+        except Exception:
+            logging.getLogger(__name__).warning('Admin partner decisions could not be loaded')
+            decisions_available = False
     return {"items": rows[:50], "hasMore": len(rows) > 50, "canManage": manager, "forwardingEnabled": forwarding_enabled,
             "partnerDecisionsAvailable": decisions_available}
 

@@ -176,6 +176,17 @@ class ComplaintManagementTest(unittest.TestCase):
         self.assertFalse(result['canManage'])
         self.assertEqual(calls[0]['params']['courier_id'], 'eq.6498')
 
+    def test_forwarded_history_includes_previously_forwarded_closed_cases(self):
+        calls = []
+        def db(*args, **kwargs):
+            calls.append(kwargs)
+            return []
+        self.functions('admin', db)['list_quality_complaints'](status='forwarded-history')
+        self.assertEqual(calls[0]['params']['or'], '(status.eq.forwarded,forwarded_at.not.is.null)')
+        self.assertNotIn('status', calls[0]['params'])
+        with self.assertRaises(ApiError):
+            self.functions('courier', db)['list_quality_complaints'](status='forwarded-history')
+
     def test_monthly_statuses_are_scoped_even_for_admin(self):
         calls = []
         def db(*args, **kwargs):

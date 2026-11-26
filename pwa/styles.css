@@ -33,6 +33,11 @@
 summary.quality-inbox-courier { cursor: pointer; }
 .quality-inbox-courier > strong { overflow-wrap: anywhere; }
 .quality-inbox-courier > span { font-variant-numeric: tabular-nums; color: var(--muted); }
+.quality-forwarding-timeline { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 0 0 12px; }
+.quality-forwarding-timeline > div { border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.quality-forwarding-timeline dt { color: var(--muted); font-size: .875rem; }
+.quality-forwarding-timeline dd { margin: 4px 0 0; font-weight: 600; }
+.quality-forwarding-timeline small { display: block; margin-top: 4px; color: var(--muted); font-weight: 400; }
 @media (max-width: 420px) {
   .quality-inbox-courier { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .quality-inbox-courier > strong { grid-column: 1 / -1; }
