@@ -98,22 +98,27 @@ test('duplicate closures hide only resolved raw signals and keep their source re
 test('page has only one source filter and a shared list without paging or extra panels',()=>{
   const html=fs.readFileSync(path.join(__dirname,'../pwa/index.html'),'utf8');
   const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),html.indexOf('<div id="today-workers-content"'));
-  for(const option of ['all','automatic','courier','in-transit','time-window'])assert.ok(section.includes(`value="${option}"`));
+  for(const option of ['all','courier','in-transit','time-window'])assert.ok(section.includes(`value="${option}"`));
   assert.ok(section.includes('quality-complaints-list'));
+  assert.ok(section.includes('quality-complaints-search'));
+  assert.ok(!section.includes('value="automatic"'));
   for(const removed of ['quality-complaints-prev','quality-complaints-next','quality-route-signals-panel','quality-workspace-panel','quality-form-test'])assert.ok(!section.includes(removed));
 });
 
 test('category filters and roster counts distinguish signals from submitted complaints',()=>{
   const ctx=setup();
   const rows=[
-    {id:'transit',courier_id:1,status:'open',inboxSignal:{signalKind:'route'}},
+    {id:'transit',courier_id:1,courier_name:'Zóra',status:'open',inboxSignal:{signalKind:'route'},affected_items:[{routeId:1614777}]},
+    {id:'auto',courier_id:1,status:'open',inboxSignal:{signalKind:'route'},inboxOrigin:'automatic'},
     {id:'label',courier_id:1,status:'open',topic:'cleanedTimeWindowLate'},
     {id:'closed-label',courier_id:1,status:'closed',topic:'cleanedTimeWindowLate',forwarded_at:'2026-11-01'},
     {id:'sent',courier_id:1,status:'open',delivery:{state:'sent'}},
   ];
   assert.deepEqual(Array.from(ctx.filterQualityInbox(rows,'in-transit'),row=>row.id),['transit']);
   assert.deepEqual(Array.from(ctx.filterQualityInbox(rows,'time-window'),row=>row.id),['label']);
-  const groups=ctx.qualityInboxCourierGroups([{courierId:'1',courierName:'Anna'},{courierId:'2',courierName:'Bela'}],
+  assert.ok(ctx.qualityInboxMatches(rows[0],ctx.qualityInboxSearchText('ZORA')));
+  assert.ok(ctx.qualityInboxMatches(rows[0],'161477'));
+  const groups=ctx.qualityInboxCourierGroups([{courierId:'1',courierName:'Zora'},{courierId:'2',courierName:'Bela'}],
     rows,ctx.filterQualityInbox(rows,'all'));
   assert.deepEqual(Array.from(groups,row=>[row.id,row.open,row.submitted,row.items.length]),[['1',1,2,2],['2',0,0,0]]);
 });

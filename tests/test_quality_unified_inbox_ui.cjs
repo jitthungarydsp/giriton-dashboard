@@ -13,6 +13,13 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
       window.state={user:{role:'admin'},qualityComplaintFocus:'c0',qualityWorkspaceCourier:'stale-filter',qualityWorkspaceDay:'2026-11-01'};
       window.loadQualityOutreach=()=>null;
       window.loadCourierMasterOptions=async()=>{state.couriers=[{courierId:'777',courierName:'Nulla Elek'}];};
+      window.openQualityInboxAction=async(item,action)=>{
+        const dialog=document.createElement('dialog');
+        dialog.dataset.complaintDialog=item.id;
+        dialog.textContent=action;
+        document.body.append(dialog);
+        dialog.showModal();
+      };
       window.shortDateTime=value=>String(value||'').slice(0,16).replace('T',' ');
       window.escapeHtml=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
       window.renderComplaintShiftDetails=()=>'';
@@ -23,8 +30,8 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
         }
         reads.push(url);
         const offset=Number(new URL('http://test'+url).searchParams.get('offset'));
-        if(url.includes('/complaints?'))return {items:offset===0?Array.from({length:50},(_,i)=>({id:'c'+i,courier_id:i,courier_name:i===0?'Hegedüs Dávid':'Futár '+i,status:i===1?'closed':'open',created_at:'2026-11-19T11:00:00Z',message:i===0?'Egyik címen feltartottak.':'Bejelentés',affected_items:[{date:'2026-11-06'}]})):[{id:'last',courier_name:'Utolsó oldali futár',status:'forwarded',created_at:'2026-11-18T11:00:00Z'},...(converted?[{id:'converted',courier_id:99,courier_name:'Automata Futár',status:'open',created_at:'2026-11-20T12:00:00Z',message:'Automatikus késés',affected_items:[{signalKind:'route',signalId:'99',signalOrigin:'automatic'}]}]:[])],canManage:true,hasMore:offset===0};
-        return {alerts:offset===0?[{id:99,courier_id:99,courier_name:'Automata Futár',status:'auto',alert_type:'delay',created_at:'2026-11-20T12:00:00Z',message:'Automatikus késés',...(converted?{complaint:{id:'converted',status:'open'}}:{})},{id:98,courier_id:98,courier_name:'<img src=x onerror="window.injected=1">',alert_type:'problem',status:'new',message:'<script>Hibás cím</script>',created_at:'2026-11-20T11:00:00Z',...(duplicateClosed?{resolution:{reason:'duplicate'}}:{})}]:[],shifts:[],hasMore:false};
+        if(url.includes('/complaints?'))return {items:offset===0?Array.from({length:50},(_,i)=>({id:'c'+i,courier_id:i,courier_name:i===0?'Hegedüs Dávid':'Futár '+i,status:i===1?'closed':'open',created_at:'2026-11-19T11:00:00Z',message:i===0?'Egyik címen feltartottak.':'Bejelentés',affected_items:[{date:'2026-11-06'}]})):[{id:'last',courier_name:'Utolsó oldali futár',status:'forwarded',created_at:'2026-11-18T11:00:00Z'},...(converted?[{id:'converted',courier_id:99,courier_name:'Automata Futár',status:'open',created_at:'2026-11-20T12:00:00Z',message:'Automatikus késés',affected_items:[{signalKind:'route',signalId:'99',signalOrigin:'courier'}]}]:[])],canManage:true,hasMore:offset===0};
+        return {alerts:offset===0?[{id:99,courier_id:99,courier_name:'Automata Futár',status:'new',alert_type:'delay',created_at:'2026-11-20T12:00:00Z',message:'Automatikus késés',...(converted?{complaint:{id:'converted',status:'open'}}:{})},{id:98,courier_id:98,courier_name:'<img src=x onerror="window.injected=1">',alert_type:'problem',status:'new',message:'<script>Hibás cím</script>',created_at:'2026-11-20T11:00:00Z',...(duplicateClosed?{resolution:{reason:'duplicate'}}:{})},{id:100,courier_id:100,courier_name:'Rejtett automata',status:'auto',alert_type:'delay'}]:[],shifts:[],hasMore:false};
       };
     });
     await page.addScriptTag({content:source.slice(source.indexOf('function qualityComplaintStatus('),source.indexOf('async function openQualityInboxAction('))});
@@ -39,18 +46,22 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
     assert.equal(await page.locator('#quality-complaints-content select').count(),1);
     assert.equal(await page.locator('#quality-complaints-content img').count(),0);
     assert.equal(await page.evaluate(()=>window.injected),undefined);
-    await page.selectOption('#quality-complaints-filter','automatic');
-    await page.waitForFunction(()=>document.querySelectorAll('[data-complaint-id],[data-signal-id]').length===1);
-    assert.ok((await page.locator('.quality-inbox-item').innerText()).includes('Automata Futár'));
-    await page.locator('.quality-inbox-item summary').click();
-    await page.getByRole('button',{name:'Reklamáció kezelése / Google-űrlap'}).click();
+    assert.equal(await page.locator('[data-signal-id="signal:route:100"]').count(),0);
+    assert.match(await page.locator('.quality-inbox-courier').first().innerText(), /1 nyitott/);
+    const search=page.locator('#quality-complaints-search');
+    await search.fill('hegedus');
+    assert.equal(await page.locator('.quality-inbox-courier').count(),1);
+    await search.clear();
+    await page.selectOption('#quality-complaints-filter','in-transit');
+    const signal=page.locator('[data-signal-id="signal:route:99"]');
+    await signal.locator('summary').click();
+    await signal.getByRole('button',{name:'Reklamáció kezelése / Google-űrlap'}).click();
+    await page.locator('dialog[data-complaint-dialog="converted"][open]').waitFor();
+    await page.locator('dialog').evaluate(dialog=>dialog.remove());
     await page.waitForSelector('[data-complaint-id="converted"]');
-    assert.equal(await page.locator('.quality-inbox-item[data-complaint-id], .quality-inbox-item[data-signal-id]').count(),1);
     assert.equal(await page.evaluate(()=>writes.length),1);
-    assert.ok((await page.locator('[data-complaint-id="converted"]').innerText()).includes('Automatikus jelzés'));
     await page.selectOption('#quality-complaints-filter','courier');
-    await page.waitForFunction(()=>document.querySelectorAll('[data-complaint-id],[data-signal-id]').length===50);
-    assert.equal(await page.getByText('Automata Futár',{exact:true}).count(),0);
+    await page.waitForFunction(()=>document.querySelectorAll('[data-complaint-id],[data-signal-id]').length===51);
     await page.selectOption('#quality-complaints-filter','all');
     await page.waitForFunction(()=>document.querySelectorAll('[data-complaint-id],[data-signal-id]').length===51);
     assert.ok((await page.locator('#quality-complaints-status').innerText()).includes('51 nyitott jelzés'));
@@ -88,7 +99,7 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
     const raw=page.locator('[data-signal-id="signal:route:98"]');
     await raw.evaluate(card=>{card.closest('.quality-inbox-body').parentElement.open=true;card.open=true;});
     await raw.getByRole('button',{name:'Reklamáció kezelése / Google-űrlap'}).click();
-    await page.waitForFunction(()=>state.qualityComplaintFocus==='c0');
+    await page.waitForFunction(()=>document.querySelector('[data-signal-id="signal:route:98"] [data-signal-result]').textContent.includes('nyitott'));
     await page.waitForSelector('[data-signal-id="signal:route:98"]',{state:'attached'});
     await raw.evaluate(card=>{card.closest('.quality-inbox-body').parentElement.open=true;card.open=true;});
     await raw.getByRole('button',{name:'Lezárás duplikációként'}).click();
@@ -118,6 +129,10 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
     assert.equal(await same.count(),0);
     assert.ok((await other.locator('summary').textContent()).includes('Route ID: 1612800'));
     assert.match(await page.locator('.quality-inbox-courier').filter({hasText:'9460'}).innerText(), /1 bek/);
+    await search.fill('1612800');
+    assert.equal(await page.locator('.quality-inbox-courier').count(),1);
+    assert.equal(await other.isVisible(),true);
+    await search.clear();
     await page.selectOption('#quality-complaints-filter','in-transit');
     await page.waitForFunction(()=>document.querySelectorAll('[data-signal-id]').length===1);
     await page.selectOption('#quality-complaints-filter','time-window');
@@ -143,6 +158,8 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
     await page.selectOption('#quality-complaints-filter','unrecorded');
     await page.locator('[data-signal-id="signal:route:114"] > summary').click();
     await page.locator('[data-signal-id="signal:route:114"]').getByRole('button',{name:'Reklamáció kezelése / Google-űrlap'}).click();
+    await page.locator('dialog[data-complaint-dialog="created-route"][open]').waitFor();
+    await page.locator('dialog').evaluate(dialog=>dialog.remove());
     await page.locator('[data-complaint-id="created-route"][open]').waitFor();
     assert.equal(await page.locator('#quality-complaints-filter').inputValue(),'pending-forward');
     assert.equal(await page.locator('[data-complaint-id="created-route"]').getByRole('button',{name:'Továbbítás',exact:true}).isEnabled(),true);

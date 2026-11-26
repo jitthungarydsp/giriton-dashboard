@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v306";
+const APP_VERSION = "v307";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1970,6 +1970,7 @@ function mergeQualityInbox(complaints, alerts, shifts) {
 
 function filterQualityInbox(items, filter) {
   const open = items.filter(item => item.status === 'open' && item.delivery?.state !== 'sent' &&
+    !(item.inboxSignal && item.inboxOrigin === 'automatic') &&
     (!item.relatedComplaint || item.relatedComplaint.status === 'open'));
   if (filter === 'unrecorded') return open.filter(item => item.inboxSignal?.signalKind === 'route' &&
     qualityComplaintRoutes(item).length && !item.relatedComplaint && !item.inboxSignal.complaint);
@@ -1977,6 +1978,15 @@ function filterQualityInbox(items, filter) {
   if (filter === 'in-transit') return open.filter(item => item.inboxSignal?.signalKind === 'route' || qualityInboxTopic(item) === 'Menet közben');
   if (filter === 'time-window') return open.filter(item => qualityInboxTopic(item) === 'Címkésési panasz');
   return open.filter(item => filter === 'all' || item.inboxOrigin === filter);
+}
+
+function qualityInboxSearchText(value) {
+  return String(value ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('hu').trim();
+}
+
+function qualityInboxMatches(item, query) {
+  return [item.courier_name, ...qualityComplaintRoutes(item), item.delivery?.route_id]
+    .some(value => qualityInboxSearchText(value).includes(query));
 }
 
 function qualityInboxCourierGroups(roster, complaints, openItems) {
@@ -1996,7 +2006,7 @@ function qualityInboxCourierGroups(roster, complaints, openItems) {
     else if (item.status === 'open') courier.open++;
   }
   for (const item of openItems) group(item.courier_id, item.courier_name)?.items.push(item);
-  return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'hu') || a.id.localeCompare(b.id, 'hu', {numeric: true}));
+  return [...groups.values()].sort((a, b) => b.open - a.open || a.name.localeCompare(b.name, 'hu') || a.id.localeCompare(b.id, 'hu', {numeric: true}));
 }
 
 async function loadQualityInboxPages(isCurrent = () => true) {
@@ -2081,6 +2091,11 @@ async function loadQualityComplaints() {
   status.textContent = "Betöltés…";
   target.innerHTML = '';
   const filter = $("#quality-complaints-filter").value;
+  const search = $("#quality-complaints-search");
+  if (search) {
+    search.oninput = null;
+    search.parentElement?.classList.toggle('hidden', filter.startsWith('outreach-'));
+  }
   const outreach = loadQualityOutreach(() => state.qualityComplaintRequest === request);
   if (filter.startsWith("outreach-")) {
     await renderQualityOutreachList(outreach, filter, target, status, () => state.qualityComplaintRequest === request);
@@ -2093,111 +2108,133 @@ async function loadQualityComplaints() {
     ]);
     if (state.qualityComplaintRequest !== request) return;
     if (!payload) return;
-    const items = filterQualityInbox(payload.items, filter);
-    const renderItem = (item) => {
-      if (item.inboxSignal) return renderQualityInboxSignal(item);
-      const delivery = item.delivery;
-      const deliveryLabels = {queued:"Jóváhagyva · kitöltésre vár", processing:"Google-űrlap kitöltése folyamatban", prepared:"Jóváhagyva · kézi beküldésre vár", login_required:"Google-bejelentkezés szükséges", failed:"Kitöltési hiba · nem indult beküldés", uncertain:"Beküldés ellenőrzése szükséges · automatikusan nem ismételjük", sent:"Google-beküldés igazolva"};
-      const blocked = ["processing", "uncertain"].includes(delivery?.state);
-      const open = String(item.id) === (state.qualityComplaintFocus || state.qualityInboxOpen);
-      return `<details class="quality-inbox-item" name="quality-inbox" data-complaint-id="${escapeHtml(item.id)}" ${open ? "open" : ""}>
-        <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}<small class="quality-route-id">${escapeHtml(qualityComplaintRouteLabel(item))}</small></strong><span>${escapeHtml(qualityInboxTopic(item))}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintDisplayStatus(item))}</span></summary>
-        <div class="quality-inbox-body">
-        <div class="quality-inbox-meta"><span>${item.inboxOrigin === 'automatic' ? 'Automatikus jelzés' : 'Futár jelzés'}</span><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span></div>
-        <p><strong>${escapeHtml(qualityComplaintRouteLabel(item))}</strong>${item.delivery?.route_id && !qualityComplaintRoutes(item).includes(String(item.delivery.route_id).trim()) ? ' · Eltérés: az eredeti tétel Route ID-ja más vagy hiányzik; ellenőrzés szükséges.' : ''}</p>
-        <p class="complaint-text">${escapeHtml(item.message)}</p>
-        ${renderQualityPartnerDecision(item)}
-        ${renderComplaintShiftDetails(item)}
-        ${delivery ? `<div class="notice ${blocked || delivery.state === "failed" ? "error" : ""}">${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}${delivery.last_error ? ` · ${escapeHtml(delivery.last_error)}` : ""}</div>` : ""}
-        ${payload.canManage && item.status !== "closed" ? `<div class="quality-inbox-actions">
-          <button type="button" class="secondary" data-complaint-action="close" ${blocked || delivery?.state === "queued" ? "disabled" : ""}>Reklamáció lezárása</button>
-          ${item.status === "open" ? `<button type="button" class="primary" data-complaint-action="forward" ${["uncertain", "sent"].includes(delivery?.state) ? "disabled" : ""}>${["queued", "processing", "prepared"].includes(delivery?.state) ? "Továbbítás folytatása" : "Továbbítás"}</button>` : ""}
-        </div>` : ""}
-        ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
-        ${payload.canManage ? `<details data-complaint-evidence><summary>Műszak- és Hub-adatok</summary><div data-evidence-content role="status"></div><button type="button" class="secondary" data-evidence-refresh>Adatok frissítése</button></details>` : ""}
-        <details><summary>Érintett tételek és előzmények</summary>
-          ${(item.affected_items || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.date)} · ${escapeHtml(row.label)}${row.routeId ? ` · Route ID: ${escapeHtml(row.routeId)}` : ''}</span><strong>${escapeHtml(row.note)}</strong></div>`).join("")}
-          ${(item.history || []).map(event => `<p class="complaint-text">${escapeHtml(shortDateTime(event.at))} · ${escapeHtml(event.actor)} · ${escapeHtml(qualityComplaintStatus(event.status))}<br>${escapeHtml(event.message || event.reference)}</p>`).join("")}
-        </details>
-        ${item.admin_response ? `<div class="notice complaint-text"><strong>Válasz:</strong> ${escapeHtml(item.admin_response)}</div>` : ""}
-        </div>
-      </details>`;
+    const openItems = filterQualityInbox(payload.items, filter);
+    const groups = filter === 'all' ? qualityInboxCourierGroups(state.couriers || [], payload.items, openItems) : [];
+    const render = () => renderQualityComplaints(payload, filter, target, status, openItems, groups, qualityInboxSearchText(search?.value));
+    if (search) search.oninput = () => {
+      state.qualityComplaintFocus = '';
+      render();
     };
-    const groups = filter === 'all' ? qualityInboxCourierGroups(state.couriers || [], payload.items, items) : [];
-    target.innerHTML = (filter === 'all' ? groups.map(courier => {
-      const heading = `<strong>${escapeHtml(courier.name)}<small class="quality-route-id">ID ${escapeHtml(courier.id)}</small></strong><span>${courier.open} nyitott</span><span>${courier.submitted} beküldve</span>`;
-      const focused = courier.items.some(item => String(item.id) === (state.qualityComplaintFocus || state.qualityInboxOpen));
-      return courier.items.length
-        ? `<details class="quality-inbox-item" ${focused ? 'open' : ''}><summary class="quality-inbox-courier">${heading}</summary><div class="quality-inbox-body">${courier.items.map(renderItem).join('')}</div></details>`
-        : `<div class="quality-inbox-item quality-inbox-courier">${heading}</div>`;
-    }).join('') : items.map(renderItem).join('')) || '<div class="empty-card">Nincs nyitott jelzés.</div>';
-    status.textContent = `${filter === 'all' ? `${groups.length} kolléga · ` : ''}${items.length} nyitott jelzés`;
-    if (filter === 'all' && !state.couriers?.length) status.textContent += ' · A futárnévsor nem érhető el.';
-    if (filter === 'unrecorded') status.textContent += ` · ${new Set(items.map(item => `${item.courier_id}:${qualityComplaintRoutes(item)[0]}`)).size} külön túra · reklamáció még nincs rögzítve`;
-    if (filter === 'pending-forward') status.textContent += ' · rögzített ügyek, továbbításra várnak';
-    if (payload.partnerDecisionsAvailable === false) status.textContent += ' · A Kifli-válaszok most nem érhetők el.';
-    target.querySelectorAll('[data-signal-close-duplicate]').forEach(button => button.addEventListener('click', () => {
-      const item = items.find(row => row.id === button.dataset.signalCloseDuplicate);
-      if (item) openQualitySignalDuplicateDialog(item);
-    }));
-    target.querySelectorAll('[data-route-signal-complaint]').forEach(button => button.addEventListener('click', async () => {
-      const output = button.closest('.quality-inbox-body').querySelector('[data-signal-result]');
-      button.disabled = true;
-      output.textContent = 'A jelzés hozzákapcsolása a reklamációs folyamathoz…';
-      try {
-        const response = await api(`/api/quality/route-signals/${encodeURIComponent(button.dataset.signalKind)}/${encodeURIComponent(button.dataset.routeSignalComplaint)}/complaint`, {method:'POST', body:'{}'});
-        if (!response.ok || !response.item?.id) throw Error('A mentés nem igazolható.');
-        state.qualityComplaintFocus = String(response.item.id);
-        if (response.alreadyExists) $('#quality-complaints-filter').value = 'all';
-        else if ($('#quality-complaints-filter').value === 'unrecorded') $('#quality-complaints-filter').value = 'pending-forward';
-        await loadQualityComplaints();
-      } catch (error) { output.textContent = error.message; button.disabled = false; }
-    }));
-    target.querySelectorAll('[data-signal-id]').forEach(card => card.addEventListener('toggle', () => {
-      if (card.open) state.qualityInboxOpen = card.dataset.signalId;
-      else if (state.qualityInboxOpen === card.dataset.signalId) state.qualityInboxOpen = '';
-    }));
-    target.querySelectorAll("[data-complaint-evidence]").forEach(panel => {
-      const content = panel.querySelector("[data-evidence-content]");
-      const refresh = panel.querySelector("[data-evidence-refresh]");
-      let loaded = false;
-      const loadEvidence = async () => {
-        if (refresh.disabled) return;
-        refresh.disabled = true;
-        content.textContent = "Műszak- és Hub-adatok betöltése…";
-        try {
-          const id = panel.closest("[data-complaint-id]").dataset.complaintId;
-          const evidence = await api(`/api/quality/complaints/${encodeURIComponent(id)}/evidence`);
-          content.innerHTML = `${(evidence.warnings || []).map(text => `<p class="notice error">${escapeHtml(text)}</p>`).join("")}
-            ${(evidence.sections || []).map(section => `<section class="complaint-shift-details"><h4>${escapeHtml(section.title)}</h4>
-              ${(section.rows || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join("")}
-              <small>${escapeHtml(section.source)} · ${escapeHtml(shortDateTime(section.updatedAt) || "Nincs adat")}</small></section>`).join("")}`;
-          loaded = true;
-        } catch (error) { content.textContent = error.message; }
-        finally { refresh.disabled = false; }
-      };
-      panel.addEventListener("toggle", () => { if (panel.open && !loaded) loadEvidence(); });
-      refresh.addEventListener("click", loadEvidence);
-    });
-    const cards = Array.from(target.querySelectorAll("[data-complaint-id]"));
-    cards.forEach(card => card.addEventListener?.("toggle", () => {
-      if (card.open) state.qualityInboxOpen = card.dataset.complaintId;
-      else if (state.qualityInboxOpen === card.dataset.complaintId) state.qualityInboxOpen = "";
-    }));
-    target.querySelectorAll("[data-complaint-action]").forEach(button => button.addEventListener("click", () => {
-      const id = button.closest("[data-complaint-id]").dataset.complaintId;
-      const item = payload.items.find(row => String(row.id) === id);
-      if (item) openQualityInboxAction(item, button.dataset.complaintAction, payload.forwardingEnabled);
-    }));
-    if (state.qualityComplaintFocus) {
-      const selected = cards.find(card => card.dataset.complaintId === state.qualityComplaintFocus);
-      if (selected) {
-        selected.open = true;
-        selected.scrollIntoView({behavior:"smooth",block:"start"});
-      }
-    }
+    render();
   } catch (error) {
     if (state.qualityComplaintRequest === request) status.textContent = error.message;
+  }
+}
+
+function renderQualityComplaints(payload, filter, target, status, openItems, allGroups, query) {
+  const groups = query ? allGroups.flatMap(courier => {
+    if (qualityInboxSearchText(courier.name).includes(query)) return [courier];
+    const matches = courier.items.filter(item => qualityInboxMatches(item, query));
+    return matches.length ? [{...courier, items: matches}] : [];
+  }) : allGroups;
+  const items = filter === 'all' ? groups.flatMap(courier => courier.items)
+    : query ? openItems.filter(item => qualityInboxMatches(item, query)) : openItems;
+  const renderItem = (item) => {
+    if (item.inboxSignal) return renderQualityInboxSignal(item);
+    const delivery = item.delivery;
+    const deliveryLabels = {queued:"Jóváhagyva · kitöltésre vár", processing:"Google-űrlap kitöltése folyamatban", prepared:"Jóváhagyva · kézi beküldésre vár", login_required:"Google-bejelentkezés szükséges", failed:"Kitöltési hiba · nem indult beküldés", uncertain:"Beküldés ellenőrzése szükséges · automatikusan nem ismételjük", sent:"Google-beküldés igazolva"};
+    const blocked = ["processing", "uncertain"].includes(delivery?.state);
+    const open = String(item.id) === (state.qualityComplaintFocus || state.qualityInboxOpen);
+    return `<details class="quality-inbox-item" name="quality-inbox" data-complaint-id="${escapeHtml(item.id)}" ${open ? "open" : ""}>
+      <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}<small class="quality-route-id">${escapeHtml(qualityComplaintRouteLabel(item))}</small></strong><span>${escapeHtml(qualityInboxTopic(item))}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintDisplayStatus(item))}</span></summary>
+      <div class="quality-inbox-body">
+      <div class="quality-inbox-meta"><span>${item.inboxOrigin === 'automatic' ? 'Automatikus jelzés' : 'Futár jelzés'}</span><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span></div>
+      <p><strong>${escapeHtml(qualityComplaintRouteLabel(item))}</strong>${item.delivery?.route_id && !qualityComplaintRoutes(item).includes(String(item.delivery.route_id).trim()) ? ' · Eltérés: az eredeti tétel Route ID-ja más vagy hiányzik; ellenőrzés szükséges.' : ''}</p>
+      <p class="complaint-text">${escapeHtml(item.message)}</p>
+      ${renderQualityPartnerDecision(item)}
+      ${renderComplaintShiftDetails(item)}
+      ${delivery ? `<div class="notice ${blocked || delivery.state === "failed" ? "error" : ""}">${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}${delivery.last_error ? ` · ${escapeHtml(delivery.last_error)}` : ""}</div>` : ""}
+      ${payload.canManage && item.status !== "closed" ? `<div class="quality-inbox-actions">
+        <button type="button" class="secondary" data-complaint-action="close" ${blocked || delivery?.state === "queued" ? "disabled" : ""}>Reklamáció lezárása</button>
+        ${item.status === "open" ? `<button type="button" class="primary" data-complaint-action="forward" ${["uncertain", "sent"].includes(delivery?.state) ? "disabled" : ""}>${["queued", "processing", "prepared"].includes(delivery?.state) ? "Továbbítás folytatása" : "Továbbítás"}</button>` : ""}
+      </div>` : ""}
+      ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
+      ${payload.canManage ? `<details data-complaint-evidence><summary>Műszak- és Hub-adatok</summary><div data-evidence-content role="status"></div><button type="button" class="secondary" data-evidence-refresh>Adatok frissítése</button></details>` : ""}
+      <details><summary>Érintett tételek és előzmények</summary>
+        ${(item.affected_items || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.date)} · ${escapeHtml(row.label)}${row.routeId ? ` · Route ID: ${escapeHtml(row.routeId)}` : ''}</span><strong>${escapeHtml(row.note)}</strong></div>`).join("")}
+        ${(item.history || []).map(event => `<p class="complaint-text">${escapeHtml(shortDateTime(event.at))} · ${escapeHtml(event.actor)} · ${escapeHtml(qualityComplaintStatus(event.status))}<br>${escapeHtml(event.message || event.reference)}</p>`).join("")}
+      </details>
+      ${item.admin_response ? `<div class="notice complaint-text"><strong>Válasz:</strong> ${escapeHtml(item.admin_response)}</div>` : ""}
+      </div>
+    </details>`;
+  };
+  target.innerHTML = (filter === 'all' ? groups.map(courier => {
+    const heading = `<strong>${escapeHtml(courier.name)}<small class="quality-route-id">ID ${escapeHtml(courier.id)}</small></strong><span>${courier.open} nyitott</span><span>${courier.submitted} beküldve</span>`;
+    const focused = query || courier.items.some(item => String(item.id) === (state.qualityComplaintFocus || state.qualityInboxOpen));
+    return courier.items.length
+      ? `<details class="quality-inbox-item" ${focused ? 'open' : ''}><summary class="quality-inbox-courier">${heading}</summary><div class="quality-inbox-body">${courier.items.map(renderItem).join('')}</div></details>`
+      : `<div class="quality-inbox-item quality-inbox-courier">${heading}</div>`;
+  }).join('') : items.map(renderItem).join('')) || `<div class="empty-card">${query ? 'Nincs találat.' : 'Nincs nyitott jelzés.'}</div>`;
+  status.textContent = `${filter === 'all' ? `${groups.length} kolléga · ` : ''}${items.length} nyitott jelzés`;
+  if (filter === 'all' && !state.couriers?.length) status.textContent += ' · A futárnévsor nem érhető el.';
+  if (filter === 'unrecorded') status.textContent += ` · ${new Set(items.map(item => `${item.courier_id}:${qualityComplaintRoutes(item)[0]}`)).size} külön túra · reklamáció még nincs rögzítve`;
+  if (filter === 'pending-forward') status.textContent += ' · rögzített ügyek, továbbításra várnak';
+  if (payload.partnerDecisionsAvailable === false) status.textContent += ' · A Kifli-válaszok most nem érhetők el.';
+  target.querySelectorAll('[data-signal-close-duplicate]').forEach(button => button.addEventListener('click', () => {
+    const item = items.find(row => row.id === button.dataset.signalCloseDuplicate);
+    if (item) openQualitySignalDuplicateDialog(item);
+  }));
+  target.querySelectorAll('[data-route-signal-complaint]').forEach(button => button.addEventListener('click', async () => {
+    const output = button.closest('.quality-inbox-body').querySelector('[data-signal-result]');
+    button.disabled = true;
+    output.textContent = 'A jelzés hozzákapcsolása a reklamációs folyamathoz…';
+    try {
+      const response = await api(`/api/quality/route-signals/${encodeURIComponent(button.dataset.signalKind)}/${encodeURIComponent(button.dataset.routeSignalComplaint)}/complaint`, {method:'POST', body:'{}'});
+      if (!response.ok || !response.item?.id) throw Error('A mentés nem igazolható.');
+      const complaint = payload.items.find(item => String(item.id) === String(response.item.id));
+      if ((response.item.status && response.item.status !== 'open') || complaint?.delivery?.state === 'sent') {
+        output.textContent = 'Az ehhez a jelzéshez tartozó reklamáció már nem nyitott.';
+        button.disabled = false;
+        return;
+      }
+      state.qualityComplaintFocus = String(response.item.id);
+      if ($('#quality-complaints-filter').value === 'unrecorded') $('#quality-complaints-filter').value = 'pending-forward';
+      await openQualityInboxAction({...complaint, ...response.item}, 'forward', payload.forwardingEnabled);
+      await loadQualityComplaints();
+    } catch (error) { output.textContent = error.message; button.disabled = false; }
+  }));
+  target.querySelectorAll('[data-signal-id]').forEach(card => card.addEventListener('toggle', () => {
+    if (card.open) state.qualityInboxOpen = card.dataset.signalId;
+    else if (state.qualityInboxOpen === card.dataset.signalId) state.qualityInboxOpen = '';
+  }));
+  target.querySelectorAll("[data-complaint-evidence]").forEach(panel => {
+    const content = panel.querySelector("[data-evidence-content]");
+    const refresh = panel.querySelector("[data-evidence-refresh]");
+    let loaded = false;
+    const loadEvidence = async () => {
+      if (refresh.disabled) return;
+      refresh.disabled = true;
+      content.textContent = "Műszak- és Hub-adatok betöltése…";
+      try {
+        const id = panel.closest("[data-complaint-id]").dataset.complaintId;
+        const evidence = await api(`/api/quality/complaints/${encodeURIComponent(id)}/evidence`);
+        content.innerHTML = `${(evidence.warnings || []).map(text => `<p class="notice error">${escapeHtml(text)}</p>`).join("")}
+          ${(evidence.sections || []).map(section => `<section class="complaint-shift-details"><h4>${escapeHtml(section.title)}</h4>
+            ${(section.rows || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`).join("")}
+            <small>${escapeHtml(section.source)} · ${escapeHtml(shortDateTime(section.updatedAt) || "Nincs adat")}</small></section>`).join("")}`;
+        loaded = true;
+      } catch (error) { content.textContent = error.message; }
+      finally { refresh.disabled = false; }
+    };
+    panel.addEventListener("toggle", () => { if (panel.open && !loaded) loadEvidence(); });
+    refresh.addEventListener("click", loadEvidence);
+  });
+  const cards = Array.from(target.querySelectorAll("[data-complaint-id]"));
+  cards.forEach(card => card.addEventListener?.("toggle", () => {
+    if (card.open) state.qualityInboxOpen = card.dataset.complaintId;
+    else if (state.qualityInboxOpen === card.dataset.complaintId) state.qualityInboxOpen = "";
+  }));
+  target.querySelectorAll("[data-complaint-action]").forEach(button => button.addEventListener("click", () => {
+    const id = button.closest("[data-complaint-id]").dataset.complaintId;
+    const item = payload.items.find(row => String(row.id) === id);
+    if (item) openQualityInboxAction(item, button.dataset.complaintAction, payload.forwardingEnabled);
+  }));
+  if (state.qualityComplaintFocus) {
+    const selected = cards.find(card => card.dataset.complaintId === state.qualityComplaintFocus);
+    if (selected) {
+      selected.open = true;
+      selected.scrollIntoView({behavior:"smooth",block:"start"});
+    }
   }
 }
 

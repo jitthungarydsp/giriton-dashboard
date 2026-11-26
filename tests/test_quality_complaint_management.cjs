@@ -5,7 +5,7 @@ const test = require('node:test');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../pwa/app.js'), 'utf8');
 function setup(role, items) {
   const nodes = new Map();
-  const get = key => { if (!nodes.has(key)) nodes.set(key, { value: 'courier', querySelectorAll: () => [] }); return nodes.get(key); };
+  const get = key => { if (key === '#quality-complaints-search') return null; if (!nodes.has(key)) nodes.set(key, { value: 'courier', querySelectorAll: () => [] }); return nodes.get(key); };
   const context = { state: { user: { role } }, $: get, prepareQualityWorkspace: async () => true, loadQualityOutreach: () => null,
     escapeHtml: value => String(value || '').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
     shortDateTime: String, renderComplaintShiftDetails: () => '', api: async () => ({ items, canManage: true, hasMore: false }) };
