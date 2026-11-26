@@ -22949,6 +22949,30 @@ def list_quality_complaints(
             "partnerDecisionsAvailable": decisions_available}
 
 
+@app.get("/api/quality/excel-forwarded")
+def list_excel_forwarded_quality_complaints(
+    offset: int = Query(default=0, ge=0),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    if not quality_complaint_manager(require_user(giriton_pwa_session)):
+        raise HTTPException(status_code=403, detail="Reklamációkezelő jogosultság szükséges.")
+    month = QUALITY_COMPLAINT_MONTH
+    start = datetime.combine(month, datetime.min.time(), LOCAL_TIMEZONE).isoformat()
+    stop = datetime.combine(month_end(month) + timedelta(days=1), datetime.min.time(), LOCAL_TIMEZONE).isoformat()
+    rows = supabase_rest("GET", "route_delay_form_draft", schema="settlement", params={
+        "select": "id,courier_id,courier_name,route_id,work_date,submitted_at,source_filename,source_row",
+        "state": "eq.sent", "and": f"(submitted_at.gte.{start},submitted_at.lt.{stop})",
+        "order": "submitted_at.desc,id.desc", "limit": "501", "offset": str(offset),
+    }) or []
+    return {"items": [{
+        "id": f"excel:{row['id']}", "courier_id": row["courier_id"], "courier_name": row["courier_name"],
+        "topic": "uncleanedTimeWindowLate", "status": "forwarded", "forwarded_at": row["submitted_at"],
+        "excelSubmission": True,
+        "sourceFilename": row.get("source_filename") or "", "sourceRow": row.get("source_row"),
+        "affected_items": [{"date": row["work_date"], "routeId": row["route_id"]}],
+    } for row in rows[:500]], "hasMore": len(rows) > 500}
+
+
 @app.get("/api/quality/outreach")
 def quality_outreach(
     response: Response,

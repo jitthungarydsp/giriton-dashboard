@@ -121,7 +121,7 @@ const state = {
   settlementImportDraggedColumnId: "",
   settlementImportDraggedSheetId: "",
 };
-const APP_VERSION = "v308";
+const APP_VERSION = "v309";
 const QUALITY_COMPLAINT_MONTH = "2026-11";
 const $ = (selector) => document.querySelector(selector);
 
@@ -1877,9 +1877,9 @@ function renderQualityForwardingTimeline(item, decisionsAvailable) {
   const forwarded = item.forwarded_at || (item.delivery?.state === 'sent' ? item.delivery.updated_at : null);
   const replied = qualityPartnerDecision(item)?.respondedAt;
   const steps = [
-    ['Beküldve', submitted, 'Nincs időpont', ''],
+    ['Beküldve', submitted, item.excelSubmission ? 'A futár beküldési ideje nincs az Excel-adatokban' : 'Nincs időpont', ''],
     ['Továbbítva', forwarded, 'Nincs időpont', qualityProcessingTime(submitted, forwarded)],
-    ['Kifli-válasz', replied, !decisionsAvailable || item.partnerDecisionWarning ? 'Nem ellenőrizhető' : 'Még nincs rögzített válasz', qualityProcessingTime(forwarded, replied)],
+    ['Kifli-válasz', replied, item.excelSubmission ? 'Nincs ehhez a beküldéshez kapcsolt válasz' : !decisionsAvailable || item.partnerDecisionWarning ? 'Nem ellenőrizhető' : 'Még nincs rögzített válasz', qualityProcessingTime(forwarded, replied)],
   ];
   return `<section aria-label="Feldolgozási idővonal"><h4>Feldolgozási idővonal</h4><dl class="quality-forwarding-timeline">${steps.map(([label, at, empty, duration]) =>
     `<div><dt>${label}</dt><dd>${at ? `<time datetime="${escapeHtml(at)}">${escapeHtml(fullDateTime(at))}</time>` : empty}${duration ? `<small>Eltelt idő: ${escapeHtml(duration)}</small>` : ''}</dd></div>`).join('')}</dl></section>`;
@@ -2037,10 +2037,10 @@ function qualityInboxCourierGroups(roster, complaints, openItems) {
 }
 
 async function loadQualityInboxPages(isCurrent = () => true, forwarded = false) {
-  async function pages(path, fields) {
+  async function pages(path, fields, pageSize = 50) {
     const result = Object.fromEntries(fields.map(field => [field, []]));
     const seen = Object.fromEntries(fields.map(field => [field, new Set()]));
-    for (let offset = 0; ; offset += 50) {
+    for (let offset = 0; ; offset += pageSize) {
       if (!isCurrent()) return null;
       const page = await api(`${path}${path.includes('?') ? '&' : '?'}offset=${offset}`, {silentLoading: true});
       if (!isCurrent()) return null;
@@ -2055,7 +2055,16 @@ async function loadQualityInboxPages(isCurrent = () => true, forwarded = false) 
       if (!added) throw Error('A teljes jelzéslista nem tölthető be. Próbáld újra a Frissítés gombbal.');
     }
   }
-  if (forwarded) return pages('/api/quality/complaints?status=forwarded-history', ['items']);
+  if (forwarded) {
+    const [complaints, excel] = await Promise.all([
+      pages('/api/quality/complaints?status=forwarded-history', ['items']),
+      pages('/api/quality/excel-forwarded', ['items'], 500),
+    ]);
+    if (!complaints || !excel) return null;
+    const items = [...complaints.items, ...excel.items].sort((a, b) =>
+      (Date.parse(b.forwarded_at || b.created_at) || 0) - (Date.parse(a.forwarded_at || a.created_at) || 0) || String(a.id).localeCompare(String(b.id)));
+    return {...complaints, items};
+  }
   const [complaints, signals] = await Promise.all([
     pages('/api/quality/complaints?status=all&include_partner_decisions=false', ['items']),
     pages('/api/quality/route-signals', ['alerts', 'shifts']),
@@ -2152,6 +2161,7 @@ async function loadQualityComplaints({reuse = false} = {}) {
     const render = () => renderQualityComplaints(payload, filter, target, status, openItems, groups, qualityInboxSearchText(search?.value));
     if (search) search.oninput = () => {
       state.qualityComplaintFocus = '';
+      state.qualityForwardedVisible = 50;
       render();
     };
     render();
@@ -2175,6 +2185,7 @@ function renderQualityComplaints(payload, filter, target, status, openItems, all
   }) : allGroups;
   const items = filter === 'all' ? groups.flatMap(courier => courier.items)
     : query ? openItems.filter(item => qualityInboxMatches(item, query)) : openItems;
+  const visibleCount = filter === 'forwarded' ? state.qualityForwardedVisible || 50 : items.length;
   const renderItem = (item) => {
     if (item.inboxSignal) return renderQualityInboxSignal(item);
     const delivery = item.delivery;
@@ -2182,21 +2193,22 @@ function renderQualityComplaints(payload, filter, target, status, openItems, all
     const blocked = ["processing", "uncertain"].includes(delivery?.state);
     const open = String(item.id) === (state.qualityComplaintFocus || state.qualityInboxOpen);
     return `<details class="quality-inbox-item" name="quality-inbox" data-complaint-id="${escapeHtml(item.id)}" ${open ? "open" : ""}>
-      <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}<small class="quality-route-id">${escapeHtml(qualityComplaintRouteLabel(item))}</small></strong><span>${escapeHtml(qualityInboxTopic(item))}</span><time>${escapeHtml(shortDateTime(item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintDisplayStatus(item))}</span></summary>
+      <summary class="quality-inbox-row"><strong>${escapeHtml(item.courier_name)}<small class="quality-route-id">${escapeHtml(qualityComplaintRouteLabel(item))}</small></strong><span>${item.excelSubmission ? 'Excel · Címkésés' : escapeHtml(qualityInboxTopic(item))}</span><time>${escapeHtml(shortDateTime(filter === 'forwarded' ? item.forwarded_at || item.created_at : item.created_at))}</time><span class="source">${escapeHtml(qualityComplaintDisplayStatus(item))}</span></summary>
       <div class="quality-inbox-body">
-      <div class="quality-inbox-meta"><span>${item.inboxOrigin === 'automatic' ? 'Automatikus jelzés' : 'Futár jelzés'}</span><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span><span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span></div>
+      <div class="quality-inbox-meta"><span>${item.excelSubmission ? 'Excel' : item.inboxOrigin === 'automatic' ? 'Automatikus jelzés' : 'Futár jelzés'}</span><span>Érintett nap <strong>${escapeHtml([...new Set((item.affected_items || []).map(row => row.date).filter(Boolean))].join(", ") || "Nincs megadva")}</strong></span><span>Futár ID <strong>${escapeHtml(item.courier_id)}</strong></span>${item.excelSubmission ? '' : `<span>JITT belső azonosító <strong>${escapeHtml(item.jitt_internal_id || "Nincs adat")}</strong></span>`}</div>
+      ${item.sourceFilename ? `<p class="muted">Forrás: ${escapeHtml(item.sourceFilename)}${item.sourceRow ? ` · ${escapeHtml(item.sourceRow)}. sor` : ''}</p>` : ''}
       <p><strong>${escapeHtml(qualityComplaintRouteLabel(item))}</strong>${item.delivery?.route_id && !qualityComplaintRoutes(item).includes(String(item.delivery.route_id).trim()) ? ' · Eltérés: az eredeti tétel Route ID-ja más vagy hiányzik; ellenőrzés szükséges.' : ''}</p>
-      <p class="complaint-text">${escapeHtml(item.message)}</p>
+      ${item.message ? `<p class="complaint-text">${escapeHtml(item.message)}</p>` : ''}
       ${filter === 'forwarded' ? renderQualityForwardingTimeline(item, payload.partnerDecisionsAvailable !== false) : ''}
       ${renderQualityPartnerDecision(item)}
       ${renderComplaintShiftDetails(item)}
       ${delivery ? `<div class="notice ${blocked || delivery.state === "failed" ? "error" : ""}">${escapeHtml(deliveryLabels[delivery.state] || delivery.state)}${delivery.last_error ? ` · ${escapeHtml(delivery.last_error)}` : ""}</div>` : ""}
-      ${payload.canManage && item.status !== "closed" ? `<div class="quality-inbox-actions">
+      ${payload.canManage && !item.excelSubmission && item.status !== "closed" ? `<div class="quality-inbox-actions">
         <button type="button" class="secondary" data-complaint-action="close" ${blocked || delivery?.state === "queued" ? "disabled" : ""}>Reklamáció lezárása</button>
         ${item.status === "open" ? `<button type="button" class="primary" data-complaint-action="forward" ${["uncertain", "sent"].includes(delivery?.state) ? "disabled" : ""}>${["queued", "processing", "prepared"].includes(delivery?.state) ? "Továbbítás folytatása" : "Továbbítás"}</button>` : ""}
       </div>` : ""}
       ${(item.attachments || []).length ? `<div class="source-row">${item.attachments.map((photo, index) => `<a class="secondary" href="/api/quality/complaints/${encodeURIComponent(item.id)}/photos/${encodeURIComponent(photo.sha256)}" target="_blank" rel="noopener">Kép ${index + 1}: ${escapeHtml(photo.file_name)}</a>`).join("")}</div>` : ""}
-      ${payload.canManage ? `<details data-complaint-evidence><summary>Műszak- és Hub-adatok</summary><div data-evidence-content role="status"></div><button type="button" class="secondary" data-evidence-refresh>Adatok frissítése</button></details>` : ""}
+      ${payload.canManage && !item.excelSubmission ? `<details data-complaint-evidence><summary>Műszak- és Hub-adatok</summary><div data-evidence-content role="status"></div><button type="button" class="secondary" data-evidence-refresh>Adatok frissítése</button></details>` : ""}
       <details><summary>Érintett tételek és előzmények</summary>
         ${(item.affected_items || []).map(row => `<div class="stat-row"><span>${escapeHtml(row.date)} · ${escapeHtml(row.label)}${row.routeId ? ` · Route ID: ${escapeHtml(row.routeId)}` : ''}</span><strong>${escapeHtml(row.note)}</strong></div>`).join("")}
         ${(item.history || []).map(event => `<p class="complaint-text">${escapeHtml(shortDateTime(event.at))} · ${escapeHtml(event.actor)} · ${escapeHtml(qualityComplaintStatus(event.status))}<br>${escapeHtml(event.message || event.reference)}</p>`).join("")}
@@ -2211,7 +2223,14 @@ function renderQualityComplaints(payload, filter, target, status, openItems, all
     return courier.items.length
       ? `<details class="quality-inbox-item" ${focused ? 'open' : ''}><summary class="quality-inbox-courier">${heading}</summary><div class="quality-inbox-body">${courier.items.map(renderItem).join('')}</div></details>`
       : `<div class="quality-inbox-item quality-inbox-courier">${heading}</div>`;
-  }).join('') : items.map(renderItem).join('')) || `<div class="empty-card">${query ? 'Nincs találat.' : filter === 'forwarded' ? 'Nincs továbbított reklamáció.' : 'Nincs nyitott jelzés.'}</div>`;
+  }).join('') : items.slice(0, visibleCount).map(renderItem).join('')) || `<div class="empty-card">${query ? 'Nincs találat.' : filter === 'forwarded' ? 'Nincs továbbított reklamáció.' : 'Nincs nyitott jelzés.'}</div>`;
+  if (visibleCount < items.length) {
+    target.insertAdjacentHTML('beforeend', '<button type="button" class="secondary" data-quality-inbox-more>További reklamációk</button>');
+    target.querySelector('[data-quality-inbox-more]').onclick = () => {
+      state.qualityForwardedVisible = visibleCount + 50;
+      renderQualityComplaints(payload, filter, target, status, openItems, allGroups, query);
+    };
+  }
   status.textContent = `${filter === 'all' ? `${groups.length} kolléga · ` : ''}${items.length} ${filter === 'forwarded' ? 'továbbított reklamáció' : 'nyitott jelzés'}`;
   if (filter === 'all' && !state.couriers?.length) status.textContent += state.couriersLoadingPromise
     ? ' · Futárnévsor betöltése…' : ' · A futárnévsor nem érhető el.';
@@ -12994,7 +13013,7 @@ $("#nav-quality-complaints").addEventListener("click", () => showSection("qualit
 $("#nav-complaint-assignments")?.addEventListener("click", () => showSection("complaint-assignments"));
 $("#quality-complaints-refresh").addEventListener("click", () => loadQualityComplaints());
 $("#quality-form-test")?.addEventListener("click", () => openQualityFormTest());
-$("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = 0; loadQualityComplaints({reuse:true}); });
+$("#quality-complaints-filter").addEventListener("change", () => { state.qualityComplaintFocus = ''; state.qualityComplaintOffset = 0; state.qualityForwardedVisible = 50; loadQualityComplaints({reuse:true}); });
 $("#refresh").addEventListener("click", loadShifts);
 $("#open-muszakpro-refresh").addEventListener("click", toggleOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));

@@ -31,6 +31,7 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
         }
         reads.push(url);
         const offset=Number(new URL('http://test'+url).searchParams.get('offset'));
+        if(url.includes('/excel-forwarded'))return {items:[{id:'excel:1',courier_id:'998',courier_name:'Excel Futár',status:'forwarded',forwarded_at:'2026-11-22T11:30:00Z',excelSubmission:true,affected_items:[{date:'2026-10-20',routeId:'1619999'}]}],hasMore:false};
         if(url.includes('status=forwarded-history'))return {items:[{id:'forwarded-history',courier_id:'777',courier_name:'Nulla Elek',status:'closed',created_at:'2026-11-19T10:00:00Z',forwarded_at:'2026-11-19T11:30:00Z',partnerDecision:{status:'accepted',respondedAt:'2026-11-20T12:30:00Z'}}],hasMore:false,canManage:true};
         if(url.includes('/complaints?'))return {items:offset===0?Array.from({length:50},(_,i)=>({id:'c'+i,courier_id:i,courier_name:i===0?'Hegedüs Dávid':'Futár '+i,status:i===1?'closed':'open',created_at:'2026-11-19T11:00:00Z',message:i===0?'Egyik címen feltartottak.':'Bejelentés',affected_items:[{date:'2026-11-06'}]})):[{id:'last',courier_name:'Utolsó oldali futár',status:'forwarded',created_at:'2026-11-18T11:00:00Z'},...(converted?[{id:'converted',courier_id:99,courier_name:'Automata Futár',status:'open',created_at:'2026-11-20T12:00:00Z',message:'Automatikus késés',affected_items:[{signalKind:'route',signalId:'99',signalOrigin:'courier'}]}]:[])],canManage:true,hasMore:offset===0};
         return {alerts:offset===0?[{id:99,courier_id:99,courier_name:'Automata Futár',status:'new',alert_type:'delay',created_at:'2026-11-20T12:00:00Z',message:'Automatikus késés',...(converted?{complaint:{id:'converted',status:'open'}}:{})},{id:98,courier_id:98,courier_name:'<img src=x onerror="window.injected=1">',alert_type:'problem',status:'new',message:'<script>Hibás cím</script>',created_at:'2026-11-20T11:00:00Z',...(duplicateClosed?{resolution:{reason:'duplicate'}}:{})},{id:100,courier_id:100,courier_name:'Rejtett automata',status:'auto',alert_type:'delay'}]:[],shifts:[],hasMore:false};
@@ -54,9 +55,14 @@ const section=html.slice(html.indexOf('<div id="quality-complaints-content"'),ht
     const timeline=page.getByRole('region',{name:'Feldolgozási idővonal'});
     assert.match(await timeline.innerText(), /1 óra 30 perc/);
     assert.match(await timeline.innerText(), /1 nap 1 óra/);
-    assert.deepEqual(await page.evaluate(from=>reads.slice(from),sourceReads),['/api/quality/complaints?status=forwarded-history&offset=0']);
+    assert.equal(await page.locator('[data-complaint-id="excel:1"]').count(),1);
+    await page.locator('#quality-complaints-search').fill('1619999');
+    assert.equal(await page.locator('[data-complaint-id="forwarded-history"]').count(),0);
+    assert.equal(await page.locator('[data-complaint-id="excel:1"] [data-complaint-action]').count(),0);
+    await page.locator('#quality-complaints-search').clear();
+    assert.deepEqual((await page.evaluate(from=>reads.slice(from),sourceReads)).sort(),['/api/quality/complaints?status=forwarded-history&offset=0','/api/quality/excel-forwarded?offset=0']);
     await page.selectOption('#quality-complaints-filter','all');
-    assert.equal(await page.evaluate(()=>reads.length),sourceReads+1);
+    assert.equal(await page.evaluate(()=>reads.length),sourceReads+2);
     assert.equal(await page.locator('[data-signal-id="signal:route:100"]').count(),0);
     assert.match(await page.locator('.quality-inbox-courier').first().innerText(), /1 nyitott/);
     const search=page.locator('#quality-complaints-search');
