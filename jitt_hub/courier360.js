@@ -68,7 +68,10 @@ function c360Live(p) {
     <aside class="c360-profile" aria-label="Futárprofil és teljesítés">
       <section class="c360-profile-section" aria-labelledby="c360-profile-title">
         <h3 id="c360-profile-title">Futárprofil</h3>
-        <div class="c360-profile-person"><span class="c360-initials" aria-hidden="true">${esc(initials)}</span><strong>${esc(name)}</strong><small>#${esc(p.courier.id)} · ${esc(p.courier.warehouse || '—')}</small></div>
+        <button type="button" class="c360-profile-person" data-c360-profile aria-haspopup="dialog" aria-label="${esc(name)} adatlapja">
+          <span class="c360-initials" aria-hidden="true">${esc(initials)}</span><strong>${esc(name)}</strong>
+          <small>#${esc(p.courier.id)} · ${esc(p.courier.warehouse || '—')}</small><span class="c360-profile-action">Adatlap megnyitása ↗</span>
+        </button>
         <div class="c360-presence" data-active="${op.currentWorking === true}"><i></i>${esc(presence)}</div>
         ${c360Pair('Jelenlét', esc(op.attendance?.activity_status || 'Nincs egyező adat'))}
         ${c360Pair('Belépés / kilépés', `${c360Time(op.attendance?.checkin_start)} / ${c360Time(op.attendance?.checkin_end)}`)}
@@ -119,6 +122,38 @@ function c360Header(loading = false) {
   </div>`;
 }
 
+const c360ProfileGroups = [
+  ['Futár adatai', [['Futár ID', 'courier_id'], ['Futár neve', 'courier_name'], ['Telefonszám', 'phone_number'], ['Preferált raktár', 'warehouse_name']]],
+  ['Számlázási adatok', [['Vállalkozás neve', 'company_name'], ['Vállalkozás székhelye', 'company_address'], ['Adószám', 'tax_number'], ['Bankszámlaszám', 'bank_account_number'], ['Számlázási e-mail', 'billing_email']]],
+];
+let c360ProfileSequence = 0;
+
+async function openCourierProfile() {
+  const courier = courier360State.payload?.courier;
+  const dialog = $('#c360-profile-dialog');
+  if (!courier || !dialog?.isConnected || dialog.open) return;
+  const sequence = ++c360ProfileSequence;
+  const body = $('#c360-profile-data');
+  $('#c360-profile-dialog-title').textContent = `${courier.name || 'Futár'} · adatlap`;
+  body.innerHTML = '<p role="status">Adatlap betöltése…</p>';
+  dialog.addEventListener('close', () => {
+    if (!dialog.open) body.replaceChildren();
+  }, {once: true});
+  dialog.showModal();
+  try {
+    const {profile} = await api('/api/courier360-profile?courier=' + encodeURIComponent(courier.id));
+    if (sequence !== c360ProfileSequence || !dialog.open || !dialog.isConnected) return;
+    if (String(profile?.courier_id) !== String(courier.id)) throw new Error('A kapott adatlap másik futárhoz tartozik.');
+    body.innerHTML = c360ProfileGroups.map(([title, fields]) => `<section><h3>${title}</h3><dl>${fields.map(([label, field]) =>
+      `<div><dt>${label}</dt><dd>${esc(profile[field] || 'Nincs megadva')}</dd></div>`).join('')}</dl></section>`).join('') +
+      (profile.billing_data_updated_at ? `<p class="c360-source">Számlázási adatok frissítve · ${c360Date(profile.billing_data_updated_at)}</p>` : '');
+  } catch (error) {
+    if (sequence === c360ProfileSequence && dialog.open && dialog.isConnected) {
+      body.innerHTML = `<p role="alert">${esc(error.message)}</p>`;
+    }
+  }
+}
+
 function c360SearchMatches(value) {
   const normalize = text => String(text ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
   const query = normalize(value).replace(/^#(?=\d+$)/, '');
@@ -158,7 +193,11 @@ function renderCourier360(){
     <nav class="c360-tabs" aria-label="Futáradatok">${c360Tabs.map(([key,label])=>`<button type="button" class="c360-tab ${courier360State.tab===key?'active':''}" aria-pressed="${courier360State.tab===key}" data-c360-go="${key}">${label}</button>`).join('')}</nav>
     ${p.sources.some(s=>!s.available)?'<div class="notice">Egyes források nem érhetők el. A hiányzó adatokat külön jelöljük; részletek a Dokumentumok és napló fülön.</div>':''}
     ${!p.operational.fresh&&courier360State.tab==='live'?'<div class="c360-notice">Nincs 20 percen belüli Hub-jelzés. A régebbi túra- és címadatok utolsó ismert állapotot jelentenek.</div>':''}
-    <div class="c360-content">${({live:c360Live,shifts:c360Shifts,routes:c360Routes,finance:c360Finance,complaints:c360Complaints,logs:c360Logs})[courier360State.tab](p)}</div>`;
+    <div class="c360-content">${({live:c360Live,shifts:c360Shifts,routes:c360Routes,finance:c360Finance,complaints:c360Complaints,logs:c360Logs})[courier360State.tab](p)}</div>
+    <dialog id="c360-profile-dialog" class="c360-profile-dialog" aria-labelledby="c360-profile-dialog-title">
+      <header><h2 id="c360-profile-dialog-title">Futár adatlapja</h2><form method="dialog"><button class="c360-button" autofocus>Bezárás</button></form></header>
+      <div id="c360-profile-data"></div>
+    </dialog>`;
 }
 async function openCourier360(id,{date,month,tab,backLabel='Vissza a futárlistához'}={}){
   const isNew=courier360State.id!==String(id);
@@ -185,6 +224,7 @@ document.addEventListener('click',event=>{
   const open=event.target.closest('[data-open-courier]');if(open){openCourier360(open.dataset.openCourier);return}
   if(event.target.closest('[data-c360-close]')){closeCourier360();return}
   if(event.target.closest('[data-c360-refresh]')){loadCourier360();return}
+  if(event.target.closest('[data-c360-profile]')){openCourierProfile();return}
   const selected = event.target.closest('[data-c360-switch]');
   if(selected){c360SwitchCourier(selected.dataset.c360Switch);return}
   if(!event.target.closest('#c360-search')){

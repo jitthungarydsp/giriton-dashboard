@@ -1264,6 +1264,17 @@ async function courier360SaveBankAccount(request,env,user) {
   return jsonResponse({ok:true,...(!auditSaved?{warning:'A bankszámlaszám mentve, de a külön változásnapló bejegyzése nem sikerült.'}:{})});
 }
 
+async function courier360Profile(request, env) {
+  const courierId = key(new URL(request.url).searchParams.get('courier'));
+  if (!/^\d{1,12}$/.test(courierId)) return jsonResponse({error: 'Érvényes futárazonosító szükséges.'}, 400);
+  const [profile] = await supabaseFetch(env, PUBLIC_SCHEMA, 'courier_master', {
+    select: 'courier_id,courier_name,phone_number,warehouse_name,company_name,company_address,tax_number,bank_account_number,billing_email,billing_data_updated_at',
+    courier_id: `eq.${courierId}`, limit: 1,
+  });
+  if (!profile) return jsonResponse({error: 'Ehhez a futárhoz nincs rögzített adatlap.'}, 404);
+  return jsonResponse({profile});
+}
+
 async function courier360Document(request,env) {
   const url=new URL(request.url),id=key(url.searchParams.get('id')),courier=key(url.searchParams.get('courier'));
   if(!/^[0-9a-f-]{36}$/i.test(id)||!/^\d{1,12}$/.test(courier))return jsonResponse({error:'Érvénytelen dokumentumazonosító.'},400);
@@ -1474,6 +1485,14 @@ export default {
       if (access.error) return access.error;
       try { return await courierFinanceBreakdown(request, env); }
       catch (error) { return jsonResponse({error:error.status === 400 ? error.message : 'A tételbontás nem tölthető be.'},error.status === 400 ? 400 : 500); }
+    }
+
+    if (url.pathname === '/api/courier360-profile') {
+      if (request.method !== 'GET') return jsonResponse({error: 'Csak olvasási kérés támogatott.'}, 405);
+      const access = await requireDashboardUser(request, env);
+      if (access.error) return access.error;
+      try { return await courier360Profile(request, env); }
+      catch { return jsonResponse({error: 'A futár adatlapja most nem tölthető be.'}, 502); }
     }
 
     if (["/api/courier360","/api/courier360-document"].includes(url.pathname)) {

@@ -346,8 +346,83 @@
   justify-items: center;
   gap: 3px;
   margin: 12px 0 10px;
+  padding: 3px 6px;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  color: var(--ink);
+  background: transparent;
   overflow-wrap: anywhere;
   text-align: center;
+}
+
+.c360-profile-person:hover {
+  background: var(--blue-soft);
+}
+
+.c360-profile-action {
+  margin-top: 4px;
+  color: var(--blue);
+  font-size: 11px;
+}
+
+.c360-profile-dialog {
+  width: min(680px, calc(100% - 28px));
+  max-height: calc(100% - 28px);
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.c360-profile-dialog::backdrop {
+  background: #070811be;
+}
+
+.c360-profile-dialog > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.c360-profile-dialog h2 {
+  font-size: clamp(18px, 4vw, 24px);
+  overflow-wrap: anywhere;
+}
+
+#c360-profile-data {
+  padding-top: 14px;
+}
+
+#c360-profile-data h3 {
+  font-size: 14px;
+}
+
+#c360-profile-data dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 22px;
+  margin: 6px 0 16px;
+}
+
+#c360-profile-data dl div {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+#c360-profile-data dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+#c360-profile-data dd {
+  margin: 3px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .c360-initials {
@@ -448,6 +523,10 @@
 }
 
 @media (max-width: 460px) {
+  #c360-profile-data dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   #courier360-page .c360-head {
     grid-template-columns: 1fr auto;
   }
