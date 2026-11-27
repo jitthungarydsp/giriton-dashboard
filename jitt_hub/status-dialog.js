@@ -120,8 +120,8 @@ function statusDialogBody(p,kind){
   return warning+`<div class="status-workspace"><nav class="payment-tabs status-workspace-tabs" role="tablist" aria-label="Havi elszámolás menü">${statusDialogTabs.map(([name,label])=>`<button type="button" role="tab" id="status-tab-${name}" aria-controls="status-panel-${name}" aria-selected="${name===active}" data-status-tab="${name}">${label}</button>`).join('')}</nav>${statusDialogTabs.map(([name])=>`<div role="tabpanel" id="status-panel-${name}" aria-labelledby="status-tab-${name}" ${name===active?'':'hidden'}>${contents[name]()}</div>`).join('')}</div>`;
 }
 function closeStatusDialog(){statusDialogSequence++;statusDialogPayload=null;$('#courier-status-dialog').close();}
-async function openStatusDialog(courierId,status,complaintId=null){
-  const dialog=$('#courier-status-dialog'),body=$('#status-dialog-body'),month=$('#month').value;
+async function openStatusDialog(courierId,status,complaintId=null,month=$('#month').value){
+  const dialog=$('#courier-status-dialog'),body=$('#status-dialog-body');
   const sequence=++statusDialogSequence;
   statusDialogPayload=null;
   statusDialogComplaintId=complaintId;
@@ -138,7 +138,7 @@ async function openStatusDialog(courierId,status,complaintId=null){
     if(sequence!==statusDialogSequence||!dialog.open)return;
     if(String(p.courier?.id)!==String(courierId)||p.periodStart!==month+'-01')throw new Error('A kapott adatok nem a kiválasztott futárhoz és hónaphoz tartoznak.');
     statusDialogPayload=p;body.innerHTML=statusDialogBody(p,kind);dialog.scrollTop=0;
-  }catch(error){if(sequence===statusDialogSequence&&dialog.open)body.innerHTML=`<div class="notice" role="alert">Az adatok nem tölthetők be: ${esc(error.message)}</div><button type="button" class="c360-button" data-status-retry="${esc(courierId)}" data-status-label="${esc(status)}">Újrapróbálás</button>`;}
+  }catch(error){if(sequence===statusDialogSequence&&dialog.open)body.innerHTML=`<div class="notice" role="alert">Az adatok nem tölthetők be: ${esc(error.message)}</div><button type="button" class="c360-button" data-status-retry="${esc(courierId)}" data-status-month="${esc(month)}" data-status-label="${esc(status)}">Újrapróbálás</button>`;}
 }
 document.addEventListener('click',event=>{
   const statusTab=event.target.closest('[data-status-tab],[data-status-open]');
@@ -156,7 +156,7 @@ document.addEventListener('click',event=>{
   if(event.target.closest('[data-payment-record]')){const form=$('.payment-record-form');form.hidden=false;form.querySelector('textarea').focus();return;}
   if(event.target.closest('[data-payment-cancel]')){$('.payment-record-form').hidden=true;return;}
   const button=event.target.closest('[data-status-courier],[data-status-retry]');
-  if(button){event.stopPropagation();openStatusDialog(button.dataset.statusCourier||button.dataset.statusRetry,button.dataset.statusLabel,button.dataset.statusComplaint||null);return;}
+  if(button){event.stopPropagation();openStatusDialog(button.dataset.statusCourier||button.dataset.statusRetry,button.dataset.statusLabel,button.dataset.statusComplaint||null,button.dataset.statusMonth);return;}
   if(event.target.closest('[data-status-close]'))closeStatusDialog();
   if(event.target.id==='courier-status-dialog'){
     const box=event.target.getBoundingClientRect();
@@ -180,7 +180,7 @@ async function saveStatusComplaintAction(action,fields,container){
   const message=container.matches('.complaint-case')?container.querySelector('.complaint-action-message'):container.querySelector('.complaint-feedback');container.dataset.saving='true';container.querySelectorAll('button').forEach(button=>button.disabled=true);message.textContent='Mentés folyamatban…';
   try{
     const result=await api('/api/courier360-complaint',{method:'POST',body:JSON.stringify({courierId:p.courier.id,month:p.periodStart.slice(0,7),complaintId:row.id,action,expected:{status:row.status,adminResponse:row.admin_response??null,respondedAt:row.responded_at??null},expectedNote:p.complaintNote?.note||'',snapshotId:p.financeSnapshot?.id||'',...fields})});
-    if(sequence===statusDialogSequence&&$('#courier-status-dialog').open){await openStatusDialog(p.courier.id,'Reklamáció',row.id);const output=$('.complaint-action-message');if(output)output.textContent=result.warning||result.message||'Az ügy módosítása mentve.';}
+    if(sequence===statusDialogSequence&&$('#courier-status-dialog').open){await openStatusDialog(p.courier.id,'Reklamáció',row.id,p.periodStart.slice(0,7));const output=$('.complaint-action-message');if(output)output.textContent=result.warning||result.message||'Az ügy módosítása mentve.';}
     if(!['note','assign'].includes(action)&&typeof load==='function')await load();
   }catch(error){if(sequence===statusDialogSequence){message.textContent=error.message;delete container.dataset.saving;container.querySelectorAll('button').forEach(button=>button.disabled=false);}}
 }
@@ -205,7 +205,7 @@ document.addEventListener('submit',async event=>{
     submit.disabled=true;message.textContent='Bankszámlaszám mentése…';
     try{
       const result=await api('/api/courier360-bank-account',{method:'POST',body:JSON.stringify({courierId:p.courier.id,bankAccount:form.elements.bankAccount.value})});
-      if(sequence===statusDialogSequence&&$('#courier-status-dialog').open){await openStatusDialog(p.courier.id,'Kifizetésre vár');const output=$('#payment-copy-result');if(output)output.textContent=result.warning||'Bankszámlaszám mentve. A kifizetési feltételeket újra ellenőriztük.';}
+      if(sequence===statusDialogSequence&&$('#courier-status-dialog').open){await openStatusDialog(p.courier.id,'Kifizetésre vár',null,p.periodStart.slice(0,7));const output=$('#payment-copy-result');if(output)output.textContent=result.warning||'Bankszámlaszám mentve. A kifizetési feltételeket újra ellenőriztük.';}
     }catch(error){if(sequence===statusDialogSequence){message.textContent=error.message;submit.disabled=false;}}
     return;
   }
@@ -215,7 +215,7 @@ document.addEventListener('submit',async event=>{
   submit.disabled=true;message.textContent='Rögzítés folyamatban…';
   try{
     await api('/api/courier360-payment-close',{method:'POST',body:JSON.stringify({courierId:p.courier.id,month:p.periodStart.slice(0,7),snapshotId:p.payment.snapshotId,note:form.elements.note.value})});
-    if(sequence===statusDialogSequence&&$('#courier-status-dialog').open)await openStatusDialog(p.courier.id,'Kifizetve');
+    if(sequence===statusDialogSequence&&$('#courier-status-dialog').open)await openStatusDialog(p.courier.id,'Kifizetve',null,p.periodStart.slice(0,7));
     if(typeof load==='function')await load();
   }catch(error){if(sequence===statusDialogSequence){message.textContent=error.message;submit.disabled=false;}}
 });

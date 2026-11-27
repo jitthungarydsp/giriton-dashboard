@@ -1277,6 +1277,112 @@ async function courier360Document(request,env) {
     'content-disposition':`${disposition}; filename*=UTF-8''${encodeURIComponent(key(row.file_name)||'dokumentum')}`}});
 }
 
+async function dailyAbsences(env, date) {
+  const work_date = `eq.${date}`;
+  const [attendance, hub] = await Promise.allSettled([
+    supabaseFetch(env, PUBLIC_SCHEMA, 'pwa_today_worker_attendance', {
+      select: 'courier_id,courier_name,warehouse,shift_name,start_time,attendance_status',
+      work_date, order: 'start_time.asc,id.asc', limit: 10000,
+    }),
+    supabaseFetch(env, PUBLIC_SCHEMA, 'raw_jitt_invoice_perf_couriers_daily', {
+      select: 'courier_id,courier_name,warehouse_code,did_not_come_count',
+      work_date, dsp_code: 'eq.JIT', order: 'warehouse_id.asc,courier_id.asc,source_name.asc,dsp_id.asc', limit: 10000,
+    }),
+  ]);
+  if (attendance.status === 'rejected' && hub.status === 'rejected') throw new Error('Attendance sources unavailable');
+  const manualRows = attendance.value || [];
+  const hubRows = hub.value || [];
+  const affected = new Map();
+  function getCourier(row) {
+    const id = key(row.courier_id);
+    if (!affected.has(id)) affected.set(id, {courier_id: id, courier_name: row.courier_name, attendance: [], hub: Object.create(null)});
+    const courier = affected.get(id);
+    courier.courier_name ||= row.courier_name;
+    return courier;
+  }
+  for (const row of manualRows.filter(row => row.attendance_status === 'absent')) {
+    getCourier(row).attendance.push({warehouse: row.warehouse, shift: row.shift_name, start: row.start_time});
+  }
+  for (const row of hubRows.filter(row => row.did_not_come_count > 0)) {
+    const courier = getCourier(row);
+    const warehouse = key(row.warehouse_code) || '—';
+    courier.hub[warehouse] = Math.max(courier.hub[warehouse] || 0, Number(row.did_not_come_count));
+  }
+  return {
+    rows: [...affected.values()],
+    ...(attendance.status === 'rejected' || hub.status === 'rejected'
+      ? {note: 'Az egyik jelenléti forrás nem érhető el.'}
+      : {}),
+    ...(manualRows.length === 0 && hubRows.length === 0 ? {empty: 'A mai napra még nincs jelenléti adat.'} : {}),
+  };
+}
+
+async function dailySalaryAdvances(env) {
+  const [plans, installments, requests] = await Promise.all([
+    supabaseFetch(env, SETTLEMENT_SCHEMA, 'courier_salary_advance_plan', {
+      select: 'id,courier_id,courier_name,requested_amount_huf,start_date',
+      status: 'eq.open', order: 'start_date.asc,id.asc', limit: 10000,
+    }),
+    supabaseFetch(env, SETTLEMENT_SCHEMA, 'courier_salary_advance_installment', {
+      select: 'plan_id,period_start,amount_huf',
+      status: 'eq.open', order: 'period_start.asc,id.asc', limit: 10000,
+    }),
+    supabaseFetch(env, SETTLEMENT_SCHEMA, 'courier_salary_advance_request', {
+      select: 'id,courier_id,courier_name,requested_amount_huf,start_date,status',
+      status: 'in.(approved,paid)', plan_id: 'is.null', order: 'start_date.asc,id.asc', limit: 10000,
+    }),
+  ]);
+  const balances = new Map();
+  for (const row of installments) {
+    if (!balances.has(row.plan_id)) balances.set(row.plan_id, {remaining: 0, nextPeriod: row.period_start});
+    balances.get(row.plan_id).remaining += money(row.amount_huf);
+  }
+  return [
+    ...plans.map(row => ({...row, status: 'plan', ...balances.get(row.id)})),
+    ...requests,
+  ];
+}
+
+async function dailyTasks(env, user, now = new Date()) {
+  const date = budapestDay(now);
+  const canManageQuality = ['admin', 'superadmin'].includes(user.role.toLowerCase());
+  const sourceEnv = {...env, SUPABASE_READ_KEY: env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_READ_KEY};
+  const [quality, settlement, shifts, absences, payments, advances] = await Promise.allSettled([
+    canManageQuality ? supabaseFetch(sourceEnv, PUBLIC_SCHEMA, 'pwa_quality_complaints', {
+      select: 'id,courier_id,courier_name,topic,status,created_at,affected_items',
+      status: 'in.(new,open,in_review)', forwarded_at: 'is.null',
+      order: 'created_at.asc,id.asc', limit: 10000,
+    }) : null,
+    supabaseFetch(env, PUBLIC_SCHEMA, 'peopleforce_complaints', {
+      select: 'id,courier_id,courier_name,document_month,document_type,status,created_at',
+      status: 'in.(new,open,in_progress)', order: 'created_at.asc,id.asc', limit: 10000,
+    }),
+    supabaseFetch(sourceEnv, PUBLIC_SCHEMA, 'vw_muszakpro_hub_shift_time_mismatch', {
+      select: 'courier_id,courier_name,warehouse_code,muszakpro_shift_start_time,hub_booking_shift_start_time,comparison_reason,comparison_status',
+      work_date: `eq.${date}`, comparison_status: 'neq.PONTOS',
+      order: 'muszakpro_shift_start_time.asc,warehouse_code.asc,courier_id.asc,muszakpro_source_row.asc,muszakpro_serial.asc',
+      limit: 10000,
+    }),
+    dailyAbsences(sourceEnv, date),
+    supabaseFetch(sourceEnv, SETTLEMENT_SCHEMA, 'vw_admin_settlement_dashboard_fast', {
+      select: 'courier_id,courier_name,period_start,warehouse,payable_huf',
+      dashboard_status_label: 'eq.Kifizetésre vár', payable_huf: 'gt.0',
+      order: 'period_start.asc,courier_id.asc', limit: 10000,
+    }),
+    dailySalaryAdvances(sourceEnv),
+  ]);
+  const section = result => result.status === 'fulfilled' ? {rows: result.value} : {error: 'Az adatok nem tölthetők be.'};
+  return jsonResponse({
+    date, generatedAt: now.toISOString(),
+    quality: canManageQuality ? section(quality) : {error: 'Reklamációkezelő jogosultság szükséges.'},
+    settlement: section(settlement),
+    shifts: section(shifts),
+    absences: absences.status === 'fulfilled' ? absences.value : section(absences),
+    payments: section(payments),
+    advances: section(advances),
+  });
+}
+
 export default {
   async fetch(request, env, executionContext) {
     const url = new URL(request.url);
@@ -1309,6 +1415,13 @@ export default {
       const access=await requireDashboardUser(request,env);if(access.error)return access.error;
       try{return url.pathname.endsWith('complaint')?await courier360ComplaintAction(request,env,access.user,executionContext):url.pathname.endsWith('bank-account')?await courier360SaveBankAccount(request,env,access.user):await courier360ClosePayment(request,env,access.user)}
       catch{return jsonResponse({error:'A művelet nem menthető. Frissítsd az adatokat és ellenőrizd a források elérhetőségét.'},500)}
+    }
+
+    if (url.pathname === '/api/daily-tasks') {
+      if (request.method !== 'GET') return jsonResponse({error: 'Csak olvasási kérés támogatott.'}, 405);
+      const access = await requireDashboardUser(request, env);
+      if (access.error) return access.error;
+      return dailyTasks(env, access.user);
     }
 
     if (url.pathname === '/api/courier-reki') {

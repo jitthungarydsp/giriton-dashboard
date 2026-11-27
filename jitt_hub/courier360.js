@@ -1,5 +1,5 @@
 /* Read-only courier detail. Operational day and settlement month are independent. */
-const courier360State={id:null,tab:'live',date:null,month:null,payload:null,sequence:0,previousScroll:0};
+const courier360State={id:null,tab:'live',date:null,month:null,payload:null,sequence:0,previousScroll:0,backLabel:'Vissza a futárlistához'};
 const c360Tabs=[['live','Élő helyzet'],['shifts','Műszakok'],['routes','Túrák és címek'],['finance','Pénzügy'],['complaints','Reklamációk'],['logs','Dokumentumok és napló']];
 function c360Date(value,time=true){if(!value)return 'Nincs rögzítve';if(/^\d{2}:\d{2}/.test(value))return value.slice(0,5);const d=new Date(value);return Number.isFinite(d.getTime())?d.toLocaleString('hu-HU',{timeZone:'Europe/Budapest',year:'numeric',month:'2-digit',day:'2-digit',...(time?{hour:'2-digit',minute:'2-digit'}:{})}):esc(value)}
 function c360Time(value){if(!value)return '—';if(/^\d{2}:\d{2}/.test(value))return value.slice(0,5);const d=new Date(value);return Number.isFinite(d.getTime())?d.toLocaleTimeString('hu-HU',{timeZone:'Europe/Budapest',hour:'2-digit',minute:'2-digit'}):'—'}
@@ -47,7 +47,7 @@ function c360Logs(p){return `<div class="c360-two"><article class="panel"><h3>Ha
 function renderCourier360(){
   const p=courier360State.payload;if(!p)return;
   const root=$('#courier360-page');
-  root.innerHTML=`<div class="c360-head"><button type="button" class="c360-button" data-c360-close>← Vissza a futárlistához</button><button type="button" class="c360-button" data-c360-refresh>Frissítés</button></div>
+  root.innerHTML=`<div class="c360-head"><button type="button" class="c360-button" data-c360-close>← ${esc(courier360State.backLabel)}</button><button type="button" class="c360-button" data-c360-refresh>Frissítés</button></div>
     <div class="c360-identity"><div><p class="crumb">FUTÁR / TELJES ADATLAP</p><h2>${esc(p.courier.name)}</h2><p>#${esc(p.courier.id)} · ${esc(p.courier.warehouse||'—')}</p></div><span class="badge">${esc(p.operational.label)}</span></div>
     <div class="c360-controls"><label>Operatív nap <input type="date" id="c360-date" value="${esc(courier360State.date)}"></label><label>Elszámolási hónap <input type="month" id="c360-month" value="${esc(courier360State.month)}"></label><span class="c360-source">Lekérés: ${c360Date(p.generatedAt)}</span></div>
     <nav class="c360-tabs" aria-label="Futáradatok">${c360Tabs.map(([key,label])=>`<button type="button" class="c360-tab ${courier360State.tab===key?'active':''}" aria-pressed="${courier360State.tab===key}" data-c360-go="${key}">${label}</button>`).join('')}</nav>
@@ -55,11 +55,14 @@ function renderCourier360(){
     ${!p.operational.fresh&&courier360State.tab==='live'?'<div class="c360-notice">Nincs 20 percen belüli Hub-jelzés. A régebbi túra- és címadatok utolsó ismert állapotot jelentenek.</div>':''}
     <div class="c360-content">${({live:c360Live,shifts:c360Shifts,routes:c360Routes,finance:c360Finance,complaints:c360Complaints,logs:c360Logs})[courier360State.tab](p)}</div>`;
 }
-async function openCourier360(id){
+async function openCourier360(id,{date,month,tab,backLabel='Vissza a futárlistához'}={}){
   const isNew=courier360State.id!==String(id);
   courier360State.previousScroll=window.scrollY;
   courier360State.id=String(id);if(isNew){courier360State.tab='live';courier360State.date=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Budapest',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())}
-  courier360State.month=$('#month').value;
+  courier360State.month=month||$('#month').value;
+  if(date)courier360State.date=date;
+  if(tab)courier360State.tab=tab;
+  courier360State.backLabel=backLabel;
   $('#courier360-page').hidden=false;$('#app').classList.add('courier360-open');window.scrollTo(0,0);
   await loadCourier360();
 }
@@ -70,7 +73,7 @@ async function loadCourier360(){
     const p=await api(`/api/courier360?courier=${encodeURIComponent(courier360State.id)}&date=${encodeURIComponent(courier360State.date)}&month=${encodeURIComponent(courier360State.month)}`);
     if(sequence!==courier360State.sequence)return;
     courier360State.payload=p;renderCourier360();
-  }catch(error){if(sequence!==courier360State.sequence)return;$('#courier360-page').innerHTML=`<button type="button" class="c360-button" data-c360-close>← Vissza a listához</button><div class="notice">${esc(error.message)}</div><button type="button" class="c360-button" data-c360-refresh>Újrapróbálás</button>`}
+  }catch(error){if(sequence!==courier360State.sequence)return;$('#courier360-page').innerHTML=`<button type="button" class="c360-button" data-c360-close>← ${esc(courier360State.backLabel)}</button><div class="notice">${esc(error.message)}</div><button type="button" class="c360-button" data-c360-refresh>Újrapróbálás</button>`}
 }
 function closeCourier360(){courier360State.sequence++;$('#courier360-page').hidden=true;$('#app').classList.remove('courier360-open');window.scrollTo(0,courier360State.previousScroll)}
 document.addEventListener('click',event=>{
