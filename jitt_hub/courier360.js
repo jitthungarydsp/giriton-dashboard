@@ -107,10 +107,52 @@ function c360Complaints(p){
   return `<div class="c360-summary-grid"><article class="panel"><label class="c360-label">REKLAMÁCIÓK A HÓNAPBAN</label><b class="c360-value">${p.complaints.length} db</b><p>Minden nem törölt reklamációtípus.</p></article><article class="panel"><label class="c360-label">MEGVÁLASZOLT / LEZÁRT</label><b class="c360-value">${answered.length} db</b><p>Állapot vagy rögzített válasz alapján.</p></article><article class="panel"><label class="c360-label">ÁTLAGOS VÁLASZIDŐ</label><b class="c360-value">${durations.length?hours(durations.reduce((a,b)=>a+b,0)/durations.length):'Nem mérhető'}</b><p>${durations.length} időbélyeges válasz alapján.</p></article></div><article class="panel"><h3>Ügyek, beküldések és válaszok</h3>${p.complaints.length?p.complaints.map(row=>`<details class="c360-details"><summary>${esc(row.document_type)} · ${esc(row.status)} · ${c360Date(row.created_at)}</summary><p class="c360-message">${esc(row.message||'Nincs rögzített szöveg')}</p><button type="button" class="c360-button" data-status-courier="${esc(p.courier.id)}" data-status-label="Reklamáció" data-status-complaint="${esc(row.id||'')}">Reklamáció ügyintézése</button><div class="c360-answer"><strong>Válasz</strong><p class="c360-message">${esc(row.admin_response||'Nincs rögzített válaszszöveg')}</p><small>${esc(row.responded_by||'—')} · ${c360Date(row.responded_at)}</small></div></details>`).join(''):c360Missing('Ehhez a hónaphoz nincs rögzített reklamáció.')}</article>`;
 }
 function c360Logs(p){return `<div class="c360-two"><article class="panel"><h3>Havi dokumentumok</h3>${c360Table(['Dokumentum','Feltöltés','Megnyitás'],p.documents.map(row=>[esc(row.title||row.file_name||row.document_type)+'<br><small>'+esc(row.document_type)+'</small>',c360Date(row.uploaded_at)+'<br><small>'+esc(row.uploaded_by||'—')+'</small>',`<a class="c360-button" href="/api/courier360-document?courier=${encodeURIComponent(p.courier.id)}&id=${encodeURIComponent(row.id)}" target="_blank" rel="noopener">Megnyitás ↗</a>`]))}</article><article class="panel"><h3>Forrásadatok elérhetősége</h3>${c360Table(['Forrás','Állapot'],p.sources.map(row=>[esc(row.table),row.available?`${row.count} sor`:'Nem elérhető']))}</article></div><article class="panel c360-gap"><h3>Operatív nap és havi elszámolás eseménynaplója</h3>${c360Timeline(p.eventLog)}</article>`}
+function c360Header(loading = false) {
+  return `<div class="c360-head">
+    <button type="button" class="c360-button" data-c360-close>← ${esc(courier360State.backLabel)}</button>
+    <form class="c360-search" id="c360-search" role="search" aria-label="Futár keresése">
+      <input type="search" id="c360-search-input" placeholder="Futár neve vagy azonosítója" aria-label="Futár neve vagy azonosítója" aria-controls="c360-search-results" autocomplete="off">
+      <div id="c360-search-results" class="c360-search-results" hidden></div>
+      <p id="c360-search-status" class="c360-search-status" role="status"></p>
+    </form>
+    <button type="button" class="c360-button c360-refresh" data-c360-refresh ${loading ? 'disabled' : ''}>Frissítés</button>
+  </div>`;
+}
+
+function c360SearchMatches(value) {
+  const normalize = text => String(text ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+  const query = normalize(value).replace(/^#(?=\d+$)/, '');
+  if (!query) return [];
+  return (data?.couriers || []).filter(row => /^\d{1,12}$/.test(row.courierId) &&
+    normalize(`${row.courierName || ''} ${row.courierId}`).includes(query))
+    .sort((a, b) => Number(String(b.courierId) === query) - Number(String(a.courierId) === query));
+}
+
+function c360RenderSearch(input) {
+  const results = $('#c360-search-results');
+  const status = $('#c360-search-status');
+  const matches = c360SearchMatches(input.value);
+  results.innerHTML = matches.slice(0, 8).map(row => `<button type="button" data-c360-switch="${esc(row.courierId)}">
+    <span>${esc(row.courierName || 'Futár')}</span><small>#${esc(row.courierId)}</small>
+  </button>`).join('');
+  results.hidden = !matches.length;
+  status.textContent = !input.value.trim() ? '' : matches.length
+    ? `${matches.length} találat${matches.length > 8 ? ', az első 8 látható' : ''}.`
+    : /^#?\d{1,12}$/.test(input.value.trim()) ? 'Enter a futárazonosító megnyitásához.' : 'Nincs találat a betöltött futárlistában.';
+}
+
+async function c360SwitchCourier(id) {
+  courier360State.id = String(id);
+  await loadCourier360();
+  if (!$('#courier360-page').hidden && courier360State.id === String(id) && document.activeElement === document.body) {
+    $('#c360-search-input').focus();
+  }
+}
+
 function renderCourier360(){
   const p=courier360State.payload;if(!p)return;
   const root=$('#courier360-page');
-  root.innerHTML=`<div class="c360-head"><button type="button" class="c360-button" data-c360-close>← ${esc(courier360State.backLabel)}</button><button type="button" class="c360-button" data-c360-refresh>Frissítés</button></div>
+  root.innerHTML=`${c360Header()}
     <header class="c360-identity"><div><p class="crumb">FUTÁR 360°</p><h2>${esc(p.courier.name)}</h2></div>
       <div class="c360-controls"><label>Operatív nap <input type="date" id="c360-date" value="${esc(courier360State.date)}"></label><label>Elszámolási hónap <input type="month" id="c360-month" value="${esc(courier360State.month)}"></label></div></header>
     <nav class="c360-tabs" aria-label="Futáradatok">${c360Tabs.map(([key,label])=>`<button type="button" class="c360-tab ${courier360State.tab===key?'active':''}" aria-pressed="${courier360State.tab===key}" data-c360-go="${key}">${label}</button>`).join('')}</nav>
@@ -131,18 +173,24 @@ async function openCourier360(id,{date,month,tab,backLabel='Vissza a futárlist�
 }
 async function loadCourier360(){
   const sequence=++courier360State.sequence;
-  $('#courier360-page').innerHTML='<div class="empty">Futáradatok betöltése…</div>';
+  $('#courier360-page').innerHTML=`${c360Header(true)}<div class="empty" role="status">Futáradatok betöltése…</div>`;
   try{
     const p=await api(`/api/courier360?courier=${encodeURIComponent(courier360State.id)}&date=${encodeURIComponent(courier360State.date)}&month=${encodeURIComponent(courier360State.month)}`);
     if(sequence!==courier360State.sequence)return;
     courier360State.payload=p;renderCourier360();
-  }catch(error){if(sequence!==courier360State.sequence)return;$('#courier360-page').innerHTML=`<button type="button" class="c360-button" data-c360-close>← ${esc(courier360State.backLabel)}</button><div class="notice">${esc(error.message)}</div><button type="button" class="c360-button" data-c360-refresh>Újrapróbálás</button>`}
+  }catch(error){if(sequence!==courier360State.sequence)return;$('#courier360-page').innerHTML=`${c360Header()}<div class="notice" role="alert">${esc(error.message)}</div>`}
 }
 function closeCourier360(){courier360State.sequence++;$('#courier360-page').hidden=true;$('#app').classList.remove('courier360-open');window.scrollTo(0,courier360State.previousScroll)}
 document.addEventListener('click',event=>{
   const open=event.target.closest('[data-open-courier]');if(open){openCourier360(open.dataset.openCourier);return}
   if(event.target.closest('[data-c360-close]')){closeCourier360();return}
   if(event.target.closest('[data-c360-refresh]')){loadCourier360();return}
+  const selected = event.target.closest('[data-c360-switch]');
+  if(selected){c360SwitchCourier(selected.dataset.c360Switch);return}
+  if(!event.target.closest('#c360-search')){
+    const results = $('#c360-search-results');
+    if(results)results.hidden = true;
+  }
   const day=event.target.closest('[data-c360-day]');
   if(day){
     courier360State.date=day.dataset.c360Day;
@@ -150,5 +198,38 @@ document.addEventListener('click',event=>{
     return;
   }
   const tab=event.target.closest('[data-c360-go]');if(tab){courier360State.tab=tab.dataset.c360Go;renderCourier360()}
+});
+document.addEventListener('input', event => {
+  if (event.target.id === 'c360-search-input') c360RenderSearch(event.target);
+});
+document.addEventListener('focusin', event => {
+  if (event.target.id === 'c360-search-input') c360RenderSearch(event.target);
+  else if (!event.target.closest('#c360-search')) {
+    const results = $('#c360-search-results');
+    if (results) results.hidden = true;
+  }
+});
+document.addEventListener('submit', event => {
+  if (event.target.id !== 'c360-search') return;
+  event.preventDefault();
+  const input = $('#c360-search-input');
+  const id = input.value.trim().replace(/^#/, '');
+  const matches = c360SearchMatches(input.value);
+  if (/^\d{1,12}$/.test(id)) c360SwitchCourier(id);
+  else if (matches.length === 1) c360SwitchCourier(matches[0].courierId);
+  else c360RenderSearch(input);
+});
+document.addEventListener('keydown', event => {
+  if (!event.target.closest('#c360-search')) return;
+  const input = $('#c360-search-input');
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    input.focus();
+    $('#c360-search-results').hidden = true;
+    $('#c360-search-status').textContent = '';
+  } else if (event.key === 'ArrowDown' && event.target === input) {
+    const first = $('#c360-search-results:not([hidden]) button');
+    if (first) { event.preventDefault(); first.focus(); }
+  }
 });
 document.addEventListener('change',event=>{if(event.target.id==='c360-date'){courier360State.date=event.target.value;loadCourier360()}if(event.target.id==='c360-month'){courier360State.month=event.target.value;loadCourier360()}});

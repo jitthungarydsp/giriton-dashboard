@@ -28,12 +28,99 @@
 }
 
 #courier360-page .c360-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 320px) 1fr;
+  gap: 10px;
   padding-bottom: 13px;
   border-bottom: 1px solid var(--line);
 }
 
-#courier360-page .c360-head button {
+#courier360-page .c360-head > button {
   background: transparent;
+}
+
+.c360-refresh {
+  justify-self: end;
+}
+
+.c360-search {
+  position: relative;
+  min-width: 0;
+}
+
+.c360-search input {
+  width: 100%;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.c360-search input::placeholder {
+  color: var(--muted);
+}
+
+.c360-search-results {
+  position: absolute;
+  z-index: 3;
+  inset-inline: 0;
+  top: calc(100% + 5px);
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: 0 12px 24px #060612b3;
+}
+
+.c360-search-results button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--ink);
+  background: transparent;
+  font-size: 13px;
+  text-align: left;
+}
+
+.c360-search-results button:is(:hover, :focus-visible) {
+  background: var(--blue-soft);
+}
+
+.c360-search-results small {
+  color: var(--muted);
+}
+
+.c360-search-status {
+  position: absolute;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.c360-search:focus-within .c360-search-results[hidden] + .c360-search-status:not(:empty) {
+  z-index: 3;
+  top: calc(100% + 5px);
+  width: 100%;
+  height: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--muted);
+  clip-path: none;
+  white-space: normal;
+  font-size: 12px;
 }
 
 #courier360-page .c360-identity h2 {
@@ -361,6 +448,24 @@
 }
 
 @media (max-width: 460px) {
+  #courier360-page .c360-head {
+    grid-template-columns: 1fr auto;
+  }
+
+  .c360-head > [data-c360-close] {
+    justify-self: start;
+  }
+
+  .c360-search {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+
+  .c360-refresh {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
   .courier360-open .footer {
     gap: 5px;
     flex-wrap: wrap;
