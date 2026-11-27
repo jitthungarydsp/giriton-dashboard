@@ -17,13 +17,73 @@ function c360Route(route){
     <div class="c360-next"><span class="c360-label">${currentNext?'KÖVETKEZŐ NEM TELJESÍTETT CÍM':'UTOLSÓ ISMERT NEM TELJESÍTETT CÍM'}</span><h3>${esc(next?.address||'Nincs címinformáció')}</h3><p>Időablak: ${c360Time(next?.windowFrom)}–${c360Time(next?.windowTo)} · érkezés: ${c360Time(next?.estimatedArrival||next?.plannedArrival)}</p>${next?.note?`<p>${esc(next.note)}</p>`:''}${c360Source('Címadatok',route.stopsUpdatedAt)}${c360Go('routes','Túra és címlista megnyitása ↗')}</div>
     ${c360Pair('Jármű rendszáma',esc(route.vehiclePlate||'Nincs rögzítve'))}${c360Source('Hub',route.updatedAt)}`;
 }
-function c360Live(p){
-  const op=p.operational,today=op.shifts.filter(row=>row.date===p.date),next=op.nextShift;
-  return `<div class="c360-summary-grid"><article class="panel"><label class="c360-label">DOLGOZIK MOST?</label><b class="c360-value">${op.currentWorking===true?'Igen':op.currentWorking===false?'Nincs aktív jelenléti jelzés':'Nem állapítható meg'}</b><p>${esc(op.label)}</p>${c360Source(op.attendanceFresh?'Giriton':'Hub',op.attendanceFresh?op.attendance?.updated_at:op.lastSourceAt)}</article>
-    <article class="panel"><label class="c360-label">MAI / KIVÁLASZTOTT NAPI BEOSZTÁS</label><b class="c360-value">${today.length?today.map(row=>c360Time(row.start)).join(' · '):'Nincs aktív beosztás'}</b><p>${today.length?today.map(row=>esc(row.warehouse||'')+' · '+esc(row.label||row.source)).join('<br>'):'A beosztás önmagában nem bizonyít jelenlétet.'}</p>${c360Go('shifts','Műszakadatok')}</article>
-    <article class="panel"><label class="c360-label">KÖVETKEZŐ BEOSZTÁS</label><b class="c360-value">${next?c360Time(next.start):'Nincs ismert következő'}</b><p>${next?c360Date(next.date,false)+' · '+esc(next.warehouse||''):'A következő 31 nap aktív beosztásai között.'}</p>${next?c360Source(next.source,next.updatedAt):''}</article></div>
-    <div class="c360-two"><article class="panel">${c360Route(op.route)}</article><article class="panel"><div class="panel-head"><h3>Napi jelenlét és események</h3></div>${c360Pair('Giriton állapot',esc(op.attendance?.activity_status||'Nincs egyező jelenléti adat'))}${c360Pair('Giriton-belépés',c360Time(op.attendance?.checkin_start))}${c360Pair('Giriton-kijelentkezés',c360Time(op.attendance?.checkin_end))}${c360Source('Giriton',op.attendance?.updated_at)}${c360Timeline(op.logs.slice(-8).reverse())}</article></div>`;
+const c360Weekday = new Intl.DateTimeFormat('hu-HU', {weekday:'short', timeZone:'UTC'});
+function c360Week(date) {
+  const selected = new Date(date + 'T12:00:00Z');
+  const monday = selected.getUTCDate() - (selected.getUTCDay() + 6) % 7;
+  return `<div class="c360-week" role="group" aria-label="A kiválasztott hét napjai">${Array.from({length:7}, (_, offset) => {
+    const day = new Date(selected);
+    day.setUTCDate(monday + offset);
+    const value = day.toISOString().slice(0, 10);
+    return `<button type="button" data-c360-day="${value}" aria-pressed="${value === date}" aria-label="${c360Date(value, false)}"><span>${c360Weekday.format(day)}</span><b>${day.getUTCDate()}</b></button>`;
+  }).join('')}</div>`;
 }
+
+function c360Ring(label, value, total, tone) {
+  const ratio = Number(total) > 0 && value != null ? Math.min(100, Math.max(0, Math.round(100 * value / total))) : null;
+  const name = `${label}, ${ratio == null ? 'nincs adat' : `${nf.format(value)} / ${nf.format(total)} · ${ratio}%`}`;
+  return `<div class="c360-ring c360-ring-${tone}" role="img" aria-label="${esc(name)}" style="--ring-value:${ratio ?? 0}%"><div aria-hidden="true"><strong>${ratio == null ? '—' : `${ratio}%`}</strong><small>${esc(label)}</small></div></div>`;
+}
+
+function c360Live(p) {
+  const op = p.operational, route = op.route, next = op.nextShift;
+  const today = op.shifts.filter(row => row.date === p.date);
+  const open = p.complaints.filter(row => ['new','open','in_progress'].includes(String(row.status).trim().toLowerCase())).length;
+  const answered = p.complaints.filter(c360ComplaintAnswered).length;
+  const name = p.courier.name || 'Futár';
+  const initials = name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toLocaleUpperCase('hu');
+  const presence = op.currentWorking === true ? 'Műszakban' : op.currentWorking === false ? 'Nincs aktív jelenléti jelzés' : 'Nem állapítható meg';
+  const nextAddress = route?.active && route.stopsFresh ? route.nextStop : route?.lastKnownNextStop;
+  return `<div class="c360-dashboard">
+    <div class="c360-main">
+      <section aria-label="Napi mutatók" class="c360-metrics">
+        <div><span>Napi beosztások</span><strong>${nf.format(today.length)}</strong><small>${today.length ? today.map(row => c360Time(row.start)).join(' · ') : 'A kiválasztott napon'}</small></div>
+        <div><span>Teljesített címek</span><strong>${route?.completedStops == null ? '—' : nf.format(route.completedStops)}${route?.totalStops != null ? `<small> / ${nf.format(route.totalStops)}</small>` : ''}</strong><small>${route ? `Túra #${esc(route.id)}` : 'Nincs túraadat'}</small></div>
+        <div><span>Nyitott reklamációk</span><strong>${nf.format(open)}</strong><small>${esc(monthLabel(p.periodStart.slice(0, 7)))}</small></div>
+      </section>
+      <section class="c360-route-strip" aria-labelledby="c360-brief-title">
+        <div class="c360-route-mark" aria-hidden="true">↗</div>
+        <div><h3 id="c360-brief-title">${route ? `Túra #${esc(route.id)}` : 'Túra a kiválasztott napon'}</h3>
+          <p>${route ? `${esc(route.warehouse || 'Raktár nincs rögzítve')} · ${route.active ? 'Friss túrajelzés' : 'Utolsó ismert túraadat'}` : 'Nincs azonosítható túra.'}</p>
+          ${nextAddress?.address ? `<p>${route.active && route.stopsFresh ? 'Következő cím' : 'Utolsó ismert cím'} · ${esc(nextAddress.address)}</p>` : ''}</div>
+        ${route ? c360Go('routes', 'Túra részletei ↗') : ''}
+      </section>
+      <section class="c360-agenda" aria-labelledby="c360-agenda-title">
+        <div class="c360-section-head"><div><h3 id="c360-agenda-title">Műszakok és események</h3><p>${c360Date(p.date, false)}</p></div>${c360Go('shifts','Műszakadatok ↗')}</div>
+        ${c360Week(p.date)}
+        ${today.length ? `<ul class="c360-agenda-shifts">${today.map(row => `<li><time>${c360Time(row.start)}</time><div><strong>${esc(row.label || 'Műszak')}</strong><small>${[row.warehouse, row.source].filter(Boolean).map(esc).join(' · ')}</small></div></li>`).join('')}</ul>` : ''}
+        ${c360Timeline(op.logs.slice(-8).reverse())}
+      </section>
+    </div>
+    <aside class="c360-profile" aria-label="Futárprofil és teljesítés">
+      <section class="c360-profile-section" aria-labelledby="c360-profile-title">
+        <h3 id="c360-profile-title">Futárprofil</h3>
+        <div class="c360-profile-person"><span class="c360-initials" aria-hidden="true">${esc(initials)}</span><strong>${esc(name)}</strong><small>#${esc(p.courier.id)} · ${esc(p.courier.warehouse || '—')}</small></div>
+        <div class="c360-presence" data-active="${op.currentWorking === true}"><i></i>${esc(presence)}</div>
+        ${c360Pair('Jelenlét', esc(op.attendance?.activity_status || 'Nincs egyező adat'))}
+        ${c360Pair('Belépés / kilépés', `${c360Time(op.attendance?.checkin_start)} / ${c360Time(op.attendance?.checkin_end)}`)}
+        ${c360Pair('Következő műszak', next ? `${c360Date(next.date, false)} · ${c360Time(next.start)}${next.warehouse ? ` · ${esc(next.warehouse)}` : ''}` : 'Nincs rögzítve')}
+        ${c360Source(op.attendanceFresh ? 'Giriton' : 'Hub', op.attendanceFresh ? op.attendance?.updated_at : op.lastSourceAt)}
+      </section>
+      <section class="c360-profile-section" aria-labelledby="c360-progress-title">
+        <h3 id="c360-progress-title">Teljesítés</h3>
+        ${c360Ring('Címek teljesítve', route?.completedStops, route?.totalStops, 'route')}
+        ${c360Ring('Válaszolt vagy lezárt ügyek', answered, p.complaints.length, 'cases')}
+      </section>
+    </aside>
+  </div>`;
+}
+
 function c360Shifts(p){
   const op=p.operational;
   return `<article class="panel"><h3>Aktív beosztások · a kiválasztott naptól 31 napig</h3><p>A Hub rövid idősávja jelentkezési / kezdési idősáv lehet; nem kezeljük teljes műszakhosszként.</p>${c360Table(['Nap','Raktár','Kezdés','Vége / idősáv vége','Típus','Forrás frissítése'],op.shifts.map(row=>[c360Date(row.date,false),esc(row.warehouse||'—'),c360Time(row.start),c360Time(row.end),esc(row.source)+(row.isArrivalSlot?' · kezdési idősáv':''),c360Date(row.updatedAt)]))}</article>
@@ -38,8 +98,11 @@ function c360Finance(p){
   return `<div class="c360-summary-grid"><article class="panel"><label class="c360-label">KIFIZETENDŐ</label><b class="c360-value">${huf(f.payable)}</b><p>${esc(f.status)}</p></article><article class="panel"><label class="c360-label">LEVONÁSOK ÖSSZESEN</label><b class="c360-value">${huf(f.deductionImpact)}</b><p>A mentett pénzügyi adatokból.</p></article><article class="panel"><label class="c360-label">MENTETT VÁLTOZAT</label><b class="c360-value">v${esc(snapshot.version)}</b><p>${c360Date(snapshot.createdAt)}</p></article></div><div class="c360-two"><article class="panel"><h3>Mentett pénzügyi tételek</h3>${c360Table(['Tétel','Indoklás / megjegyzés','Összeg'],rows.map(row=>[esc(row.item_label||row.item_key),esc(row.note||'—'),huf(row.amount_value)]))}${c360Pair('Hozzáadott fizetési előleg',huf(f.salaryAdvanceAdded))}<details class="c360-details"><summary>Összes mentett részlettétel</summary>${c360Table(['Tétel','Megjegyzés','Összeg'],snapshot.items.filter(row=>row.section==='finance'&&row.amount_kind==='huf').map(row=>[esc(row.item_label||row.item_key),esc(row.note||'—'),huf(row.amount_value)]))}</details></article>
     <article class="panel"><h3>Elfogadások és kifizetés</h3>${c360Table(['Dokumentum / folyamat','Elfogadás','Elfogadott összeg'],p.acceptances.map(row=>[esc(row.action_key)+(row.process_id?' · '+esc(row.process_id):''),c360Date(row.accepted_at),row.payable_huf!=null||row.tig_final_total_huf!=null?huf(row.payable_huf??row.tig_final_total_huf):'Nincs rögzítve']))}${c360Pair('Kifizetés állapota',esc(p.closure?.status||p.workflowStates.invoice_payment?.status||'Nincs rögzítve'))}${c360Pair('Kifizetés ideje',c360Date(p.closure?.closed_at))}${c360Pair('Kifizetett összeg',p.closure?.payable_huf!=null?huf(p.closure.payable_huf):'Nincs rögzítve')}${c360Go('logs','Számlák és dokumentumok')}</article></div><article class="panel c360-gap"><h3>Havi elszámolási folyamatidők</h3>${c360Table(['Szakasz','Eltelt idő'],[['Megnyitás → elszámolás elfogadása','opening_to_settlement_hours'],['Elszámolás → teljesítés-összesítő elfogadása','settlement_to_tig_hours'],['Teljesítés-összesítő → számlafeltöltés','tig_to_invoice_hours'],['Számlafeltöltés → kifizetés','invoice_to_paid_hours'],['Megnyitás → kifizetés','opening_to_paid_hours']].map(([label,key])=>[label,p.processMetric?.[key]!=null?hours(p.processMetric[key]):'Nem mérhető']))}<p>Az adott futár és hónap mentett mutatói. Hiányzó időbélyegből nem számolunk nulla órát.</p></article>`;
 }
+function c360ComplaintAnswered(row) {
+  return ['closed','resolved'].includes(String(row.status).trim().toLowerCase()) || row.responded_at || String(row.admin_response||'').trim();
+}
 function c360Complaints(p){
-  const answered=p.complaints.filter(row=>['closed','resolved'].includes(String(row.status).trim().toLowerCase())||row.responded_at||String(row.admin_response||'').trim());
+  const answered=p.complaints.filter(c360ComplaintAnswered);
   const durations=answered.map(row=>(Date.parse(row.responded_at)-Date.parse(row.created_at))/3600000).filter(value=>Number.isFinite(value)&&value>=0);
   return `<div class="c360-summary-grid"><article class="panel"><label class="c360-label">REKLAMÁCIÓK A HÓNAPBAN</label><b class="c360-value">${p.complaints.length} db</b><p>Minden nem törölt reklamációtípus.</p></article><article class="panel"><label class="c360-label">MEGVÁLASZOLT / LEZÁRT</label><b class="c360-value">${answered.length} db</b><p>Állapot vagy rögzített válasz alapján.</p></article><article class="panel"><label class="c360-label">ÁTLAGOS VÁLASZIDŐ</label><b class="c360-value">${durations.length?hours(durations.reduce((a,b)=>a+b,0)/durations.length):'Nem mérhető'}</b><p>${durations.length} időbélyeges válasz alapján.</p></article></div><article class="panel"><h3>Ügyek, beküldések és válaszok</h3>${p.complaints.length?p.complaints.map(row=>`<details class="c360-details"><summary>${esc(row.document_type)} · ${esc(row.status)} · ${c360Date(row.created_at)}</summary><p class="c360-message">${esc(row.message||'Nincs rögzített szöveg')}</p><button type="button" class="c360-button" data-status-courier="${esc(p.courier.id)}" data-status-label="Reklamáció" data-status-complaint="${esc(row.id||'')}">Reklamáció ügyintézése</button><div class="c360-answer"><strong>Válasz</strong><p class="c360-message">${esc(row.admin_response||'Nincs rögzített válaszszöveg')}</p><small>${esc(row.responded_by||'—')} · ${c360Date(row.responded_at)}</small></div></details>`).join(''):c360Missing('Ehhez a hónaphoz nincs rögzített reklamáció.')}</article>`;
 }
@@ -48,8 +111,8 @@ function renderCourier360(){
   const p=courier360State.payload;if(!p)return;
   const root=$('#courier360-page');
   root.innerHTML=`<div class="c360-head"><button type="button" class="c360-button" data-c360-close>← ${esc(courier360State.backLabel)}</button><button type="button" class="c360-button" data-c360-refresh>Frissítés</button></div>
-    <div class="c360-identity"><div><p class="crumb">FUTÁR / TELJES ADATLAP</p><h2>${esc(p.courier.name)}</h2><p>#${esc(p.courier.id)} · ${esc(p.courier.warehouse||'—')}</p></div><span class="badge">${esc(p.operational.label)}</span></div>
-    <div class="c360-controls"><label>Operatív nap <input type="date" id="c360-date" value="${esc(courier360State.date)}"></label><label>Elszámolási hónap <input type="month" id="c360-month" value="${esc(courier360State.month)}"></label><span class="c360-source">Lekérés: ${c360Date(p.generatedAt)}</span></div>
+    <header class="c360-identity"><div><p class="crumb">FUTÁR 360°</p><h2>${esc(p.courier.name)}</h2></div>
+      <div class="c360-controls"><label>Operatív nap <input type="date" id="c360-date" value="${esc(courier360State.date)}"></label><label>Elszámolási hónap <input type="month" id="c360-month" value="${esc(courier360State.month)}"></label></div></header>
     <nav class="c360-tabs" aria-label="Futáradatok">${c360Tabs.map(([key,label])=>`<button type="button" class="c360-tab ${courier360State.tab===key?'active':''}" aria-pressed="${courier360State.tab===key}" data-c360-go="${key}">${label}</button>`).join('')}</nav>
     ${p.sources.some(s=>!s.available)?'<div class="notice">Egyes források nem érhetők el. A hiányzó adatokat külön jelöljük; részletek a Dokumentumok és napló fülön.</div>':''}
     ${!p.operational.fresh&&courier360State.tab==='live'?'<div class="c360-notice">Nincs 20 percen belüli Hub-jelzés. A régebbi túra- és címadatok utolsó ismert állapotot jelentenek.</div>':''}
@@ -80,6 +143,12 @@ document.addEventListener('click',event=>{
   const open=event.target.closest('[data-open-courier]');if(open){openCourier360(open.dataset.openCourier);return}
   if(event.target.closest('[data-c360-close]')){closeCourier360();return}
   if(event.target.closest('[data-c360-refresh]')){loadCourier360();return}
+  const day=event.target.closest('[data-c360-day]');
+  if(day){
+    courier360State.date=day.dataset.c360Day;
+    loadCourier360().then(()=>$('#courier360-page [data-c360-day][aria-pressed="true"]')?.focus());
+    return;
+  }
   const tab=event.target.closest('[data-c360-go]');if(tab){courier360State.tab=tab.dataset.c360Go;renderCourier360()}
 });
 document.addEventListener('change',event=>{if(event.target.id==='c360-date'){courier360State.date=event.target.value;loadCourier360()}if(event.target.id==='c360-month'){courier360State.month=event.target.value;loadCourier360()}});
