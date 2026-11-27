@@ -1,0 +1,42 @@
+name: Refresh settlement process metrics
+
+on:
+  schedule:
+    - cron: '13,43 * * * *'
+  workflow_dispatch:
+    inputs:
+      month:
+        description: Elszámolási hónap (YYYY-MM). Üresen az aktuális és az előző két hónap.
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: settlement-process-metrics
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SETTLEMENT_METRIC_MONTH: ${{ inputs.month }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Recalculate and verify monthly metrics
+        shell: bash
+        run: |
+          selection=(--recent-months 3)
+          if [[ -n "$SETTLEMENT_METRIC_MONTH" ]]; then
+            selection=(--months "$SETTLEMENT_METRIC_MONTH")
+          fi
+          python scripts/rebuild_verified_settlement_metrics.py --write "${selection[@]}"

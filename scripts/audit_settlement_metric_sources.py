@@ -1,12 +1,17 @@
 """Read-only source inventory for rebuilding the two derived metric tables."""
 import json
+import os
 import tomllib
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIG = tomllib.loads((ROOT / '.streamlit/secrets.toml').read_text(encoding='utf-8'))
+SECRETS_PATH = ROOT / '.streamlit/secrets.toml'
+CONFIG = tomllib.loads(SECRETS_PATH.read_text(encoding='utf-8-sig')) if SECRETS_PATH.is_file() else {}
+for key in ('SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'):
+    if os.environ.get(key):
+        CONFIG[key] = os.environ[key].strip()
 
 def read(table, schema='public', **params):
     rows = []
