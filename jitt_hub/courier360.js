@@ -114,7 +114,7 @@ function c360Header(loading = false) {
   return `<div class="c360-head">
     <button type="button" class="c360-button" data-c360-close>← ${esc(courier360State.backLabel)}</button>
     <form class="c360-search" id="c360-search" role="search" aria-label="Futár keresése">
-      <input type="search" id="c360-search-input" placeholder="Futár neve vagy azonosítója" aria-label="Futár neve vagy azonosítója" aria-controls="c360-search-results" autocomplete="off">
+      <input type="search" id="c360-search-input" placeholder="Futárnév, azonosító vagy Túrán" aria-label="Futár neve vagy azonosítója" aria-controls="c360-search-results" autocomplete="off">
       <div id="c360-search-results" class="c360-search-results" hidden></div>
       <p id="c360-search-status" class="c360-search-status" role="status"></p>
     </form>
@@ -154,23 +154,53 @@ async function openCourierProfile() {
   }
 }
 
+const c360SearchText = text => String(text ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+const c360ActiveQuery = value => /^(?:turan|turan van|dolgozik|muszakban)$/.test(c360SearchText(value));
+let c360SearchSequence = 0;
+let c360ActiveRequest;
+
 function c360SearchMatches(value) {
-  const normalize = text => String(text ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
-  const query = normalize(value).replace(/^#(?=\d+$)/, '');
+  const query = c360SearchText(value).replace(/^#(?=\d+$)/, '');
   if (!query) return [];
   return (data?.couriers || []).filter(row => /^\d{1,12}$/.test(row.courierId) &&
-    normalize(`${row.courierName || ''} ${row.courierId}`).includes(query))
+    c360SearchText(`${row.courierName || ''} ${row.courierId}`).includes(query))
     .sort((a, b) => Number(String(b.courierId) === query) - Number(String(a.courierId) === query));
 }
 
-function c360RenderSearch(input) {
+function c360SearchRows(results, rows, active = false) {
+  results.innerHTML = rows.map(row => `<button type="button" data-c360-switch="${esc(row.courierId)}">
+    <span>${esc(row.courierName || 'Futár')}${active ? `<small class="c360-search-courier-status">${esc(row.status)}</small>` : ''}</span><small>#${esc(row.courierId)}</small>
+  </button>`).join('');
+  results.hidden = !rows.length;
+}
+
+function c360DismissSearch() {
+  c360SearchSequence++;
+  const results = $('#c360-search-results');
+  if (results) results.hidden = true;
+}
+
+async function c360RenderSearch(input) {
+  const sequence = ++c360SearchSequence;
   const results = $('#c360-search-results');
   const status = $('#c360-search-status');
+  if (c360ActiveQuery(input.value)) {
+    results.hidden = true;
+    status.textContent = 'Élő futárstátuszok betöltése…';
+    c360ActiveRequest ||= api('/api/courier360-active').finally(() => { c360ActiveRequest = null; });
+    try {
+      const {couriers, partial} = await c360ActiveRequest;
+      if (sequence !== c360SearchSequence || !input.isConnected) return;
+      c360SearchRows(results, couriers, true);
+      status.textContent = couriers.length ? `${couriers.length} aktív futár${partial ? ' · Részleges adat' : ''}.`
+        : partial ? 'A rendelkezésre álló forrásokban nincs friss aktív futárjelzés.' : 'Nincs friss túra- vagy jelenléti jelzés aktív futárról.';
+    } catch (error) {
+      if (sequence === c360SearchSequence && input.isConnected) status.textContent = error.message;
+    }
+    return;
+  }
   const matches = c360SearchMatches(input.value);
-  results.innerHTML = matches.slice(0, 8).map(row => `<button type="button" data-c360-switch="${esc(row.courierId)}">
-    <span>${esc(row.courierName || 'Futár')}</span><small>#${esc(row.courierId)}</small>
-  </button>`).join('');
-  results.hidden = !matches.length;
+  c360SearchRows(results, matches.slice(0, 8));
   status.textContent = !input.value.trim() ? '' : matches.length
     ? `${matches.length} találat${matches.length > 8 ? ', az első 8 látható' : ''}.`
     : /^#?\d{1,12}$/.test(input.value.trim()) ? 'Enter a futárazonosító megnyitásához.' : 'Nincs találat a betöltött futárlistában.';
@@ -227,10 +257,7 @@ document.addEventListener('click',event=>{
   if(event.target.closest('[data-c360-profile]')){openCourierProfile();return}
   const selected = event.target.closest('[data-c360-switch]');
   if(selected){c360SwitchCourier(selected.dataset.c360Switch);return}
-  if(!event.target.closest('#c360-search')){
-    const results = $('#c360-search-results');
-    if(results)results.hidden = true;
-  }
+  if(!event.target.closest('#c360-search')) c360DismissSearch();
   const day=event.target.closest('[data-c360-day]');
   if(day){
     courier360State.date=day.dataset.c360Day;
@@ -244,15 +271,13 @@ document.addEventListener('input', event => {
 });
 document.addEventListener('focusin', event => {
   if (event.target.id === 'c360-search-input') c360RenderSearch(event.target);
-  else if (!event.target.closest('#c360-search')) {
-    const results = $('#c360-search-results');
-    if (results) results.hidden = true;
-  }
+  else if (!event.target.closest('#c360-search')) c360DismissSearch();
 });
 document.addEventListener('submit', event => {
   if (event.target.id !== 'c360-search') return;
   event.preventDefault();
   const input = $('#c360-search-input');
+  if (c360ActiveQuery(input.value)) { c360RenderSearch(input); return; }
   const id = input.value.trim().replace(/^#/, '');
   const matches = c360SearchMatches(input.value);
   if (/^\d{1,12}$/.test(id)) c360SwitchCourier(id);
@@ -265,7 +290,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     event.preventDefault();
     input.focus();
-    $('#c360-search-results').hidden = true;
+    c360DismissSearch();
     $('#c360-search-status').textContent = '';
   } else if (event.key === 'ArrowDown' && event.target === input) {
     const first = $('#c360-search-results:not([hidden]) button');

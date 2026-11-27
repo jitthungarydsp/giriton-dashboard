@@ -745,8 +745,9 @@ async function settlementTrends(request, env) {
   return jsonResponse(await entry.promise);
 }
 
+const budapestDayFormatter = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Budapest',year:'numeric',month:'2-digit',day:'2-digit'});
 function budapestDay(value = new Date()) {
-  return new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Budapest',year:'numeric',month:'2-digit',day:'2-digit'}).format(value);
+  return budapestDayFormatter.format(value);
 }
 
 function courier360Identity(request) {
@@ -891,6 +892,23 @@ function courier360RouteObjects(value, depth=0) {
   return [...(isRoute?[value]:[]),...Object.values(value).filter(v=>v&&typeof v==='object').flatMap(v=>courier360RouteObjects(v,depth+1))];
 }
 
+function courier360RouteActive({date, routeId, activityAt, returned, state}) {
+  const activityMatches = !activityAt || !Number.isFinite(Date.parse(activityAt)) || budapestDay(new Date(activityAt)) === date;
+  return Boolean(routeId && activityMatches && !returned &&
+    ['ON_ROUTE','ON_TOUR','DELIVERING','DRIVING','DEPARTED','IN_PROGRESS','ACTIVE','ON_THE_WAY','IN_ROUTE'].includes(state));
+}
+
+function courier360Working({fresh, routeActive, attendanceFresh, attended, state}) {
+  if (fresh && routeActive) return {working: true, label: 'Túrán'};
+  if (attendanceFresh && attended.checkin_end) return {working: false, label: 'Giritonból kijelentkezett'};
+  if (attendanceFresh && attended.checkin_start) return {working: true, label: 'Giritonba bejelentkezve'};
+  if (fresh && ['NO_SHOW','OFFLINE','FINISHED','INACTIVE'].includes(state))
+    return {working: false, label: state === 'NO_SHOW' ? 'Hub: nem érkezett meg' : 'Nincs aktív munkavégzés'};
+  if (attendanceFresh && /didn.t come|absent|nem érkezett/i.test(attended.activity_status || ''))
+    return {working: false, label: 'Giriton: nem érkezett meg'};
+  return {working: null, label: fresh ? 'Friss Hub-jelzés · ' + (state || 'ismeretlen állapot') : 'Nincs friss adat'};
+}
+
 function courier360BuildOperational({date,now,monitor=[],detail=[],map=[],stops=[],statistics=[],checkins=[],attendance=[],bookings=[],giritonShifts=[]}) {
   const sameDay=row=>row.fetched_at&&budapestDay(new Date(row.fetched_at))===date;
   const newest=rows=>[...rows].sort((a,b)=>key(b.fetched_at||b.updated_at).localeCompare(key(a.fetched_at||a.updated_at)))[0];
@@ -917,17 +935,10 @@ function courier360BuildOperational({date,now,monitor=[],detail=[],map=[],stops=
   const returned=route.realReturn||route.actualReturnAt||route.finishedAt||routeStat.returned_at||null;
   const departed=route.realDeparture||route.departedAt||routeStat.departed_at||signal?.departed_at||null;
   const activityAt=route.actualStartAt||route.plannedStartAt||route.departedAt||route.plannedDepartureAt||signalJson.plannedStartAt;
-  const activityMatches=!activityAt||!Number.isFinite(Date.parse(activityAt))||budapestDay(new Date(activityAt))===date;
-  const routeActive=Boolean(routeId&&activityMatches&&!returned&&['ON_ROUTE','ON_TOUR','DELIVERING','DRIVING','DEPARTED','IN_PROGRESS','ACTIVE','ON_THE_WAY','IN_ROUTE'].includes(state));
+  const routeActive=courier360RouteActive({date,routeId,activityAt,returned,state});
   const attended=newest(attendance.map(row=>({...row,fetched_at:row.updated_at})))||null;
   const attendanceFresh=Boolean(attended&&date===budapestDay(now)&&courier360Fresh(attended.updated_at,now));
-  let working=null,label='Nincs friss adat';
-  if(fresh&&routeActive){working=true;label='Túrán';}
-  else if(attendanceFresh&&attended.checkin_end){working=false;label='Giritonból kijelentkezett';}
-  else if(attendanceFresh&&attended.checkin_start&&!attended.checkin_end){working=true;label='Giritonba bejelentkezve';}
-  else if(fresh&&['NO_SHOW','OFFLINE','FINISHED','INACTIVE'].includes(state)){working=false;label=state==='NO_SHOW'?'Hub: nem érkezett meg':'Nincs aktív munkavégzés';}
-  else if(attendanceFresh&&/didn.t come|absent|nem érkezett/i.test(attended.activity_status||'')){working=false;label='Giriton: nem érkezett meg';}
-  else if(fresh){label='Friss Hub-jelzés · '+(state||'ismeretlen állapot');}
+  const {working,label}=courier360Working({fresh,routeActive,attendanceFresh,attended,state});
   const nextStop=routeStops.find(stop=>!['COMPLETED','REJECTED','CANCELLED','CANCELED'].includes(stop.state))||null;
   const activeBookings=bookings.filter(row=>row.active!==false&&!['CANCELLED','CANCELED','DELETED'].includes(key(row.status).toUpperCase()));
   const shifts=activeBookings.map(row=>({date:row.work_date,start:row.slot_from,end:row.slot_to,warehouse:row.warehouse_code||key(row.warehouse_id),
@@ -1264,6 +1275,85 @@ async function courier360SaveBankAccount(request,env,user) {
   return jsonResponse({ok:true,...(!auditSaved?{warning:'A bankszámlaszám mentve, de a külön változásnapló bejegyzése nem sikerült.'}:{})});
 }
 
+async function courier360ActiveCouriers(env, now = new Date()) {
+  const date = budapestDay(now);
+  const recent = new Date(+now - 20 * 60000).toISOString();
+  const common = 'courier_id,courier_name,status,warehouse_code,courier_json,fetched_at';
+  const liveParams = {fetched_at: `gte.${recent}`, order: 'fetched_at.desc,courier_id.asc,warehouse_id.asc,dsp_id.asc', limit: 2000};
+  const results = await Promise.allSettled([
+    supabaseFetch(env, PUBLIC_SCHEMA, 'courier_hub_live_monitoring_courier_snapshot_latest', {
+      ...liveParams, select: `${common},route_id,departed_at`,
+    }),
+    supabaseFetch(env, PUBLIC_SCHEMA, 'courier_hub_live_map_courier_latest', {
+      ...liveParams, select: `${common},route_ids`,
+    }),
+    supabaseFetch(env, PUBLIC_SCHEMA, 'giriton_attendance_raw', {
+      select: 'courier_name,activity_status,checkin_start,checkin_end,updated_at',
+      work_date: `eq.${date}`, updated_at: `gte.${recent}`, order: 'updated_at.desc,id.asc', limit: 2000,
+    }),
+    supabaseFetch(env, PUBLIC_SCHEMA, 'courier_hub_route_statistics', {
+      select: 'courier_id,work_date,route_id,returned_at',
+      work_date: `eq.${date}`, returned_at: 'not.is.null', order: 'courier_id.asc,route_id.asc', limit: 2000,
+    }),
+  ]);
+  if (results.slice(0, 3).every(result => result.status === 'rejected')) {
+    return jsonResponse({error: 'Az élő futárstátuszok most nem érhetők el.'}, 502);
+  }
+  const [monitor, map, attendance, statistics] = results.map(result => result.value || []);
+  const group = new Map();
+  function record(id) {
+    if (!group.has(id)) group.set(id, {monitor: [], map: [], statistics: [], attendance: []});
+    return group.get(id);
+  }
+  for (const [source, rows] of [['monitor', monitor], ['map', map], ['statistics', statistics]]) {
+    for (const row of rows) {
+      const id = key(row.courier_id);
+      if (/^\d{1,12}$/.test(id)) record(id)[source].push(row);
+    }
+  }
+  let attendanceUnavailable = false;
+  if (attendance.length) {
+    try {
+      const directory = await supabaseFetch(env, PUBLIC_SCHEMA, 'courier_master', {
+        select: 'courier_id,courier_name', order: 'courier_id.asc', limit: 10000,
+      });
+      const idsByName = new Map();
+      for (const row of directory) {
+        const name = courier360Name(row.courier_name), id = key(row.courier_id);
+        if (!name || !/^\d{1,12}$/.test(id)) continue;
+        if (!idsByName.has(name)) idsByName.set(name, new Set());
+        idsByName.get(name).add(id);
+      }
+      for (const row of attendance) {
+        const ids = idsByName.get(courier360Name(row.courier_name));
+        if (ids?.size === 1) record(ids.values().next().value).attendance.push(row);
+      }
+    } catch { attendanceUnavailable = true; }
+  }
+  const couriers = [];
+  for (const [id, sources] of group) {
+    const signal = [...sources.monitor, ...sources.map]
+      .filter(row => courier360Fresh(row.fetched_at, now) && budapestDay(new Date(row.fetched_at)) === date)
+      .sort((a, b) => Date.parse(b.fetched_at) - Date.parse(a.fetched_at))[0];
+    const info = courier360Json(signal?.courier_json);
+    const state = key(signal?.status || info.status).toUpperCase();
+    const routeId = key(signal?.route_id || info.cargoRouteId || info.routeExternalId ||
+      (Array.isArray(signal?.route_ids) ? signal.route_ids[0] : null));
+    const returned = sources.statistics.find(row => key(row.route_id) === routeId)?.returned_at;
+    const routeActive = courier360RouteActive({date, routeId, activityAt: info.plannedStartAt, returned, state});
+    const sameAttendanceName = new Set(sources.attendance.map(row => key(row.courier_name))).size === 1;
+    const attended = sameAttendanceName ? sources.attendance[0] : null;
+    const {working} = courier360Working({state, routeActive, fresh: Boolean(signal), attended,
+      attendanceFresh: courier360Fresh(attended?.updated_at, now)});
+    if (working !== true) continue;
+    const name = sources.monitor[0]?.courier_name || sources.map[0]?.courier_name || sources.attendance[0]?.courier_name;
+    couriers.push({courierId: id, courierName: name || 'Futár', status: routeActive ? 'Túrán' : 'Műszakban'});
+  }
+  couriers.sort((a, b) => Number(b.status === 'Túrán') - Number(a.status === 'Túrán') ||
+    a.courierName.localeCompare(b.courierName, 'hu') || a.courierId.localeCompare(b.courierId));
+  return jsonResponse({couriers, partial: attendanceUnavailable || results.some(result => result.status === 'rejected')});
+}
+
 async function courier360Profile(request, env) {
   const courierId = key(new URL(request.url).searchParams.get('courier'));
   if (!/^\d{1,12}$/.test(courierId)) return jsonResponse({error: 'Érvényes futárazonosító szükséges.'}, 400);
@@ -1485,6 +1575,13 @@ export default {
       if (access.error) return access.error;
       try { return await courierFinanceBreakdown(request, env); }
       catch (error) { return jsonResponse({error:error.status === 400 ? error.message : 'A tételbontás nem tölthető be.'},error.status === 400 ? 400 : 500); }
+    }
+
+    if (url.pathname === '/api/courier360-active') {
+      if (request.method !== 'GET') return jsonResponse({error: 'Csak olvasási kérés támogatott.'}, 405);
+      const access = await requireDashboardUser(request, env);
+      if (access.error) return access.error;
+      return courier360ActiveCouriers(env);
     }
 
     if (url.pathname === '/api/courier360-profile') {

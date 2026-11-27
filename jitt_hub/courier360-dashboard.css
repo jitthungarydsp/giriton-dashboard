@@ -99,6 +99,12 @@
   color: var(--muted);
 }
 
+.c360-search-results .c360-search-courier-status {
+  display: block;
+  margin-top: 3px;
+  color: #83dcb6;
+}
+
 .c360-search-status {
   position: absolute;
   clip-path: inset(50%);
