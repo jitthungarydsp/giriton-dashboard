@@ -1484,6 +1484,261 @@ async function dailyTasks(env, user, now = new Date()) {
   });
 }
 
+function scheduleTime(value) {
+  const match = key(value).match(/(?:^|\D)([01]?\d|2[0-3]):([0-5]\d)(?!\d)/);
+  return match ? match[1].padStart(2,'0') + ':' + match[2] : '';
+}
+
+function scheduleEmail(value) {
+  return key(value).toLowerCase().replace(/\s+/g,'');
+}
+
+function scheduleTimestamp(value) {
+  if (value == null || value === '') return null;
+  const text = key(value);
+  if (/^\d{10}(?:\d{3})?$/.test(text)) return new Date(Number(text) * (text.length === 10 ? 1000 : 1)).toISOString();
+  // MűszakPro stores some local wall times as text. Preserve those separately from ISO instants.
+  if (/^20\d\d[./-]\s*\d{1,2}[./-]\s*\d{1,2}\.?\s+\d{1,2}:\d{2}(?::\d{2})?$/.test(text)) return text;
+  return /^20\d{2}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(text) && Number.isFinite(Date.parse(text)) ? text : null;
+}
+
+function scheduleIsCancelled(row) {
+  return Boolean(row.cancelled_at || /torol|cancel|delet|inactive/.test(normalizedLogin(row.status + ' ' + row.event_type)));
+}
+
+const scheduleSheetIds = {BUD1:30983345,BUD2:723813954};
+const scheduleSheetCache = new Map();
+
+function scheduleCsv(text) {
+  const rows = [];
+  let row = [], field = '', quoted = false;
+  for (let i=0;i<text.length;i++) {
+    const char = text[i];
+    if (char === '"') {
+      if (quoted && text[i+1] === '"') { field += '"'; i++; }
+      else quoted = !quoted;
+    } else if (!quoted && (char === ',' || char === '\n' || char === '\r')) {
+      row.push(field);
+      field = '';
+      if (char !== ',') {
+        if (char === '\r' && text[i+1] === '\n') i++;
+        rows.push(row);
+        row = [];
+      }
+    } else field += char;
+  }
+  if (quoted) throw new Error('Hiányos Google Sheets export.');
+  if (row.length || field) rows.push([...row,field]);
+  return rows;
+}
+
+async function loadScheduleSheet(warehouse) {
+  const cached = scheduleSheetCache.get(warehouse);
+  if (cached?.until > Date.now()) return cached.promise;
+  const promise = (async()=>{
+    const url = 'https://docs.google.com/spreadsheets/d/1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg/export?format=csv&gid='+scheduleSheetIds[warehouse];
+    const response = await fetch(url);
+    if (!response.ok) throw Error('RobotShift export unavailable');
+    const [header,...rows] = scheduleCsv(await response.text());
+    const columns = ['Dátum','Raktár','BlockKey','DSP ID','Template név','Slot kezdete','KIFLI_BOOKING','MUSZAKPRO_BOOKING'].map(name=>header?.indexOf(name) ?? -1);
+    if (columns.includes(-1)) throw Error('RobotShift export headers do not match');
+    return rows.map(row=>columns.map(index=>key(row[index]))).filter(row=>row[1] === warehouse && row[2]);
+  })();
+  scheduleSheetCache.set(warehouse,{until:Date.now()+60000,promise});
+  try { return await promise; }
+  catch (error) { if (scheduleSheetCache.get(warehouse)?.promise === promise) scheduleSheetCache.delete(warehouse); throw error; }
+}
+
+async function loadScheduleLog(warehouse, first) {
+  const dates = Array.from({length:7},(_,index)=>new Date(Date.parse(first+'T12:00:00Z')+index*86400000).toISOString().slice(0,10));
+  const dateQuery = dates.map(date=>`D contains '${date}'`).join(' or ');
+  const query = new URLSearchParams({gid:'1961182696',tqx:'out:csv',headers:'1',
+    tq:`select A,B,C,D where D contains '${warehouse}' and (${dateQuery})`});
+  const response = await fetch('https://docs.google.com/spreadsheets/d/1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg/gviz/tq?'+query);
+  if (!response.ok) throw Error('MűszakPro LOG unavailable');
+  const [header,...rows] = scheduleCsv(await response.text());
+  if (header?.join('|') !== 'Időpont|Felhasználó|Művelet|Adatok') throw Error('MűszakPro LOG export headers do not match');
+  return rows.flatMap(([at,user_email,operation,raw_shift_data])=>{
+    const shift_date = raw_shift_data?.match(/D[áa]tum:\s*(\d{4}-\d{2}-\d{2})/i)?.[1];
+    const shift_time = raw_shift_data?.match(/M[űu]szak:\s*([^,]+)/i)?.[1];
+    const targetWarehouse = raw_shift_data?.match(/Rakt[áa]r:\s*(BUD[12])/i)?.[1]?.toUpperCase();
+    const booked_at = scheduleTimestamp(at);
+    return targetWarehouse === warehouse && dates.includes(shift_date) && shift_time && booked_at
+      ? [{shift_date,shift_time,user_email,operation,booked_at,raw_shift_data}] : [];
+  });
+}
+
+function scheduleLogOrder(value) {
+  const local = value.match(/^(\d{4})[./-]\s*(\d{1,2})[./-]\s*(\d{1,2})\.?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!local) return Date.parse(value);
+  return Date.UTC(+local[1],+local[2]-1,+local[3],+local[4],+local[5],+(local[6] || 0));
+}
+
+function buildScheduleWeek(warehouse, blocks, hub, bookings, logs, sheetRows = [], identity = []) {
+  const byBlock = new Map(), byTime = new Map(), days = {};
+  const dayTime = (day, time) => day + '|' + time;
+  function addShift(row, missingBlock = false) {
+    const list = days[row.work_date] ||= [];
+    const time = scheduleTime(row.slot_from || row.shift_text);
+    const entry = {id: row.id, time, name: row.template_name || row.shift_text || 'Műszak',
+      assigned: row.assigned, uncertain: missingBlock, people: []};
+    list.push(entry);
+    return entry;
+  }
+  const hubKey = row => [row.work_date,row.dsp_id,row.block_key].join('|');
+  for (const block of blocks) {
+    const row = addShift(block);
+    byBlock.set(hubKey(block), row);
+    const k = dayTime(block.work_date, row.time);
+    if (!byTime.has(k)) byTime.set(k, []);
+    byTime.get(k).push(row);
+  }
+  for (const row of hub) {
+    if (!row.active) continue;
+    const k = hubKey(row);
+    if (!byBlock.has(k)) {
+      byBlock.set(k, addShift({...row,id:k}, true));
+    }
+    const entry = byBlock.get(k);
+    const assignedAt = scheduleTimestamp(row.assigned_at);
+    entry.people.push({id:key(row.courier_id), name:key(row.courier_name), email:scheduleEmail(row.email),
+      hub:true, muszakpro:false, assignedAt, firstSeenAt:assignedAt ? null : row.first_seen_at || null});
+  }
+  const logGroups = new Map();
+  for (const log of logs) {
+    const operation = normalizedLogin(log.operation);
+    const text = key(log.raw_shift_data);
+    const member = text.match(/Fut.r:\s*([^\s,)]+@[^\s,)]+)/i)?.[1];
+    const proxy = text.match(/Proxy:\s*([^\s,)]+@[^\s,)]+)/i)?.[1];
+    const user = scheduleEmail(log.user_email);
+    const target = scheduleEmail(member || user);
+    const time = scheduleTime(log.shift_time);
+    // Only booking/deletion events enter this sequence. Requests and Q-column adjustments are different actions.
+    if (!target || !time || !log.booked_at || !/^(?:foglalas(?:\s|$)|(?:radir )?torles(?:\s|$))/.test(operation)) continue;
+    const match = dayTime(log.shift_date,time) + '|' + target;
+    const previous = logGroups.get(match);
+    if (!previous || scheduleLogOrder(log.booked_at) >= scheduleLogOrder(previous.at)) {
+      logGroups.set(match, {at:log.booked_at, actor:scheduleEmail(proxy || user), booked:operation.startsWith('foglalas')});
+    }
+  }
+  const latest = new Map(), alone = new Map();
+  for (const row of bookings) {
+    const time = scheduleTime(row.shift_text);
+    if (!time) continue;
+    const identity = scheduleEmail(row.email) || key(row.courier_id);
+    const key = JSON.stringify([row.work_date,time,identity || row.id,normalizedLogin(row.shift_text)]);
+    const current = latest.get(key);
+    const version = row.cancelled_at || row.updated_at || row.created_at || '';
+    if (!current || Date.parse(version) >= Date.parse(current.version)) latest.set(key,{row,time,version});
+  }
+  for (const {row,time} of latest.values()) {
+    if (scheduleIsCancelled(row)) continue;
+    const match = dayTime(row.work_date,time);
+    const candidates = byTime.get(match) || [];
+    const name = normalizedLogin(row.shift_text).replace(/[\W_]+/g,'');
+    const named = candidates.filter(candidate => normalizedLogin(candidate.name).replace(/[\W_]+/g,'') === name);
+    const id = key(row.courier_id), email = scheduleEmail(row.email);
+    const includesCourier = candidates.filter(candidate => candidate.people.some(person => id && person.id === id || email && person.email === email));
+    let entry = candidates.length === 1 ? candidates[0] : named.length === 1 ? named[0] : includesCourier.length === 1 ? includesCourier[0] : null;
+    if (!entry) {
+      for (const candidate of candidates) candidate.uncertain = true;
+      const separate = match + '|' + name;
+      if (!alone.has(separate)) alone.set(separate, addShift({...row,id:separate}, true));
+      entry = alone.get(separate);
+    }
+    const matching = entry.people.filter(person => id && person.id === id || email && person.email === email);
+    if (matching.length > 1) entry.uncertain = true;
+    const person = matching.length === 1 ? matching[0] : {id, name:key(row.courier_name), email, hub:false};
+    if (matching.length !== 1) entry.people.push(person);
+    person.id ||= id;
+    person.name ||= key(row.courier_name);
+    person.muszakpro = true;
+    const event = email && logGroups.get(match+'|'+email);
+    person.log = event?.booked ? {actor:event.actor || null,at:event.at} : null;
+  }
+  const identityByGiriton = new Map();
+  for (const row of identity) {
+    const giriton = key(row.giriton_person_id).toLowerCase();
+    if (!giriton || !row.courier_id) continue;
+    const existing = identityByGiriton.get(giriton);
+    if (existing !== null && (!existing || key(existing.courier_id) === key(row.courier_id))) identityByGiriton.set(giriton,row);
+    else identityByGiriton.set(giriton,null);
+  }
+  const sheetTokens = value => [...new Set(value.split(';').map(token=>token.trim().toLowerCase()).filter(Boolean))];
+  for (const [work_date,,block_key,dsp_id,template_name,slot_from,q,r] of sheetRows) {
+    const group = hubKey({work_date,dsp_id,block_key});
+    let shift = byBlock.get(group);
+    if (!shift) {
+      shift = addShift({work_date,slot_from,template_name,id:group});
+      byBlock.set(group,shift);
+    }
+    const qIds = new Set(sheetTokens(q)), rIds = new Set(sheetTokens(r));
+    const previous = new Map(shift.people.filter(person=>person.id).map(person=>[person.id,person]));
+    shift.sheet = true;
+    shift.uncertain = false;
+    shift.people = [...new Set([...qIds,...rIds])].map(giritonId=>{
+      const profile = identityByGiriton.get(giritonId);
+      const id = key(profile?.courier_id);
+      const existing = previous.get(id);
+      const hub = qIds.has(giritonId), muszakpro = rIds.has(giritonId);
+      const log = muszakpro && profile?.email && logGroups.get(dayTime(work_date,shift.time)+'|'+scheduleEmail(profile.email));
+      if (!id) shift.uncertain = true;
+      return {id,giritonId,name:existing?.name || key(profile?.name_without_identifier || profile?.name_json),
+        hub,muszakpro,assignedAt:hub ? existing?.assignedAt : null,firstSeenAt:hub ? existing?.firstSeenAt : null,
+        log:muszakpro ? existing?.log || (log?.booked ? {actor:log.actor || null,at:log.at} : null) : null};
+    });
+  }
+  // A MűszakPro booking whose start cannot be paired with a sheet block stays
+  // visible with an uncertain status, with no inferred assignment to a different slot.
+  for (const list of Object.values(days)) {
+    list.sort((a,b)=>a.time.localeCompare(b.time)||a.name.localeCompare(b.name,'hu'));
+    for (const shift of list) {
+      const hubCount = shift.people.filter(person=>person.hub).length;
+      if (!shift.sheet) shift.uncertain ||= shift.assigned != null && Number(shift.assigned) > hubCount;
+      shift.people.forEach(person => { delete person.email; });
+    }
+  }
+  return {warehouse,days};
+}
+
+async function scheduleWeek(request, env) {
+  const url = new URL(request.url);
+  const warehouse = url.searchParams.get('warehouse');
+  const start = url.searchParams.get('week') || '';
+  const timestamp = Date.parse(start + 'T00:00:00Z');
+  if (!['BUD1','BUD2'].includes(warehouse) || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !Number.isFinite(timestamp) ||
+    new Date(timestamp).toISOString().slice(0,10) !== start || new Date(timestamp).getUTCDay() !== 1) {
+    return jsonResponse({error:'Érvényes raktár és hétfői kezdődátum szükséges.'},400);
+  }
+  const end = new Date(timestamp + 7*86400000).toISOString().slice(0,10);
+  const bounds = column => `(${column}.gte.${start},${column}.lt.${end})`;
+  const base = {and:bounds('work_date'), limit:6000};
+  const sources = {...env, SUPABASE_READ_KEY:env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_READ_KEY};
+  const [blocks,hub,bookings,logRows,sheetExport,identity,directLog] = await Promise.all([
+    supabaseFetch(sources,PUBLIC_SCHEMA,'courier_hub_shift_blocks_raw',{...base,warehouse_code:`eq.${warehouse}`,order:'id.asc',
+      select:'id,work_date,dsp_id,block_key,template_name,slot_from,assigned'}),
+    supabaseFetch(sources,PUBLIC_SCHEMA,'courier_hub_shift_bookings_raw',{...base,warehouse_code:`eq.${warehouse}`,order:'id.asc',
+      select:'work_date,dsp_id,block_key,slot_from,shift_text,courier_id,courier_name,email,active,first_seen_at,assigned_at:subscription_json->>assignedAt'}),
+    supabaseFetch(sources,PUBLIC_SCHEMA,'raw_muszakpro_bookings',{...base,warehouse:`ilike.${warehouse}*`,order:'id.asc',
+      select:'id,work_date,shift_text,email,courier_id,courier_name,status,event_type,cancelled_at,created_at,updated_at'}),
+    supabaseFetch(sources,SETTLEMENT_SCHEMA,'courier_loyalty_booking_log',{and:bounds('shift_date'),warehouse:`ilike.${warehouse}*`,order:'source_row.asc,source_key.asc',limit:8000,
+      select:'shift_date,shift_time,user_email,operation,booked_at,raw_shift_data,fetched_at'}).catch(()=>null),
+    loadScheduleSheet(warehouse).catch(()=>null),
+    supabaseFetch(sources,PUBLIC_SCHEMA,'courier_hub_courier_identity_raw',{
+      select:'courier_id,giriton_person_id,name_without_identifier,name_json,email',order:'courier_id.asc',limit:6000,
+    }).catch(()=>null),
+    loadScheduleLog(warehouse,start).catch(()=>null),
+  ]);
+  if (blocks.length >= 6000 || hub.length >= 6000 || bookings.length >= 6000 || logRows?.length >= 8000) {
+    return jsonResponse({error:'A heti adatsor nem tölthető be teljes egészében.'},502);
+  }
+  const sheetRows = (sheetExport || []).filter(row=>row[0]>=start && row[0]<end);
+  const sheetAvailable = Boolean(sheetRows.length && identity?.length && identity.length<6000);
+  return jsonResponse({...buildScheduleWeek(warehouse,blocks,hub,bookings,directLog ?? logRows ?? [],sheetAvailable ? sheetRows : [],identity || []),sheetAvailable,
+    logDirect:directLog !== null,logAvailable:directLog !== null || logRows !== null,
+    logUpdatedAt: (logRows || []).reduce((last,row)=>key(row.fetched_at)>last?key(row.fetched_at):last,'') || null});
+}
+
 export default {
   async fetch(request, env, executionContext) {
     const url = new URL(request.url);
@@ -1575,6 +1830,14 @@ export default {
       if (access.error) return access.error;
       try { return await courierFinanceBreakdown(request, env); }
       catch (error) { return jsonResponse({error:error.status === 400 ? error.message : 'A tételbontás nem tölthető be.'},error.status === 400 ? 400 : 500); }
+    }
+
+    if (url.pathname === '/api/schedule-week') {
+      if (request.method !== 'GET') return jsonResponse({error:'Csak olvasási kérés támogatott.'},405);
+      const access = await requireDashboardUser(request,env);
+      if (access.error) return access.error;
+      try { return await scheduleWeek(request,env); }
+      catch { return jsonResponse({error:'A beosztás adatai most nem tölthetők be.'},502); }
     }
 
     if (url.pathname === '/api/courier360-active') {
