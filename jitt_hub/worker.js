@@ -979,6 +979,108 @@ function courier360BuildOperational({date,now,monitor=[],detail=[],map=[],stops=
     shifts:uniqueShifts,nextShift:upcoming,dayStatistics:dailyStats,logs};
 }
 
+const courierAttendanceClock = new Intl.DateTimeFormat('en-GB',{
+  timeZone:'Europe/Budapest',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23',
+});
+
+function courierAttendanceBoard({date,now,hub,giriton,attendance,directory}) {
+  const byId = new Map();
+  const byName = new Map();
+  const nameById = new Map();
+  const validId = value => /^\d{1,12}$/.test(key(value)) ? key(value) : '';
+  const register = (id,name) => {
+    if (!id) return;
+    const normalized = courier360Name(name);
+    if (!normalized) return;
+    if (!nameById.has(id)) nameById.set(id,key(name));
+    if (!byName.has(normalized)) byName.set(normalized,new Set());
+    byName.get(normalized).add(id);
+  };
+  for (const row of [...directory,...hub,...giriton]) register(validId(row.courier_id),row.courier_name);
+
+  const getCourier = (id,name) => {
+    if (!byId.has(id)) byId.set(id,{courierId:validId(id),courierName:nameById.get(id) || key(name),shifts:[],checkin:'',checkout:'',uncertain:false});
+    return byId.get(id);
+  };
+  let unmatchedShifts = 0;
+  for (const row of [...hub,...giriton]) {
+    if (!courier360ShiftEnabled(row) || normalizedLogin(row.status) === 'ures') continue;
+    const name = courier360Name(row.courier_name);
+    const names = byName.get(name);
+    const id = validId(row.courier_id) || (names?.size === 1 ? [...names][0] : name && 'name:'+name);
+    const start = scheduleTime(row.start_time || row.slot_from);
+    const warehouse = key(row.warehouse_code || row.warehouse).trim().toUpperCase().match(/\bBUD[12]\b/)?.[0] || '';
+    if (!id || !start) { unmatchedShifts++; continue; }
+    const courier = getCourier(id,row.courier_name);
+    if (names?.size > 1 && !courier.courierId) courier.uncertain = true;
+    if (!courier.shifts.some(shift=>shift.start===start && shift.warehouse===warehouse)) courier.shifts.push({start,warehouse});
+  }
+
+  for (const row of attendance) {
+    const info = courier360Json(row.response_json);
+    const explicitId = validId(info.courier_id || info.courier?.courier_id || info.courier?.courierId);
+    const name = courier360Name(row.courier_name);
+    const names = byName.get(name);
+    const checkin = scheduleTime(row.checkin_start);
+    if (!checkin) continue;
+    if (!explicitId && names?.size > 1) {
+      for (const candidate of names) if (byId.has(candidate)) byId.get(candidate).uncertain = true;
+      continue;
+    }
+    const id = explicitId || (names?.size === 1 ? [...names][0] : name && 'name:'+name);
+    if (!id) continue;
+    const checkout = scheduleTime(row.checkin_end);
+    const courier = getCourier(id,row.courier_name);
+    if (!courier.checkin || checkin < courier.checkin) courier.checkin = checkin;
+    if (checkout > courier.checkout) courier.checkout = checkout;
+  }
+
+  const syncedAt = attendance[0]?.fetched_at || null;
+  const syncAge = +now - Date.parse(syncedAt);
+  const attendanceFresh = syncedAt !== null && syncAge >= 0 && syncAge <= 30*60000;
+  const [hour,minute,second] = courierAttendanceClock.format(now).split(':').map(Number);
+  const currentMinute = hour*60 + minute + second/60;
+  const priority = {overdue:0,due:1,upcoming:2,unknown:3,arrived:4};
+  const couriers = [...byId.values()].map(({uncertain,...courier}) => {
+    courier.shifts.sort((a,b)=>a.start.localeCompare(b.start)||a.warehouse.localeCompare(b.warehouse));
+    const [startHour,startMinute] = (courier.shifts[0]?.start || '').split(':').map(Number);
+    const untilStart = startHour*60 + startMinute - currentMinute;
+    const status = courier.checkin ? 'arrived' : untilStart > 30 ? 'upcoming' :
+      !attendanceFresh || uncertain ? 'unknown' : untilStart <= 0 ? 'overdue' : 'due';
+    return {...courier,status};
+  });
+  couriers.sort((a,b)=>priority[a.status]-priority[b.status] ||
+    (a.shifts[0]?.start || '99:99').localeCompare(b.shifts[0]?.start || '99:99') ||
+    a.courierName.localeCompare(b.courierName,'hu'));
+  return {date,syncedAt,attendanceFresh,unmatchedShifts,couriers};
+}
+
+async function courierAttendanceData(env,now = new Date()) {
+  const date = budapestDay(now);
+  const day = {work_date:'eq.'+date,order:'id.asc',limit:3000};
+  const results = await Promise.allSettled([
+    supabaseFetch(env,PUBLIC_SCHEMA,'courier_hub_shift_bookings_raw',{
+      ...day,dsp_id:'eq.8',warehouse_id:'in.(1,2)',select:'courier_id,courier_name,warehouse_code,slot_from,status,active',
+    }),
+    supabaseFetch(env,PUBLIC_SCHEMA,'giriton_shifts_raw',{
+      ...day,select:'courier_id,courier_name,warehouse,start_time,status',
+    }),
+    supabaseFetch(env,PUBLIC_SCHEMA,'giriton_attendance_raw',{
+      ...day,source_name:'eq.giriton-attendance-robot',order:'fetched_at.desc,id.asc',
+      select:'courier_name,checkin_start,checkin_end,response_json,fetched_at',
+    }),
+    supabaseFetch(env,PUBLIC_SCHEMA,'courier_master',{
+      select:'courier_id,courier_name',order:'courier_id.asc',limit:6000,
+    }),
+  ]);
+  const [hub,giriton,attendance,directory] = results.map(result=>result.value || []);
+  if (results.slice(0,3).every(result=>result.status==='rejected')) {
+    return jsonResponse({error:'A mai jelenléti adatok most nem tölthetők be.'},502);
+  }
+  const partial = results.some((result,index)=>result.status==='rejected' || result.value.length >= (index === 3 ? 6000 : day.limit));
+  return jsonResponse({...courierAttendanceBoard({date,now,hub,giriton,attendance,directory}),partial});
+}
+
 async function courier360CalendarShifts(env,courierId,date) {
   const month = date.slice(0,7);
   const first = month+'-01';
@@ -1941,6 +2043,13 @@ export default {
       if (access.error) return access.error;
       try { return await scheduleWeek(request,env); }
       catch { return jsonResponse({error:'A beosztás adatai most nem tölthetők be.'},502); }
+    }
+
+    if (url.pathname === '/api/courier-attendance') {
+      if (request.method !== 'GET') return jsonResponse({error:'Csak olvasási kérés támogatott.'},405);
+      const access = await requireDashboardUser(request,env);
+      if (access.error) return access.error;
+      return courierAttendanceData(env);
     }
 
     if (url.pathname === '/api/courier360-active') {

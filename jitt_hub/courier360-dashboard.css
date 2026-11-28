@@ -1,4 +1,5 @@
-.courier360-open {
+.courier360-open,
+.attendance-active {
   --bg: #0c0d18;
   --card: #131520;
   --ink: #f1f1fa;
@@ -12,7 +13,8 @@
   background: var(--bg);
 }
 
-.courier360-open .sidebar {
+.courier360-open .sidebar,
+.attendance-active .sidebar {
   background: #10111d;
   border-right: 1px solid var(--line);
 }
@@ -27,7 +29,8 @@
   z-index: 12;
 }
 
-.courier360-open .nav button.active {
+.courier360-open .nav button.active,
+.attendance-active .nav button.active {
   background: var(--blue-soft);
   box-shadow: inset 2px 0 #a28bff;
 }
@@ -701,4 +704,128 @@
     grid-column: 2;
     justify-self: start;
   }
+}
+
+
+.attendance-active .toolbar,
+.attendance-active .content > #error {
+  display: none;
+}
+
+.attendance-tools,
+.attendance-filter-fields,
+.attendance-filters,
+.attendance-table-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.attendance-tools,
+.attendance-table-head {
+  justify-content: space-between;
+}
+
+.attendance-board .attendance-tools {
+  margin-bottom: 24px;
+}
+
+.attendance-board .attendance-filter-fields .search {
+  width: min(300px,70vw);
+}
+
+.attendance-filter-fields select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+}
+
+.attendance-table-head h2 {
+  margin: 0;
+}
+
+#attendance-date,
+#attendance-status {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.attendance-filters {
+  margin: 14px 0;
+}
+
+.attendance-filters button[aria-pressed="true"] {
+  background: var(--blue-soft);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.attendance-board .table-wrap {
+  overflow-x: auto;
+}
+
+.attendance-table {
+  width: 100%;
+  min-width: 580px;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.attendance-table th,
+.attendance-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.attendance-table th,
+.attendance-table small,
+.attendance-empty {
+  color: var(--muted);
+}
+
+.attendance-table small {
+  display: block;
+  margin-top: 3px;
+}
+
+.attendance-profile {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.attendance-profile:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+[data-attendance-status="due"],
+[data-attendance-status="overdue"] {
+  color: #ffacae;
+  background: #291923;
+}
+
+[data-attendance-status="due"] td:first-child,
+[data-attendance-status="overdue"] td:first-child {
+  box-shadow: inset 3px 0 #d96675;
+}
+
+[data-attendance-status="arrived"] .attendance-state {
+  color: #96d9b5;
+}
+
+[data-attendance-status="unknown"] .attendance-state {
+  color: var(--muted);
 }
