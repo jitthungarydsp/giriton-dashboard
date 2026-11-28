@@ -33,3 +33,11 @@ Erre kerülhet rá később:
 - futár 360 nézet,
 - Hub műszakadatok,
 - Excel alapú elszámolás.
+
+## Futár 360° élő státuszok
+
+A Futár 360° az aktuális napon 30 másodpercenként lekéri a futár állapotát.
+A Worker a Kifli Hubot közvetlenül olvassa, ha a `COURIER_HUB_COOKIE` vagy a
+`COURIER_HUB_AUTHORIZATION` titok érvényes hitelesítést tartalmaz. Elérési
+hiba vagy hiányzó hitelesítés esetén a felület a mentett pillanatképet és
+annak időpontját jelzi.

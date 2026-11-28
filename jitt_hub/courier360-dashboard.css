@@ -105,6 +105,30 @@
   color: #83dcb6;
 }
 
+.c360-search-courier-status[data-status="Nem jelent meg"] { color:#f198a5 }
+.c360-search-courier-status[data-status="Csúszik"] { color:#ffcc82 }
+.c360-search-courier-status[data-status="Tétlen"] { color:var(--muted) }
+
+.c360-live-tools {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+  margin-bottom:16px;
+}
+
+.c360-live-tools button[aria-pressed="true"] {
+  color:var(--blue);
+  border-color:var(--blue);
+  background:var(--blue-soft);
+}
+
+#c360-live-checked {
+  margin-left:auto;
+  color:var(--muted);
+  font-size:11px;
+}
+
 .c360-search-status {
   position: absolute;
   clip-path: inset(50%);

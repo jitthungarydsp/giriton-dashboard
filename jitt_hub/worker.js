@@ -895,11 +895,13 @@ function courier360RouteObjects(value, depth=0) {
 function courier360RouteActive({date, routeId, activityAt, returned, state}) {
   const activityMatches = !activityAt || !Number.isFinite(Date.parse(activityAt)) || budapestDay(new Date(activityAt)) === date;
   return Boolean(routeId && activityMatches && !returned &&
-    ['ON_ROUTE','ON_TOUR','DELIVERING','DRIVING','DEPARTED','IN_PROGRESS','ACTIVE','ON_THE_WAY','IN_ROUTE'].includes(state));
+    ['ON_ROUTE','ON_TOUR','DELIVERING','SLIPPING','LATE','RETURNING','DRIVING','DEPARTED','IN_PROGRESS','ACTIVE','ON_THE_WAY','IN_ROUTE'].includes(state));
 }
 
 function courier360Working({fresh, routeActive, attendanceFresh, attended, state}) {
+  if (fresh && state === 'NO_SHOW') return {working: false, label: 'Nem jelent meg'};
   if (fresh && routeActive) return {working: true, label: 'Túrán'};
+  if (fresh && state === 'LOADING') return {working: true, label: 'Rakodik'};
   if (attendanceFresh && attended.checkin_end) return {working: false, label: 'Giritonból kijelentkezett'};
   if (attendanceFresh && attended.checkin_start) return {working: true, label: 'Giritonba bejelentkezve'};
   if (fresh && ['NO_SHOW','OFFLINE','FINISHED','INACTIVE'].includes(state))
@@ -931,7 +933,8 @@ function courier360BuildOperational({date,now,monitor=[],detail=[],map=[],stops=
   const routeStat=dailyStats.find(row=>key(row.route_id)===routeId)||{};
   const lastSourceAt=signal?.fetched_at||rawDetail?.fetched_at||null;
   const fresh=Boolean(lastSourceAt&&date===budapestDay(now)&&courier360Fresh(lastSourceAt,now));
-  const state=key(signal?.status||signalJson.status||route.status).toUpperCase();
+  const shiftState=key(signal?.shift_status||signalJson.shiftStatus).toUpperCase();
+  const state=shiftState==='NO_SHOW'?'NO_SHOW':key(signal?.status||signalJson.status||route.status).toUpperCase();
   const returned=route.realReturn||route.actualReturnAt||route.finishedAt||routeStat.returned_at||null;
   const departed=route.realDeparture||route.departedAt||routeStat.departed_at||signal?.departed_at||null;
   const activityAt=route.actualStartAt||route.plannedStartAt||route.departedAt||route.plannedDepartureAt||signalJson.plannedStartAt;
@@ -962,6 +965,8 @@ function courier360BuildOperational({date,now,monitor=[],detail=[],map=[],stops=
   stamp('queue_started_at','Sorbaállás');stamp('actual_shift_start_at','Tényleges műszakkezdés');stamp('departed_at','Raktári indulás');stamp('returned_at','Raktári visszaérkezés');
   logs.sort((a,b)=>key(a.at).localeCompare(key(b.at)));
   return {date,currentWorking:working,label,fresh,lastSourceAt,hubStatus:state||null,attendance:attended,attendanceFresh,
+    liveStatus:fresh?courier360MonitorStatus(state,shiftState,routeActive,working):null,
+    liveDelay:fresh?metricNumber(signalJson.delayMinutes):null,
     route:routeId?{id:routeId,status:state,warehouse:signal?.warehouse_code||rawDetail?.warehouse_code||null,stops:routeStops,
       totalStops:signal?.stops_total??(routeStops.length||null),completedStops:signal?.deliveries_completed??routeStops.filter(row=>row.state==='COMPLETED').length,
       nextStop:routeActive&&fresh&&stopsFresh?nextStop:null,lastKnownNextStop:nextStop,active:routeActive&&fresh,stopsFresh,stopsUpdatedAt,
@@ -1275,17 +1280,54 @@ async function courier360SaveBankAccount(request,env,user) {
   return jsonResponse({ok:true,...(!auditSaved?{warning:'A bankszámlaszám mentve, de a külön változásnapló bejegyzése nem sikerült.'}:{})});
 }
 
-async function courier360ActiveCouriers(env, now = new Date()) {
+let courier360LiveCache;
+function courier360DirectMonitor(env) {
+  const cookie = key(env.COURIER_HUB_COOKIE);
+  const authorization = key(env.COURIER_HUB_AUTHORIZATION);
+  if (!cookie && !authorization) return Promise.resolve([]);
+  if (courier360LiveCache?.until > Date.now()) return courier360LiveCache.promise;
+  const headers = {accept:'application/json',...(cookie ? {cookie} : {}),...(authorization ? {authorization} : {})};
+  const promise = Promise.all([1,2].map(async id => {
+    try {
+      const response = await fetch(`https://courier-hub.kifli.hu/services/courier-hub-service/external/warehouses/${id}/live-monitoring-dashboard?dspId=8`,
+        {headers,redirect:'error',signal:AbortSignal.timeout(5500)});
+      if (!response.ok) return null;
+      const payload = await response.json();
+      const rows = Array.isArray(payload) ? payload : payload.couriers;
+      if (!Array.isArray(rows)) return null;
+      const fetched_at = new Date().toISOString();
+      return {warehouse:`BUD${id}`,fetched_at,rows:rows.map(row=>({
+        courier_id:row.courierId,courier_name:row.name || row.courierName,route_id:row.cargoRouteId || row.routeExternalId,
+        status:row.status,shift_status:row.shiftStatus,delay_minutes:row.delayMinutes,
+        warehouse_code:`BUD${id}`,courier_json:row,fetched_at,direct:true,
+      }))};
+    } catch { return null; }
+  })).then(results=>results.filter(Boolean));
+  courier360LiveCache = {until:Date.now()+15000,promise};
+  return promise;
+}
+
+function courier360MonitorStatus(state, shiftState, routeActive, working) {
+  if (state === 'NO_SHOW' || shiftState === 'NO_SHOW') return 'Nem jelent meg';
+  if (['SLIPPING','LATE'].includes(state)) return 'Csúszik';
+  if (state === 'IDLE') return 'Tétlen';
+  if (routeActive) return 'Túrán';
+  if (state === 'LOADING') return 'Rakodik';
+  if (working) return 'Műszakban';
+  return '';
+}
+
+async function courier360ActiveCouriers(env, now = new Date(), includeAll = false) {
   const date = budapestDay(now);
   const recent = new Date(+now - 20 * 60000).toISOString();
   const common = 'courier_id,courier_name,status,warehouse_code,courier_json,fetched_at';
-  const liveParams = {fetched_at: `gte.${recent}`, order: 'fetched_at.desc,courier_id.asc,warehouse_id.asc,dsp_id.asc', limit: 2000};
+  const liveParams = {dsp_id:'eq.8', warehouse_id:'in.(1,2)', fetched_at: `gte.${recent}`, order: 'fetched_at.desc,courier_id.asc,warehouse_id.asc,dsp_id.asc', limit: 2000};
   const results = await Promise.allSettled([
     supabaseFetch(env, PUBLIC_SCHEMA, 'courier_hub_live_monitoring_courier_snapshot_latest', {
-      ...liveParams, select: `${common},route_id,departed_at`,
+      ...liveParams, select: `${common},route_id,departed_at,shift_status,delay_minutes`,
     }),
     supabaseFetch(env, PUBLIC_SCHEMA, 'courier_hub_live_map_courier_latest', {
-      ...liveParams, select: `${common},route_ids`,
+      ...liveParams, select: `${common},route_ids,shift_status`,
     }),
     supabaseFetch(env, PUBLIC_SCHEMA, 'giriton_attendance_raw', {
       select: 'courier_name,activity_status,checkin_start,checkin_end,updated_at',
@@ -1295,17 +1337,20 @@ async function courier360ActiveCouriers(env, now = new Date()) {
       select: 'courier_id,work_date,route_id,returned_at',
       work_date: `eq.${date}`, returned_at: 'not.is.null', order: 'courier_id.asc,route_id.asc', limit: 2000,
     }),
+    courier360DirectMonitor(env),
   ]);
-  if (results.slice(0, 3).every(result => result.status === 'rejected')) {
+  const [monitor, map, attendance, statistics, direct] = results.map(result => result.value || []);
+  if (!direct.length && results.slice(0, 3).every(result => result.status === 'rejected')) {
     return jsonResponse({error: 'Az élő futárstátuszok most nem érhetők el.'}, 502);
   }
-  const [monitor, map, attendance, statistics] = results.map(result => result.value || []);
+  const directWarehouses = new Set(direct.map(source=>source.warehouse));
+  const snapshotRows = [...monitor,...map].filter(row=>!directWarehouses.has(row.warehouse_code));
   const group = new Map();
   function record(id) {
-    if (!group.has(id)) group.set(id, {monitor: [], map: [], statistics: [], attendance: []});
+    if (!group.has(id)) group.set(id, {signals: [], statistics: [], attendance: []});
     return group.get(id);
   }
-  for (const [source, rows] of [['monitor', monitor], ['map', map], ['statistics', statistics]]) {
+  for (const [source, rows] of [['signals', [...snapshotRows,...direct.flatMap(source=>source.rows)]], ['statistics', statistics]]) {
     for (const row of rows) {
       const id = key(row.courier_id);
       if (/^\d{1,12}$/.test(id)) record(id)[source].push(row);
@@ -1332,11 +1377,12 @@ async function courier360ActiveCouriers(env, now = new Date()) {
   }
   const couriers = [];
   for (const [id, sources] of group) {
-    const signal = [...sources.monitor, ...sources.map]
+    const signal = sources.signals
       .filter(row => courier360Fresh(row.fetched_at, now) && budapestDay(new Date(row.fetched_at)) === date)
       .sort((a, b) => Date.parse(b.fetched_at) - Date.parse(a.fetched_at))[0];
     const info = courier360Json(signal?.courier_json);
-    const state = key(signal?.status || info.status).toUpperCase();
+    const shiftState = key(signal?.shift_status || info.shiftStatus).toUpperCase();
+    const state = shiftState === 'NO_SHOW' ? 'NO_SHOW' : key(signal?.status || info.status).toUpperCase();
     const routeId = key(signal?.route_id || info.cargoRouteId || info.routeExternalId ||
       (Array.isArray(signal?.route_ids) ? signal.route_ids[0] : null));
     const returned = sources.statistics.find(row => key(row.route_id) === routeId)?.returned_at;
@@ -1345,13 +1391,20 @@ async function courier360ActiveCouriers(env, now = new Date()) {
     const attended = sameAttendanceName ? sources.attendance[0] : null;
     const {working} = courier360Working({state, routeActive, fresh: Boolean(signal), attended,
       attendanceFresh: courier360Fresh(attended?.updated_at, now)});
-    if (working !== true) continue;
-    const name = sources.monitor[0]?.courier_name || sources.map[0]?.courier_name || sources.attendance[0]?.courier_name;
-    couriers.push({courierId: id, courierName: name || 'Futár', status: routeActive ? 'Túrán' : 'Műszakban'});
+    const status = courier360MonitorStatus(state,shiftState,routeActive,working);
+    if ((!includeAll && working !== true) || (!status && !signal)) continue;
+    const name = sources.signals[0]?.courier_name || sources.attendance[0]?.courier_name;
+    const optionalNumber = value => value == null || value === '' ? null : metricNumber(value);
+    couriers.push({courierId:id,courierName:signal?.courier_name || name || 'Futár',status:status || 'Nincs aktív jelzés',
+      working:working === true,routeActive,routeId:routeId || null,warehouse:signal?.warehouse_code || null,
+      delayMinutes:optionalNumber(signal?.delay_minutes ?? info.delayMinutes),
+      completedStops:optionalNumber(info.deliveriesCompleted),totalStops:optionalNumber(info.stopsTotal),
+      at:signal?.fetched_at || attended?.updated_at || null,source:signal?.direct ? 'Kifli Hub · közvetlen' : signal ? 'Kifli Hub · mentett pillanatkép' : 'Giriton'});
   }
   couriers.sort((a, b) => Number(b.status === 'Túrán') - Number(a.status === 'Túrán') ||
     a.courierName.localeCompare(b.courierName, 'hu') || a.courierId.localeCompare(b.courierId));
-  return jsonResponse({couriers, partial: attendanceUnavailable || results.some(result => result.status === 'rejected')});
+  return jsonResponse({couriers, partial: attendanceUnavailable || results.some(result => result.status === 'rejected'),
+    directWarehouses:[...directWarehouses]});
 }
 
 async function courier360Profile(request, env) {
@@ -1844,7 +1897,7 @@ export default {
       if (request.method !== 'GET') return jsonResponse({error: 'Csak olvasási kérés támogatott.'}, 405);
       const access = await requireDashboardUser(request, env);
       if (access.error) return access.error;
-      return courier360ActiveCouriers(env);
+      return courier360ActiveCouriers(env,new Date(),url.searchParams.get('scope') === 'all');
     }
 
     if (url.pathname === '/api/courier360-profile') {
