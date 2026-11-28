@@ -911,6 +911,10 @@ function courier360Working({fresh, routeActive, attendanceFresh, attended, state
   return {working: null, label: fresh ? 'Friss Hub-jelzés · ' + (state || 'ismeretlen állapot') : 'Nincs friss adat'};
 }
 
+function courier360ShiftEnabled(row) {
+  return row.active !== false && !['cancelled','canceled','deleted','torolt','torolve'].includes(normalizedLogin(row.status));
+}
+
 function courier360BuildOperational({date,now,monitor=[],detail=[],map=[],stops=[],statistics=[],checkins=[],attendance=[],bookings=[],giritonShifts=[]}) {
   const sameDay=row=>row.fetched_at&&budapestDay(new Date(row.fetched_at))===date;
   const newest=rows=>[...rows].sort((a,b)=>key(b.fetched_at||b.updated_at).localeCompare(key(a.fetched_at||a.updated_at)))[0];
@@ -943,10 +947,10 @@ function courier360BuildOperational({date,now,monitor=[],detail=[],map=[],stops=
   const attendanceFresh=Boolean(attended&&date===budapestDay(now)&&courier360Fresh(attended.updated_at,now));
   const {working,label}=courier360Working({fresh,routeActive,attendanceFresh,attended,state});
   const nextStop=routeStops.find(stop=>!['COMPLETED','REJECTED','CANCELLED','CANCELED'].includes(stop.state))||null;
-  const activeBookings=bookings.filter(row=>row.active!==false&&!['CANCELLED','CANCELED','DELETED'].includes(key(row.status).toUpperCase()));
+  const activeBookings=bookings.filter(courier360ShiftEnabled);
   const shifts=activeBookings.map(row=>({date:row.work_date,start:row.slot_from,end:row.slot_to,warehouse:row.warehouse_code||key(row.warehouse_id),
     label:row.shift_text,source:'Hub beosztott kezdési idősáv',updatedAt:row.last_seen_at||row.updated_at,isArrivalSlot:true}));
-  for(const row of giritonShifts.filter(row=>!['CANCELLED','CANCELED','DELETED'].includes(key(row.status).toUpperCase())))
+  for(const row of giritonShifts.filter(courier360ShiftEnabled))
     shifts.push({date:row.work_date,start:row.start_time,end:row.end_time,warehouse:row.warehouse,label:row.status,source:'Giriton beosztás',updatedAt:row.fetched_at||row.updated_at,isArrivalSlot:false});
   shifts.sort((a,b)=>(a.date+key(a.start)).localeCompare(b.date+key(b.start)));
   const seen=new Set(),uniqueShifts=shifts.filter(row=>{const key=[row.date,row.start,row.warehouse,row.source].join('|');if(seen.has(key))return false;seen.add(key);return true;});
@@ -975,9 +979,27 @@ function courier360BuildOperational({date,now,monitor=[],detail=[],map=[],stops=
     shifts:uniqueShifts,nextShift:upcoming,dayStatistics:dailyStats,logs};
 }
 
+async function courier360CalendarShifts(env,courierId,date) {
+  const month = date.slice(0,7);
+  const first = month+'-01';
+  const [year,number] = month.split('-').map(Number);
+  const end = new Date(Date.UTC(year,number,1)).toISOString().slice(0,10);
+  const params = {courier_id:`eq.${courierId}`,and:`(work_date.gte.${first},work_date.lt.${end})`,order:'id.asc',limit:1000};
+  const results = await Promise.allSettled([
+    supabaseFetch(env,PUBLIC_SCHEMA,'courier_hub_shift_bookings_raw',{...params,select:'work_date,status,active'}),
+    supabaseFetch(env,PUBLIC_SCHEMA,'giriton_shifts_raw',{...params,select:'work_date,status'}),
+  ]);
+  if (results.every(result=>result.status==='rejected')) return jsonResponse({error:'A havi műszakok nem tölthetők be.'},502);
+  const rows = results.flatMap(result=>result.value || []);
+  return jsonResponse({courierId,month,dates:[...new Set(rows.filter(courier360ShiftEnabled).map(row=>row.work_date))].sort(),
+    partial:results.some(result=>result.status==='rejected'||result.value.length===params.limit)});
+}
+
 async function courier360Data(request, env, now = new Date()) {
   const {courierId,date,periodStart}=courier360Identity(request);
-  const dayOnly = new URL(request.url).searchParams.get('scope') === 'day';
+  const scope = new URL(request.url).searchParams.get('scope');
+  if (scope === 'calendar') return courier360CalendarShifts(env,courierId,date);
+  const dayOnly = scope === 'day';
   const sources=[];
   const safe=async(table,schema,params)=>{
     try{const rows=await supabaseFetch(env,schema,table,params);sources.push({table,available:true,count:rows.length});return rows;}

@@ -226,6 +226,7 @@
 }
 
 .c360-main,
+.c360-content,
 .c360-profile {
   min-width: 0;
 }
@@ -355,11 +356,37 @@
   color: var(--blue);
 }
 
+.c360-calendar-grid button[data-has-shift="true"] {
+  background:#20362f;
+  color:#b7e5cf;
+  border-color:#344b41;
+}
+
 .c360-calendar-grid button[aria-current="date"] {
   background:#143b2d;
   color:#a3e9c4;
   border-color:#43896d;
   font-weight:750;
+}
+
+.c360-calendar-legend {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  align-items:center;
+  gap:6px;
+  margin:9px 3px 2px;
+  color:var(--muted);
+  font-size:11px;
+}
+
+.c360-calendar-legend i {
+  display:inline-block;
+  width:9px;
+  height:9px;
+  margin-right:5px;
+  border-radius:3px;
+  background:#65977e;
 }
 
 .c360-day-dialog {
@@ -402,6 +429,11 @@
 }
 
 .c360-profile {
+  position:sticky;
+  top:16px;
+  align-self:start;
+  max-height:calc(100dvh - 32px);
+  overflow-y:auto;
   border-left: 1px solid var(--line);
   padding-left: 17px;
 }
@@ -578,6 +610,9 @@
   }
 
   .c360-profile {
+    position:static;
+    max-height:none;
+    overflow:visible;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 14px;

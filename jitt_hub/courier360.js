@@ -39,7 +39,45 @@ function c360Calendar(date) {
           return `<button type="button" data-c360-day="${value}" aria-haspopup="dialog" ${value === today ? 'aria-current="date"' : ''}
             data-operational-day="${value === date}" aria-label="${c360Date(value,false)}">${index+1}</button>`;
         }).join('')}
-      </div></div>`;
+      </div>
+      <div class="c360-calendar-legend"><span><i aria-hidden="true"></i>Van műszak</span><small id="c360-calendar-status" role="status"></small></div>
+    </div>`;
+}
+
+let c360CalendarShifts;
+function c360MarkCalendar() {
+  const status = $('#c360-calendar-status');
+  if (!status) return;
+  const entry = c360CalendarShifts;
+  status.textContent = !entry ? '' : entry.error || (entry.loading ? 'Műszakok betöltése…' : entry.partial ? 'Részleges műszakadat' : '');
+  $$('.c360-calendar-grid [data-c360-day]').forEach(button=>{
+    const date = button.dataset.c360Day;
+    const hasShift = entry?.dates?.has(date);
+    button.setAttribute('data-has-shift',String(Boolean(hasShift)));
+    button.setAttribute('aria-label',c360Date(date,false)+(hasShift ? ' · van műszak' : ''));
+  });
+}
+
+async function c360LoadCalendar() {
+  const {id,calendarMonth:month} = courier360State;
+  if (!$('#c360-calendar-status') || !id || !month) return;
+  if (c360CalendarShifts?.id === id && c360CalendarShifts.month === month && !c360CalendarShifts.error) {
+    c360MarkCalendar();
+    return;
+  }
+  const entry = c360CalendarShifts = {id,month,loading:true};
+  c360MarkCalendar();
+  try {
+    const data = await api('/api/courier360?' + new URLSearchParams({courier:id,date:month+'-01',scope:'calendar'}));
+    if (String(data.courierId) !== id || data.month !== month) throw Error('Eltérő naptáradat érkezett.');
+    entry.dates = new Set(data.dates);
+    entry.partial = data.partial;
+  } catch {
+    entry.error = 'A havi műszakok nem érhetők el.';
+  } finally {
+    entry.loading = false;
+    if (c360CalendarShifts === entry) c360MarkCalendar();
+  }
 }
 
 function c360ShiftList(shifts) {
@@ -54,17 +92,12 @@ function c360Ring(label, value, total, tone) {
 }
 
 function c360Live(p) {
-  const op = p.operational, route = op.route, next = op.nextShift;
+  const op = p.operational, route = op.route;
   const today = op.shifts.filter(row => row.date === p.date);
   const open = p.complaints.filter(row => ['new','open','in_progress'].includes(String(row.status).trim().toLowerCase())).length;
-  const answered = p.complaints.filter(c360ComplaintAnswered).length;
-  const name = p.courier.name || 'Futár';
-  const initials = name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toLocaleUpperCase('hu');
-  const presence = op.liveStatus || (op.currentWorking === true ? 'Műszakban' : op.currentWorking === false ? 'Nincs aktív jelenléti jelzés' : 'Nem állapítható meg');
   const delay = op.liveDelay != null ? ` · késés ${op.liveDelay > 0 ? '+' : ''}${nf.format(op.liveDelay)} perc` : '';
   const nextAddress = route?.active && route.stopsFresh ? route.nextStop : route?.lastKnownNextStop;
-  return `<div class="c360-dashboard">
-    <div class="c360-main">
+  return `<div class="c360-main">
       <section aria-label="Napi mutatók" class="c360-metrics">
         <div><span>Napi beosztások</span><strong>${nf.format(today.length)}</strong><small>${today.length ? today.map(row => c360Time(row.start)).join(' · ') : 'A kiválasztott napon'}</small></div>
         <div><span>Teljesített címek</span><strong>${route?.completedStops == null ? '—' : nf.format(route.completedStops)}${route?.totalStops != null ? `<small> / ${nf.format(route.totalStops)}</small>` : ''}</strong><small>${route ? `Túra #${esc(route.id)}` : 'Nincs túraadat'}</small></div>
@@ -81,9 +114,17 @@ function c360Live(p) {
         <div class="c360-section-head"><h3 id="c360-agenda-title">Műszakok és események</h3>${c360Go('shifts','Műszakadatok ↗')}</div>
         ${c360Calendar(p.date)}
       </section>
-    </div>
-    <aside class="c360-profile" aria-label="Futárprofil és teljesítés">
-      <section class="c360-profile-section" aria-labelledby="c360-profile-title">
+    </div>`;
+}
+
+function c360Profile(p) {
+  const op = p.operational, route = op.route, next = op.nextShift;
+  const open = p.complaints.filter(row => ['new','open','in_progress'].includes(String(row.status).trim().toLowerCase())).length;
+  const answered = p.complaints.filter(c360ComplaintAnswered).length;
+  const name = p.courier.name || 'Futár';
+  const initials = name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toLocaleUpperCase('hu');
+  const presence = op.liveStatus || (op.currentWorking === true ? 'Műszakban' : op.currentWorking === false ? 'Nincs aktív jelenléti jelzés' : 'Nem állapítható meg');
+  return `      <section class="c360-profile-section" aria-labelledby="c360-profile-title">
         <h3 id="c360-profile-title">Futárprofil</h3>
         <button type="button" class="c360-profile-person" data-c360-profile aria-haspopup="dialog" aria-label="${esc(name)} adatlapja">
           <span class="c360-initials" aria-hidden="true">${esc(initials)}</span><strong>${esc(name)}</strong>
@@ -99,9 +140,7 @@ function c360Live(p) {
         <h3 id="c360-progress-title">Teljesítés</h3>
         ${c360Ring('Címek teljesítve', route?.completedStops, route?.totalStops, 'route')}
         ${c360Ring('Válaszolt vagy lezárt ügyek', answered, p.complaints.length, 'cases')}
-      </section>
-    </aside>
-  </div>`;
+      </section>`;
 }
 
 function c360Shifts(p){
@@ -269,7 +308,8 @@ async function c360RefreshLive() {
     const op = p.operational, oldRoute = op.route;
     if (row?.at) {
       const notice = $('#c360-freshness-note');
-      if (notice) notice.hidden = !row.stale && row.source.startsWith('Kifli Hub');
+      op.fresh = !row.stale && row.source.startsWith('Kifli Hub');
+      if (notice) notice.hidden = op.fresh;
       indicator.textContent = (row.stale ? 'Utolsó ismert · ' : '')+row.source+' · '+c360Date(row.at);
       Object.assign(op,{liveStatus:row.stale ? 'Utolsó ismert: '+row.status : row.status,
         currentWorking:row.stale ? null : row.working,liveSource:row.source,liveAt:row.at,liveDelay:row.stale ? null : row.delayMinutes});
@@ -287,8 +327,7 @@ async function c360RefreshLive() {
       if (absent) Object.assign(op,{liveSource:'Giriton',liveAt:op.attendance.updated_at});
       if (oldRoute) op.route = {...oldRoute,active:false,stopsFresh:false};
     }
-    const content = $('#courier360-page .c360-content');
-    if (content && !content.contains(document.activeElement) && !$('#c360-profile-dialog')?.open && !$('#c360-day-dialog')?.open) content.innerHTML = c360Live(p);
+    c360RefreshView(p);
   } catch {
     if (sequence !== courier360State.sequence || courier360State.tab !== 'live' || !indicator?.isConnected) return;
     indicator.textContent = 'Frissítés sikertelen · utolsó ismert adatok';
@@ -296,8 +335,18 @@ async function c360RefreshLive() {
     p.operational.currentWorking = null;
     p.operational.liveDelay = null;
     if (p.operational.route) Object.assign(p.operational.route,{active:false,stopsFresh:false});
-    const content = $('#courier360-page .c360-content');
-    if (content && !content.contains(document.activeElement) && !$('#c360-profile-dialog')?.open && !$('#c360-day-dialog')?.open) content.innerHTML = c360Live(p);
+    c360RefreshView(p);
+  }
+}
+
+function c360RefreshView(p) {
+  if ($('#c360-profile-dialog')?.open || $('#c360-day-dialog')?.open) return;
+  const content = $('#courier360-page .c360-content');
+  const profile = $('#c360-profile-rail');
+  if (profile && !profile.contains(document.activeElement)) profile.innerHTML = c360Profile(p);
+  if (content && !content.contains(document.activeElement)) {
+    content.innerHTML = c360Live(p);
+    c360MarkCalendar();
   }
 }
 
@@ -348,6 +397,28 @@ async function c360SwitchCourier(id) {
   }
 }
 
+const c360TabContent = {live:c360Live,shifts:c360Shifts,routes:c360Routes,finance:c360Finance,complaints:c360Complaints,logs:c360Logs};
+
+function c360SelectTab(tab) {
+  if (!Object.hasOwn(c360TabContent,tab) || !courier360State.payload) return;
+  $('#c360-day-dialog')?.close();
+  c360DayOpener=null;
+  courier360State.tab=tab;
+  const p=courier360State.payload;
+  $$('.c360-tabs button').forEach(button=>{
+    const active = button.dataset.c360Go === tab;
+    button.classList.toggle('active',active);
+    button.setAttribute('aria-pressed',String(active));
+  });
+  $('#c360-live-checked').hidden = tab !== 'live' || p.date !== c360Today();
+  $('#c360-freshness-note').hidden = tab !== 'live' || p.operational.fresh;
+  $('#courier360-page .c360-content').innerHTML = c360TabContent[tab](p);
+  if (tab === 'live') {
+    c360LoadCalendar();
+    c360RefreshLive();
+  }
+}
+
 function renderCourier360(){
   const p=courier360State.payload;if(!p)return;
   const root=$('#courier360-page');
@@ -355,10 +426,13 @@ function renderCourier360(){
     <header class="c360-identity"><div><p class="crumb">FUTÁR 360°</p><h2>${esc(p.courier.name)}</h2></div>
       <div class="c360-controls"><label>Operatív nap <input type="date" id="c360-date" value="${esc(courier360State.date)}"></label><label>Elszámolási hónap <input type="month" id="c360-month" value="${esc(courier360State.month)}"></label></div></header>
     <nav class="c360-tabs" aria-label="Futáradatok">${c360Tabs.map(([key,label])=>`<button type="button" class="c360-tab ${courier360State.tab===key?'active':''}" aria-pressed="${courier360State.tab===key}" data-c360-go="${key}">${label}</button>`).join('')}</nav>
-    ${courier360State.tab==='live' && p.date===c360Today() ? '<small id="c360-live-checked" aria-live="polite"></small>' : ''}
+    <small id="c360-live-checked" aria-live="polite" ${courier360State.tab==='live' && p.date===c360Today() ? '' : 'hidden'}></small>
     ${p.sources.some(s=>!s.available)?'<div class="notice">Egyes források nem érhetők el. A hiányzó adatokat külön jelöljük; részletek a Dokumentumok és napló fülön.</div>':''}
-    ${courier360State.tab==='live'? `<div class="c360-notice" id="c360-freshness-note" ${p.operational.fresh ? 'hidden' : ''}>A régebbi túra- és címadatok az utolsó ismert állapotot mutatják.</div>` : ''}
-    <div class="c360-content">${({live:c360Live,shifts:c360Shifts,routes:c360Routes,finance:c360Finance,complaints:c360Complaints,logs:c360Logs})[courier360State.tab](p)}</div>
+    <div class="c360-notice" id="c360-freshness-note" ${courier360State.tab==='live'&&!p.operational.fresh ? '' : 'hidden'}>A régebbi túra- és címadatok az utolsó ismert állapotot mutatják.</div>
+    <div class="c360-dashboard">
+      <div class="c360-content">${c360TabContent[courier360State.tab](p)}</div>
+      <aside class="c360-profile" id="c360-profile-rail" aria-label="Futárprofil és teljesítés">${c360Profile(p)}</aside>
+    </div>
     <dialog id="c360-day-dialog" class="c360-profile-dialog c360-day-dialog" aria-labelledby="c360-day-title">
       <header><div><h2 id="c360-day-title"></h2><p>${esc(p.courier.name)} · #${esc(p.courier.id)}</p></div>
         <button type="button" class="c360-button" data-c360-close-day>Bezárás</button></header>
@@ -368,6 +442,7 @@ function renderCourier360(){
       <header><h2 id="c360-profile-dialog-title">Futár adatlapja</h2><form method="dialog"><button class="c360-button" autofocus>Bezárás</button></form></header>
       <div id="c360-profile-data"></div>
     </dialog>`;
+  if (courier360State.tab === 'live') c360LoadCalendar();
 }
 async function openCourier360(id,{date,month,tab,backLabel='Vissza a futárlistához'}={}){
   const isNew=courier360State.id!==String(id);
@@ -384,6 +459,7 @@ async function openCourier360(id,{date,month,tab,backLabel='Vissza a futárlist�
 }
 async function loadCourier360(){
   const sequence=++courier360State.sequence;
+  c360CalendarShifts=null;
   $('#courier360-page').innerHTML=`${c360Header(true)}<div class="empty" role="status">Futáradatok betöltése…</div>`;
   try{
     const p=await api(`/api/courier360?courier=${encodeURIComponent(courier360State.id)}&date=${encodeURIComponent(courier360State.date)}&month=${encodeURIComponent(courier360State.month)}`);
@@ -391,7 +467,7 @@ async function loadCourier360(){
     courier360State.payload=p;renderCourier360();c360RefreshLive();
   }catch(error){if(sequence!==courier360State.sequence)return;$('#courier360-page').innerHTML=`${c360Header()}<div class="notice" role="alert">${esc(error.message)}</div>`}
 }
-function closeCourier360(){courier360State.sequence++;clearInterval(c360LiveTimer);c360LiveTimer=null;c360DayOpener=null;$('#c360-day-dialog')?.close();$('#courier360-page').hidden=true;$('#app').classList.remove('courier360-open');window.scrollTo(0,courier360State.previousScroll)}
+function closeCourier360(){courier360State.sequence++;clearInterval(c360LiveTimer);c360LiveTimer=null;c360CalendarShifts=null;c360DayOpener=null;$('#c360-day-dialog')?.close();$('#courier360-page').hidden=true;$('#app').classList.remove('courier360-open');window.scrollTo(0,courier360State.previousScroll)}
 document.addEventListener('click',event=>{
   const open=event.target.closest('[data-open-courier]');if(open){openCourier360(open.dataset.openCourier);return}
   if(event.target.closest('[data-c360-close]')){closeCourier360();return}
@@ -418,10 +494,11 @@ document.addEventListener('click',event=>{
     cursor.setUTCMonth(cursor.getUTCMonth()+step);
     courier360State.calendarMonth=step ? cursor.toISOString().slice(0,7) : c360Today().slice(0,7);
     $('.c360-calendar').outerHTML=c360Calendar(courier360State.date);
+    c360LoadCalendar();
     $(`[data-c360-month-step="${step}"]`)?.focus();
     return;
   }
-  const tab=event.target.closest('[data-c360-go]');if(tab){courier360State.tab=tab.dataset.c360Go;renderCourier360();c360RefreshLive()}
+  const tab=event.target.closest('[data-c360-go]');if(tab)c360SelectTab(tab.dataset.c360Go);
 });
 document.addEventListener('input', event => {
   if (event.target.id === 'c360-search-input') c360RenderSearch(event.target);
