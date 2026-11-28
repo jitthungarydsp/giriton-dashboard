@@ -91,6 +91,29 @@ function c360Ring(label, value, total, tone) {
   return `<div class="c360-ring c360-ring-${tone}" role="img" aria-label="${esc(name)}" style="--ring-value:${ratio ?? 0}%"><div aria-hidden="true"><strong>${ratio == null ? '—' : `${ratio}%`}</strong><small>${esc(label)}</small></div></div>`;
 }
 
+function c360CompletedRoutes(p) {
+  const {route,dayStatistics=[]}=p.operational;
+  const completed=new Map();
+  for (const row of dayStatistics) {
+    if (row.route_id==null || !Number.isFinite(Date.parse(row.returned_at))) continue;
+    const id=String(row.route_id);
+    if (id===String(route?.id) && route.active) continue;
+    if (!completed.has(id) || Date.parse(row.returned_at)>Date.parse(completed.get(id).returned_at)) completed.set(id,row);
+  }
+  if (route?.id!=null && !route.active && Number.isFinite(Date.parse(route.returnedAt)) && !completed.has(String(route.id))) {
+    completed.set(String(route.id),{route_id:route.id,warehouse_code:route.warehouse,departed_at:route.departedAt,returned_at:route.returnedAt});
+  }
+  const rows=[...completed.values()].sort((a,b)=>Date.parse(b.returned_at)-Date.parse(a.returned_at));
+  const unavailable=p.sources?.some(source=>source.table==='courier_hub_route_statistics' && source.available===false);
+  return `<section class="c360-agenda" aria-labelledby="c360-completed-title">
+    <div class="c360-section-head"><h3 id="c360-completed-title">Kifutott túrák · ${nf.format(rows.length)}</h3></div>
+    ${rows.length ? c360Table(['Túra','Raktár','Indulás','Visszaérkezés'],rows.map(row=>[
+      '#'+esc(row.route_id),esc(row.warehouse_code||'—'),c360Time(row.departed_at),c360Time(row.returned_at)
+    ])) : ''}
+    ${unavailable ? c360Missing('A napi túrastatisztika jelenleg nem érhető el.') : rows.length ? '' : c360Missing('A kiválasztott napon nincs rögzített visszaérkezés.')}
+  </section>`;
+}
+
 function c360Live(p) {
   const op = p.operational, route = op.route;
   const today = op.shifts.filter(row => row.date === p.date);
@@ -110,6 +133,7 @@ function c360Live(p) {
           ${nextAddress?.address ? `<p>${route.active && route.stopsFresh ? 'Következő cím' : 'Utolsó ismert cím'} · ${esc(nextAddress.address)}</p>` : ''}</div>
         ${route ? c360Go('routes', 'Túra részletei ↗') : ''}
       </section>
+      ${c360CompletedRoutes(p)}
       <section class="c360-agenda" aria-labelledby="c360-agenda-title">
         <div class="c360-section-head"><h3 id="c360-agenda-title">Műszakok és események</h3>${c360Go('shifts','Műszakadatok ↗')}</div>
         ${c360Calendar(p.date)}
