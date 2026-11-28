@@ -17,6 +17,16 @@
   border-right: 1px solid var(--line);
 }
 
+#app > .sidebar {
+  align-self: start;
+  position: sticky;
+  top: 0;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  z-index: 12;
+}
+
 .courier360-open .nav button.active {
   background: var(--blue-soft);
   box-shadow: inset 2px 0 #a28bff;
@@ -29,7 +39,7 @@
 
 #courier360-page .c360-head {
   display: grid;
-  grid-template-columns: auto minmax(0, 320px) 1fr;
+  grid-template-columns: auto minmax(160px, 290px) minmax(0, 1fr) auto;
   gap: 10px;
   padding-bottom: 13px;
   border-bottom: 1px solid var(--line);
@@ -114,7 +124,6 @@
   align-items:center;
   gap:6px;
   flex-wrap:wrap;
-  margin-bottom:16px;
 }
 
 .c360-live-tools button[aria-pressed="true"] {
@@ -124,7 +133,8 @@
 }
 
 #c360-live-checked {
-  margin-left:auto;
+  display:block;
+  margin:0 0 12px;
   color:var(--muted);
   font-size:11px;
 }
@@ -301,38 +311,69 @@
   gap: 10px;
 }
 
-.c360-week {
+.c360-calendar {
+  border:1px solid var(--line);
+  border-radius:8px;
+  margin-top:12px;
+  padding:8px;
+}
+
+.c360-calendar-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+  padding:0 3px 7px;
+}
+
+.c360-calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 3px;
-  padding-block: 8px;
-  margin-top: 9px;
-  border-block: 1px solid var(--line);
 }
 
-.c360-week button {
-  display: grid;
-  justify-items: center;
-  gap: 4px;
+.c360-calendar-grid button {
   min-width: 0;
-  padding: 5px 0;
-  border: 0;
+  min-height: 34px;
+  border: 1px solid transparent;
   border-radius: 6px;
-  color: var(--muted);
-  background: transparent;
-  font-size: 11px;
-}
-
-.c360-week button b {
   color: var(--ink);
-  font-size: 13px;
+  background: var(--card);
+  font-size: 12px;
 }
 
-.c360-week button:hover,
-.c360-week button[aria-pressed="true"] {
+.c360-weekday {
+  color:var(--muted);
+  text-align:center;
+  padding:5px 0;
+  font-size:11px;
+}
+
+.c360-calendar-grid button:hover,
+.c360-calendar-grid button[data-operational-day="true"] {
   background: var(--blue-soft);
   color: var(--blue);
 }
+
+.c360-calendar-grid button[aria-current="date"] {
+  background:#143b2d;
+  color:#a3e9c4;
+  border-color:#43896d;
+  font-weight:750;
+}
+
+.c360-day-dialog {
+  position:fixed;
+  top:clamp(88px,16vh,190px);
+  max-height:calc(100dvh - clamp(88px,16vh,190px) - 18px);
+  margin:0 auto;
+  z-index:11;
+  box-shadow:0 16px 64px #070811b8;
+}
+
+.c360-day-dialog header p { color:var(--muted);font-size:12px;margin-top:4px }
+#c360-day-data section { margin-top:14px }
+#c360-day-data h3 { font-size:14px }
 
 .c360-agenda-shifts {
   margin: 0;
@@ -552,6 +593,34 @@
   }
 }
 
+@media (max-width: 1120px) {
+  #courier360-page .c360-head { grid-template-columns:auto minmax(0,1fr) auto }
+  .c360-live-tools { grid-row:2; grid-column:1 / -1 }
+  .c360-refresh { grid-row:1; grid-column:3 }
+}
+
+@media (max-width: 820px) {
+  #app > .sidebar {
+    display:grid;
+    grid-template-columns:minmax(0,1fr) auto;
+    gap:7px;
+    min-height:0;
+    max-height:none;
+    padding:7px 12px;
+    border-right:0;
+  }
+  #app > .sidebar .nav-title, #app > .sidebar .side-foot > :is(strong,span,br) { display:none }
+  #app > .sidebar .side-foot { grid-column:2;grid-row:1; margin:0;padding:0;border:0 }
+  #app > .sidebar .logout { margin:0 }
+  #app > .sidebar .nav {
+    grid-column:1 / -1;
+    display:flex;
+    overflow-x:auto;
+    padding-bottom:2px;
+  }
+  #app > .sidebar .nav button { width:auto;flex:none;white-space:nowrap }
+}
+
 @media (max-width: 460px) {
   #c360-profile-data dl {
     grid-template-columns: minmax(0, 1fr);
@@ -573,6 +642,11 @@
   .c360-refresh {
     grid-row: 1;
     grid-column: 2;
+  }
+
+  .c360-live-tools {
+    grid-row:3;
+    grid-column:1 / -1;
   }
 
   .courier360-open .footer {

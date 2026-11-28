@@ -977,34 +977,36 @@ function courier360BuildOperational({date,now,monitor=[],detail=[],map=[],stops=
 
 async function courier360Data(request, env, now = new Date()) {
   const {courierId,date,periodStart}=courier360Identity(request);
+  const dayOnly = new URL(request.url).searchParams.get('scope') === 'day';
   const sources=[];
   const safe=async(table,schema,params)=>{
     try{const rows=await supabaseFetch(env,schema,table,params);sources.push({table,available:true,count:rows.length});return rows;}
     catch{sources.push({table,available:false,count:null});return [];}
   };
+  const monthly = (...args)=>dayOnly ? [] : safe(...args);
   const sameId={courier_id:`eq.${courierId}`};
-  const endDate=new Date(Date.parse(date)+31*86400000).toISOString().slice(0,10);
+  const endDate=dayOnly ? date : new Date(Date.parse(date)+31*86400000).toISOString().slice(0,10);
   const [profiles,masters,monitor,detail,map,storedStops,statistics,checkins,allAttendance,bookings,giritonShifts,complaints,documents,states,acceptances,metrics,closures,snapshots,advanceAdditions,dashboardRows] = await Promise.all([
-    safe('courier_master',PUBLIC_SCHEMA,{...sameId,select:'courier_id,courier_name,warehouse_name,company_name,bank_account_number',order:'courier_id.asc',limit:1}),
+    safe('courier_master',PUBLIC_SCHEMA,{...sameId,select:dayOnly?'courier_id,courier_name':'courier_id,courier_name,warehouse_name,company_name,bank_account_number',order:'courier_id.asc',limit:1}),
     safe('courier_hub_master',PUBLIC_SCHEMA,{...sameId,select:'courier_id,courier_name,user_number,giriton_person_id,warehouse_code,vehicle_registration_number,fetched_at',order:'fetched_at.desc',limit:4}),
     safe('courier_hub_live_monitoring_courier_snapshot_latest',PUBLIC_SCHEMA,{...sameId,select:'courier_id,route_id,status,shift_status,warehouse_code,deliveries_completed,stops_total,vehicle_plate,departed_at,courier_json,fetched_at',order:'fetched_at.desc',limit:4}),
     safe('courier_hub_live_monitoring_courier_latest',PUBLIC_SCHEMA,{...sameId,select:'courier_id,route_id,warehouse_code,response_json,fetched_at',status_code:'eq.200',order:'fetched_at.desc',limit:4}),
     safe('courier_hub_live_map_courier_latest',PUBLIC_SCHEMA,{...sameId,select:'courier_id,status,shift_status,warehouse_code,deliveries_completed,stops_total,vehicle_plate,route_ids,courier_json,fetched_at',order:'fetched_at.desc',limit:4}),
-    safe('courier_hub_live_map_stop_latest',PUBLIC_SCHEMA,{...sameId,select:'route_id,order_id,sequence,address,planned_arrival_at,actual_arrival_at,state,delay_minutes,stop_json,fetched_at',and:`(fetched_at.gte.${budapestMidnightUtc(date)},fetched_at.lt.${budapestMidnightUtc(new Date(Date.parse(date)+86400000).toISOString().slice(0,10))})`,order:'fetched_at.desc,route_id.asc,sequence.asc',limit:2000}),
+    dayOnly ? [] : safe('courier_hub_live_map_stop_latest',PUBLIC_SCHEMA,{...sameId,select:'route_id,order_id,sequence,address,planned_arrival_at,actual_arrival_at,state,delay_minutes,stop_json,fetched_at',and:`(fetched_at.gte.${budapestMidnightUtc(date)},fetched_at.lt.${budapestMidnightUtc(new Date(Date.parse(date)+86400000).toISOString().slice(0,10))})`,order:'fetched_at.desc,route_id.asc,sequence.asc',limit:2000}),
     safe('courier_hub_route_statistics',PUBLIC_SCHEMA,{...sameId,select:'work_date,route_id,warehouse_code,queue_started_at,actual_shift_start_at,departed_at,returned_at,planned_return_at,vehicle_plate,orders,stops,source_updated_at',work_date:`eq.${date}`,order:'route_id.asc',limit:100}),
     safe('courier_shift_checkins',PUBLIC_SCHEMA,{...sameId,select:'work_date,event_type,created_at,warehouse,shift_name',work_date:`eq.${date}`,order:'created_at.asc',limit:200}),
     safe('giriton_attendance_raw',PUBLIC_SCHEMA,{select:'courier_name,activity_status,checkin_start,checkin_end,updated_at',work_date:`eq.${date}`,order:'courier_name.asc',limit:2000}),
     safe('courier_hub_shift_bookings_raw',PUBLIC_SCHEMA,{...sameId,select:'work_date,warehouse_code,warehouse_id,shift_text,slot_from,slot_to,status,active,last_seen_at,updated_at',and:`(work_date.gte.${date},work_date.lte.${endDate})`,order:'work_date.asc,slot_from.asc',limit:1000}),
     safe('giriton_shifts_raw',PUBLIC_SCHEMA,{...sameId,select:'work_date,start_time,end_time,warehouse,status,fetched_at',and:`(work_date.gte.${date},work_date.lte.${endDate})`,order:'work_date.asc,start_time.asc',limit:1000}),
-    safe('peopleforce_complaints',PUBLIC_SCHEMA,{...sameId,select:'id,document_type,document_month,message,status,created_by,created_at,admin_response,responded_at,responded_by',document_month:`eq.${periodStart}`,order:'created_at.desc',limit:1000}),
-    safe('peopleforce_documents',PUBLIC_SCHEMA,{...sameId,select:'id,document_type,title,file_name,mime_type,file_size,note,uploaded_by,uploaded_at',document_month:`eq.${periodStart}`,order:'uploaded_at.desc',limit:300}),
-    safe('peopleforce_card_statuses',PUBLIC_SCHEMA,{...sameId,select:'action_key,status,status_note,updated_by,created_at,updated_at',document_month:`eq.${periodStart}`,order:'updated_at.desc',limit:100}),
-    safe('pwa_workflow_acceptance_snapshots',SETTLEMENT_SCHEMA,{...sameId,select:'id,action_key,process_id,payable_huf,tig_final_total_huf,accepted_at,accepted_by',period_start:`eq.${periodStart}`,order:'accepted_at.asc',limit:300}),
-    safe('courier_monthly_process_metric',SETTLEMENT_SCHEMA,{...sameId,select:'*',period_start:`eq.${periodStart}`,limit:1}),
-    safe('courier_monthly_closure',SETTLEMENT_SCHEMA,{...sameId,select:'status,payable_huf,closed_at,closed_by,reopened_at,reopened_by,recipient_name,bank_account_number,payment_note,invoice_number,snapshot',period_start:`eq.${periodStart}`,limit:1}),
-    loadLatestFinanceSnapshots(env,periodStart,courierId).then(rows=>{sources.push({table:'courier_finance_snapshot',available:true,count:rows.length});return rows}).catch(()=>{sources.push({table:'courier_finance_snapshot',available:false,count:null});return []}),
-    loadSalaryAdvanceAdditions(env,periodStart).then(rows=>{sources.push({table:'Fizetési előlegek',available:true,count:rows.length});return rows}).catch(()=>{sources.push({table:'Fizetési előlegek',available:false,count:null});return []}),
-    safe('vw_admin_settlement_dashboard_fast',SETTLEMENT_SCHEMA,{select:'courier_id,dashboard_status_label',period_start:`eq.${periodStart}`,order:'courier_id.asc',limit:10000}),
+    monthly('peopleforce_complaints',PUBLIC_SCHEMA,{...sameId,select:'id,document_type,document_month,message,status,created_by,created_at,admin_response,responded_at,responded_by',document_month:`eq.${periodStart}`,order:'created_at.desc',limit:1000}),
+    monthly('peopleforce_documents',PUBLIC_SCHEMA,{...sameId,select:'id,document_type,title,file_name,mime_type,file_size,note,uploaded_by,uploaded_at',document_month:`eq.${periodStart}`,order:'uploaded_at.desc',limit:300}),
+    monthly('peopleforce_card_statuses',PUBLIC_SCHEMA,{...sameId,select:'action_key,status,status_note,updated_by,created_at,updated_at',document_month:`eq.${periodStart}`,order:'updated_at.desc',limit:100}),
+    monthly('pwa_workflow_acceptance_snapshots',SETTLEMENT_SCHEMA,{...sameId,select:'id,action_key,process_id,payable_huf,tig_final_total_huf,accepted_at,accepted_by',period_start:`eq.${periodStart}`,order:'accepted_at.asc',limit:300}),
+    monthly('courier_monthly_process_metric',SETTLEMENT_SCHEMA,{...sameId,select:'*',period_start:`eq.${periodStart}`,limit:1}),
+    monthly('courier_monthly_closure',SETTLEMENT_SCHEMA,{...sameId,select:'status,payable_huf,closed_at,closed_by,reopened_at,reopened_by,recipient_name,bank_account_number,payment_note,invoice_number,snapshot',period_start:`eq.${periodStart}`,limit:1}),
+    dayOnly ? [] : loadLatestFinanceSnapshots(env,periodStart,courierId).then(rows=>{sources.push({table:'courier_finance_snapshot',available:true,count:rows.length});return rows}).catch(()=>{sources.push({table:'courier_finance_snapshot',available:false,count:null});return []}),
+    dayOnly ? [] : loadSalaryAdvanceAdditions(env,periodStart).then(rows=>{sources.push({table:'Fizetési előlegek',available:true,count:rows.length});return rows}).catch(()=>{sources.push({table:'Fizetési előlegek',available:false,count:null});return []}),
+    monthly('vw_admin_settlement_dashboard_fast',SETTLEMENT_SCHEMA,{select:'courier_id,dashboard_status_label',period_start:`eq.${periodStart}`,order:'courier_id.asc',limit:10000}),
   ]);
   if(!profiles.length&&!masters.length&&!snapshots.length&&!metrics.length&&!monitor.length) return jsonResponse({error:'A futárhoz nem található adat.'},404);
   const names=new Set([...profiles,...masters,...snapshots].map(row=>courier360Name(row.courier_name)).filter(Boolean));
@@ -1013,6 +1015,7 @@ async function courier360Data(request, env, now = new Date()) {
   const attendance=attendanceNames.size>1?[]:matchedAttendance;
   if(attendanceNames.size>1)sources.push({table:'Giriton névazonosítás',available:false,count:null});
   const operational=courier360BuildOperational({date,now,monitor,detail,map,stops:storedStops,statistics,checkins,attendance,bookings,giritonShifts});
+  if (dayOnly) return jsonResponse({courier:{id:courierId},date,operational,sources});
   const financeSnapshot=snapshots[0]||null;
   const paymentSources=financeSnapshot?await safe('courier_finance_snapshot_source',SETTLEMENT_SCHEMA,{
     snapshot_id:`eq.${financeSnapshot.id}`,source_key:'in.(tig_breakdown,courier_profile)',select:'source_key,payload',limit:10,
