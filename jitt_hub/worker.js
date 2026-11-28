@@ -1281,28 +1281,50 @@ async function courier360SaveBankAccount(request,env,user) {
 }
 
 let courier360LiveCache;
+async function courier360SharedHeaders(env) {
+  const token = cleanEnv(env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_READ_KEY);
+  const base = cleanEnv(env.SUPABASE_URL);
+  if (!token || !base) return [];
+  try {
+    const response = await fetch(base+'/storage/v1/object/authenticated/hub-session-cache/session.json',{
+      headers:{apikey:token,authorization:`Bearer ${token}`},redirect:'error',signal:AbortSignal.timeout(4000),
+    });
+    if (!response.ok) return [];
+    const payload = await response.json();
+    return [payload.headers,payload.backupHeaders].flatMap(source=>{
+      const cookie = key(source?.Cookie), authorization = key(source?.Authorization);
+      return cookie || authorization ? [{...(cookie ? {cookie} : {}),...(authorization ? {authorization} : {})}] : [];
+    });
+  } catch { return []; }
+}
+
 function courier360DirectMonitor(env) {
   const cookie = key(env.COURIER_HUB_COOKIE);
   const authorization = key(env.COURIER_HUB_AUTHORIZATION);
-  if (!cookie && !authorization) return Promise.resolve([]);
   if (courier360LiveCache?.until > Date.now()) return courier360LiveCache.promise;
-  const headers = {accept:'application/json',...(cookie ? {cookie} : {}),...(authorization ? {authorization} : {})};
-  const promise = Promise.all([1,2].map(async id => {
-    try {
-      const response = await fetch(`https://courier-hub.kifli.hu/services/courier-hub-service/external/warehouses/${id}/live-monitoring-dashboard?dspId=8`,
-        {headers,redirect:'error',signal:AbortSignal.timeout(5500)});
-      if (!response.ok) return null;
-      const payload = await response.json();
-      const rows = Array.isArray(payload) ? payload : payload.couriers;
-      if (!Array.isArray(rows)) return null;
-      const fetched_at = new Date().toISOString();
-      return {warehouse:`BUD${id}`,fetched_at,rows:rows.map(row=>({
-        courier_id:row.courierId,courier_name:row.name || row.courierName,route_id:row.cargoRouteId || row.routeExternalId,
-        status:row.status,shift_status:row.shiftStatus,delay_minutes:row.delayMinutes,
-        warehouse_code:`BUD${id}`,courier_json:row,fetched_at,direct:true,
-      }))};
-    } catch { return null; }
-  })).then(results=>results.filter(Boolean));
+  const promise = courier360SharedHeaders(env).then(candidates=>{
+    if (cookie || authorization) candidates.push({...(cookie ? {cookie} : {}),...(authorization ? {authorization} : {})});
+    return Promise.all([1,2].map(async id => {
+      const url = `https://courier-hub.kifli.hu/services/courier-hub-service/external/warehouses/${id}/live-monitoring-dashboard?dspId=8`;
+      for (const headers of candidates) {
+        try {
+          const response = await fetch(url,{headers:{accept:'application/json',...headers},redirect:'error',signal:AbortSignal.timeout(5500)});
+          if (response.status === 401 || response.status === 403) continue;
+          if (!response.ok) return null;
+          const payload = await response.json();
+          const rows = Array.isArray(payload) ? payload : payload.couriers;
+          if (!Array.isArray(rows)) return null;
+          const fetched_at = new Date().toISOString();
+          return {warehouse:`BUD${id}`,fetched_at,rows:rows.map(row=>({
+            courier_id:row.courierId,courier_name:row.name || row.courierName,route_id:row.cargoRouteId || row.routeExternalId,
+            status:row.status,shift_status:row.shiftStatus,delay_minutes:row.delayMinutes,
+            warehouse_code:`BUD${id}`,courier_json:row,fetched_at,direct:true,
+          }))};
+        } catch { return null; }
+      }
+      return null;
+    }));
+  }).then(results=>results.filter(Boolean));
   courier360LiveCache = {until:Date.now()+15000,promise};
   return promise;
 }
@@ -1319,7 +1341,7 @@ function courier360MonitorStatus(state, shiftState, routeActive, working) {
 
 async function courier360ActiveCouriers(env, now = new Date(), includeAll = false) {
   const date = budapestDay(now);
-  const recent = new Date(+now - 20 * 60000).toISOString();
+  const recent = includeAll ? budapestMidnightUtc(date) : new Date(+now - 20 * 60000).toISOString();
   const common = 'courier_id,courier_name,status,warehouse_code,courier_json,fetched_at';
   const liveParams = {dsp_id:'eq.8', warehouse_id:'in.(1,2)', fetched_at: `gte.${recent}`, order: 'fetched_at.desc,courier_id.asc,warehouse_id.asc,dsp_id.asc', limit: 2000};
   const results = await Promise.allSettled([
@@ -1378,7 +1400,7 @@ async function courier360ActiveCouriers(env, now = new Date(), includeAll = fals
   const couriers = [];
   for (const [id, sources] of group) {
     const signal = sources.signals
-      .filter(row => courier360Fresh(row.fetched_at, now) && budapestDay(new Date(row.fetched_at)) === date)
+      .filter(row => (includeAll || courier360Fresh(row.fetched_at, now)) && budapestDay(new Date(row.fetched_at)) === date)
       .sort((a, b) => Date.parse(b.fetched_at) - Date.parse(a.fetched_at))[0];
     const info = courier360Json(signal?.courier_json);
     const shiftState = key(signal?.shift_status || info.shiftStatus).toUpperCase();
@@ -1389,17 +1411,20 @@ async function courier360ActiveCouriers(env, now = new Date(), includeAll = fals
     const routeActive = courier360RouteActive({date, routeId, activityAt: info.plannedStartAt, returned, state});
     const sameAttendanceName = new Set(sources.attendance.map(row => key(row.courier_name))).size === 1;
     const attended = sameAttendanceName ? sources.attendance[0] : null;
-    const {working} = courier360Working({state, routeActive, fresh: Boolean(signal), attended,
-      attendanceFresh: courier360Fresh(attended?.updated_at, now)});
+    const fresh = courier360Fresh(signal?.fetched_at,now);
+    const attendanceFresh = courier360Fresh(attended?.updated_at,now);
+    const {working} = courier360Working({state,routeActive,fresh:Boolean(signal),attended,attendanceFresh});
     const status = courier360MonitorStatus(state,shiftState,routeActive,working);
     if ((!includeAll && working !== true) || (!status && !signal)) continue;
     const name = sources.signals[0]?.courier_name || sources.attendance[0]?.courier_name;
     const optionalNumber = value => value == null || value === '' ? null : metricNumber(value);
     couriers.push({courierId:id,courierName:signal?.courier_name || name || 'Futár',status:status || 'Nincs aktív jelzés',
-      working:working === true,routeActive,routeId:routeId || null,warehouse:signal?.warehouse_code || null,
+      working:working === true,routeActive,routeId:routeId || null,
+      stale:!(signal ? fresh : attendanceFresh),
       delayMinutes:optionalNumber(signal?.delay_minutes ?? info.delayMinutes),
       completedStops:optionalNumber(info.deliveriesCompleted),totalStops:optionalNumber(info.stopsTotal),
-      at:signal?.fetched_at || attended?.updated_at || null,source:signal?.direct ? 'Kifli Hub · közvetlen' : signal ? 'Kifli Hub · mentett pillanatkép' : 'Giriton'});
+      at:signal?.fetched_at || attended?.updated_at || null,
+      source:signal?.direct ? 'Kifli Hub · közvetlen' : signal ? 'Kifli Hub · mentett pillanatkép' : 'Giriton'});
   }
   couriers.sort((a, b) => Number(b.status === 'Túrán') - Number(a.status === 'Túrán') ||
     a.courierName.localeCompare(b.courierName, 'hu') || a.courierId.localeCompare(b.courierId));

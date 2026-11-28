@@ -37,7 +37,8 @@ Erre kerülhet rá később:
 ## Futár 360° élő státuszok
 
 A Futár 360° az aktuális napon 30 másodpercenként lekéri a futár állapotát.
-A Worker a Kifli Hubot közvetlenül olvassa, ha a `COURIER_HUB_COOKIE` vagy a
-`COURIER_HUB_AUTHORIZATION` titok érvényes hitelesítést tartalmaz. Elérési
-hiba vagy hiányzó hitelesítés esetén a felület a mentett pillanatképet és
-annak időpontját jelzi.
+A Worker a Kifli Hubot közvetlenül olvassa a Supabase privát
+`hub-session-cache` tárolójában megosztott munkamenettel. Ehhez szolgáltatási
+jogosultságú Supabase-kulcs szükséges. A `COURIER_HUB_COOKIE` vagy a
+`COURIER_HUB_AUTHORIZATION` közvetlenül is megadható Worker-titokként.
+Hiba esetén a felület a mentett állapotot és annak időpontját mutatja.

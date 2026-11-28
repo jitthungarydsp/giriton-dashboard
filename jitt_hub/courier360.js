@@ -184,7 +184,7 @@ function c360SearchMatches(value) {
 
 function c360SearchRows(results, rows, active = false) {
   results.innerHTML = rows.map(row => `<button type="button" data-c360-switch="${esc(row.courierId)}">
-    <span>${esc(row.courierName || 'Futár')}${active ? `<small class="c360-search-courier-status" data-status="${esc(row.status)}">${esc(row.status)}${row.warehouse ? ' · '+esc(row.warehouse) : ''}</small>` : ''}</span><small>#${esc(row.courierId)}</small>
+    <span>${esc(row.courierName || 'Futár')}${active ? `<small class="c360-search-courier-status" data-status="${esc(row.status)}">${row.stale ? 'Utolsó ismert: ' : ''}${esc(row.status)}${row.warehouse ? ' · '+esc(row.warehouse) : ''}${row.stale && row.at ? ' · '+c360Date(row.at) : ''}</small>` : ''}</span><small>#${esc(row.courierId)}</small>
   </button>`).join('');
   results.hidden = !rows.length;
 }
@@ -198,7 +198,8 @@ function c360DismissSearch() {
 }
 
 function c360ShowLiveSearch(couriers, partial, filter) {
-  const rows = couriers.filter(row=>filter === 'active' ? row.working : row.status === filter);
+  const rows = couriers.filter(row=>filter === 'active' ? row.working : row.status === filter)
+    .sort((a,b)=>Number(Boolean(a.stale))-Number(Boolean(b.stale)));
   c360SearchRows($('#c360-search-results'),rows,true);
   $('#c360-search-status').textContent = rows.length ? `${rows.length} futár${partial ? ' · Részleges adat' : ''}.`
     : partial ? 'A rendelkezésre álló forrásokban nincs friss találat.' : 'Nincs friss találat erre az állapotra.';
@@ -248,18 +249,22 @@ async function c360RefreshLive() {
     const op = p.operational, oldRoute = op.route;
     if (row?.at) {
       const notice = $('#c360-freshness-note');
-      if (notice && row.source !== 'Giriton') notice.hidden = true;
-      indicator.textContent = row.source+' · '+c360Date(row.at);
-      Object.assign(op,{liveStatus:row.status,currentWorking:row.working,liveSource:row.source,liveAt:row.at,liveDelay:row.delayMinutes});
+      if (notice) notice.hidden = !row.stale && row.source.startsWith('Kifli Hub');
+      indicator.textContent = (row.stale ? 'Utolsó ismert · ' : '')+row.source+' · '+c360Date(row.at);
+      Object.assign(op,{liveStatus:row.stale ? 'Utolsó ismert: '+row.status : row.status,
+        currentWorking:row.stale ? null : row.working,liveSource:row.source,liveAt:row.at,liveDelay:row.stale ? null : row.delayMinutes});
       if (row.routeId) {
         const same = oldRoute?.id === row.routeId;
-        op.route = {...(same ? oldRoute : {stops:[]}),id:row.routeId,warehouse:row.warehouse,active:row.routeActive,updatedAt:row.at,
+        op.route = {...(same ? oldRoute : {stops:[]}),id:row.routeId,warehouse:row.warehouse,active:!row.stale && row.routeActive,updatedAt:row.at,
           completedStops:row.completedStops ?? (same ? oldRoute.completedStops : null),totalStops:row.totalStops ?? (same ? oldRoute.totalStops : null),
-          stopsFresh:Boolean(same && oldRoute.stopsFresh && row.completedStops === oldRoute.completedStops && Date.now()-Date.parse(oldRoute.stopsUpdatedAt)<1200000)};
+          stopsFresh:Boolean(!row.stale && same && oldRoute.stopsFresh && row.completedStops === oldRoute.completedStops && Date.now()-Date.parse(oldRoute.stopsUpdatedAt)<1200000)};
       } else if (oldRoute) op.route = {...oldRoute,active:false,stopsFresh:false};
     } else {
-      indicator.textContent = partial ? 'A friss futáradat részlegesen érhető el.' : 'A futárról nincs friss státusz.';
-      Object.assign(op,{liveStatus:'Nincs friss státusz',currentWorking:null,liveDelay:null});
+      const absent = !op.attendance?.checkin_start && /didn.t come|absent|nem érkezett/i.test(op.attendance?.activity_status || '');
+      indicator.textContent = absent ? 'Giriton · rögzített hiányzás · '+c360Date(op.attendance.updated_at)
+        : partial ? 'A friss futáradat részlegesen érhető el.' : 'A futárról nincs friss státusz.';
+      Object.assign(op,{liveStatus:absent ? 'Giriton: nem jelent meg' : 'Nincs friss státusz',currentWorking:absent ? false : null,liveDelay:null});
+      if (absent) Object.assign(op,{liveSource:'Giriton',liveAt:op.attendance.updated_at});
       if (oldRoute) op.route = {...oldRoute,active:false,stopsFresh:false};
     }
     const content = $('#courier360-page .c360-content');
