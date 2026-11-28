@@ -21,6 +21,22 @@ const base={date,now,monitor:[{route_id:'42',status:'ON_ROUTE',fetched_at:'2026-
   let document=await c.courier360Document(new Request(`https://test/api/courier360-document?courier=6959&id=${documentId}`),{});assert.equal(document.status,200);assert.equal(await document.text(),'%PDF-');assert.equal(document.headers.get('cache-control'),'no-store');
   c.supabaseFetch=async()=>[];document=await c.courier360Document(new Request(`https://test/api/courier360-document?courier=6958&id=${documentId}`),{});assert.equal(document.status,404);c.supabaseFetch=actualFetch;
   console.log('Freshness, route-day isolation, next stop, cancelled shifts, checkout, DST and admin access OK');
+  c.supabaseFetch=async(_env,_schema,table,params)=>{
+    if(table==='courier_master')return [{courier_name:'Test Courier'}];
+    if(table==='courier_hub_route_statistics'&&params.and)return [{work_date:date,route_id:'42',tip_huf:250}];
+    return [];
+  };
+  for(const scope of ['', 'day']){
+    const response=await c.courier360Data(new Request(`https://test/api/courier360?courier=6959&date=${date}&month=2026-11&scope=${scope}`),{},now);
+    assert.equal(response.status,200);
+    const payload=await response.json();
+    assert.equal(payload.courier.id,'6959');
+    if(!scope){
+      assert.equal(payload.courier.name,'Test Courier');
+      assert.equal(payload.monthlyPerformance.tipHuf,250);
+    }
+  }
+  c.supabaseFetch=actualFetch;
   if(process.argv.includes('--live')){
     const text=fs.readFileSync(path.join(root,'.streamlit/secrets.toml'),'utf8');const setting=name=>text.match(new RegExp('^'+name+'\\s*=\\s*"([^"]+)"','m'))?.[1];
     const env={SUPABASE_URL:setting('SUPABASE_URL'),SUPABASE_SERVICE_ROLE_KEY:setting('SUPABASE_SERVICE_ROLE_KEY')};

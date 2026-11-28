@@ -1155,7 +1155,6 @@ async function courier360Data(request, env, now = new Date()) {
   const endDate=dayOnly ? date : new Date(Date.parse(date)+31*86400000).toISOString().slice(0,10);
   const monthlyRoutes=dayOnly ? null : loadCourier360MonthlyRoutes(env,courierId,periodStart,now).catch(()=>null);
   const [profiles,masters,monitor,detail,map,storedStops,statistics,routeHistory,checkins,allAttendance,bookings,giritonShifts,complaints,documents,states,acceptances,metrics,closures,snapshots,advanceAdditions,dashboardRows,monthlyPerformance] = await Promise.all([
-    monthlyRoutes,
     safe('courier_master',PUBLIC_SCHEMA,{...sameId,select:dayOnly?'courier_id,courier_name':'courier_id,courier_name,warehouse_name,company_name,bank_account_number',order:'courier_id.asc',limit:1}),
     safe('courier_hub_master',PUBLIC_SCHEMA,{...sameId,select:'courier_id,courier_name,user_number,giriton_person_id,warehouse_code,vehicle_registration_number,fetched_at',order:'fetched_at.desc',limit:4}),
     safe('courier_hub_live_monitoring_courier_snapshot_latest',PUBLIC_SCHEMA,{...sameId,select:'courier_id,route_id,status,shift_status,warehouse_code,deliveries_completed,stops_total,vehicle_plate,departed_at,courier_json,fetched_at',order:'fetched_at.desc',limit:4}),
@@ -1181,6 +1180,7 @@ async function courier360Data(request, env, now = new Date()) {
     dayOnly ? [] : loadLatestFinanceSnapshots(env,periodStart,courierId).then(rows=>{sources.push({table:'courier_finance_snapshot',available:true,count:rows.length});return rows}).catch(()=>{sources.push({table:'courier_finance_snapshot',available:false,count:null});return []}),
     dayOnly ? [] : loadSalaryAdvanceAdditions(env,periodStart).then(rows=>{sources.push({table:'Fizetési előlegek',available:true,count:rows.length});return rows}).catch(()=>{sources.push({table:'Fizetési előlegek',available:false,count:null});return []}),
     monthly('vw_admin_settlement_dashboard_fast',SETTLEMENT_SCHEMA,{select:'courier_id,dashboard_status_label',period_start:`eq.${periodStart}`,order:'courier_id.asc',limit:10000}),
+    monthlyRoutes,
   ]);
   if(!profiles.length&&!masters.length&&!snapshots.length&&!metrics.length&&!monitor.length) return jsonResponse({error:'A futárhoz nem található adat.'},404);
   const names=new Set([...profiles,...masters,...snapshots].map(row=>courier360Name(row.courier_name)).filter(Boolean));
