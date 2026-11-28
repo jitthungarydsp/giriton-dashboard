@@ -85,32 +85,32 @@ function c360ShiftList(shifts) {
     c360Missing('Nincs rögzített műszak.');
 }
 
-function c360Ring(label, value, total, tone) {
-  const ratio = Number(total) > 0 && value != null ? Math.min(100, Math.max(0, Math.round(100 * value / total))) : null;
-  const name = `${label}, ${ratio == null ? 'nincs adat' : `${nf.format(value)} / ${nf.format(total)} · ${ratio}%`}`;
-  return `<div class="c360-ring c360-ring-${tone}" role="img" aria-label="${esc(name)}" style="--ring-value:${ratio ?? 0}%"><div aria-hidden="true"><strong>${ratio == null ? '—' : `${ratio}%`}</strong><small>${esc(label)}</small></div></div>`;
-}
-
-function c360CompletedRoutes(p) {
-  const {route,dayStatistics=[]}=p.operational;
-  const completed=new Map();
+function c360DailyRoutes(p) {
+  const {route,dayStatistics=[],routeHistory=[]}=p.operational;
+  const rows=new Map();
+  for (const row of routeHistory) rows.set(String(row.route_id),row);
   for (const row of dayStatistics) {
-    if (row.route_id==null || !Number.isFinite(Date.parse(row.returned_at))) continue;
-    const id=String(row.route_id);
-    if (id===String(route?.id) && route.active) continue;
-    if (!completed.has(id) || Date.parse(row.returned_at)>Date.parse(completed.get(id).returned_at)) completed.set(id,row);
+    if(row.route_id==null)continue;
+    const id=String(row.route_id),previous=rows.get(id);
+    rows.set(id,{...previous,...row,warehouse_code:row.warehouse_code||previous?.warehouse_code,
+      departed_at:row.departed_at||previous?.departed_at,returned_at:row.returned_at||previous?.returned_at});
   }
-  if (route?.id!=null && !route.active && Number.isFinite(Date.parse(route.returnedAt)) && !completed.has(String(route.id))) {
-    completed.set(String(route.id),{route_id:route.id,warehouse_code:route.warehouse,departed_at:route.departedAt,returned_at:route.returnedAt});
+  if(route?.id!=null){
+    const id=String(route.id),previous=rows.get(id);
+    rows.set(id,{...previous,route_id:route.id,warehouse_code:route.warehouse||previous?.warehouse_code,
+      departed_at:route.departedAt||previous?.departed_at,returned_at:route.returnedAt||previous?.returned_at,
+      status:previous?.status||route.status});
   }
-  const rows=[...completed.values()].sort((a,b)=>Date.parse(b.returned_at)-Date.parse(a.returned_at));
-  const unavailable=p.sources?.some(source=>source.table==='courier_hub_route_statistics' && source.available===false);
+  const knownStatus={RETURNING:'Visszaúton',DELIVERING:'Kiszállítás alatt',SLIPPING:'Késésben',LOADING:'Rakodás'};
+  const sorted=[...rows.values()].sort((a,b)=>String(b.departed_at||b.fetched_at||'').localeCompare(String(a.departed_at||a.fetched_at||'')));
+  const unavailable=p.sources?.some(source=>!source.available && ['courier_hub_route_statistics','courier_hub_live_monitoring_courier_snapshots'].includes(source.table));
   return `<section class="c360-agenda" aria-labelledby="c360-completed-title">
-    <div class="c360-section-head"><h3 id="c360-completed-title">Kifutott túrák · ${nf.format(rows.length)}</h3></div>
-    ${rows.length ? c360Table(['Túra','Raktár','Indulás','Visszaérkezés'],rows.map(row=>[
-      '#'+esc(row.route_id),esc(row.warehouse_code||'—'),c360Time(row.departed_at),c360Time(row.returned_at)
+    <div class="c360-section-head"><h3 id="c360-completed-title">A nap túrái · ${nf.format(sorted.length)}</h3></div>
+    ${sorted.length ? c360Table(['Túra','Raktár','Indulás','Visszaérkezés','Állapot'],sorted.map(row=>[
+      '#'+esc(row.route_id),esc(row.warehouse_code||'—'),c360Time(row.departed_at),c360Time(row.returned_at),
+      row.returned_at?'Visszaérkezett':esc(knownStatus[row.status]||'Rögzítve')
     ])) : ''}
-    ${unavailable ? c360Missing('A napi túrastatisztika jelenleg nem érhető el.') : rows.length ? '' : c360Missing('A kiválasztott napon nincs rögzített visszaérkezés.')}
+    ${unavailable ? c360Missing('A napi túraadatok egy része nem érhető el.') : sorted.length ? '' : c360Missing('A kiválasztott naphoz nincs rögzített túra.')}
   </section>`;
 }
 
@@ -133,7 +133,7 @@ function c360Live(p) {
           ${nextAddress?.address ? `<p>${route.active && route.stopsFresh ? 'Következő cím' : 'Utolsó ismert cím'} · ${esc(nextAddress.address)}</p>` : ''}</div>
         ${route ? c360Go('routes', 'Túra részletei ↗') : ''}
       </section>
-      ${c360CompletedRoutes(p)}
+      ${c360DailyRoutes(p)}
       <section class="c360-agenda" aria-labelledby="c360-agenda-title">
         <div class="c360-section-head"><h3 id="c360-agenda-title">Műszakok és események</h3>${c360Go('shifts','Műszakadatok ↗')}</div>
         ${c360Calendar(p.date)}
@@ -141,10 +141,36 @@ function c360Live(p) {
     </div>`;
 }
 
+function c360Performance(p) {
+  const month=esc(monthLabel(p.periodStart.slice(0,7))),routes=p.monthlyPerformance;
+  const finance=p.finance?.snapshotIsPublished ? p.finance : null;
+  const bar=(label,value,total,format,tone)=>`<div class="c360-performance-row">
+    <div><span>${label}</span><strong>${format(value)}</strong></div>
+    <div class="c360-performance-track" aria-hidden="true"><span data-tone="${tone}" style="width:${total>0?Math.min(100,100*value/total):0}%"></span></div>
+  </div>`;
+  const bonus=finance?.bonus??0,malus=finance?.malus??0;
+  const tips=routes?.dailyTips||[],peak=Math.max(0,...tips.map(row=>Math.abs(row.amount)));
+  const tipChart=tips.length?`<div class="c360-tip-chart" role="img" aria-label="${esc(tips.map(row=>c360Date(row.date,false)+': '+huf(row.amount)).join(', '))}">${tips.map(row=>
+    `<span style="height:${peak?Math.max(4,100*Math.abs(row.amount)/peak):4}%" title="${esc(c360Date(row.date,false)+' · '+huf(row.amount))}"></span>`).join('')}</div>`:'';
+
+  return `<p class="c360-source">${month}</p>
+    ${routes?`<div class="c360-performance-block"><h4>Havi túrák</h4>
+      ${bar('Kifutott / rögzített',routes.completed,routes.total,value=>nf.format(value)+' / '+nf.format(routes.total),'route')}
+    </div><div class="c360-performance-block"><h4>Borravaló eddig</h4><strong>${huf(routes.tipHuf)}</strong>${tipChart}</div>
+    <div class="c360-performance-block"><h4>Kifutott túrák típus szerint</h4>
+      ${bar('Express',routes.express,routes.completed,nf.format,'route')}
+      ${bar('City',routes.city,routes.completed,nf.format,'city')}
+      ${routes.other?bar('Egyéb / ismeretlen',routes.other,routes.completed,nf.format,'other'):''}
+    </div>`:'<p class="c360-source">A havi túraadatok jelenleg nem érhetők el.</p>'}
+    <div class="c360-performance-block"><h4>Bónusz és malusz</h4>
+      ${finance?`<p class="c360-source">Mentett elszámolás</p>
+      ${bar('Bónusz',bonus,bonus+malus,huf,'city')}
+      ${bar('Malusz',malus,bonus+malus,huf,'malus')}`:'<p class="c360-source">Nincs mentett elszámolási adat.</p>'}
+    </div>`;
+}
+
 function c360Profile(p) {
-  const op = p.operational, route = op.route, next = op.nextShift;
-  const open = p.complaints.filter(row => ['new','open','in_progress'].includes(String(row.status).trim().toLowerCase())).length;
-  const answered = p.complaints.filter(c360ComplaintAnswered).length;
+  const op = p.operational, next = op.nextShift;
   const name = p.courier.name || 'Futár';
   const initials = name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toLocaleUpperCase('hu');
   const presence = op.liveStatus || (op.currentWorking === true ? 'Műszakban' : op.currentWorking === false ? 'Nincs aktív jelenléti jelzés' : 'Nem állapítható meg');
@@ -162,8 +188,7 @@ function c360Profile(p) {
       </section>
       <section class="c360-profile-section" aria-labelledby="c360-progress-title">
         <h3 id="c360-progress-title">Teljesítés</h3>
-        ${c360Ring('Címek teljesítve', route?.completedStops, route?.totalStops, 'route')}
-        ${c360Ring('Válaszolt vagy lezárt ügyek', answered, p.complaints.length, 'cases')}
+        <div id="c360-performance-data">${c360Performance(c360PerformancePayload(p))}</div><p id="c360-performance-update" class="c360-source" role="status">${esc(c360PerformanceMessage())}</p>
       </section>`;
 }
 
@@ -513,6 +538,47 @@ function renderCourier360(){
     </dialog>`;
   if (courier360State.tab === 'live') c360LoadCalendar();
 }
+let c360PerformanceRefreshPending=null;
+let c360PerformanceRefreshData=null;
+function c360PerformanceMessage() {
+  return c360PerformanceRefreshData?.sequence===courier360State.sequence ? c360PerformanceRefreshData.message : '';
+}
+function c360PerformancePayload(p) {
+  const refresh=c360PerformanceRefreshData;
+  if (!refresh || refresh.sequence!==courier360State.sequence) return p;
+  return {...p,...refresh.values};
+}
+async function c360RefreshPerformance() {
+  const {id,date,month,sequence,payload}=courier360State;
+  const root=$('#c360-performance-data');
+  if (!root || !payload || document.hidden || $('#courier360-page').hidden || c360PerformanceRefreshPending===sequence) return;
+  c360PerformanceRefreshPending=sequence;
+  try {
+    const result=await api('/api/courier360?'+new URLSearchParams({courier:id,date,month,scope:'performance'}));
+    if (sequence!==courier360State.sequence) return;
+    if (result.courierId!==id || result.periodStart!==month+'-01') throw Error('Eltérő futár vagy hónap.');
+    const previous=c360PerformancePayload(payload);
+    c360PerformanceRefreshData={sequence,message:result.monthlyPerformance===null || !result.financeAvailable
+      ? 'Részleges frissítés. A korábbi elérhető adatok látszanak.' : '',values:{
+      monthlyPerformance:result.monthlyPerformance??previous.monthlyPerformance,
+      finance:result.financeAvailable?result.finance:previous.finance,
+    }};
+    const target=$('#c360-performance-data');
+    const html=c360Performance(c360PerformancePayload(payload));
+    if (target && target.innerHTML!==html) target.innerHTML=html;
+    $('#c360-performance-update').textContent=c360PerformanceMessage();
+  } catch {
+    if (sequence===courier360State.sequence) {
+      const values=c360PerformancePayload(payload);
+      c360PerformanceRefreshData={sequence,values:{monthlyPerformance:values.monthlyPerformance,finance:values.finance},
+        message:'A frissítés sikertelen. A korábbi adatok látszanak.'};
+      $('#c360-performance-update').textContent=c360PerformanceMessage();
+    }
+  } finally {
+    if (c360PerformanceRefreshPending===sequence) c360PerformanceRefreshPending=null;
+  }
+}
+
 async function openCourier360(id,{date,month,tab,backLabel='Vissza a futárlistához'}={}){
   const isNew=courier360State.id!==String(id);
   courier360State.previousScroll=window.scrollY;
@@ -523,7 +589,7 @@ async function openCourier360(id,{date,month,tab,backLabel='Vissza a futárlist�
   if(tab)courier360State.tab=tab;
   courier360State.backLabel=backLabel;
   $('#courier360-page').hidden=false;$('#app').classList.add('courier360-open');window.scrollTo(0,0);
-  if (!c360LiveTimer) c360LiveTimer=setInterval(c360RefreshLive,30000);
+  if (!c360LiveTimer) c360LiveTimer=setInterval(()=>{c360RefreshLive();c360RefreshPerformance()},30000);
   await loadCourier360();
 }
 async function loadCourier360(){
@@ -614,4 +680,4 @@ document.addEventListener('keydown', event => {
   }
 });
 document.addEventListener('change',event=>{if(event.target.id==='c360-date'&&event.target.value){courier360State.date=event.target.value;courier360State.calendarMonth=event.target.value.slice(0,7);loadCourier360()}if(event.target.id==='c360-month'&&event.target.value){courier360State.month=event.target.value;loadCourier360()}});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)c360RefreshLive()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){c360RefreshLive();c360RefreshPerformance()}});
