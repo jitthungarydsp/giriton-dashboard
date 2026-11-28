@@ -1,5 +1,6 @@
 const attendanceBoard = $('[data-view="attendance"]');
-const attendanceSearch = $('#attendance-search');
+$('#attendance-courier-search').innerHTML = c360SearchControls('attendance-c360-search', 'Futárnév, azonosító, műszakkezdés vagy státusz');
+const attendanceSearch = $('#attendance-c360-search-input');
 const attendanceWarehouse = $('#attendance-warehouse');
 const attendanceRows = $('#attendance-rows');
 const attendanceRefresh = $('#attendance-refresh');
@@ -17,16 +18,15 @@ let attendanceRequest = null;
 let attendanceTimer = null;
 let attendanceFilter = 'all';
 
-function attendanceNormalize(value) {
-  return String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-}
-
 function renderAttendance() {
-  const query = attendanceNormalize(attendanceSearch.value).trim().replace(/^#/,'');
+  const query = c360SearchText(attendanceSearch.value).replace(/^#/,'');
+  const liveFilter = c360ActiveQuery(query);
+  const liveIds = liveFilter ? new Set(c360SearchState(attendanceSearch.form).liveRows.map(row=>String(row.courierId))) : null;
   const warehouse = attendanceWarehouse.value;
   const couriers = (attendanceData?.couriers || []).filter(row =>
     (!warehouse || row.shifts.some(shift=>shift.warehouse===warehouse)) &&
-    [row.courierName,row.courierId,...row.shifts.map(shift=>shift.start)].some(value=>attendanceNormalize(value).includes(query)));
+    (liveIds ? liveIds.has(String(row.courierId)) :
+      c360SearchText([row.courierName,row.courierId,...row.shifts.map(shift=>shift.start)].join(' ')).includes(query)));
   const group = row=>['due','overdue'].includes(row.status)?'missing':row.status;
   for (const button of attendanceBoard.querySelectorAll('[data-attendance-filter]')) {
     const filter = button.dataset.attendanceFilter;
@@ -71,7 +71,8 @@ async function loadAttendance() {
       data.partial ? 'Egyes adatforrások hiányosak.' : '',
       data.unmatchedShifts ? 'Azonosítatlan műszakok: '+data.unmatchedShifts : '',
     ].filter(Boolean).join(' · ');
-    renderAttendance();
+    if (c360ActiveQuery(attendanceSearch.value)) c360RenderSearch(attendanceSearch,{expand:false});
+    else renderAttendance();
   } catch {
     if (attendanceRequest !== controller) return;
     attendanceData = null;
@@ -98,11 +99,25 @@ function closeAttendance() {
   attendanceRequest?.abort();
   attendanceRequest = null;
   attendanceData = null;
+  const searchState = c360SearchState(attendanceSearch.form);
+  searchState.sequence++;
+  searchState.liveRows = [];
+  c360DismissSearch(attendanceSearch.form);
   attendanceRefresh.disabled = false;
   renderAttendance();
 }
 
-attendanceSearch.addEventListener('input',renderAttendance);
+function attendanceSearchOptions() {
+  return (attendanceData?.couriers || []).map(row=>({...row,searchTerms:row.shifts.map(shift=>shift.start).join(' ')}));
+}
+
+function openAttendanceCourier(id) {
+  return openCourier360(id,{
+    date:attendanceData?.date || c360Today(),tab:'live',backLabel:'Vissza a mai jelenléthez',
+  });
+}
+
+attendanceSearch.form.addEventListener('c360-search-change',renderAttendance);
 attendanceWarehouse.addEventListener('change',renderAttendance);
 attendanceRefresh.addEventListener('click',loadAttendance);
 attendanceBoard.addEventListener('click',event=>{
@@ -112,9 +127,5 @@ attendanceBoard.addEventListener('click',event=>{
     renderAttendance();
   }
   const courier = event.target.closest('[data-attendance-courier]');
-  if (courier && attendanceData) {
-    openCourier360(courier.dataset.attendanceCourier,{
-      date:attendanceData.date,tab:'live',backLabel:'Vissza a mai jelenléthez',
-    });
-  }
+  if (courier) openAttendanceCourier(courier.dataset.attendanceCourier);
 });

@@ -713,7 +713,6 @@
 }
 
 .attendance-tools,
-.attendance-filter-fields,
 .attendance-filters,
 .attendance-table-head {
   display: flex;
@@ -722,7 +721,6 @@
   gap: 10px;
 }
 
-.attendance-tools,
 .attendance-table-head {
   justify-content: space-between;
 }
@@ -731,11 +729,20 @@
   margin-bottom: 24px;
 }
 
-.attendance-board .attendance-filter-fields .search {
-  width: min(300px,70vw);
+#attendance-courier-search {
+  display: contents;
 }
 
-.attendance-filter-fields select {
+.attendance-tools .c360-search {
+  flex: 1 1 270px;
+  max-width: 340px;
+}
+
+#attendance-refresh {
+  margin-inline-start: auto;
+}
+
+#attendance-warehouse {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 10px;

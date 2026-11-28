@@ -166,17 +166,21 @@ function c360Complaints(p){
   return `<div class="c360-summary-grid"><article class="panel"><label class="c360-label">REKLAMÁCIÓK A HÓNAPBAN</label><b class="c360-value">${p.complaints.length} db</b><p>Minden nem törölt reklamációtípus.</p></article><article class="panel"><label class="c360-label">MEGVÁLASZOLT / LEZÁRT</label><b class="c360-value">${answered.length} db</b><p>Állapot vagy rögzített válasz alapján.</p></article><article class="panel"><label class="c360-label">ÁTLAGOS VÁLASZIDŐ</label><b class="c360-value">${durations.length?hours(durations.reduce((a,b)=>a+b,0)/durations.length):'Nem mérhető'}</b><p>${durations.length} időbélyeges válasz alapján.</p></article></div><article class="panel"><h3>Ügyek, beküldések és válaszok</h3>${p.complaints.length?p.complaints.map(row=>`<details class="c360-details"><summary>${esc(row.document_type)} · ${esc(row.status)} · ${c360Date(row.created_at)}</summary><p class="c360-message">${esc(row.message||'Nincs rögzített szöveg')}</p><button type="button" class="c360-button" data-status-courier="${esc(p.courier.id)}" data-status-label="Reklamáció" data-status-complaint="${esc(row.id||'')}">Reklamáció ügyintézése</button><div class="c360-answer"><strong>Válasz</strong><p class="c360-message">${esc(row.admin_response||'Nincs rögzített válaszszöveg')}</p><small>${esc(row.responded_by||'—')} · ${c360Date(row.responded_at)}</small></div></details>`).join(''):c360Missing('Ehhez a hónaphoz nincs rögzített reklamáció.')}</article>`;
 }
 function c360Logs(p){return `<div class="c360-two"><article class="panel"><h3>Havi dokumentumok</h3>${c360Table(['Dokumentum','Feltöltés','Megnyitás'],p.documents.map(row=>[esc(row.title||row.file_name||row.document_type)+'<br><small>'+esc(row.document_type)+'</small>',c360Date(row.uploaded_at)+'<br><small>'+esc(row.uploaded_by||'—')+'</small>',`<a class="c360-button" href="/api/courier360-document?courier=${encodeURIComponent(p.courier.id)}&id=${encodeURIComponent(row.id)}" target="_blank" rel="noopener">Megnyitás ↗</a>`]))}</article><article class="panel"><h3>Forrásadatok elérhetősége</h3>${c360Table(['Forrás','Állapot'],p.sources.map(row=>[esc(row.table),row.available?`${row.count} sor`:'Nem elérhető']))}</article></div><article class="panel c360-gap"><h3>Operatív nap és havi elszámolás eseménynaplója</h3>${c360Timeline(p.eventLog)}</article>`}
+function c360SearchControls(id, placeholder = 'Futárnév, azonosító vagy Túrán') {
+  return `<form class="c360-search" id="${id}" role="search" aria-label="Futár keresése">
+    <input type="search" id="${id}-input" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}" aria-controls="${id}-results" autocomplete="off">
+    <div id="${id}-results" class="c360-search-results" hidden></div>
+    <p id="${id}-status" class="c360-search-status" role="status"></p>
+  </form>
+  <div class="c360-live-tools" role="group" aria-label="Élő státuszszűrők">
+    ${['Túrán','Nem jelent meg','Csúszik','Tétlen','Rakodik'].map(label=>`<button type="button" class="c360-button" data-c360-live-filter="${label}" aria-pressed="false">${label}</button>`).join('')}
+  </div>`;
+}
+
 function c360Header(loading = false) {
-  return `<div class="c360-head">
+  return `<div class="c360-head" data-c360-search-area>
     <button type="button" class="c360-button" data-c360-close>← ${esc(courier360State.backLabel)}</button>
-    <form class="c360-search" id="c360-search" role="search" aria-label="Futár keresése">
-      <input type="search" id="c360-search-input" placeholder="Futárnév, azonosító vagy Túrán" aria-label="Futár neve vagy azonosítója" aria-controls="c360-search-results" autocomplete="off">
-      <div id="c360-search-results" class="c360-search-results" hidden></div>
-      <p id="c360-search-status" class="c360-search-status" role="status"></p>
-    </form>
-    <div class="c360-live-tools" role="group" aria-label="Élő státuszszűrők">
-      ${['Túrán','Nem jelent meg','Csúszik','Tétlen','Rakodik'].map(label=>`<button type="button" class="c360-button" data-c360-live-filter="${label}" aria-pressed="false">${label}</button>`).join('')}
-    </div>
+    ${c360SearchControls('c360-search')}
     <button type="button" class="c360-button c360-refresh" data-c360-refresh ${loading ? 'disabled' : ''}>Frissítés</button>
   </div>`;
 }
@@ -223,7 +227,7 @@ function c360ActiveQuery(value) {
   if (query === 'rakodik') return 'Rakodik';
   return '';
 }
-let c360SearchSequence = 0;
+const c360SearchStates = new WeakMap();
 let c360ActiveRequest;
 let c360LiveTimer;
 
@@ -232,12 +236,18 @@ function c360ReadLive() {
   return c360ActiveRequest;
 }
 
-function c360SearchMatches(value) {
+function c360SearchMatches(value, form) {
   const query = c360SearchText(value).replace(/^#(?=\d+$)/, '');
   if (!query) return [];
-  return (data?.couriers || []).filter(row => /^\d{1,12}$/.test(row.courierId) &&
-    c360SearchText(`${row.courierName || ''} ${row.courierId}`).includes(query))
-    .sort((a, b) => Number(String(b.courierId) === query) - Number(String(a.courierId) === query));
+  const daily = form?.id === 'attendance-c360-search' ? attendanceSearchOptions() : [];
+  const matches = new Map();
+  for (const row of [...daily,...(data?.couriers || [])]) {
+    if (!/^\d{1,12}$/.test(row.courierId)) continue;
+    if (!c360SearchText([row.courierName,row.courierId,row.searchTerms].join(' ')).includes(query)) continue;
+    const id = String(row.courierId);
+    if (!matches.has(id)) matches.set(id,row);
+  }
+  return [...matches.values()].sort((a,b)=>Number(String(b.courierId)===query)-Number(String(a.courierId)===query));
 }
 
 function c360SearchRows(results, rows, active = false) {
@@ -247,43 +257,77 @@ function c360SearchRows(results, rows, active = false) {
   results.hidden = !rows.length;
 }
 
-function c360DismissSearch() {
-  c360SearchSequence++;
-  const results = $('#c360-search-results');
-  if (results) results.hidden = true;
-  const input = $('#c360-search-input');
-  if (input) delete input.dataset.liveSearch;
+function c360SearchState(form) {
+  if (!c360SearchStates.has(form)) c360SearchStates.set(form,{sequence:0,expanded:false,filter:'',liveRows:[]});
+  return c360SearchStates.get(form);
 }
 
-function c360ShowLiveSearch(couriers, partial, filter) {
+function c360DismissSearch(form) {
+  const state = c360SearchState(form);
+  state.expanded = false;
+  form.querySelector('.c360-search-results').hidden = true;
+  form.querySelector('.c360-search-status').textContent = '';
+  delete form.querySelector('input').dataset.liveSearch;
+}
+
+function c360DismissOtherSearches(target) {
+  for (const form of $$('.c360-search')) {
+    if (!form.contains(target)) c360DismissSearch(form);
+  }
+}
+
+function c360ShowLiveSearch(form, couriers, partial, filter) {
   const rows = couriers.filter(row=>filter === 'active' ? row.working : row.status === filter)
     .sort((a,b)=>Number(Boolean(a.stale))-Number(Boolean(b.stale)));
-  c360SearchRows($('#c360-search-results'),rows,true);
-  $('#c360-search-status').textContent = rows.length ? `${rows.length} futár${partial ? ' · Részleges adat' : ''}.`
+  const state = c360SearchState(form);
+  state.liveRows = rows;
+  form.dispatchEvent(new Event('c360-search-change'));
+  if (!state.expanded) return;
+  c360SearchRows(form.querySelector('.c360-search-results'),rows,true);
+  form.querySelector('.c360-search-status').textContent = rows.length ? `${rows.length} futár${partial ? ' · Részleges adat' : ''}.`
     : partial ? 'A rendelkezésre álló forrásokban nincs friss találat.' : 'Nincs friss találat erre az állapotra.';
 }
 
-async function c360RenderSearch(input) {
-  const sequence = ++c360SearchSequence;
-  const results = $('#c360-search-results');
-  const status = $('#c360-search-status');
+async function c360RenderSearch(input, {expand = true} = {}) {
+  const form = input.form;
+  const state = c360SearchState(form);
+  const sequence = ++state.sequence;
+  if (expand) state.expanded = true;
+  const results = form.querySelector('.c360-search-results');
+  const status = form.querySelector('.c360-search-status');
   const filter = c360ActiveQuery(input.value);
-  $$('[data-c360-live-filter]').forEach(button=>button.setAttribute('aria-pressed',String(c360ActiveQuery(button.dataset.c360LiveFilter) === filter)));
+  const changed = state.filter !== filter;
+  if (changed) state.liveRows = [];
+  state.filter = filter;
+  form.closest('[data-c360-search-area]').querySelectorAll('[data-c360-live-filter]').forEach(button=>
+    button.setAttribute('aria-pressed',String(c360ActiveQuery(button.dataset.c360LiveFilter) === filter)));
+  form.dispatchEvent(new Event('c360-search-change'));
   if (filter) {
-    input.dataset.liveSearch = 'true';
-    results.hidden = true;
-    status.textContent = 'Élő futárstátuszok betöltése…';
+    if (state.expanded) {
+      input.dataset.liveSearch = 'true';
+      if (changed || !state.liveRows.length) {
+        results.hidden = true;
+        status.textContent = 'Élő futárstátuszok betöltése…';
+      }
+    }
     try {
       const {couriers, partial} = await c360ReadLive();
-      if (sequence !== c360SearchSequence || !input.isConnected) return;
-      c360ShowLiveSearch(couriers,partial,filter);
+      if (sequence !== state.sequence || !input.isConnected) return;
+      c360ShowLiveSearch(form,couriers,partial,filter);
     } catch (error) {
-      if (sequence === c360SearchSequence && input.isConnected) status.textContent = error.message;
+      if (sequence !== state.sequence || !input.isConnected) return;
+      state.liveRows = [];
+      form.dispatchEvent(new Event('c360-search-change'));
+      if (state.expanded) {
+        results.hidden = true;
+        status.textContent = error.message;
+      }
     }
     return;
   }
   delete input.dataset.liveSearch;
-  const matches = c360SearchMatches(input.value);
+  if (!state.expanded) return;
+  const matches = c360SearchMatches(input.value,form);
   c360SearchRows(results, matches.slice(0, 8));
   status.textContent = !input.value.trim() ? '' : matches.length
     ? `${matches.length} találat${matches.length > 8 ? ', az első 8 látható' : ''}.`
@@ -302,7 +346,7 @@ async function c360RefreshLive() {
     const input = $('#c360-search-input');
     const statusFilter = c360ActiveQuery(input.value);
     if (statusFilter && input.dataset.liveSearch && document.activeElement === input) {
-      c360ShowLiveSearch(couriers,partial,statusFilter);
+      c360ShowLiveSearch(input.form,couriers,partial,statusFilter);
     }
     const row = couriers.find(row=>String(row.courierId) === String(p.courier.id));
     const op = p.operational, oldRoute = op.route;
@@ -389,7 +433,8 @@ async function c360OpenDay(button) {
   }
 }
 
-async function c360SwitchCourier(id) {
+async function c360SwitchCourier(id, form) {
+  if (form?.id === 'attendance-c360-search') return openAttendanceCourier(id);
   courier360State.id = String(id);
   await loadCourier360();
   if (!$('#courier360-page').hidden && courier360State.id === String(id) && document.activeElement === document.body) {
@@ -476,15 +521,21 @@ document.addEventListener('click',event=>{
   if(event.target.closest('[data-c360-close-day]')){c360CloseDay();return}
   const filter = event.target.closest('[data-c360-live-filter]');
   if (filter) {
-    const input = $('#c360-search-input');
-    input.value = filter.dataset.c360LiveFilter;
-    input.focus();
-    c360RenderSearch(input);
+    const input = filter.closest('[data-c360-search-area]').querySelector('.c360-search input');
+    const active = filter.getAttribute('aria-pressed') === 'true';
+    input.value = active && input.form.id === 'attendance-c360-search' ? '' : filter.dataset.c360LiveFilter;
+    if (document.activeElement === input) c360RenderSearch(input);
+    else input.focus();
     return;
   }
   const selected = event.target.closest('[data-c360-switch]');
-  if(selected){c360SwitchCourier(selected.dataset.c360Switch);return}
-  if(!event.target.closest('#c360-search')) c360DismissSearch();
+  if (selected) {
+    const form = selected.closest('.c360-search');
+    c360DismissSearch(form);
+    c360SwitchCourier(selected.dataset.c360Switch,form);
+    return;
+  }
+  c360DismissOtherSearches(event.target);
   const day=event.target.closest('[data-c360-day]');
   if(day){c360OpenDay(day);return}
   const monthStep=event.target.closest('[data-c360-month-step]');
@@ -501,22 +552,24 @@ document.addEventListener('click',event=>{
   const tab=event.target.closest('[data-c360-go]');if(tab)c360SelectTab(tab.dataset.c360Go);
 });
 document.addEventListener('input', event => {
-  if (event.target.id === 'c360-search-input') c360RenderSearch(event.target);
+  if (event.target.matches('.c360-search input')) c360RenderSearch(event.target);
 });
 document.addEventListener('focusin', event => {
-  if (event.target.id === 'c360-search-input') c360RenderSearch(event.target);
-  else if (!event.target.closest('#c360-search')) c360DismissSearch();
+  c360DismissOtherSearches(event.target);
+  if (event.target.matches('.c360-search input')) c360RenderSearch(event.target);
 });
 document.addEventListener('submit', event => {
-  if (event.target.id !== 'c360-search') return;
+  const form = event.target;
+  if (!form.matches('.c360-search')) return;
   event.preventDefault();
-  const input = $('#c360-search-input');
+  const input = form.querySelector('input');
   if (c360ActiveQuery(input.value)) { c360RenderSearch(input); return; }
   const id = input.value.trim().replace(/^#/, '');
-  const matches = c360SearchMatches(input.value);
-  if (/^\d{1,12}$/.test(id)) c360SwitchCourier(id);
-  else if (matches.length === 1) c360SwitchCourier(matches[0].courierId);
-  else c360RenderSearch(input);
+  const matches = c360SearchMatches(input.value,form);
+  if (/^\d{1,12}$/.test(id) || matches.length === 1) {
+    c360DismissSearch(form);
+    c360SwitchCourier(/^\d{1,12}$/.test(id) ? id : matches[0].courierId,form);
+  } else c360RenderSearch(input);
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && $('#c360-day-dialog')?.open) {
@@ -524,15 +577,15 @@ document.addEventListener('keydown', event => {
     c360CloseDay();
     return;
   }
-  if (!event.target.closest('#c360-search')) return;
-  const input = $('#c360-search-input');
+  const form = event.target.closest('.c360-search');
+  if (!form) return;
+  const input = form.querySelector('input');
   if (event.key === 'Escape') {
     event.preventDefault();
     input.focus();
-    c360DismissSearch();
-    $('#c360-search-status').textContent = '';
+    c360DismissSearch(form);
   } else if (event.key === 'ArrowDown' && event.target === input) {
-    const first = $('#c360-search-results:not([hidden]) button');
+    const first = form.querySelector('.c360-search-results:not([hidden]) button');
     if (first) { event.preventDefault(); first.focus(); }
   }
 });
